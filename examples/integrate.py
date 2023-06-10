@@ -57,5 +57,11 @@ for i in bar:
     opt.step()
 
 I,SigI = integrator.get_intensity_sigma(xy, dxy, counts, mask, batch_size)
+plt.plot(ds.I, I, 'k.')
+plt.xlabel("Intensity (Precognition)")
+plt.ylabel("Intensity (Neural net)")
+plt.loglog()
+plt.grid(which='both', axis='both', linestyle='--')
+plt.show()
 
 embed(colors='linux')
