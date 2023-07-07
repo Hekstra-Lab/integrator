@@ -16,7 +16,7 @@ class PoissonLikelihood(torch.nn.Module):
 
     def forward(self, counts, profile, p, bg, q, mc_samples=100):
         z = q.rsample([mc_samples])
-        rate = z * p[..., 1:2].permute(2, 0, 1) + bg[None, ...]
+        rate = z * p.permute(2, 0, 1) + bg[None, ...]
         # rate = z * profile[None,...] + bg[None,...]
         # rate = self.constraint(rate)
         ll = torch.distributions.Poisson(rate).log_prob(counts)
