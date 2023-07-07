@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "/n/holylabs/LABS/hekstra_lab/Users/laldama/integrator_/runs/run1-2023-07-07/integrate.py", line 43, in <module>
+    loss = integrator(xy[idx].cuda(), dxy[idx].cuda(), counts[idx].cuda(), mask[idx].cuda())
+  File "/n/holylabs/LABS/hekstra_lab/Users/laldama/micromamba/envs/pt2.0.1_cuda11.8/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1501, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/n/holylabs/LABS/hekstra_lab/Users/laldama/integrator_/integrator/models/integratration.py", line 56, in forward
+    ll = self.likelihood(counts, profile, p, bg, q, mc_samples)
+NameError: name 'profile' is not defined
+srun: error: holygpu7c26106: task 0: Exited with exit code 1
