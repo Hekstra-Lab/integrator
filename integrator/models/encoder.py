@@ -23,7 +23,7 @@ class MLPEncoder(torch.nn.Module):
 
         out = self.mlp_1(per_pixel)
         score = out[..., :1]
-        ps = out[..., :2]
+        ps = torch.special.expit(out[...,1:2].permute(2,0,1))
         refl = out[..., 2:]
         if mask is not None:
             score = torch.where(mask[..., None], score, -np.inf)
