@@ -51,7 +51,7 @@ class Integrator(torch.nn.Module):
 
         # profile = profile * norm_factor
         bg = bg * norm_factor
-        p = p * norm_factor
+        # p = p * norm_factor
 
         ll = self.likelihood(counts, profile, p, bg, q, mc_samples)
         if mask is None:
