@@ -7,7 +7,8 @@ from integrator.models import MLP
 class MLPEncoder(torch.nn.Module):
     def __init__(self, depth, dmodel, d_in=5):
         super().__init__()
-        self.mlp_1 = MLP(dmodel, depth, d_in=d_in, output_dims=dmodel + 1)
+        #self.mlp_1 = MLP(dmodel, depth, d_in=d_in, output_dims=dmodel + 1)
+        self.mlp_1 = MLP(dmodel, depth, d_in=d_in, output_dims=dmodel + 2)
         #self.mlp_2 = MLP(dmodel, depth)
 
     def forward(self, xy, dxy, counts, mask=None):
@@ -19,6 +20,7 @@ class MLPEncoder(torch.nn.Module):
 
         out = self.mlp_1(per_pixel)
         score = out[...,:1]
+        ps = out[...,:2]
         refl = out[...,1:]
         if mask is not None:
             score = torch.where(mask[...,None], score, -np.inf)
@@ -26,5 +28,5 @@ class MLPEncoder(torch.nn.Module):
 
         refl = torch.matmul(score.transpose(-2, -1), refl)
         #refl = self.mlp_2(refl)
-        return refl
+        return refl,ps
 

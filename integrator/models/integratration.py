@@ -37,7 +37,7 @@ class Integrator(torch.nn.Module):
 
     def get_intensity_sigma_batch(self, xy, dxy, counts, mask=None):
         norm_factor = self.get_per_spot_normalization(counts, mask)
-        representation = self.encoder(xy, dxy, counts / norm_factor, mask)
+        representation,p = self.encoder(xy, dxy, counts / norm_factor, mask)
         params = self.profile.get_params(representation)
         q = self.profile.distribution(params)
         I, SigI = q.mean,q.stddev
@@ -46,13 +46,13 @@ class Integrator(torch.nn.Module):
 
     def forward(self, xy, dxy, counts, mask=None, mc_samples=100):
         norm_factor = self.get_per_spot_normalization(counts, mask=mask)
-        representation = self.encoder(xy, dxy, counts / norm_factor, mask=mask)
+        representation,p = self.encoder(xy, dxy, counts / norm_factor, mask=mask)
         profile, bg, q = self.profile(representation, dxy, mask=mask)
 
         profile = profile * norm_factor
         bg = bg * norm_factor
 
-        ll = self.likelihood(counts, profile, bg, q, mc_samples)
+        ll = self.likelihood(counts, profile,p, bg, q, mc_samples)
         if mask is None:
             nll = -ll.mean()
         else:

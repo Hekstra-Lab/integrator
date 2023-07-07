@@ -12,7 +12,7 @@ from integrator.models import Integrator,MLPEncoder,PoissonLikelihood,Elliptical
 image_file = "e080_001.mccd"
 prediction_file = "e080_001.mccd.ii"
 
-steps = 10_000
+steps = 10
 batch_size=100
 max_size = 1024
 
