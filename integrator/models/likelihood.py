@@ -14,7 +14,7 @@ class PoissonLikelihood(torch.nn.Module):
         # return torch.nn.functional.softplus(x, beta=self.beta) + self.eps
         return x + self.eps
 
-    def forward(self, counts, profile, p, bg, q, mc_samples=100):
+    def forward(self, counts, p, bg, q, mc_samples=100):
         z = q.rsample([mc_samples])
         rate = z * p.permute(2, 0, 1) + bg[None, ...]
         # rate = z * profile[None,...] + bg[None,...]

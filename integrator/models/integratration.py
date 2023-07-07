@@ -47,12 +47,13 @@ class Integrator(torch.nn.Module):
     def forward(self, xy, dxy, counts, mask=None, mc_samples=100):
         norm_factor = self.get_per_spot_normalization(counts, mask=mask)
         representation, p = self.encoder(xy, dxy, counts / norm_factor, mask=mask)
-        profile, bg, q = self.profile(representation, dxy, mask=mask)
+        bg, q = self.profile(representation, dxy, mask=mask)
 
-        profile = profile * norm_factor
+        # profile = profile * norm_factor
         bg = bg * norm_factor
+        # p = p * norm_factor
 
-        ll = self.likelihood(counts, profile, p, bg, q, mc_samples)
+        ll = self.likelihood(counts, p, bg, q, mc_samples)
         if mask is None:
             nll = -ll.mean()
         else:

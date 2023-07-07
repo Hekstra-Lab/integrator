@@ -34,30 +34,30 @@ class EllipticalProfileBase(torch.nn.Module):
         ddxy = params[..., 6:8]
         return ddxy
 
-    def profile(self, params, dxy):
-        factory_kwargs = {
-            "device": dxy.device,
-            "dtype": dxy.dtype,
-        }
-        diag = self.constraint(params[..., 3:5])
-        L = diag[:, None, :] * torch.eye(2, **factory_kwargs)[None, ...]
-        L[..., 1, 0] = params[..., 5]
-        precision = torch.matmul(L, L.transpose(-1, -2))
-        ddxy = self.centroid_offset(params)
-        X = dxy - ddxy
-        profile = torch.exp(-X[..., None, :] @ precision @ X[..., :, None])
-        profile = torch.squeeze(profile, [-2, -1])
-        return profile
+    # def profile(self, params, dxy):
+    # factory_kwargs = {
+    # "device": dxy.device,
+    # "dtype": dxy.dtype,
+    # }
+    # diag = self.constraint(params[..., 3:5])
+    # L = diag[:, None, :] * torch.eye(2, **factory_kwargs)[None, ...]
+    # L[..., 1, 0] = params[..., 5]
+    # precision = torch.matmul(L, L.transpose(-1, -2))
+    # ddxy = self.centroid_offset(params)
+    # X = dxy - ddxy
+    # profile = torch.exp(-X[..., None, :] @ precision @ X[..., :, None])
+    # profile = torch.squeeze(profile, [-2, -1])
+    # return profile
 
     def get_params(self, representation):
         return self.linear(representation)
 
     def forward(self, representation, dxy, mask=None, mc_samples=10):
         params = self.get_params(representation)
-        profile = self.profile(params, dxy)
+        # profile = self.profile(params, dxy)
         bg = self.background(params, dxy)
         q = self.distribution(params)
-        return profile, bg, q
+        return bg, q
 
 
 class EllipticalProfile(EllipticalProfileBase):
