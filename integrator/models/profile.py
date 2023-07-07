@@ -1,15 +1,15 @@
 from pylab import *
 import torch
-from integrator.layers import Linear,ResidualLayer
+from integrator.layers import Linear, ResidualLayer
 from integrator.models import MLP
 
 
 class EllipticalProfileBase(torch.nn.Module):
-    def __init__(self, dmodel, eps=1e-12, beta=1., dtype=None, device=None):
+    def __init__(self, dmodel, eps=1e-12, beta=1.0, dtype=None, device=None):
         super().__init__()
         self.linear = Linear(
-            dmodel, 
-        #  bg  cov dxy  I  SigI
+            dmodel,
+            #  bg  cov dxy  I  SigI
             3 + 3 + 2 + 1 + 1,
         )
         self.eps = torch.nn.Parameter(data=torch.tensor(eps), requires_grad=False)
@@ -24,28 +24,28 @@ class EllipticalProfileBase(torch.nn.Module):
         )
 
     def background(self, params, dxy):
-        m = params[...,:2]
-        b = params[...,2]
+        m = params[..., :2]
+        b = params[..., 2]
         bg = (m * dxy).sum(-1) + b
         bg = self.constraint(bg)
         return bg
 
     def centroid_offset(self, params):
-        ddxy = params[...,6:8]
+        ddxy = params[..., 6:8]
         return ddxy
 
     def profile(self, params, dxy):
         factory_kwargs = {
-            'device' : dxy.device,
-            'dtype' : dxy.dtype,
+            "device": dxy.device,
+            "dtype": dxy.dtype,
         }
-        diag = self.constraint(params[...,3:5]) 
-        L = diag[:,None,:] * torch.eye(2, **factory_kwargs)[None,...] 
-        L[...,1,0] = params[...,5]
+        diag = self.constraint(params[..., 3:5])
+        L = diag[:, None, :] * torch.eye(2, **factory_kwargs)[None, ...]
+        L[..., 1, 0] = params[..., 5]
         precision = torch.matmul(L, L.transpose(-1, -2))
         ddxy = self.centroid_offset(params)
         X = dxy - ddxy
-        profile = torch.exp(-X[...,None,:]@precision@X[...,:,None])
+        profile = torch.exp(-X[..., None, :] @ precision @ X[..., :, None])
         profile = torch.squeeze(profile, [-2, -1])
         return profile
 
@@ -59,11 +59,11 @@ class EllipticalProfileBase(torch.nn.Module):
         q = self.distribution(params)
         return profile, bg, q
 
+
 class EllipticalProfile(EllipticalProfileBase):
     def distribution(self, parameters):
-        loc   = parameters[...,-2]
-        scale = parameters[...,-1]
+        loc = parameters[..., -2]
+        scale = parameters[..., -1]
         scale = self.constraint(scale)
         q = torch.distributions.LogNormal(loc, scale)
         return q
-
