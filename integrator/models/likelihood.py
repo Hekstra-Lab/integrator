@@ -44,4 +44,4 @@ class PoissonLikelihood(torch.nn.Module):
         else:
             kl_term = 0  # set to 0 when vi false
 
-    return ll, kl_term
+        return ll, kl_term
