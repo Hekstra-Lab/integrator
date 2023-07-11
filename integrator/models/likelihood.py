@@ -38,7 +38,8 @@ class PoissonLikelihood(torch.nn.Module):
         if vi:
             q_log_prob = q.log_prob(z)
             p_log_prob = self.priorLogNorm.log_prob(z)
-            kl_bern = torch.distributions.kl.kl_divergence(p, prior).mean()
+            bern = torch.distributions.bernoulli.Bernoulli(p)
+            kl_bern = torch.distributions.kl.kl_divergence(bern, self.priorBern).mean()
             kl_term = (q_log_prob - p_log_prob).mean() + kl_bern
 
         else:
