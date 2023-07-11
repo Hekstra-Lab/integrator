@@ -36,8 +36,8 @@ class EllipticalProfileBase(torch.nn.Module):
 
     def profile(self, params, dxy):
         factory_kwargs = {
-        "device": dxy.device,
-        "dtype": dxy.dtype,
+            "device": dxy.device,
+            "dtype": dxy.dtype,
         }
         diag = self.constraint(params[..., 3:5])
         L = diag[:, None, :] * torch.eye(2, **factory_kwargs)[None, ...]
