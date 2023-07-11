@@ -10,7 +10,7 @@ class PoissonLikelihood(torch.nn.Module):
         self.eps = torch.nn.Parameter(data=torch.tensor(eps), requires_grad=False)
         self.beta = torch.nn.Parameter(data=torch.tensor(beta), requires_grad=False)
         self.priorLogNorm = torch.distributions.LogNormal(prior_mean, prior_std)
-        self.priorBern = torch.distributions.bernoulli(
+        self.priorBern = torch.distributions.bernoulli.Bernoulli(
             prior_bern
         )  # Prior Bern(p) of pixel belonging to a refl
 
