@@ -6,9 +6,9 @@ import reciprocalspaceship as rs
 
 
 class ImageData(torch.utils.data.Dataset):
-    def __init__(self, image_files, prediction_files, max_size=4096):
-        self.image_files = image_files
-        self.prediction_files = prediction_files
+    def __init__(self, image_dir, prediction_dir, max_size=4096):
+        self.image_files = image_dir
+        self.prediction_files = prediction_dir
         self.max_size = max_size
 
     def __len__(self):

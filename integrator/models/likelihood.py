@@ -9,23 +9,23 @@ class PoissonLikelihood(torch.nn.Module):
         super().__init__()
         self.eps = torch.nn.Parameter(data=torch.tensor(eps), requires_grad=False)
         self.beta = torch.nn.Parameter(data=torch.tensor(beta), requires_grad=False)
-        self.priorLogNorm = torch.distributions.LogNormal(prior_mean, prior_std)
         self.priorBern = torch.distributions.bernoulli.Bernoulli(
             prior_bern
         )  # Prior Bern(p) of pixel belonging to a refl
+        self.priorLogNorm = torch.distributions.LogNormal(prior_mean, prior_std)
 
     def constraint(self, x):
         # return torch.nn.functional.softplus(x, beta=self.beta) + self.eps
         return x + self.eps
 
-    def forward(self, counts, p, bg, q, mc_samples=100, vi=True):
+    def forward(self, norm_factor,counts, p, bg, q, mc_samples=100, vi=True):
         # Take sample from LogNormal
         z = q.rsample([mc_samples])
         kl_term = 0  # no kl divergence
         p = p.permute(2, 0, 1)
 
         # calculate lambda
-        rate = z * p + bg[None, ...]
+        rate = z * (p*norm_factor[...,None]) + bg[None, ...]
         # rate = z * profile[None,...] + bg[None,...]
         # rate = self.constraint(rate)
 
@@ -40,7 +40,7 @@ class PoissonLikelihood(torch.nn.Module):
             p_log_prob = self.priorLogNorm.log_prob(z)
             bern = torch.distributions.bernoulli.Bernoulli(p)
             kl_bern = torch.distributions.kl.kl_divergence(bern, self.priorBern).mean()
-            kl_term = (q_log_prob - p_log_prob).mean() + kl_bern
+            kl_term = .01*(q_log_prob - p_log_prob).mean() + kl_bern
 
         else:
             kl_term = 0  # set to 0 when vi false
