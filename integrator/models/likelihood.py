@@ -5,12 +5,16 @@ from integrator.models import MLP
 
 
 class PoissonLikelihood(torch.nn.Module):
-    def __init__(self, beta=1.0, eps=1e-8, prior_bern=0.2, prior_mean=2, prior_std=1):
+    def __init__(self, beta=1.0, eps=1e-8, prior_bern_p=0.2, prior_mean=2, prior_std=1):
         super().__init__()
         self.eps = torch.nn.Parameter(data=torch.tensor(eps), requires_grad=False)
         self.beta = torch.nn.Parameter(data=torch.tensor(beta), requires_grad=False)
+        self.prior_std = prior_std
+        self.prior_mean = prior_mean
+        self.prior_bern_p = 0.2
+        self.priorLogNorm = torch.distributions.LogNormal(prior_mean, prior_std)
         self.priorBern = torch.distributions.bernoulli.Bernoulli(
-            prior_bern
+            self.prior_bern_p
         )  # Prior Bern(p) of pixel belonging to a refl
         self.priorLogNorm = torch.distributions.LogNormal(prior_mean, prior_std)
 

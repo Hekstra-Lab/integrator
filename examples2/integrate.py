@@ -13,7 +13,6 @@ from integrator.models import (
     EllipticalProfile,
 )
 
-
 image_file = "e080_001.mccd"
 prediction_file = "e080_001.mccd.ii"
 
@@ -68,11 +67,11 @@ for i in bar:
 # Function to get intensity
 I, SigI = integrator.get_intensity_sigma(xy, dxy, counts, mask, batch_size)
 
-plt.plot(ds.I,I,'k.')
+plt.plot(ds.I, I, "k.")
 plt.xlabel("Intensity(Precog)")
 plt.ylabel("Intensity(NN)")
 plt.loglog()
-plt.grid(which='both', axis = 'both',linestyle='--')
-plt.savefig('Inn_vs_Iprecog.png')
+plt.grid(which="both", axis="both", linestyle="--")
+plt.savefig("Inn_vs_Iprecog.png")
 
-embed(colors='linux')
+embed(colors="linux")
