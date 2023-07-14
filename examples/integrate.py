@@ -13,25 +13,26 @@ from integrator.models import (
     EllipticalProfile,
 )
 
-
+# Image file
 image_file = "e080_001.mccd"
 prediction_file = "e080_001.mccd.ii"
 
-steps = 10
+# Training epochs
+epochs = 10
 batch_size = 100
 max_size = 1024
+learning_rate = 1e-4
 
+# Number of layers
 depth = 10
 dmodel = 64
 eps = 1e-12
-learning_rate = 1e-4
 beta = 10.0
 mc_samples = 100
 
 img_data = ImageData([image_file], [prediction_file], max_size=max_size)
 ds = img_data.get_data_set(0)
 xy_idx, xy, dxy, counts, mask = img_data[0]
-
 
 profile = EllipticalProfile(dmodel, eps=eps, beta=beta)
 encoder = MLPEncoder(depth, dmodel)
@@ -50,14 +51,14 @@ loss = integrator(xy[idx].cuda(), dxy[idx].cuda(), counts[idx].cuda(), mask[idx]
 opt = torch.optim.Adam(integrator.parameters(), lr=learning_rate)
 trace = []
 grad_norms = []
-bar = trange(steps)
+bar = trange(epochs)
 for i in bar:
     opt.zero_grad()
     idx = torch.multinomial(
         torch.ones(len(mask)) / len(mask), num_samples=batch_size, replacement=False
     )
     batch = (xy[idx].cuda(), dxy[idx].cuda(), counts[idx].cuda(), mask[idx].cuda())
-    loss = integrator(*batch, mc_samples=mc_samples)
+    loss, pOut = integrator(*batch, mc_samples=mc_samples)
     loss.backward()
     trace.append(float(loss.detach().cpu().numpy()))
     gnorm = integrator.grad_norm().detach().cpu().numpy()
@@ -90,7 +91,7 @@ plt.savefig("plot.png")
 # Plot the loss
 plt.figure()
 plt.plot(trace, "k-")
-plt.title("Loss over steps")
+plt.title("Loss over epochs")
 plt.xlabel("Step")
 plt.ylabel("Loss")
 plt.savefig("loss_plot.png")
@@ -98,7 +99,7 @@ plt.savefig("loss_plot.png")
 # Plot the gradient norm
 plt.figure()
 plt.plot(grad_norms, "k-")
-plt.title("Gradient norm over steps")
+plt.title("Gradient norm over epochs")
 plt.xlabel("Step")
 plt.ylabel("Gradient norm")
 plt.savefig("grad_norm_plot.png")
@@ -106,7 +107,7 @@ plt.savefig("grad_norm_plot.png")
 # Plot the average intensity
 plt.figure()
 plt.plot(I_values, "k-")
-plt.title("Average intensity over steps")
+plt.title("Average intensity over epochs")
 plt.xlabel("Step")
 plt.ylabel("Average intensity")
 plt.savefig("I_plot.png")
@@ -114,10 +115,9 @@ plt.savefig("I_plot.png")
 # Plot the average SigI
 plt.figure()
 plt.plot(SigI_values, "k-")
-plt.title("Average SigI over steps")
+plt.title("Average SigI over epochs")
 plt.xlabel("Step")
 plt.ylabel("Average SigI")
 plt.savefig("SigI_plot.png")
-
 
 embed(colors="linux")

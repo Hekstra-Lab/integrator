@@ -53,13 +53,13 @@ class Integrator(torch.nn.Module):
         bg = bg * norm_factor
         # p = p * norm_factor[..., None]
 
-        ll, kl_term = self.likelihood(norm_factor,counts, p, bg, q, mc_samples)
+        ll, kl_term = self.likelihood(norm_factor, counts, p, bg, q, mc_samples)
         if mask is None:
             nll = -ll.mean()
         else:
             nll = -torch.where(mask, ll, 0.0).sum() / mask.sum()
 
-        return nll + kl_term
+        return nll + kl_term, p
 
     def grad_norm(self):
         grads = [
