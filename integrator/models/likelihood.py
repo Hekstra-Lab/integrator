@@ -56,6 +56,7 @@ class PoissonLikelihood(torch.nn.Module):
         # Expected log likelihood
         ll = ll.mean(0)
 
+        # Calculate KL-divergence
         if vi:
             q_log_prob = q.log_prob(z)
             p_log_prob = self.priorLogNorm.log_prob(z)
