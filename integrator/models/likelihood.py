@@ -39,7 +39,7 @@ class PoissonLikelihood(torch.nn.Module):
         # return torch.nn.functional.softplus(x, beta=self.beta) + self.eps
         return x + self.eps
 
-    def forward(self, counts, p, bg, q, mc_samples=100, vi=True):
+    def forward(self, norm_factor, counts, p, bg, q, mc_samples=100, vi=True):
         # Take sample from LogNormal
         z = q.rsample([mc_samples])
         kl_term = 0  # no kl divergence
