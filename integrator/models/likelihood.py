@@ -27,15 +27,13 @@ class PoissonLikelihood(torch.nn.Module):
         self.scale_log = torch.nn.Parameter(
             data=torch.tensor(scale_log), requires_grad=False
         )
-        self.prior_bern_p = torch.nn.Parameter(
-            data=torch.tensor(prior_bern_p), requires_grad=False
-        )
+        self.prior_bern_p = prior_bern_p
         self.priorLogNorm = torch.distributions.LogNormal(prior_mean, prior_std)
         self.scale_bern = torch.nn.Parameter(
             data=torch.tensor(scale_bern), requires_grad=False
         )
         self.priorBern = torch.distributions.bernoulli.Bernoulli(
-            self.prior_bern_p
+            prior_bern_p
         )  # Prior Bern(p) of pixel belonging to a refl
 
     def constraint(self, x):
@@ -49,7 +47,7 @@ class PoissonLikelihood(torch.nn.Module):
         p = p.permute(2, 0, 1)
 
         # calculate lambda
-        rate = z * p + bg[None, ...]
+        rate = z * p[..., None] + bg[None, ...]
         # rate = z * profile[None,...] + bg[None,...]
         # rate = self.constraint(rate)
 
