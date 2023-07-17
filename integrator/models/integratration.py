@@ -59,7 +59,7 @@ class Integrator(torch.nn.Module):
         else:
             nll = -torch.where(mask, ll, 0.0).sum() / mask.sum()
 
-        return nll + kl_term, p.detach()
+        return nll + kl_term, p.detach(), bg
 
     def grad_norm(self):
         grads = [
