@@ -47,7 +47,7 @@ class PoissonLikelihood(torch.nn.Module):
         p = p.permute(2, 0, 1)
 
         # calculate lambda
-        rate = z * p[..., None] + bg[None, ...]
+        rate = z * p + bg[None, ...]
         # rate = z * profile[None,...] + bg[None,...]
         # rate = self.constraint(rate)
 
