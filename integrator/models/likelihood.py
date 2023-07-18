@@ -48,7 +48,7 @@ class PoissonLikelihood(torch.nn.Module):
 
         # calculate lambda
         # rate = z * p * norm_factor + bg[None, ...]
-        rate = z * p  + bg[None, ...]
+        rate = z * p + bg[None, ...]
         # rate = z * profile[None,...] + bg[None,...]
         # rate = self.constraint(rate)
 
