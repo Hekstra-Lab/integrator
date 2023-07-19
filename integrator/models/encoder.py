@@ -25,7 +25,8 @@ class MLPEncoder(torch.nn.Module):
         score = out[..., :1]
         # ps = torch.special.expit(out[...,1:2])
         p = out[..., 1:2]
-        ps = p / p.sum(axis=1)[..., None]
+        # ps = p / p.sum(axis=1)[..., None] #normalizes p-array
+        ps = torch.softmax(p, axis=-2)
         refl = out[..., 2:]
         if mask is not None:
             score = torch.where(mask[..., None], score, -np.inf)
