@@ -1,6 +1,6 @@
 from pylab import *
 import torch
-from integrator.layers import Linear,ResidualLayer
+from integrator.layers import Linear, ResidualLayer
 
 
 class MLP(torch.nn.Module):
@@ -17,4 +17,3 @@ class MLP(torch.nn.Module):
     def forward(self, data, **kwargs):
         out = self.main(data)
         return out
-
