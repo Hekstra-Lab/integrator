@@ -8,7 +8,7 @@ class EllipticalProfileBase(torch.nn.Module):
     def __init__(self, dmodel, eps=1e-12, beta=1.0, dtype=None, device=None):
         super().__init__()
         self.linear = Linear(
-            dmodel,
+            1024,
             #  bg  cov dxy  I  SigI
             3 + 3 + 2 + 1 + 1,
         )
