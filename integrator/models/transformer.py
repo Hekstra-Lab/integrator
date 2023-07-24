@@ -32,6 +32,6 @@ class TransformerModel(nn.Module):
             output[..., :-1].view(output.shape[0], output.shape[1], output.shape[2] - 1)
         )  # batch_size x pixel x 1 ,
         output2 = output2.view(output2.shape[0], output2.shape[1])
-        output2 = self.linear4(output2)
+        # output2 = self.linear4(output2)
         output1 = torch.softmax(output1, axis=-1)
         return output2, output1  # (representation,pij)
