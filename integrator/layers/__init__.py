@@ -1,1 +1,1 @@
-from .layers import Linear,ResidualLayer,Transformer
+from .layers import Linear, ResidualLayer, Transformer
