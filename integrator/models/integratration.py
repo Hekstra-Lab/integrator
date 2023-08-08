@@ -118,10 +118,10 @@ class IntegratorBern(torch.nn.Module):
     def get_intensity_sigma_batch(self, xy, dxy, counts):
         norm_factor = self.get_per_spot_normalization(counts)
         reflrep = self.reflencoder(xy, dxy, counts / norm_factor)
-        imagerep = self.imageencoder(refl_representation)
-        paramrep = self.paramencoder(image_representation, refl_representation)
+        imagerep = self.imageencoder(reflrep)
+        paramrep = self.paramencoder(imagerep, reflrep)
         pixelrep = self.pixelencoder(xy, dxy)
-        pijrep = self.pijencoder(image_representation, refl_representation, pixelrep)
+        pijrep = self.pijencoder(imagerep, reflrep, pixelrep)
 
         q = self.profile.distribution(paramrep)
         I, SigI = q.mean, q.stddev
@@ -131,10 +131,10 @@ class IntegratorBern(torch.nn.Module):
     def forward(self, xy, dxy, counts, mc_samples=100):
         norm_factor = self.get_per_spot_normalization(counts)
         reflrep = self.reflencoder(xy, dxy, counts / norm_factor)
-        imagerep = self.imageencoder(refl_representation)
-        paramrep = self.paramencoder(image_representation, refl_representation)
+        imagerep = self.imageencoder(reflrep)
+        paramrep = self.paramencoder(imagerep, reflrep)
         pixelrep = self.pixelencoder(xy, dxy)
-        pijrep = self.pijencoder(image_representation, refl_representation, pixelrep)
+        pijrep = self.pijencoder(imagerep, reflrep, pixelrep)
 
         bg, q = self.profile(paramrep, dxy)
 
@@ -144,7 +144,7 @@ class IntegratorBern(torch.nn.Module):
         ll, kl_term = self.likelihood(norm_factor, counts, pijrep, bg, q, mc_samples)
         nll = -ll.mean()
 
-        return nll + kl_term, p.detach(), bg
+        return nll + kl_term, bg
 
     def grad_norm(self):
         grads = [
