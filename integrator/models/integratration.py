@@ -69,3 +69,88 @@ class Integrator(torch.nn.Module):
         ]
         norm = torch.cat(grads).norm()
         return norm
+
+
+################################
+################################
+class IntegratorBern(torch.nn.Module):
+    def __init__(
+        self,
+        reflencoder,
+        imageencoder,
+        paramencoder,
+        pixelencoder,
+        pijencoder,
+        bglognorm,
+        likelihood,
+    ):
+        super().__init__()
+        self.reflencoder = reflencoder
+        self.imageencoder = imageencoder
+        self.paramencoder = paramencoder
+        self.pixelencoder = pixelencoder
+        self.pijencoder = pijencoder
+        self.bglognorm = bglognorm
+        self.likelihood = likelihood
+        self.counts_std = None
+
+    ################################
+    def set_counts_std(self, value):
+        self.counts_std = torch.nn.Parameter(value, requires_grad=False)
+
+    def get_intensity_sigma(self, xy, dxy, counts, batch_size=100):
+        I, SigI = [], []
+        for batch in zip(
+            torch.split(xy, batch_size, dim=0),
+            torch.split(dxy, batch_size, dim=0),
+            torch.split(counts, batch_size, dim=0),
+        ):
+            device = next(self.parameters()).device
+            i, s = self.get_intensity_sigma_batch(*(i.to(device=device) for i in batch))
+            I.append(i.detach().cpu().numpy())
+            SigI.append(s.detach().cpu().numpy())
+        I, SigI = np.concatenate(I), np.concatenate(SigI)
+        return I, SigI
+
+    def get_per_spot_normalization(self, counts):
+        return counts.mean(-1, keepdims=True)
+
+    def get_intensity_sigma_batch(self, xy, dxy, counts):
+        norm_factor = self.get_per_spot_normalization(counts)
+        reflrep = reflencoder(xy, dxy, counts / norm_factor)
+        imagerep = imageencoder(refl_representation)
+        paramrep = paramencoder(image_representation, refl_representation)
+        pixelrep = pixelencoder(xy, dxy)
+        pijrep = pijencoder(image_representation, refl_representation, pixelrep)
+
+        q = self.profile.distribution(paramrep)
+        I, SigI = q.mean, q.stddev
+        I, SigI = I * norm_factor, SigI * norm_factor
+        return I, SigI
+
+    def forward(self, xy, dxy, counts, mc_samples=100):
+        norm_factor = self.get_per_spot_normalization(counts)
+        reflrep = reflencoder(xy, dxy, counts / norm_factor)
+        imagerep = imageencoder(refl_representation)
+        paramrep = paramencoder(image_representation, refl_representation)
+        pixelrep = pixelencoder(xy, dxy)
+        pijrep = pijencoder(image_representation, refl_representation, pixelrep)
+
+        bg, q = self.profile(paramrep, dxy)
+
+        bg = bg * norm_factor
+        # p = p * norm_factor[..., None]
+
+        ll, kl_term = self.likelihood(norm_factor, counts, pijrep, bg, q, mc_samples)
+        nll = -ll.mean()
+
+        return nll + kl_term, p.detach(), bg
+
+    def grad_norm(self):
+        grads = [
+            param.grad.detach().flatten()
+            for param in self.parameters()
+            if param.grad is not None
+        ]
+        norm = torch.cat(grads).norm()
+        return norm

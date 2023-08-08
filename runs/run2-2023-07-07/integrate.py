@@ -6,7 +6,12 @@ from scipy.spatial import cKDTree
 import pandas as pd
 
 from integrator.io import ImageData
-from integrator.models import Integrator, MLPEncoder, PoissonLikelihood, EllipticalProfile
+from integrator.models import (
+    Integrator,
+    MLPEncoder,
+    PoissonLikelihood,
+    EllipticalProfile,
+)
 
 
 image_file = "e080_001.mccd"
@@ -28,7 +33,7 @@ ds = img_data.get_data_set(0)
 xy_idx, xy, dxy, counts, mask = img_data[0]
 
 
-profile = EllipticalProfile(dmodel,eps=eps,beta=beta)
+profile = EllipticalProfile(dmodel, eps=eps, beta=beta)
 encoder = MLPEncoder(depth, dmodel)
 likelihood = PoissonLikelihood(beta=beta, eps=eps)
 
