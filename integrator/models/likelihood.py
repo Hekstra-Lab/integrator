@@ -44,11 +44,11 @@ class PoissonLikelihood(torch.nn.Module):
         # Take sample from LogNormal
         z = q.rsample([mc_samples])
         kl_term = 0  # no kl divergence
-        p = p.permute(2, 0, 1)
+        # p = pijrep.permute(2, 0, 1)
 
         # calculate lambda
         # rate = z * p * norm_factor + bg[None, ...]
-        rate = z[..., None] * p + bg
+        rate = z[..., None] * pijrep + bg
         rate = rate.permute(1, 2, 0)
         # rate = z * profile[None,...] + bg[None,...]
         # rate = self.constraint(rate)
@@ -63,7 +63,7 @@ class PoissonLikelihood(torch.nn.Module):
         if vi:
             q_log_prob = q.log_prob(z)
             p_log_prob = self.priorLogNorm.log_prob(z)
-            bern = torch.distributions.bernoulli.Bernoulli(p)
+            bern = torch.distributions.bernoulli.Bernoulli(pijrep)
             kl_bern = torch.distributions.kl.kl_divergence(bern, self.priorBern).mean()
             kl_term = (
                 self.scale_log * (q_log_prob - p_log_prob).mean()

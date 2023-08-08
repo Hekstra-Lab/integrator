@@ -123,7 +123,7 @@ class IntegratorBern(torch.nn.Module):
         pixelrep = self.pixelencoder(xy, dxy)
         pijrep = self.pijencoder(imagerep, reflrep, pixelrep)
 
-        q = self.profile.distribution(paramrep)
+        q = self.bglognorm.distribution(paramrep)
         I, SigI = q.mean, q.stddev
         I, SigI = I * norm_factor, SigI * norm_factor
         return I, SigI
@@ -136,7 +136,7 @@ class IntegratorBern(torch.nn.Module):
         pixelrep = self.pixelencoder(xy, dxy)
         pijrep = self.pijencoder(imagerep, reflrep, pixelrep)
 
-        bg, q = self.profile(paramrep, dxy)
+        bg, q = self.bglognorm(paramrep, dxy)
 
         bg = bg * norm_factor
         # p = p * norm_factor[..., None]
