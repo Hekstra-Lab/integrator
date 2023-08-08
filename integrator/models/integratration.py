@@ -117,11 +117,11 @@ class IntegratorBern(torch.nn.Module):
 
     def get_intensity_sigma_batch(self, xy, dxy, counts):
         norm_factor = self.get_per_spot_normalization(counts)
-        reflrep = reflencoder(xy, dxy, counts / norm_factor)
-        imagerep = imageencoder(refl_representation)
-        paramrep = paramencoder(image_representation, refl_representation)
-        pixelrep = pixelencoder(xy, dxy)
-        pijrep = pijencoder(image_representation, refl_representation, pixelrep)
+        reflrep = self.reflencoder(xy, dxy, counts / norm_factor)
+        imagerep = self.imageencoder(refl_representation)
+        paramrep = self.paramencoder(image_representation, refl_representation)
+        pixelrep = self.pixelencoder(xy, dxy)
+        pijrep = self.pijencoder(image_representation, refl_representation, pixelrep)
 
         q = self.profile.distribution(paramrep)
         I, SigI = q.mean, q.stddev
@@ -130,11 +130,11 @@ class IntegratorBern(torch.nn.Module):
 
     def forward(self, xy, dxy, counts, mc_samples=100):
         norm_factor = self.get_per_spot_normalization(counts)
-        reflrep = reflencoder(xy, dxy, counts / norm_factor)
-        imagerep = imageencoder(refl_representation)
-        paramrep = paramencoder(image_representation, refl_representation)
-        pixelrep = pixelencoder(xy, dxy)
-        pijrep = pijencoder(image_representation, refl_representation, pixelrep)
+        reflrep = self.reflencoder(xy, dxy, counts / norm_factor)
+        imagerep = self.imageencoder(refl_representation)
+        paramrep = self.paramencoder(image_representation, refl_representation)
+        pixelrep = self.pixelencoder(xy, dxy)
+        pijrep = self.pijencoder(image_representation, refl_representation, pixelrep)
 
         bg, q = self.profile(paramrep, dxy)
 
