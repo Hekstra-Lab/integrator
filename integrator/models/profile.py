@@ -8,7 +8,7 @@ class EllipticalProfileBase(torch.nn.Module):
     def __init__(self, dmodel, eps=1e-12, beta=1.0, dtype=None, device=None):
         super().__init__()
         self.linear = Linear(
-            1024,  # use dmodel for non-transformer model
+            dmodel,  # use dmodel for non-transformer model
             #  bg  cov dxy  I  SigI
             3 + 3 + 2 + 1 + 1,
         )
@@ -88,9 +88,7 @@ class BackgroundLogNorm(torch.nn.Module):
 
     def background(self, params, dxy):
         m = params[..., :2]
-        m = m.view(m.shape[0], 1, m.shape[-1])
         b = params[..., 2]
-        b = b[..., None]
         bg = (m * dxy).sum(-1) + b
         bg = self.constraint(bg)
         return bg

@@ -114,7 +114,7 @@ class MLPOut1Encoder(torch.nn.Module):
     def forward(self, image_rep, refl_representation):
         summed = refl_representation + image_rep.transpose(-2, -1)
         out1 = self.mlp_1(summed)
-        out1 = out1.view(out1.shape[0], out1.shape[-1])
+        # out1 = out1.view(out1.shape[0], out1.shape[-1])
         return out1
 
 

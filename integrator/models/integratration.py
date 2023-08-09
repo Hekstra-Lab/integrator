@@ -27,7 +27,7 @@ class Integrator(torch.nn.Module):
             i, s = self.get_intensity_sigma_batch(*(i.to(device=device) for i in batch))
             I.append(i.detach().cpu().numpy())
             SigI.append(s.detach().cpu().numpy())
-        I, SigI = np.concatenate(I), np.concatenate(SigI)
+        # I, SigI = np.concatenate(I), np.concatenate(SigI)
         return I, SigI
 
     def get_per_spot_normalization(self, counts, mask=None):
@@ -117,6 +117,7 @@ class IntegratorBern(torch.nn.Module):
 
     def get_intensity_sigma_batch(self, xy, dxy, counts):
         norm_factor = self.get_per_spot_normalization(counts)
+
         reflrep = self.reflencoder(xy, dxy, counts / norm_factor)
         imagerep = self.imageencoder(reflrep)
         paramrep = self.paramencoder(imagerep, reflrep)
