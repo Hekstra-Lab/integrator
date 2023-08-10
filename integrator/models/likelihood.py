@@ -40,7 +40,7 @@ class PoissonLikelihood(torch.nn.Module):
         # return torch.nn.functional.softplus(x, beta=self.beta) + self.eps
         return x + self.eps
 
-    def forward(self, norm_factor, counts, pijrep, bg, q, mc_samples=100, vi=True):
+    def forward(self, norm_factor, counts, pijrep, bg, q, mc_samples=100, vi=False):
         # Take sample from LogNormal
         z = q.rsample([mc_samples])
         kl_term = 0  # no kl divergence
@@ -48,7 +48,7 @@ class PoissonLikelihood(torch.nn.Module):
 
         # calculate lambda
         # rate = z * p * norm_factor + bg[None, ...]
-        rate = z * pijrep + bg
+        rate = z * pijrep * norm_factor + bg
         # rate = rate.permute(1, 2, 0)
         # rate = z * profile[None,...] + bg[None,...]
         # rate = self.constraint(rate)
