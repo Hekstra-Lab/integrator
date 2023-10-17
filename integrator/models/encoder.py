@@ -121,8 +121,8 @@ class MLPOut1Encoder(torch.nn.Module):
 class MLPPijEncoder(torch.nn.Module):
     def __init__(self, depth, dmodel):
         super().__init__()
-        self.mlp_1 = MLPPij(dmodel, depth, output_dims=dmodel + 1)
-        self.mlp_2 = MLPPij2(dmodel, output_dims=1024)
+        self.mlp_1 = MLPPij(dmodel, depth, output_dims=1)
+        # self.mlp_2 = MLPPij2(dmodel, output_dims=1024)
 
     def forward(self, image_rep, refl_representation, pixel_rep):
         refl_representation = refl_representation.view(
@@ -133,8 +133,10 @@ class MLPPijEncoder(torch.nn.Module):
         sum1 = sum1.unsqueeze(1).expand_as(pixel_rep)
         sum2 = pixel_rep + sum1
         out = self.mlp_1(sum2)
-        out = convexcombination(out)
-        out = out.view(out.shape[0], out.shape[1])
-        out2 = self.mlp_2(out)
-        out2 = torch.softmax(out2, axis=1)  # pij matrix
-        return out2
+        out = torch.softmax(out, axis=-2)
+        out.squeeze()
+        # out = convexcombination(out)
+        # out = out.view(out.shape[0], out.shape[1])
+        # out2 = self.mlp_2(out)
+        # out2 = torch.softmax(out2, axis=1)  # pij matrix
+        return out

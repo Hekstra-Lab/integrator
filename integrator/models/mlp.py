@@ -4,6 +4,11 @@ from integrator.layers import Linear, ResidualLayer
 
 
 class MLP(torch.nn.Module):
+    """
+    If d_in \neq width, you must specify it .
+    """
+
+    # If d_in \neq width, you must specify it
     def __init__(self, width, depth, d_in=None, output_dims=None):
         super().__init__()
         layers = []
