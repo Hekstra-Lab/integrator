@@ -10,13 +10,12 @@ import numpy as np
 
 
 class RotationData(torch.utils.data.Dataset):
+
     """
+
     Attributes:
-        max_size:
-        shoebox_dir: path to `shoebox.refl` files
-        shoebox_filenames: names of files in `shoebox_dir`
-        refl_tables:
-        data: `DataFrame` containing [x,y,z,dx,dy,dz,I,shoebox]
+        shoebox_dir: Path to shoebox.refl files
+        shoebox_filenames: filenames of .refl files in `shoebox_dir`
     """
 
     def __init__(
@@ -185,6 +184,14 @@ class RotationData(torch.utils.data.Dataset):
 
 
 class StillData(torch.utils.data.Dataset):
+
+    """
+    Attributes:
+        image_files: filename of diffraction image
+        prediction_files: filename of prediction file
+        max_size: max shoebox dimensions
+    """
+
     def __init__(self, image_files, prediction_files, max_size=4096):
         self.image_files = image_files
         self.prediction_files = prediction_files

@@ -159,6 +159,18 @@ class IntegratorBern(torch.nn.Module):
 
 
 class IntegratorV2(torch.nn.Module):
+    """
+    Attributes:
+        reflencoder: Reflection encoder
+        paramencoder:
+        pixelencoder:
+        pijencoder:
+        bglognorm:
+        likelihood:
+        counts_std:
+        counts_std:
+    """
+
     def __init__(
         self,
         reflencoder,
@@ -213,7 +225,7 @@ class IntegratorV2(torch.nn.Module):
         I, SigI = I * norm_factor, SigI * norm_factor
         return I, SigI
 
-    def forward(self, shoebox, mask, mc_samples=5):
+    def forward(self, shoebox, mask, mc_samples=100):
         norm_factor = self.get_per_spot_normalization(shoebox)
         shoebox[..., -1] = shoebox[..., -1] / norm_factor.unsqueeze(-1)
         shoebox[..., -1][shoebox[..., -1].isnan()] = 0
@@ -233,10 +245,12 @@ class IntegratorV2(torch.nn.Module):
         bg = bg * norm_factor.unsqueeze(1)
         # p = p * norm_factor[..., None]
 
-        ll, kl_term = self.likelihood(norm_factor, counts, pijrep, bg, q, mc_samples)
-        nll = -ll.mean()
+        ll, kl_term = self.likelihood(
+            norm_factor, counts, pijrep, bg, q, mc_samples, mask=mask
+        )
+        nll = -ll.mean(-1)
 
-        return nll + kl_term, bg
+        return nll + kl_term
 
     def grad_norm(self):
         grads = [

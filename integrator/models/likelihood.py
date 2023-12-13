@@ -38,37 +38,38 @@ class PoissonLikelihood(torch.nn.Module):
         )  # Prior Bern(p) of pixel belonging to a refl
 
     def constraint(self, x):
-        # return torch.nn.functional.softplus(x, beta=self.beta) + self.eps
         return x + self.eps
 
-    def forward(self, norm_factor, counts, pijrep, bg, q, mc_samples=100, vi=True):
+    def forward(
+        self, norm_factor, counts, pijrep, bg, q, mc_samples=100, vi=False, mask=None
+    ):
         # Take sample from LogNormal
         z = q.rsample([mc_samples])
 
         # Set KL term
         kl_term = 0
-        # p = pijrep.permute(2, 0, 1)
-        # calculate lambda
-        # rate = z * p * norm_factor + bg[None, ...]
         rate = (z * pijrep * norm_factor.unsqueeze(-1)) + bg
-        # rate = rate.permute(1, 2, 0)
-        # rate = z * profile[None,...] + bg[None,...]
-        # rate = self.constraint(rate)
         # counts ~ Pois(rate) = Pois(z * p + bg)
 
-        ll = torch.distributions.Poisson(rate).log_prob(counts.to(torch.int32))
+        if mask is not None:
+            ll = torch.distributions.Poisson(rate).log_prob(counts.to(torch.int32))
+            ll = ll * mask
+        else:
+            ll = torch.distributions.Poisson(rate).log_prob(counts.to(torch.int32))
 
         # Expected log likelihood
-        ll = ll.mean(-1)
+        # ll = ll.mean(-1)
+
         # Calculate KL-divergence
         if vi:
             q_log_prob = q.log_prob(z)
-            p_log_prob = self.priorLogNorm.log_prob(z)
-            bern = torch.distributions.bernoulli.Bernoulli(pijrep)
-            kl_bern = torch.distributions.kl.kl_divergence(bern, self.priorBern).mean()
+            # p_log_prob = self.priorLogNorm.log_prob(z)
+            # bern = torch.distributions.bernoulli.Bernoulli(pijrep)
+            # kl_bern = torch.distributions.kl.kl_divergence(bern, self.priorBern).mean()
             kl_term = (
-                self.scale_log * (q_log_prob - p_log_prob).mean()
-                + self.scale_bern * kl_bern
+                self.scale_log
+                * (q_log_prob).mean()
+                # + self.scale_bern * kl_bern
             )
 
         else:

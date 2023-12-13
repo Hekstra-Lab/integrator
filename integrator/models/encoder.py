@@ -152,6 +152,10 @@ class MLPOut1Encoder(torch.nn.Module):
 
 
 class IntensityBgPredictor(torch.nn.Module):
+    """
+    Ouputs mu and sigma for LogNorm(mu,sigma) and Background
+    """
+
     def __init__(self, depth, dmodel):
         super().__init__()
         self.mlp_1 = MLPOut1(dmodel, depth, output_dims=2 + 1)
@@ -186,18 +190,11 @@ class MLPPijEncoder(torch.nn.Module):
         return out
 
 
-# class RotationPixelEncoder(torch.nn.Module):
-# def __init__(self, depth, dmodel, d_in_refl=4):
-# super().__init__()
-# self.mlp_1 = MLP(dmodel, depth, d_in=d_in_refl, output_dims=dmodel)
-
-# def forward(self, shoebox, mask=None):
-# out = self.mlp_1(shoebox)
-# pixel_rep = torch.relu(out)
-# return pixel_rep
-
-
 class ProfilePredictor(torch.nn.Module):
+    """
+    Outputs p_ij matrix to scale Intensity values
+    """
+
     def __init__(self, dmodel, depth):
         super().__init__()
         self.mlp_1 = MLPPij(dmodel, depth, output_dims=1)
@@ -210,6 +207,10 @@ class ProfilePredictor(torch.nn.Module):
 
 
 class RotationPixelEncoder(torch.nn.Module):
+    """
+    Encodes pixels into (num_reflection x max_voxel_sixe x d_model)
+    """
+
     def __init__(self, depth, dmodel, d_in_refl=4):
         super().__init__()
         self.mlp_1 = MLP(dmodel, depth, d_in=d_in_refl, output_dims=dmodel)
@@ -218,14 +219,3 @@ class RotationPixelEncoder(torch.nn.Module):
         out = self.mlp_1(shoebox)
         pixel_rep = torch.relu(out)
         return pixel_rep
-
-
-class IntensityBgPredictor(torch.nn.Module):
-    def __init__(self, depth, dmodel):
-        super().__init__()
-        self.mlp_1 = MLPOut1(dmodel, depth, output_dims=2 + 1)
-
-    def forward(self, refl_representation):
-        out1 = self.mlp_1(refl_representation)
-        # out1 = out1.view(out1.shape[0], out1.shape[-1])
-        return out1
