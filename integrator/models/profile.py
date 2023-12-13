@@ -69,10 +69,15 @@ class EllipticalProfile(EllipticalProfileBase):
         return q
 
 
-################################################################################################
+############################################################################################
 
 
 class BackgroundLogNorm(torch.nn.Module):
+    """
+    Attributes:
+        eps: constant value to avoid 0 values
+    """
+
     def __init__(self, dmodel, eps=1e-12, beta=1.0, dtype=None, device=None):
         super().__init__()
         self.eps = torch.nn.Parameter(data=torch.tensor(eps), requires_grad=False)
@@ -86,24 +91,57 @@ class BackgroundLogNorm(torch.nn.Module):
             "Derived classes must implement self.distribution(tensor) -> distribution"
         )
 
-    def background(self, params, dxy):
-        m = params[..., :2]
-        b = params[..., 2]
-        bg = (m * dxy).sum(-1) + b
+    def forward(self, paramrep, mc_samples=10):
+        bg = paramrep[..., -1]
         bg = self.constraint(bg)
-        return bg
-
-    def forward(self, paramrep, dxy, mc_samples=10):
-        params = paramrep
-        bg = self.background(params, dxy)
+        params = paramrep[..., 0:2]
         q = self.distribution(params)
         return bg, q
 
 
 class LogNormDistribution(BackgroundLogNorm):
     def distribution(self, parameters):
-        loc = parameters[..., -2]
-        scale = parameters[..., -1]
+        loc = parameters[..., 0]
+        scale = parameters[..., 1]
         scale = self.constraint(scale)
         q = torch.distributions.LogNormal(loc, scale)
         return q
+
+
+############################################################################################
+
+
+# class BackgroundLogNorm(torch.nn.Module):
+# def __init__(self, dmodel, eps=1e-12, beta=1.0, dtype=None, device=None):
+# super().__init__()
+# self.eps = torch.nn.Parameter(data=torch.tensor(eps), requires_grad=False)
+# self.beta = torch.nn.Parameter(data=torch.tensor(beta), requires_grad=False)
+
+# def constraint(self, x):
+# return torch.nn.functional.softplus(x, beta=self.beta) + self.eps
+
+# def distribution(self, parameters):
+# raise NotImplementedError(
+# "Derived classes must implement self.distribution(tensor) -> distribution"
+# )
+
+# def background(self, params, dxy):
+# bg = params[..., 2]
+# bg = (m * dxy).sum(-1) + b
+# bg = self.constraint(bg)
+# return bg
+
+# def forward(self, paramrep, dxy, mc_samples=10):
+# params = paramrep
+# bg = self.background(params, dxy)
+# q = self.distribution(params)
+# return bg, q
+
+
+# class LogNormDistribution(BackgroundLogNorm):
+# def distribution(self, parameters):
+# loc = parameters[..., -2]
+# scale = parameters[..., -1]
+# scale = self.constraint(scale)
+# q = torch.distributions.LogNormal(loc, scale)
+# return q

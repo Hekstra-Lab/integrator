@@ -1,5 +1,6 @@
 from setuptools import setup, find_packages
 
+
 # Get version number
 def getVersionNumber():
     with open("integrator/VERSION", "r") as vfile:
@@ -9,8 +10,7 @@ def getVersionNumber():
 
 __version__ = getVersionNumber()
 
-PROJECT_URLS = {
-}
+PROJECT_URLS = {}
 
 
 LONG_DESCRIPTION = """
@@ -35,12 +35,8 @@ setup(
         "matplotlib",
         "seaborn",
     ],
-    scripts=[
-    ],
-    entry_points={
-        "console_scripts": [
-        ]
-    },
+    scripts=[],
+    entry_points={"console_scripts": []},
     setup_requires=["pytest-runner"],
     tests_require=["pytest", "pytest-cov", "pytest-xdist>=3"],
 )

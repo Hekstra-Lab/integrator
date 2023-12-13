@@ -5,7 +5,7 @@ import torch
 from scipy.spatial import cKDTree
 import pandas as pd
 
-from integrator.io import ImageData
+from integrator.io import StillData, RotationData
 from integrator.models import (
     Integrator,
     MLPEncoder,
@@ -28,7 +28,7 @@ learning_rate = 1e-4
 beta = 10.0
 mc_samples = 100
 
-img_data = ImageData([image_file], [prediction_file], max_size=max_size)
+img_data = StillData([image_file], [prediction_file], max_size=max_size)
 ds = img_data.get_data_set(0)
 xy_idx, xy, dxy, counts, mask = img_data[0]
 
