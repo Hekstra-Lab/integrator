@@ -202,7 +202,8 @@ class ProfilePredictor(torch.nn.Module):
     def forward(self, refl_representation, pixel_rep):
         sum = pixel_rep + refl_representation.expand_as(pixel_rep)
         out = self.mlp_1(sum)
-        out = torch.softmax(out, axis=-2).squeeze(-1)
+        out = torch.softmax(out, axis=-2)
+        out = out.squeeze(-1)
         return out
 
 

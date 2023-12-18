@@ -25,7 +25,7 @@ class RotationData(torch.utils.data.Dataset):
         self.refl_tables = self._get_refl_tables()
         self.data, self.shoeboxes, self.centroids = self._get_rotation_data()
         self.max_voxels = max(self.data["shoebox"].map_elements(self._get_num_coords))
-        self.padded_data = self._pad_data()
+        self.padded_data, self.padded_masks = self._pad_data()
 
     def _get_rotation_data(self):
         # Create a DataFrame from the reflection tables
@@ -35,9 +35,6 @@ class RotationData(torch.utils.data.Dataset):
         arr_shoebox = np.vstack(
             refl_df["reflection_table"].map_elements(self._get_shoebox)
         )
-        # arr_bbox = np.concatenate(
-        # refl_df["reflection_table"].map_elements(self._get_bbox)
-        # )
         arr_miller_index = np.concatenate(
             refl_df["reflection_table"].map_elements(self._get_miller_index)
         )
@@ -78,7 +75,7 @@ class RotationData(torch.utils.data.Dataset):
         coordinates = self.data["shoebox"].map_elements(self._get_coordinates)
         iobs = self.data["shoebox"].map_elements(self._get_intensity)
         pad_size = [self.max_voxels - len(coords) for coords in coordinates]
-        cntroids = torch.tensor(self.centroids)
+        cntroids = torch.tensor(self.centroids, dtype=torch.float32)
         dxy = [
             sub_tensor - centroid for sub_tensor, centroid in zip(coordinates, cntroids)
         ]
@@ -110,7 +107,19 @@ class RotationData(torch.utils.data.Dataset):
                 self.data["dxy"].to_list(),
             )
         ]
-        return padded_data
+        masks = [
+            torch.nn.functional.pad(
+                torch.ones_like(i_obs, dtype=torch.bool),
+                (0, max(pad_size, 0)),
+                "constant",
+                False,
+            )
+            for pad_size, i_obs in zip(
+                self.data["padding_size"].to_list(),
+                self.data["per_pix_i_obs"].to_list(),
+            )
+        ]
+        return padded_data, masks
 
     # Define the individual functions for extracting each attribute
     def _get_shoebox(self, refl_table):
@@ -123,22 +132,22 @@ class RotationData(torch.utils.data.Dataset):
         return np.array(refl_table["miller_index"])
 
     def _get_xyz_cal_px(self, refl_table):
-        return np.array(refl_table["xyzcal.px"])
+        return np.array(refl_table["xyzcal.px"]).astype(np.float32)
 
     def _get_xyz_obs_px_value(self, refl_table):
-        return np.array(refl_table["xyzobs.px.value"])
+        return np.array(refl_table["xyzobs.px.value"]).astype(np.float32)
 
     def _get_intensity_sum_value(self, refl_table):
-        return torch.tensor(refl_table["intensity.sum.value"])
+        return torch.tensor(refl_table["intensity.sum.value"], dtype=torch.float32)
 
     def _get_intensity_sum_variance(self, refl_table):
-        return np.array(refl_table["intensity.sum.variance"])
+        return np.array(refl_table["intensity.sum.variance"]).astype(np.float32)
 
     def _get_shoebox_filenames(self):
         return sorted(glob.glob(os.path.join(self.shoebox_dir, "shoebox*")))
 
     def _get_coordinates(self, shoebox):
-        coords = torch.tensor(shoebox.coords().as_numpy_array())
+        coords = torch.tensor(shoebox.coords().as_numpy_array(), dtype=torch.float32)
         return coords
 
     def _get_num_coords(self, shoebox_array):
@@ -171,13 +180,9 @@ class RotationData(torch.utils.data.Dataset):
         Returns: ([num_reflection x max_voxe_size x features] , mask)
         """
         # returns bool mask of shoeboxes that belong to idx
-        return self.padded_data[idx]
+        return self.padded_data[idx], self.padded_masks[idx]
 
 
-# %%
-
-
-##
 class StillData(torch.utils.data.Dataset):
 
     """
@@ -196,7 +201,7 @@ class StillData(torch.utils.data.Dataset):
         return len(self.image_files)
 
     def get_data_set(self, idx):
-        image_file = self.image_files[idx]
+        # image_file = self.image_files[idx]
         prediction_file = self.prediction_files[idx]
         ds = rs.read_precognition(prediction_file)
         ds = (
@@ -210,13 +215,6 @@ class StillData(torch.utils.data.Dataset):
         pix = imread(image_file)
         x = ds.X.to_numpy("float32")
         y = ds.Y.to_numpy("float32")
-        centroids = np.column_stack((x, y))
-
-        # from dials.array_family import flex
-        # Alternative dials version once prediction is fixed
-        # prediction_file = "predicted000099.refl"
-        # refls = flex.reflection_table.from_file(prediction_file)
-        # x,y,_ = np.array(refls['xyzcal.px']).T
 
         xy = np.column_stack((x, y))
         pxy = np.indices(pix.shape).T.reshape((-1, 2))
@@ -439,9 +437,7 @@ class StillData(torch.utils.data.Dataset):
 
 # # Create mask for this shoebox (1 for real data, 0 for padding)
 # mask = torch.ones(num_pixels, dtype=torch.bool)
-# mask_padded = torch.nn.functional.pad(
-# mask, (0, padding_size), "constant", False
-# )
+# mask_padded = torch.nn.functional.pad(mask, (0, padding_size), "constant", False)
 
 # masks.append(mask_padded)
 

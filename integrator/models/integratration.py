@@ -237,8 +237,12 @@ class IntegratorV2(torch.nn.Module):
         pijrep = self.pijencoder(reflrep, pixelrep)
 
         # Removing nans
-        paramrep[paramrep.isnan()] = 0
-        pijrep[pijrep.isnan()] = 0
+        paramrep = torch.where(
+            torch.isnan(paramrep), torch.zeros_like(paramrep), paramrep
+        )
+        pijrep = torch.where(torch.isnan(pijrep), torch.zeros_like(pijrep), pijrep)
+
+        # pijrep[pijrep.isnan()] = 0
 
         bg, q = self.bglognorm(paramrep)
 
@@ -248,7 +252,7 @@ class IntegratorV2(torch.nn.Module):
         ll, kl_term = self.likelihood(
             norm_factor, counts, pijrep, bg, q, mc_samples, mask=mask
         )
-        nll = -ll.mean(-1)
+        nll = -ll.mean()
 
         return nll + kl_term
 
