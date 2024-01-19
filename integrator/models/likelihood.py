@@ -40,16 +40,16 @@ class PoissonLikelihood(torch.nn.Module):
     def constraint(self, x):
         return x + self.eps
 
-    def forward(
-        self, norm_factor, counts, pijrep, bg, q, mc_samples=100, vi=False, mask=None
-    ):
+    def forward(self, counts, pijrep, bg, q, mc_samples=100, vi=False, mask=None):
         # Take sample from LogNormal
         z = q.rsample([mc_samples])
 
         # Set KL term
         kl_term = 0
-        rate = (z * pijrep * norm_factor.unsqueeze(-1)) + bg
+        # rate = (z * pijrep * norm_factor.unsqueeze(-1)) + bg
+        rate = (z * pijrep) + bg
         # counts ~ Pois(rate) = Pois(z * p + bg)
+        counts = torch.clamp(counts, min=0)
 
         if mask is not None:
             ll = torch.distributions.Poisson(rate).log_prob(counts.to(torch.int32))

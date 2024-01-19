@@ -18,7 +18,6 @@ class RotationData(torch.utils.data.Dataset):
         max_size=4096,
         shoebox_dir=None,
     ):
-        # self.image_dir = image_dir
         self.max_size = max_size
         self.shoebox_dir = shoebox_dir  # directory of shoeboxes
         self.shoebox_filenames = self._get_shoebox_filenames()
@@ -26,6 +25,7 @@ class RotationData(torch.utils.data.Dataset):
         self.data, self.shoeboxes, self.centroids = self._get_rotation_data()
         self.max_voxels = max(self.data["shoebox"].map_elements(self._get_num_coords))
         self.padded_data, self.padded_masks = self._pad_data()
+        self.padded_filtered_data = self._clean_data()
 
     def _get_rotation_data(self):
         # Create a DataFrame from the reflection tables
@@ -76,8 +76,10 @@ class RotationData(torch.utils.data.Dataset):
         iobs = self.data["shoebox"].map_elements(self._get_intensity)
         pad_size = [self.max_voxels - len(coords) for coords in coordinates]
         cntroids = torch.tensor(self.centroids, dtype=torch.float32)
+
         dxy = [
-            sub_tensor - centroid for sub_tensor, centroid in zip(coordinates, cntroids)
+            torch.abs(sub_tensor - centroid)
+            for sub_tensor, centroid in zip(coordinates, cntroids)
         ]
 
         self.data = self.data.with_columns(pl.Series("padding_size", pad_size))
@@ -119,7 +121,25 @@ class RotationData(torch.utils.data.Dataset):
                 self.data["per_pix_i_obs"].to_list(),
             )
         ]
-        return padded_data, masks
+        return torch.stack(padded_data), torch.stack(masks)
+
+    def _get_max_(self, tens):
+        return tens.max().item()
+
+    def _clean_data(self):
+        mask = self.data["coordinates"].map_elements(self._get_max_) > 50000
+        coord_mask = (
+            torch.tensor(mask.to_list())
+            .unsqueeze(-1)
+            .unsqueeze(-1)
+            .expand_as(self.padded_data)
+        )
+        masked_data = self.padded_data.clone()
+        masked_data = masked_data * ~coord_mask
+        is_zero = (masked_data == 0).all(dim=2)
+        is_sample_zero = is_zero.all(dim=1)
+        masked_data = masked_data[~is_sample_zero]
+        return masked_data
 
     # Define the individual functions for extracting each attribute
     def _get_shoebox(self, refl_table):

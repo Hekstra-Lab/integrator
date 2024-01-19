@@ -71,7 +71,6 @@ class RotationReflectionEncoder(torch.nn.Module):
 
     def forward(self, shoebox_data, mask=None):
         out = self.mlp_1(shoebox_data)
-
         pooled_out = self.mean_pool(out, mask)
         return pooled_out
 
