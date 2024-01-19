@@ -25,7 +25,7 @@ class RotationData(torch.utils.data.Dataset):
         self.data, self.shoeboxes, self.centroids = self._get_rotation_data()
         self.max_voxels = max(self.data["shoebox"].map_elements(self._get_num_coords))
         self.padded_data, self.padded_masks = self._pad_data()
-        self.padded_filtered_data = self._clean_data()
+        self.padded_filtered_data, self.padded_filtered_masks = self._clean_data()
 
     def _get_rotation_data(self):
         # Create a DataFrame from the reflection tables
@@ -139,7 +139,11 @@ class RotationData(torch.utils.data.Dataset):
         is_zero = (masked_data == 0).all(dim=2)
         is_sample_zero = is_zero.all(dim=1)
         masked_data = masked_data[~is_sample_zero]
-        return masked_data
+
+        masks_ = self.padded_masks.clone()
+        masks_ = masks_[~mask]
+
+        return masked_data, masks_
 
     # Define the individual functions for extracting each attribute
     def _get_shoebox(self, refl_table):
@@ -200,7 +204,7 @@ class RotationData(torch.utils.data.Dataset):
         Returns: ([num_reflection x max_voxe_size x features] , mask)
         """
         # returns bool mask of shoeboxes that belong to idx
-        return self.padded_data[idx], self.padded_masks[idx]
+        return self.padded_filtered_data[idx], self.padded_filtered_masks[idx]
 
 
 class StillData(torch.utils.data.Dataset):
