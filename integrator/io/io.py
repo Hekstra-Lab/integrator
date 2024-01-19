@@ -18,6 +18,7 @@ class RotationData(torch.utils.data.Dataset):
         max_size=4096,
         shoebox_dir=None,
     ):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.max_size = max_size
         self.shoebox_dir = shoebox_dir  # directory of shoeboxes
         self.shoebox_filenames = self._get_shoebox_filenames()
@@ -75,7 +76,7 @@ class RotationData(torch.utils.data.Dataset):
         coordinates = self.data["shoebox"].map_elements(self._get_coordinates)
         iobs = self.data["shoebox"].map_elements(self._get_intensity)
         pad_size = [self.max_voxels - len(coords) for coords in coordinates]
-        cntroids = torch.tensor(self.centroids, dtype=torch.float32)
+        cntroids = torch.tensor(self.centroids, dtype=torch.float32).to(self.device)
 
         dxy = [
             torch.abs(sub_tensor - centroid)
@@ -101,7 +102,7 @@ class RotationData(torch.utils.data.Dataset):
                     ).unsqueeze(-1),
                 ),
                 dim=1,
-            )
+            ).to(self.device)
             for pad_size, coor, i_obs, dist in zip(
                 self.data["padding_size"].to_list(),
                 self.data["coordinates"].to_list(),
@@ -120,7 +121,7 @@ class RotationData(torch.utils.data.Dataset):
                 self.data["padding_size"].to_list(),
                 self.data["per_pix_i_obs"].to_list(),
             )
-        ]
+        ].to(self.device)
         return torch.stack(padded_data), torch.stack(masks)
 
     def _get_max_(self, tens):
@@ -172,13 +173,16 @@ class RotationData(torch.utils.data.Dataset):
 
     def _get_coordinates(self, shoebox):
         coords = torch.tensor(shoebox.coords().as_numpy_array(), dtype=torch.float32)
-        return coords
+        return coords.to(self.device)
 
     def _get_num_coords(self, shoebox_array):
         return len(shoebox_array.coords())
 
     def _get_intensity(self, shoebox):
-        return torch.tensor(shoebox.data.as_numpy_array().ravel().astype(np.float32))
+        intensity = torch.tensor(
+            shoebox.data.as_numpy_array().ravel().astype(np.float32)
+        )
+        return coords.to(self.device)
 
     def _get_refl_tables(self):
         refl_tables = []
@@ -204,7 +208,9 @@ class RotationData(torch.utils.data.Dataset):
         Returns: ([num_reflection x max_voxe_size x features] , mask)
         """
         # returns bool mask of shoeboxes that belong to idx
-        return self.padded_filtered_data[idx], self.padded_filtered_masks[idx]
+        return self.padded_filtered_data[idx].to(
+            self.device
+        ), self.padded_filtered_masks[idx].to(self.device)
 
 
 class StillData(torch.utils.data.Dataset):
