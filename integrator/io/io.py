@@ -12,205 +12,393 @@ import numpy as np
 
 # %%
 class RotationData(torch.utils.data.Dataset):
-    def __init__(
-        self,
-        # image_dir,
-        max_size=4096,
-        shoebox_dir=None,
-    ):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    def __init__(self, max_size=4096, shoebox_dir=None, max_detector_dimension=5000):
+        self.max_detector_dimension = max_detector_dimension
         self.max_size = max_size
-        self.shoebox_dir = shoebox_dir  # directory of shoeboxes
+        self.shoebox_dir = shoebox_dir
         self.shoebox_filenames = self._get_shoebox_filenames()
-        self.refl_tables = self._get_refl_tables()
-        self.data, self.shoeboxes, self.centroids = self._get_rotation_data()
-        self.max_voxels = max(self.data["shoebox"].map_elements(self._get_num_coords))
-        self.padded_data, self.padded_masks = self._pad_data()
-        self.padded_filtered_data, self.padded_filtered_masks = self._clean_data()
+        self.refl_tables, self.max_voxels = self._get_refl_tables()
 
-    def _get_rotation_data(self):
-        # Create a DataFrame from the reflection tables
-        refl_df = pl.DataFrame({"reflection_table": self.refl_tables})
+    def _get_shoebox_filenames(self):
+        """
+        Get the `shoebox_*.refl` names
+        """
+        df = pl.DataFrame(
+            {"shoebox_filenames": glob.glob(os.path.join(self.shoebox_dir, "shoebox*"))}
+        )
+        return df
 
-        # Stack the shoebox arrays and other attributes
-        arr_shoebox = np.vstack(
-            refl_df["reflection_table"].map_elements(self._get_shoebox)
-        )
-        arr_miller_index = np.concatenate(
-            refl_df["reflection_table"].map_elements(self._get_miller_index)
-        )
-        arr_xyz_cal_px = np.concatenate(
-            refl_df["reflection_table"].map_elements(self._get_xyz_cal_px)
-        )
-        arr_xyz_obs_px_value = np.concatenate(
-            refl_df["reflection_table"].map_elements(self._get_xyz_obs_px_value)
-        )
-        arr_intensity_sum_value = np.concatenate(
-            refl_df["reflection_table"].map_elements(self._get_intensity_sum_value)
-        )
-        arr_intensity_sum_variance = np.concatenate(
-            refl_df["reflection_table"].map_elements(self._get_intensity_sum_variance)
+    def _get_table(self, filename):
+        """
+        Get the reflection table
+        """
+        return flex.reflection_table.from_file(filename)
+
+    def _get_intensity(self, sbox):
+        """
+        Get the observed intensity
+        """
+        return torch.tensor(
+            sbox.data.as_numpy_array().ravel().astype(np.float32), dtype=torch.float32
         )
 
-        # number of reflections
-        # Create a new DataFrame with all attributes
-        result_df = pl.DataFrame(
-            {
-                "h": arr_miller_index[:, 0],
-                "k": arr_miller_index[:, 1],
-                "l": arr_miller_index[:, 2],
-                "x_cal_px": arr_xyz_cal_px[:, 0],
-                "y_cal_px": arr_xyz_cal_px[:, 1],
-                "z_cal_px": arr_xyz_cal_px[:, 2],
-                "x_obs_px_value": arr_xyz_obs_px_value[:, 0],
-                "y_obs_px_value": arr_xyz_obs_px_value[:, 1],
-                "z_obs_px_value": arr_xyz_obs_px_value[:, 2],
-                "intensity_sum_value": arr_intensity_sum_value,
-                "intensity_sum_variance": arr_intensity_sum_variance,
-                "shoebox": arr_shoebox.ravel(),
-            }
-        )
-        return result_df, arr_shoebox, arr_xyz_cal_px
+    def _to_tens(self, element):
+        """
+        Convert the element to a torch tensor
+        """
+        return torch.tensor(element, dtype=torch.float32)
 
-    def _pad_data(self):
-        coordinates = self.data["shoebox"].map_elements(self._get_coordinates)
-        iobs = self.data["shoebox"].map_elements(self._get_intensity)
-        pad_size = [self.max_voxels - len(coords) for coords in coordinates]
-        cntroids = torch.tensor(self.centroids, dtype=torch.float32).to(self.device)
-
-        dxy = [
-            torch.abs(sub_tensor - centroid)
-            for sub_tensor, centroid in zip(coordinates, cntroids)
-        ]
-
-        self.data = self.data.with_columns(pl.Series("padding_size", pad_size))
-        self.data = self.data.with_columns(pl.Series("coordinates", coordinates))
-        self.data = self.data.with_columns(pl.Series("per_pix_i_obs", iobs))
-        self.data = self.data.with_columns(pl.Series("dxy", dxy))
-
-        padded_data = [
-            torch.cat(
-                (
-                    torch.nn.functional.pad(
-                        coor, (0, 0, 0, max(pad_size, 0)), "constant", 0
-                    ),
-                    torch.nn.functional.pad(
-                        dist, (0, 0, 0, max(pad_size, 0)), "constant", 0
-                    ),
-                    torch.nn.functional.pad(
-                        i_obs, (0, max(pad_size, 0)), "constant", 0
-                    ).unsqueeze(-1),
-                ),
-                dim=1,
-            ).to(self.device)
-            for pad_size, coor, i_obs, dist in zip(
-                self.data["padding_size"].to_list(),
-                self.data["coordinates"].to_list(),
-                self.data["per_pix_i_obs"].to_list(),
-                self.data["dxy"].to_list(),
-            )
-        ]
-        masks = [
-            torch.nn.functional.pad(
-                torch.ones_like(i_obs, dtype=torch.bool),
-                (0, max(pad_size, 0)),
-                "constant",
-                False,
-            )
-            for pad_size, i_obs in zip(
-                self.data["padding_size"].to_list(),
-                self.data["per_pix_i_obs"].to_list(),
-            )
-        ].to(self.device)
-        return torch.stack(padded_data), torch.stack(masks)
+    def _get_num_pixels(self, intensities):
+        """
+        Count the number of voxels in each shoebox
+        """
+        return intensities.numel()
 
     def _get_max_(self, tens):
         return tens.max().item()
 
-    def _clean_data(self):
-        mask = self.data["coordinates"].map_elements(self._get_max_) > 50000
-        coord_mask = (
-            torch.tensor(mask.to_list())
-            .unsqueeze(-1)
-            .unsqueeze(-1)
-            .expand_as(self.padded_data)
+    def _get_rows(self, tbl):
+        """
+        Drop unused columns
+        """
+
+        return pl.DataFrame(list(tbl.rows())).drop(
+            [
+                "background.mean",
+                "background.sum.value",
+                "background.sum.variance",
+                "bbox",
+                "partiality",
+                "d",
+                "num_pixels.background",
+                "intensity.sum.variance",
+                "partial_id",
+                "panel",
+                "s1",
+                "xyzobs.mm.value",
+                "xyzcal.mm",
+                "xyz.px.variance",
+                "xyzcal.px.value",
+                "xyzcal.px.variance",
+                "zeta",
+                "num_pixels.foreground",
+                "flags",
+                "id",
+                "entering",
+                "imageset_id",
+                "intensity.prf.variance",
+                "num_pixels.background_used",
+                "num_pixel.foreground",
+                "num_pixels.valid",
+                "xyzobs.mm.variance",
+                "profile.correlation",
+                "intensity.prf.value",
+                "intensity.sum.value",
+            ]
         )
-        masked_data = self.padded_data.clone()
-        masked_data = masked_data * ~coord_mask
-        is_zero = (masked_data == 0).all(dim=2)
-        is_sample_zero = is_zero.all(dim=1)
-        masked_data = masked_data[~is_sample_zero]
 
-        masks_ = self.padded_masks.clone()
-        masks_ = masks_[~mask]
+    def _get_coords(self, sbox):
+        """
+        For a shoebox, get the coordinates of each voxel
+        """
+        return torch.tensor(sbox.coords().as_numpy_array(), dtype=torch.float32)
 
-        return masked_data, masks_
+    def _max_pixel_coordinate(self, coords):
+        """
+        Find the maximum coordinate value for each entry
+        """
+        return coords.max().item()
 
-    # Define the individual functions for extracting each attribute
-    def _get_shoebox(self, refl_table):
-        return np.array(refl_table["shoebox"]).reshape(-1, 1)
-
-    def _get_bbox(self, refl_table):
-        return np.array(refl_table["bbox"])
-
-    def _get_miller_index(self, refl_table):
-        return np.array(refl_table["miller_index"])
-
-    def _get_xyz_cal_px(self, refl_table):
-        return np.array(refl_table["xyzcal.px"]).astype(np.float32)
-
-    def _get_xyz_obs_px_value(self, refl_table):
-        return np.array(refl_table["xyzobs.px.value"]).astype(np.float32)
-
-    def _get_intensity_sum_value(self, refl_table):
-        return torch.tensor(refl_table["intensity.sum.value"], dtype=torch.float32)
-
-    def _get_intensity_sum_variance(self, refl_table):
-        return np.array(refl_table["intensity.sum.variance"]).astype(np.float32)
-
-    def _get_shoebox_filenames(self):
-        return sorted(glob.glob(os.path.join(self.shoebox_dir, "shoebox*")))
-
-    def _get_coordinates(self, shoebox):
-        coords = torch.tensor(shoebox.coords().as_numpy_array(), dtype=torch.float32)
-        return coords.to(self.device)
-
-    def _get_num_coords(self, shoebox_array):
-        return len(shoebox_array.coords())
-
-    def _get_intensity(self, shoebox):
-        intensity = torch.tensor(
-            shoebox.data.as_numpy_array().ravel().astype(np.float32)
-        )
-        return coords.to(self.device)
+    def _filter_shoebox(self, max_pix):
+        """
+        Remove shoeboxes with coordinates outside of the detector dimensions
+        """
+        return max_pix > self.max_detector_dimension
 
     def _get_refl_tables(self):
-        refl_tables = []
-        for filename in self.shoebox_filenames:
-            try:
-                table = flex.reflection_table.from_file(filename)
-                refl_tables.append(table)
-            except Exception as e:
-                print(f"Error loading {filename}: {e}")
-                # Handle the error appropriately, e.g., skip the file, log the error, etc.
-        return refl_tables
+        """
+        Build a dataframe of the reflection tables
+        """
+        final_df = pl.DataFrame()
+
+        for filename in self.shoebox_filenames["shoebox_filenames"]:
+            tbl = self._get_table(filename)  # refl table
+            df = self._get_rows(tbl)  # store refl table as dataframe
+            max_voxels = []
+
+            # getting coordinates and observed intensity from shoeboxes
+            coordinates = df["shoebox"].map_elements(self._get_coords)
+            iobs = df["shoebox"].map_elements(self._get_intensity)
+
+            # distance from pixel to centroid
+            dxy = [
+                torch.abs(sub_tensor - centroid)
+                for sub_tensor, centroid in zip(
+                    coordinates, df["xyzcal.px"].map_elements(self._to_tens)
+                )
+            ]
+            df = df.with_columns(
+                [
+                    pl.Series("coordinates", coordinates),
+                    pl.Series("intensity_observed", iobs),
+                    pl.Series("dxy", dxy),
+                ]
+            )
+            num_pixel = df["intensity_observed"].map_elements(self._get_num_pixels)
+            max_coord = df["coordinates"].map_elements(self._max_pixel_coordinate)
+            df = df.with_columns(
+                [pl.Series("max_coord", max_coord), pl.Series("num_pix", num_pixel)]
+            )
+            df = df.filter(pl.col("max_coord") < 5000)  # returns greater than 5000
+            max_voxels.append(df.select(pl.col("num_pix").max()))
+
+            # stack dataframe
+            final_df = final_df.vstack(df) if final_df is not None else df
+
+        return final_df, max(max_voxels).item()
 
     def __len__(self):
         """
-        Returns: number of shoeboxes
+        Return the length (number of shoeboxes) of the dataset
         """
-        return len(self.shoeboxes)
+        return self.refl_tables.height
 
     def __getitem__(self, idx):
         """
-        Args:
-            idx (): index of diffraction image in `shoebox_dir`
-        Returns: ([num_reflection x max_voxe_size x features] , mask)
+        Return the (idx)th shoebox
         """
-        # returns bool mask of shoeboxes that belong to idx
-        return self.padded_filtered_data[idx].to(
-            self.device
-        ), self.padded_filtered_masks[idx].to(self.device)
+        coords = self.refl_tables["coordinates"].gather(idx).item()
+        dxy = self.refl_tables["dxy"].gather(idx).item()
+        num_pix = self.refl_tables["num_pix"].gather(idx).item()
+        pad_size = self.max_voxels - len(coords)
+        i_obs = self.refl_tables["intensity_observed"].gather(idx).item()
+
+        pad_coords = torch.nn.functional.pad(
+            coords, (0, 0, 0, max(pad_size, 0)), "constant", 0
+        )
+        pad_dxy = torch.nn.functional.pad(
+            dxy, (0, 0, 0, max(pad_size, 0)), "constant", 0
+        )
+        pad_iobs = torch.nn.functional.pad(
+            i_obs, (0, max(pad_size, 0)), "constant", 0
+        ).unsqueeze(dim=-1)
+
+        padded_data = torch.cat((pad_coords, pad_dxy, pad_iobs), dim=1)
+
+        mask = torch.nn.functional.pad(
+            torch.ones_like(i_obs, dtype=torch.bool),
+            (0, max(pad_size, 0)),
+            "constant",
+            False,
+        )
+        return padded_data, mask
+
+
+# %%
+# class RotationData(torch.utils.data.Dataset):
+# def __init__(
+# self,
+# # image_dir,
+# max_size=4096,
+# shoebox_dir=None,
+# ):
+# self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# self.max_size = max_size
+# self.shoebox_dir = shoebox_dir  # directory of shoeboxes
+# self.shoebox_filenames = self._get_shoebox_filenames()
+# self.refl_tables = self._get_refl_tables()
+# self.data, self.shoeboxes, self.centroids = self._get_rotation_data()
+# self.max_voxels = max(self.data["shoebox"].map_elements(self._get_num_coords))
+# self.padded_data, self.padded_masks = self._pad_data()
+# self.padded_filtered_data, self.padded_filtered_masks = self._clean_data()
+
+# def _get_rotation_data(self):
+# # Create a DataFrame from the reflection tables
+# refl_df = pl.DataFrame({"reflection_table": self.refl_tables})
+
+# # Stack the shoebox arrays and other attributes
+# arr_shoebox = np.vstack(
+# refl_df["reflection_table"].map_elements(self._get_shoebox)
+# )
+# arr_miller_index = np.concatenate(
+# refl_df["reflection_table"].map_elements(self._get_miller_index)
+# )
+# arr_xyz_cal_px = np.concatenate(
+# refl_df["reflection_table"].map_elements(self._get_xyz_cal_px)
+# )
+# arr_xyz_obs_px_value = np.concatenate(
+# refl_df["reflection_table"].map_elements(self._get_xyz_obs_px_value)
+# )
+# arr_intensity_sum_value = np.concatenate(
+# refl_df["reflection_table"].map_elements(self._get_intensity_sum_value)
+# )
+# arr_intensity_sum_variance = np.concatenate(
+# refl_df["reflection_table"].map_elements(self._get_intensity_sum_variance)
+# )
+
+# # number of reflections
+# # Create a new DataFrame with all attributes
+# result_df = pl.DataFrame(
+# {
+# "h": arr_miller_index[:, 0],
+# "k": arr_miller_index[:, 1],
+# "l": arr_miller_index[:, 2],
+# "x_cal_px": arr_xyz_cal_px[:, 0],
+# "y_cal_px": arr_xyz_cal_px[:, 1],
+# "z_cal_px": arr_xyz_cal_px[:, 2],
+# "x_obs_px_value": arr_xyz_obs_px_value[:, 0],
+# "y_obs_px_value": arr_xyz_obs_px_value[:, 1],
+# "z_obs_px_value": arr_xyz_obs_px_value[:, 2],
+# "intensity_sum_value": arr_intensity_sum_value,
+# "intensity_sum_variance": arr_intensity_sum_variance,
+# "shoebox": arr_shoebox.ravel(),
+# }
+# )
+# return result_df, arr_shoebox, arr_xyz_cal_px
+
+# def _pad_data(self):
+# coordinates = self.data["shoebox"].map_elements(self._get_coordinates)
+# iobs = self.data["shoebox"].map_elements(self._get_intensity)
+# pad_size = [self.max_voxels - len(coords) for coords in coordinates]
+# cntroids = torch.tensor(self.centroids, dtype=torch.float32)
+
+# dxy = [
+# torch.abs(sub_tensor - centroid)
+# for sub_tensor, centroid in zip(coordinates, cntroids)
+# ]
+
+# self.data = self.data.with_columns(pl.Series("padding_size", pad_size))
+# self.data = self.data.with_columns(pl.Series("coordinates", coordinates))
+# self.data = self.data.with_columns(pl.Series("per_pix_i_obs", iobs))
+# self.data = self.data.with_columns(pl.Series("dxy", dxy))
+
+# padded_data = [
+# torch.cat(
+# (
+# torch.nn.functional.pad(
+# coor, (0, 0, 0, max(pad_size, 0)), "constant", 0
+# ),
+# torch.nn.functional.pad(
+# dist, (0, 0, 0, max(pad_size, 0)), "constant", 0
+# ),
+# torch.nn.functional.pad(
+# i_obs, (0, max(pad_size, 0)), "constant", 0
+# ).unsqueeze(-1),
+# ),
+# dim=1,
+# )
+# for pad_size, coor, i_obs, dist in zip(
+# self.data["padding_size"].to_list(),
+# self.data["coordinates"].to_list(),
+# self.data["per_pix_i_obs"].to_list(),
+# self.data["dxy"].to_list(),
+# )
+# ]
+
+# masks = [
+# torch.nn.functional.pad(
+# torch.ones_like(i_obs, dtype=torch.bool),
+# (0, max(pad_size, 0)),
+# "constant",
+# False,
+# )
+# for pad_size, i_obs in zip(
+# self.data["padding_size"].to_list(),
+# self.data["per_pix_i_obs"].to_list(),
+# )
+# ]
+# return torch.stack(padded_data), torch.stack(masks)
+
+# def _get_max_(self, tens):
+# return tens.max().item()
+
+# def _clean_data(self):
+# mask = self.data["coordinates"].map_elements(self._get_max_) > 50000
+# coord_mask = (
+# torch.tensor(mask.to_list())
+# .unsqueeze(-1)
+# .unsqueeze(-1)
+# .expand_as(self.padded_data)
+# )
+# masked_data = self.padded_data.clone()
+# masked_data = masked_data * ~coord_mask
+# is_zero = (masked_data == 0).all(dim=2)
+# is_sample_zero = is_zero.all(dim=1)
+# masked_data = masked_data[~is_sample_zero]
+
+# masks_ = self.padded_masks.clone()
+# masks_ = masks_[~mask]
+
+# return masked_data, masks_
+
+# # Define the individual functions for extracting each attribute
+# def _get_shoebox(self, refl_table):
+# return np.array(refl_table["shoebox"]).reshape(-1, 1)
+
+# def _get_bbox(self, refl_table):
+# return np.array(refl_table["bbox"])
+
+# def _get_miller_index(self, refl_table):
+# return np.array(refl_table["miller_index"])
+
+# def _get_xyz_cal_px(self, refl_table):
+# return np.array(refl_table["xyzcal.px"]).astype(np.float32)
+
+# def _get_xyz_obs_px_value(self, refl_table):
+# return np.array(refl_table["xyzobs.px.value"]).astype(np.float32)
+
+# def _get_intensity_sum_value(self, refl_table):
+# return torch.tensor(refl_table["intensity.sum.value"], dtype=torch.float32)
+
+# def _get_intensity_sum_variance(self, refl_table):
+# return np.array(refl_table["intensity.sum.variance"]).astype(np.float32)
+
+# def _get_shoebox_filenames(self):
+# return sorted(glob.glob(os.path.join(self.shoebox_dir, "shoebox*")))
+
+# def _get_coordinates(self, shoebox):
+# coords = torch.tensor(shoebox.coords().as_numpy_array(), dtype=torch.float32)
+# # return coords.to(self.device)
+# return coords
+
+# def _get_num_coords(self, shoebox_array):
+# return len(shoebox_array.coords())
+
+# def _get_intensity(self, shoebox):
+# intensity = torch.tensor(
+# shoebox.data.as_numpy_array().ravel().astype(np.float32)
+# )
+# # return intensity.to(self.device)
+# return intensity
+
+# def _get_refl_tables(self):
+# refl_tables = []
+# for filename in self.shoebox_filenames:
+# try:
+# table = flex.reflection_table.from_file(filename)
+# refl_tables.append(table)
+# except Exception as e:
+# print(f"Error loading {filename}: {e}")
+# # Handle the error appropriately, e.g., skip the file, log the error, etc.
+# return refl_tables
+
+# def __len__(self):
+# """
+# Returns: number of shoeboxes
+# """
+# return len(self.shoeboxes)
+
+# def __getitem__(self, idx):
+# """
+# Args:
+# idx (): index of diffraction image in `shoebox_dir`
+# Returns: ([num_reflection x max_voxe_size x features] , mask)
+# """
+# # returns bool mask of shoeboxes that belong to idx
+# return (
+# self.padded_filtered_data[idx].to(self.device),
+# self.padded_filtered_masks[idx],
+# )
 
 
 class StillData(torch.utils.data.Dataset):
