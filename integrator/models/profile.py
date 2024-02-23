@@ -103,7 +103,7 @@ class LogNormDistribution(BackgroundLogNorm):
     def distribution(self, parameters):
         loc = parameters[..., 0]
         scale = parameters[..., 1]
-        scale = self.constraint(scale)
+        scale = self.constraint(scale)  # softplus
         q = torch.distributions.LogNormal(loc, scale)
         return q
 

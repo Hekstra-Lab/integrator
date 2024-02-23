@@ -64,14 +64,13 @@ class RotationData(torch.utils.data.Dataset):
 
         return pl.DataFrame(list(tbl.rows())).drop(
             [
-                "background.mean",
-                "background.sum.value",
-                "background.sum.variance",
+                # "background.mean",
+                # "background.sum.value",
+                # "background.sum.variance",
                 "bbox",
                 "partiality",
                 "d",
                 "num_pixels.background",
-                "intensity.sum.variance",
                 "partial_id",
                 "panel",
                 "s1",
@@ -86,14 +85,15 @@ class RotationData(torch.utils.data.Dataset):
                 "id",
                 "entering",
                 "imageset_id",
-                "intensity.prf.variance",
+                # "intensity.sum.variance",
+                # "intensity.prf.variance",
                 "num_pixels.background_used",
                 "num_pixel.foreground",
                 "num_pixels.valid",
                 "xyzobs.mm.variance",
                 "profile.correlation",
-                "intensity.prf.value",
-                "intensity.sum.value",
+                # "intensity.prf.value",
+                # "intensity.sum.value",
             ]
         )
 
@@ -121,10 +121,10 @@ class RotationData(torch.utils.data.Dataset):
         """
         final_df = pl.DataFrame()
 
+        max_vox = []
         for filename in self.shoebox_filenames["shoebox_filenames"]:
             tbl = self._get_table(filename)  # refl table
             df = self._get_rows(tbl)  # store refl table as dataframe
-            max_voxels = []
 
             # getting coordinates and observed intensity from shoeboxes
             coordinates = df["shoebox"].map_elements(self._get_coords)
@@ -150,12 +150,14 @@ class RotationData(torch.utils.data.Dataset):
                 [pl.Series("max_coord", max_coord), pl.Series("num_pix", num_pixel)]
             )
             df = df.filter(pl.col("max_coord") < 5000)  # returns greater than 5000
-            max_voxels.append(df.select(pl.col("num_pix").max()))
+            max_vox.append(df.select(pl.col("num_pix").max()).item())
+            # max_vox = max(max_vox).item()
 
             # stack dataframe
             final_df = final_df.vstack(df) if final_df is not None else df
+        max_voxel = max(max_vox)
 
-        return final_df, max(max_voxels).item()
+        return final_df, max_voxel
 
     def __len__(self):
         """

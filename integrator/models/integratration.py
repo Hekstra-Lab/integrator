@@ -192,17 +192,19 @@ class IntegratorV2(torch.nn.Module):
     def set_counts_std(self, value):
         self.counts_std = torch.nn.Parameter(value, requires_grad=False)
 
-    def get_intensity_sigma(self, shoebox, batch_size=100):
+    def get_intensity_sigma(self, shoebox):
         I, SigI = [], []
         xyz = shoebox[..., 0:3]
         dxyz = shoebox[..., 3:6]
-        counts = shoebox[..., -1]
+        counts = torch.clamp(shoebox[..., -1], min=0)
         for batch in zip(
             torch.split(xyz, batch_size, dim=0),
             torch.split(dxyz, batch_size, dim=0),
             torch.split(counts, batch_size, dim=0),
         ):
-            device = next(self.parameters()).device
+            device = next(
+                self.parameters()
+            ).device  # device where parameters are located
             i, s = self.get_intensity_sigma_batch(*(i.to(device=device) for i in batch))
             I.append(i.detach().cpu().numpy())
             SigI.append(s.detach().cpu().numpy())
@@ -212,26 +214,27 @@ class IntegratorV2(torch.nn.Module):
     def get_per_spot_normalization(self, counts):
         return torch.clamp(counts[:, :, -1], min=0).sum(-1)
 
-    def get_intensity_sigma_batch(self, shoebox):
+    def get_intensity_sigma_batch(self, shoebox, mask):
         # norm_factor = self.get_per_spot_normalization(shoebox)
         # shoebox[:, :, -1] = shoebox[:, :, -1] / norm_factor.unsqueeze(-1)
-        reflrep = self.reflencoder(shoebox)
+        reflrep = self.reflencoder(shoebox, mask)
         paramrep = self.paramencoder(reflrep)
         pixelrep = self.pixelencoder(shoebox[:, :, 0:-1])
         pijrep = self.pijencoder(reflrep, pixelrep)
+        counts = torch.clamp(shoebox[:, :, -1], min=0)
 
-        q = self.bglognorm.distribution(paramrep)
+        bg, q = self.bglognorm(paramrep)
         I, SigI = q.mean, q.stddev
         # I, SigI = I * norm_factor, SigI * norm_factor
-        return I, SigI
+        return I, SigI, bg, pijrep, counts
 
     def forward(self, shoebox, mask, mc_samples=100):
         # norm_factor = self.get_per_spot_normalization(shoebox)
         # shoebox[..., -1] = shoebox[..., -1] / norm_factor.unsqueeze(-1)
         # shoebox[..., -1][shoebox[..., -1].isnan()] = 0
         # shoebox[..., -1][[shoebox[..., -1] == -float("inf")]] = 0
+        counts = torch.clamp(shoebox[:, :, -1], min=0)
         # counts = torch.clamp(shoebox[:, :, -1], min=0)
-        counts = shoebox[:, :, -1]
         reflrep = self.reflencoder(shoebox, mask)
         paramrep = self.paramencoder(reflrep)
         pixelrep = self.pixelencoder(shoebox[:, :, 0:-1])
