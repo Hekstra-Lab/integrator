@@ -11,7 +11,7 @@ class PoissonLikelihood(torch.nn.Module):
         beta=1.0,
         eps=1e-8,
         prior_bern_p=0.2,  # Prior p for prior Bern(p)
-        prior_mean=2,  # Prior mean for LogNorm
+        prior_mean=3,  # Prior mean for LogNorm
         prior_std=1,  # Prior std for LogNorm
         scale_log=0.01,  # influence of DKL(LogNorm||LogNorm) term
         scale_bern=1,  # influence of DKL(bern||bern) term
@@ -40,20 +40,38 @@ class PoissonLikelihood(torch.nn.Module):
     def constraint(self, x):
         return x + self.eps
 
-    def forward(self, counts, pijrep, bg, q, mc_samples=100, vi=False, mask=None):
+    def forward(
+        self,
+        counts,
+        pijrep,
+        bg,
+        q,
+        emp_bg,
+        bg_penalty_scaling,
+        profile_scale,
+        mc_samples=100,
+        vi=True,
+        mask=None,
+    ):
         # Take sample from LogNormal
         z = q.rsample([mc_samples])
 
         # Set KL term
         kl_term = 0
         # rate = (z * pijrep * norm_factor.unsqueeze(-1)) + bg
-        rate = (z * pijrep) + bg
+        rate = (z * (profile_scale * pijrep)) + bg
         # counts ~ Pois(rate) = Pois(z * p + bg)
         counts = torch.clamp(counts, min=0)
+
+        # Empirical background
+        bg_penalty = (bg - emp_bg) ** 2
+        bg_penalty = bg_penalty * mask * bg_penalty_scaling
+        bg_penalty = bg_penalty.mean()
 
         if mask is not None:
             ll = torch.distributions.Poisson(rate).log_prob(counts.to(torch.int32))
             ll = ll * mask
+
         else:
             ll = torch.distributions.Poisson(rate).log_prob(counts.to(torch.int32))
 
@@ -63,19 +81,23 @@ class PoissonLikelihood(torch.nn.Module):
         # Calculate KL-divergence
         if vi:
             q_log_prob = q.log_prob(z)
-            # p_log_prob = self.priorLogNorm.log_prob(z)
-            # bern = torch.distributions.bernoulli.Bernoulli(pijrep)
-            # kl_bern = torch.distributions.kl.kl_divergence(bern, self.priorBern).mean()
-            kl_term = (
-                self.scale_log
-                * (q_log_prob).mean()
-                # + self.scale_bern * kl_bern
-            )
+            p_log_prob = self.priorLogNorm.log_prob(z)
+            kl_lognorm = q_log_prob - p_log_prob
+
+            bern = torch.distributions.bernoulli.Bernoulli(pijrep)
+            kl_bern = torch.distributions.kl.kl_divergence(bern, self.priorBern).mean()
+
+            masked_kl_lognorm = kl_lognorm * mask
+
+            masked_kl_bern = kl_bern * mask
+
+            # kl_term = self.scale_log * masked_kl_lognorm.mean() + masked_kl_bern.mean()
+            kl_term = masked_kl_bern.mean()
 
         else:
             kl_term = 0  # set to 0 when vi false
 
-        return ll, kl_term
+        return ll, kl_term, bg_penalty
 
 
 #############

@@ -27,6 +27,7 @@ learning_rate = 0.0001
 dmodel = 64
 feature_dim = 7
 mc_samples = 100
+profile_scale = 10
 
 # Use GPU if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -41,7 +42,6 @@ rotation_data = RotationData(shoebox_dir=shoebox_dir)
 # loads a shoebox and corresponding mask
 train_loader = DataLoader(rotation_data, batch_size=batch_size, shuffle=True)
 
-
 # Encoders
 refl_encoder = RotationReflectionEncoder(depth, dmodel, feature_dim)
 intensity_bacground = IntensityBgPredictor(depth, dmodel)
@@ -49,12 +49,15 @@ pixel_encoder = RotationPixelEncoder(depth=depth, dmodel=dmodel, d_in_refl=6)
 profile_ = ProfilePredictor(dmodel, depth)
 likelihood = PoissonLikelihood(beta=beta, eps=eps)
 bglognorm = LogNormDistribution(dmodel, eps, beta)
+bg_penalty_scaling = 0.1
 
 # integration model
-
 integrator = IntegratorV2(
     refl_encoder, intensity_bacground, pixel_encoder, profile_, bglognorm, likelihood
 )
+
+# empirical background
+emp_bg = rotation_data.refl_tables["background.mean"].mean()
 
 # %%
 # training loop
@@ -74,7 +77,7 @@ for step in trange(steps):
 
     # Forward pass
     opt.zero_grad()
-    loss = integrator(ims, masks)
+    loss = integrator(ims, masks, emp_bg, bg_penalty_scaling, profile_scale)
 
     # Backward pass
     loss.backward()
@@ -102,8 +105,8 @@ for step in trange(steps):
 eval_loader = DataLoader(rotation_data, batch_size=batch_size, shuffle=False)
 
 # Evaluation
-# model_weights = integrator.state_dict()
-# torch.save(model_weights, "integrator_model_weights.pth")
+model_weights = integrator.state_dict()
+torch.save(model_weights, "integrator_model_weights.pth")
 integrator.load_state_dict(torch.load("integrator_model_weights.pth"))
 integrator.to(device)
 # set model to evaluation mode
@@ -134,7 +137,14 @@ with torch.no_grad():
 # Stats
 # Mean intensity across dataset
 print(f"Dataset mean intensity: {np.array(I).ravel().mean()}")
-# np.array(I).ravel().shape
+print(f"Dataset max intensity: {np.array(I).ravel().max()}")
+print(f"Dataset mean SigI: {np.array(SigI).ravel().mean()}")
+
+# profile values
+np.array(pij_).ravel().min()
+np.array(pij_).ravel().max()
+np.array(pij_).ravel().mean()
+
 
 # Mean background across dataset
 print(f"Dataset mean background {np.array(bg).ravel().mean()}")
@@ -146,8 +156,17 @@ print(f"Min background: np.array(bg).ravel().min()")
 # Min background
 rotation_data.refl_tables.columns
 
-# %%
+# DIALS profile intensity
+rotation_data.refl_tables["intensity.prf.value"].min()
+rotation_data.refl_tables["intensity.prf.value"].max()
+rotation_data.refl_tables["intensity.prf.value"].mean()
 
+# DIALS summation intensity
+rotation_data.refl_tables["intensity.sum.value"].min()
+rotation_data.refl_tables["intensity.sum.value"].max()
+rotation_data.refl_tables["intensity.sum.value"].mean()
+
+# %%
 # Plots
 
 # Plotting loss as function of step
@@ -171,3 +190,7 @@ plt.yscale("log")
 plt.xscale("log")
 plt.show()
 plt.savefig("intensity_vs_profile.png", dpi=300)
+
+rotation_data.refl_tables["background.mean"].mean()
+rotation_data.refl_tables["background.mean"].max()
+rotation_data.refl_tables["background.mean"].min()

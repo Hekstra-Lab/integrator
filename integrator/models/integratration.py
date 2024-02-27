@@ -228,36 +228,37 @@ class IntegratorV2(torch.nn.Module):
         # I, SigI = I * norm_factor, SigI * norm_factor
         return I, SigI, bg, pijrep, counts
 
-    def forward(self, shoebox, mask, mc_samples=100):
+    def forward(
+        self, shoebox, mask, emp_bg, bg_penalty_scaling, profile_scale, mc_samples=100
+    ):
         # norm_factor = self.get_per_spot_normalization(shoebox)
         # shoebox[..., -1] = shoebox[..., -1] / norm_factor.unsqueeze(-1)
-        # shoebox[..., -1][shoebox[..., -1].isnan()] = 0
-        # shoebox[..., -1][[shoebox[..., -1] == -float("inf")]] = 0
+
         counts = torch.clamp(shoebox[:, :, -1], min=0)
-        # counts = torch.clamp(shoebox[:, :, -1], min=0)
         reflrep = self.reflencoder(shoebox, mask)
         paramrep = self.paramencoder(reflrep)
         pixelrep = self.pixelencoder(shoebox[:, :, 0:-1])
         pijrep = self.pijencoder(reflrep, pixelrep)
-
-        # Removing nans
-
-        # paramrep = torch.where(
-        # torch.isnan(paramrep), torch.zeros_like(paramrep), paramrep
-        # )
-        # pijrep = torch.where(torch.isnan(pijrep), torch.zeros_like(pijrep), pijrep)
-
-        # pijrep[pijrep.isnan()] = 0
 
         bg, q = self.bglognorm(paramrep)
 
         # bg = bg * norm_factor.unsqueeze(1)
         # p = p * norm_factor[..., None]
 
-        ll, kl_term = self.likelihood(counts, pijrep, bg, q, mc_samples, mask=mask)
+        ll, kl_term, bg_penalty = self.likelihood(
+            counts,
+            pijrep,
+            bg,
+            q,
+            emp_bg,
+            bg_penalty_scaling,
+            profile_scale,
+            mc_samples,
+            mask=mask,
+        )
         nll = -ll.mean()
 
-        return nll + kl_term
+        return nll + kl_term + bg_penalty
 
     def grad_norm(self):
         grads = [
