@@ -229,7 +229,15 @@ class IntegratorV2(torch.nn.Module):
         return I, SigI, bg, pijrep, counts
 
     def forward(
-        self, shoebox, mask, emp_bg, bg_penalty_scaling, profile_scale, mc_samples=100
+        self,
+        shoebox,
+        mask,
+        emp_bg,
+        bg_penalty_scaling,
+        profile_scale,
+        kl_lognorm_scale,
+        kl_bern_scale,
+        mc_samples=100,
     ):
         # norm_factor = self.get_per_spot_normalization(shoebox)
         # shoebox[..., -1] = shoebox[..., -1] / norm_factor.unsqueeze(-1)
@@ -253,6 +261,8 @@ class IntegratorV2(torch.nn.Module):
             emp_bg,
             bg_penalty_scaling,
             profile_scale,
+            kl_lognorm_scale,
+            kl_bern_scale,
             mc_samples,
             mask=mask,
         )

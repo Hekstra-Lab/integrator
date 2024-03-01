@@ -6,14 +6,26 @@ from integrator.models import MLP
 
 # %%
 class PoissonLikelihood(torch.nn.Module):
+    """
+    Attributes:
+        beta:
+        prior_std: std parameter for prior LogNormal
+        prior_mean: mean parameter for prior LogNormal
+        lognorm_scale: scale DKL(LogNorm||LogNorm)
+        prior_bern_p: parameter for prior Bernoulli distribution
+        scale_bern: scale DKL(pij||bern)
+        priorLogNorm: prior LogNormal distribution
+        priorBern: prior Bernoulli distribution
+    """
+
     def __init__(
         self,
         beta=1.0,
         eps=1e-8,
-        prior_bern_p=0.2,  # Prior p for prior Bern(p)
+        prior_bern_p=0.2,
         prior_mean=3,  # Prior mean for LogNorm
         prior_std=1,  # Prior std for LogNorm
-        scale_log=0.01,  # influence of DKL(LogNorm||LogNorm) term
+        lognorm_scale=0.01,  # influence of DKL(LogNorm||LogNorm) term
         scale_bern=1,  # influence of DKL(bern||bern) term
     ):
         super().__init__()
@@ -25,8 +37,8 @@ class PoissonLikelihood(torch.nn.Module):
         self.prior_mean = torch.nn.Parameter(
             data=torch.tensor(prior_mean), requires_grad=False
         )
-        self.scale_log = torch.nn.Parameter(
-            data=torch.tensor(scale_log), requires_grad=False
+        self.lognorm_scale = torch.nn.Parameter(
+            data=torch.tensor(lognorm_scale), requires_grad=False
         )
         self.prior_bern_p = prior_bern_p
         self.priorLogNorm = torch.distributions.LogNormal(prior_mean, prior_std)
@@ -49,10 +61,28 @@ class PoissonLikelihood(torch.nn.Module):
         emp_bg,
         bg_penalty_scaling,
         profile_scale,
+        kl_lognorm_scale,
+        kl_bern_scale,
         mc_samples=100,
         vi=True,
         mask=None,
     ):
+        """
+        Args:
+            counts: photon counts from original data
+            pijrep: pixel representation
+            bg: background
+            q: distribution
+            emp_bg: empirical mean background
+            bg_penalty_scaling:
+            profile_scale: scale
+            mc_samples: number of monte carlo samples
+            vi: use variational inference
+            mask: mask for padded data
+
+        Returns:
+
+        """
         # Take sample from LogNormal
         z = q.rsample([mc_samples])
 
@@ -65,8 +95,8 @@ class PoissonLikelihood(torch.nn.Module):
 
         # Empirical background
         bg_penalty = (bg - emp_bg) ** 2
-        bg_penalty = bg_penalty * mask * bg_penalty_scaling
-        bg_penalty = bg_penalty.mean()
+        bg_penalty = bg_penalty * mask
+        bg_penalty = bg_penalty.mean() * bg_penalty_scaling
 
         if mask is not None:
             ll = torch.distributions.Poisson(rate).log_prob(counts.to(torch.int32))
@@ -75,24 +105,27 @@ class PoissonLikelihood(torch.nn.Module):
         else:
             ll = torch.distributions.Poisson(rate).log_prob(counts.to(torch.int32))
 
-        # Expected log likelihood
-        # ll = ll.mean(-1)
-
         # Calculate KL-divergence
         if vi:
+            # KL(lognorm)
             q_log_prob = q.log_prob(z)
             p_log_prob = self.priorLogNorm.log_prob(z)
             kl_lognorm = q_log_prob - p_log_prob
 
+            # KL(Bernoulli)
             bern = torch.distributions.bernoulli.Bernoulli(pijrep)
             kl_bern = torch.distributions.kl.kl_divergence(bern, self.priorBern).mean()
 
+            # zero out pads
             masked_kl_lognorm = kl_lognorm * mask
-
             masked_kl_bern = kl_bern * mask
 
-            # kl_term = self.scale_log * masked_kl_lognorm.mean() + masked_kl_bern.mean()
-            kl_term = masked_kl_bern.mean()
+            # total kl
+            kl_term = (
+                kl_lognorm_scale * masked_kl_lognorm.mean()
+                + kl_bern_scale * masked_kl_bern.mean()
+            )
+            # kl_term = masked_kl_bern.mean()
 
         else:
             kl_term = 0  # set to 0 when vi false
@@ -109,7 +142,7 @@ class PoissonLikelihood(torch.nn.Module):
 # prior_bern_p=0.2,  # Prior p for prior Bern(p)
 # prior_mean=2,  # Prior mean for LogNorm
 # prior_std=1,  # Prior std for LogNorm
-# scale_log=0.01,  # influence of DKL(LogNorm||LogNorm) term
+# lognorm_scale=0.01,  # influence of DKL(LogNorm||LogNorm) term
 # scale_bern=1,  # influence of DKL(bern||bern) term
 # ):
 # super().__init__()
@@ -121,8 +154,8 @@ class PoissonLikelihood(torch.nn.Module):
 # self.prior_mean = torch.nn.Parameter(
 # data=torch.tensor(prior_mean), requires_grad=False
 # )
-# self.scale_log = torch.nn.Parameter(
-# data=torch.tensor(scale_log), requires_grad=False
+# self.lognorm_scale = torch.nn.Parameter(
+# data=torch.tensor(lognorm_scale), requires_grad=False
 # )
 # self.prior_bern_p = prior_bern_p
 # self.priorLogNorm = torch.distributions.LogNormal(prior_mean, prior_std)
@@ -165,7 +198,7 @@ class PoissonLikelihood(torch.nn.Module):
 # bern = torch.distributions.bernoulli.Bernoulli(pijrep)
 # kl_bern = torch.distributions.kl.kl_divergence(bern, self.priorBern).mean()
 # kl_term = (
-# self.scale_log * (q_log_prob - p_log_prob).mean()
+# self.lognorm_scale * (q_log_prob - p_log_prob).mean()
 # + self.scale_bern * kl_bern
 # )
 
