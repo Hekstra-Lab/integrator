@@ -1,16 +1,18 @@
 import torch
 import math
 import csv
+import polars as pl
 import numpy as np
 from integrator.io import RotationData
 from tqdm import trange
+from tqdm import tqdm
 import matplotlib.pyplot as plt
 from integrator.models import (
     LogNormDistribution,
     ProfilePredictor,
     IntegratorV2,
-    RotationReflectionEncoder,
     IntensityBgPredictor,
+    RotationReflectionEncoder,
     RotationPixelEncoder,
     PoissonLikelihood,
 )
@@ -19,7 +21,7 @@ import itertools
 
 # %%
 # Hyperparameters
-steps = 10
+steps = 10000
 batch_size = 100
 max_size = 1024
 beta = 1.0
@@ -29,36 +31,40 @@ learning_rate = 0.0001
 dmodel = 64
 feature_dim = 7
 mc_samples = 100
-
-profile_scale = 10
-
-# bg_penalty_scaling = [0,0.1, 0.5, 1]
-# kl_bern_scale = [0, 0.1, 0.5, 1]
-# kl_lognorm_scale = [0, 0.1, 0.5, 1]
+epochs = 1
+prior_mean = 7
+prior_std = 1.4
+num_epochs = 2
 
 bg_penalty_scaling = [0, 1]
 kl_bern_scale = [0, 1]
-kl_lognorm_scale = [0, 1]
+kl_lognorm_scale = [1]
 
 # Use GPU if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# %%
 # Loading data
 shoebox_dir = "/Users/luis/integrator/rotation_data_examples/data/"
 # shoebox_dir = "/n/holylabs/LABS/hekstra_lab/Users/laldama"
-rotation_data = RotationData(shoebox_dir=shoebox_dir)
+rotation_data = RotationData(shoebox_dir=shoebox_dir, val_split=None)
+
 
 # %%
 # loads a shoebox and corresponding mask
+rotation_data.set_mode("train")
+
 train_loader = DataLoader(rotation_data, batch_size=batch_size, shuffle=True)
 
+
+# %%
 # Encoders
 refl_encoder = RotationReflectionEncoder(depth, dmodel, feature_dim)
 intensity_bacground = IntensityBgPredictor(depth, dmodel)
 pixel_encoder = RotationPixelEncoder(depth=depth, dmodel=dmodel, d_in_refl=6)
 profile_ = ProfilePredictor(dmodel, depth)
-likelihood = PoissonLikelihood(beta=beta, eps=eps)
+likelihood = PoissonLikelihood(
+    beta=beta, eps=eps, prior_mean=prior_mean, prior_std=prior_std
+)
 bglognorm = LogNormDistribution(dmodel, eps, beta)
 
 # integration model
@@ -67,8 +73,11 @@ integrator = IntegratorV2(
 )
 integrator = integrator.to(device)
 
-# empirical background
-emp_bg = rotation_data.refl_tables["background.mean"].mean()
+# train set empirical background
+emp_bg = rotation_data.train_df["background.mean"].mean()
+
+
+# %%
 
 
 # Trunacated Normal
@@ -89,7 +98,9 @@ def initialize_weights(model):
 
 
 # %%
-def train_and_eval(bg_penalty_scaling, kl_bern_scale, kl_lognorm_scale, n_batches):
+def train_and_eval(
+    kl_lognorm_scale, n_batches, bg_penalty_scaling=None, kl_bern_scale=None
+):
     # Encoders
 
     # integration model
@@ -112,50 +123,59 @@ def train_and_eval(bg_penalty_scaling, kl_bern_scale, kl_lognorm_scale, n_batche
     opt = torch.optim.Adam(integrator.parameters(), lr=learning_rate)  # optimizer
     torch.autograd.set_detect_anomaly(True)
 
-    for step in trange(steps):
+    for epoch in range(num_epochs):
+        bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}")
+
+        i = 0
         # Get batch data
-        ims, masks = next(iter(train_loader))
-        ims = ims.to(device)
-        masks = masks.to(device)
+        for ims, masks in bar:
+            if i != 1:
+                # ims, masks = next(iter(train_loader))
+                ims = ims.to(device)
+                masks = masks.to(device)
 
-        # Forward pass
-        opt.zero_grad()
-        loss = integrator(
-            ims,
-            masks,
-            emp_bg,
-            bg_penalty_scaling,
-            profile_scale,
-            kl_lognorm_scale,
-            kl_bern_scale,
-        )
+                # Forward pass
+                opt.zero_grad()
+                loss = integrator(
+                    ims,
+                    masks,
+                    emp_bg,
+                    kl_lognorm_scale,
+                    bg_penalty_scaling=None,
+                    kl_bern_scale=None,
+                )
 
-        # Backward pass
-        loss.backward()
-        opt.step()
+                # Backward pass
+                loss.backward()
+                opt.step()
 
-        # Record metrics
-        trace.append(loss.item())
-        grad_norm = (
-            sum(
-                p.grad.norm().item() ** 2
-                for p in integrator.parameters()
-                if p.grad is not None
-            )
-            ** 0.5
-        )
-        grad_norms.append(grad_norm)
-        # grad_norms.append(
-        # torch.nn.utils.clip_grad_norm(integrator.parameters(), max_norm=max_size)
-        # )
+                # Record metrics
+                trace.append(loss.item())
+                grad_norm = (
+                    sum(
+                        p.grad.norm().item() ** 2
+                        for p in integrator.parameters()
+                        if p.grad is not None
+                    )
+                    ** 0.5
+                )
+                grad_norms.append(grad_norm)
+                # grad_norms.append(
+                # torch.nn.utils.clip_grad_norm(integrator.parameters(), max_norm=max_size)
+                # )
 
-        bar.set_description(f"Step {(step+1)}/{steps},Loss:{loss.item():.4f}")
+                bar.set_description(f"Step {(steps+1)}/{steps},Loss:{loss.item():.4f}")
+                i += 1
+            else:
+                break
 
     final_loss = trace[-1]
 
     # Evaluation Loop
     integrator.eval()
     eval_metrics = {}
+
+    rotation_data.set_mode = "test"
     eval_loader = DataLoader(rotation_data, batch_size=batch_size, shuffle=False)
 
     num_batches = n_batches
@@ -179,6 +199,7 @@ def train_and_eval(bg_penalty_scaling, kl_bern_scale, kl_lognorm_scale, n_batche
             bg.append(output[2].cpu())
             pij_.append(output[3].cpu())
             counts.append(output[4].cpu())
+    rotation_data.set_mode = "train"
 
     # I = np.concatenate(I, axis=0)
     # SigI = np.concatenate(SigI, axis=0)
@@ -205,79 +226,83 @@ def train_and_eval(bg_penalty_scaling, kl_bern_scale, kl_lognorm_scale, n_batche
 
 results = []
 n_batches = 10
-for alpha in kl_bern_scale:
-    for beta in bg_penalty_scaling:
-        for gamma in kl_lognorm_scale:
-            try:
-                final_loss, eval_metrics, I_, trace_ = train_and_eval(
-                    beta, alpha, gamma, n_batches
-                )
+steps = len(train_loader)
+for gamma in kl_lognorm_scale:
+    try:
+        final_loss, eval_metrics, I_, trace_ = train_and_eval(
+            gamma, n_batches, bg_penalty_scaling=None, kl_bern_scale=None
+        )
 
-                # Plotting loss as function of step
-                plt.plot(np.linspace(0, steps, steps), trace_)
-                plt.ylabel("loss")
-                plt.xlabel("step")
-                plt.savefig(
-                    f"loss_alpha_{alpha}_beta_{beta}_gamma_{gamma}.png", dpi=300
-                )
+        # Plotting loss as function of step
+        plt.clf()
+        plt.plot(np.linspace(0, steps * num_epochs, steps * num_epochs), trace_)
+        plt.ylabel("loss")
+        plt.xlabel("step")
+        plt.savefig(f"loss_gamma_{gamma}.png", dpi=300)
 
-                # Scatter plot of network-intensity vs DIALS summmation model
-                plt.clf()
-                plt.scatter(
-                    np.array(I_).ravel(),
-                    rotation_data.refl_tables["intensity.sum.value"][
-                        0 : n_batches * batch_size
-                    ],
-                )
-                plt.savefig(
-                    f"NN_vs_sum_model_alpha_{alpha}_beta_{beta}_gamma_{gamma}.png",
-                    dpi=300,
-                )
+        # Scatter plot of network-intensity vs DIALS summmation model
+        plt.clf()
+        plt.scatter(
+            np.array(I_).ravel(),
+            rotation_data.refl_tables["intensity.sum.value"][
+                0 : n_batches * batch_size
+            ],
+            alpha=0.15,
+        )
+        plt.yscale("log")
+        plt.xscale("log")
+        plt.grid(alpha=0.5)
+        plt.savefig(
+            f"NN_vs_sum_model_gamma_{gamma}.png",
+            dpi=300,
+        )
 
-                # Network vs DIALS profile model
-                plt.clf()
-                plt.scatter(
-                    np.array(I_).ravel(),
-                    rotation_data.refl_tables["intensity.prf.value"][
-                        0 : n_batches * batch_size
-                    ],
-                )
-                plt.savefig(
-                    f"NN_vs_prf_model_alpha_{alpha}_beta_{beta}_gamma_{gamma}.png",
-                    dpi=300,
-                )
+        # Network vs DIALS profile model
+        plt.clf()
+        plt.scatter(
+            np.array(I_).ravel(),
+            rotation_data.refl_tables["intensity.prf.value"][
+                0 : n_batches * batch_size
+            ],
+            alpha=0.15,
+        )
+        plt.grid(alpha=0.5)
+        plt.yscale("log")
+        plt.scale("log")
+        plt.savefig(
+            f"NN_vs_prf_model_gamma_{gamma}.png",
+            dpi=300,
+        )
 
-                # append reults
-                results.append(
-                    {
-                        "bg_penalty_scaling": beta,
-                        "kl_bern_scale": alpha,
-                        "kl_lognorm_scale": gamma,
-                        "final_loss": final_loss,
-                        "min_intensity": eval_metrics["min_intensity"],
-                        "max_intensity": eval_metrics["max_intensity"],
-                        "mean_intensity": eval_metrics["mean_intensity"],
-                        "min_sigma": eval_metrics["min_sigma"],
-                        "max_sigma": eval_metrics["max_sigma"],
-                        "mean_sigma": eval_metrics["mean_sigma"],
-                        "min_background": eval_metrics["min_background"],
-                        "max_background": eval_metrics["max_background"],
-                        "mean_background": eval_metrics["mean_background"],
-                        "min_pij": eval_metrics["min_pij"],
-                        "max_pij": eval_metrics["max_pij"],
-                        "mean_pij": eval_metrics["mean_pij"],
-                    }
-                )
+        # append reults
+        results.append(
+            {
+                # "bg_penalty_scaling": beta,
+                # "kl_bern_scale": alpha,
+                "kl_lognorm_scale": gamma,
+                "final_loss": final_loss,
+                "min_intensity": eval_metrics["min_intensity"],
+                "max_intensity": eval_metrics["max_intensity"],
+                "mean_intensity": eval_metrics["mean_intensity"],
+                "min_sigma": eval_metrics["min_sigma"],
+                "max_sigma": eval_metrics["max_sigma"],
+                "mean_sigma": eval_metrics["mean_sigma"],
+                "min_background": eval_metrics["min_background"],
+                "max_background": eval_metrics["max_background"],
+                "mean_background": eval_metrics["mean_background"],
+                "min_pij": eval_metrics["min_pij"],
+                "max_pij": eval_metrics["max_pij"],
+                "mean_pij": eval_metrics["mean_pij"],
+            }
+        )
 
-            except Exception as e:
-                print(
-                    f"Failed with bg_penalty_scaling: {beta}, kl_lognorm_scale: {gamma}, kl_bern_scale: {alpha},Error:{e}"
-                )
+    except Exception as e:
+        print(f"Failed with kl_lognorm_scale: {gamma}, Error:{e}")
 # %%
 with open("hyperparameter_results.csv", "w", newline="") as csvfile:
     fieldnames = [
-        "bg_penalty_scaling",
-        "kl_bern_scale",
+        # "bg_penalty_scaling",
+        # "kl_bern_scale",
         "kl_lognorm_scale",
         "final_loss",
         "mean_intensity",
@@ -395,3 +420,5 @@ with open("hyperparameter_results.csv", "w", newline="") as csvfile:
 # rotation_data.refl_tables["background.mean"].mean()
 # rotation_data.refl_tables["background.mean"].max()
 # rotation_data.refl_tables["background.mean"].min()
+
+# %%
