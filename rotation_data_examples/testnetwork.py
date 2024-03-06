@@ -35,6 +35,7 @@ epochs = 1
 prior_mean = 7
 prior_std = 1.4
 num_epochs = 2
+dropout = 0.5
 
 bg_penalty_scaling = [0, 1]
 kl_bern_scale = [0, 1]
@@ -58,9 +59,11 @@ train_loader = DataLoader(rotation_data, batch_size=batch_size, shuffle=True)
 
 # %%
 # Encoders
-refl_encoder = RotationReflectionEncoder(depth, dmodel, feature_dim)
-intensity_bacground = IntensityBgPredictor(depth, dmodel)
-pixel_encoder = RotationPixelEncoder(depth=depth, dmodel=dmodel, d_in_refl=6)
+refl_encoder = RotationReflectionEncoder(depth, dmodel, feature_dim, dropout=dropout)
+intensity_bacground = IntensityBgPredictor(depth, dmodel, dropout=dropout)
+pixel_encoder = RotationPixelEncoder(
+    depth=depth, dmodel=dmodel, d_in_refl=6, dropout=dropout
+)
 profile_ = ProfilePredictor(dmodel, depth)
 likelihood = PoissonLikelihood(
     beta=beta, eps=eps, prior_mean=prior_mean, prior_std=prior_std
@@ -170,6 +173,7 @@ def train_and_eval(
                 break
 
     final_loss = trace[-1]
+    torch.save(integrator.state_dict(), f"weights_gamma{gamma}.pth")
 
     # Evaluation Loop
     integrator.eval()
@@ -235,7 +239,8 @@ for gamma in kl_lognorm_scale:
 
         # Plotting loss as function of step
         plt.clf()
-        plt.plot(np.linspace(0, steps * num_epochs, steps * num_epochs), trace_)
+        # plt.plot(np.linspace(0, steps * num_epochs, steps * num_epochs), trace_)
+        plt.plot(np.linspace(0, 2, 2), trace_)
         plt.ylabel("loss")
         plt.xlabel("step")
         plt.savefig(f"loss_gamma_{gamma}.png", dpi=300)
@@ -244,9 +249,7 @@ for gamma in kl_lognorm_scale:
         plt.clf()
         plt.scatter(
             np.array(I_).ravel(),
-            rotation_data.refl_tables["intensity.sum.value"][
-                0 : n_batches * batch_size
-            ],
+            rotation_data.test_df["intensity.sum.value"][0 : n_batches * batch_size],
             alpha=0.15,
         )
         plt.yscale("log")
@@ -261,14 +264,12 @@ for gamma in kl_lognorm_scale:
         plt.clf()
         plt.scatter(
             np.array(I_).ravel(),
-            rotation_data.refl_tables["intensity.prf.value"][
-                0 : n_batches * batch_size
-            ],
+            rotation_data.test_df["intensity.prf.value"][0 : n_batches * batch_size],
             alpha=0.15,
         )
         plt.grid(alpha=0.5)
         plt.yscale("log")
-        plt.scale("log")
+        plt.xscale("log")
         plt.savefig(
             f"NN_vs_prf_model_gamma_{gamma}.png",
             dpi=300,
@@ -305,15 +306,18 @@ with open("hyperparameter_results.csv", "w", newline="") as csvfile:
         # "kl_bern_scale",
         "kl_lognorm_scale",
         "final_loss",
-        "mean_intensity",
-        "max_intensity",
         "min_intensity",
+        "max_intensity",
+        "mean_intensity",
         "min_sigma",
         "max_sigma",
         "mean_sigma",
-        "mean_background",
         "min_background",
         "max_background",
+        "mean_background",
+        "min_pij",
+        "max_pij",
+        "mean_pij",
     ]
     writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
     writer.writeheader()  # Write the header row

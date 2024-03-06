@@ -64,9 +64,12 @@ class MLPPixelEncoder(torch.nn.Module):
 
 
 class RotationReflectionEncoder(torch.nn.Module):
-    def __init__(self, depth, dmodel, feature_dim):
+    def __init__(self, depth, dmodel, feature_dim, dropout=None):
         super().__init__()
-        self.mlp_1 = MLP(dmodel, depth, d_in=feature_dim, output_dims=dmodel)
+        self.dropout = None
+        self.mlp_1 = MLP(
+            dmodel, depth, d_in=feature_dim, dropout=self.dropout, output_dims=dmodel
+        )
         self.mean_pool = MeanPool()
 
     def forward(self, shoebox_data, mask=None):
@@ -124,9 +127,10 @@ class MLPReflEncoder(torch.nn.Module):
 
 
 class MLPImageEncoder(torch.nn.Module):
-    def __init__(self, depth, dmodel):
+    def __init__(self, depth, dmodel, dropout=None):
         super().__init__()
-        self.mlp_1 = MLPImage(dmodel, depth, output_dims=dmodel + 1)
+        self.dropout = dropout
+        self.mlp_1 = MLPImage(dmodel, depth, dropout=dropout, output_dims=dmodel + 1)
 
     def forward(self, refl_representation):
         out = self.mlp_1(refl_representation)
@@ -139,9 +143,10 @@ class MLPImageEncoder(torch.nn.Module):
 
 
 class MLPOut1Encoder(torch.nn.Module):
-    def __init__(self, depth, dmodel):
+    def __init__(self, depth, dmodel, dropout=None):
         super().__init__()
-        self.mlp_1 = MLPOut1(dmodel, depth, output_dims=2 + 2 + 1)
+        self.dropout = dropout
+        self.mlp_1 = MLPOut1(dmodel, depth, dropout=self.dropout, output_dims=2 + 2 + 1)
 
     def forward(self, image_rep, refl_representation):
         summed = refl_representation + image_rep.transpose(-2, -1)
@@ -155,9 +160,10 @@ class IntensityBgPredictor(torch.nn.Module):
     Ouputs mu and sigma for LogNorm(mu,sigma) and Background
     """
 
-    def __init__(self, depth, dmodel):
+    def __init__(self, depth, dmodel, dropout=None):
         super().__init__()
-        self.mlp_1 = MLPOut1(dmodel, depth, output_dims=2 + 1)
+        self.dropout = dropout
+        self.mlp_1 = MLPOut1(dmodel, depth, dropout=self.dropout, output_dims=2 + 1)
 
     def forward(self, refl_representation):
         out1 = self.mlp_1(refl_representation)
@@ -166,9 +172,10 @@ class IntensityBgPredictor(torch.nn.Module):
 
 
 class MLPPijEncoder(torch.nn.Module):
-    def __init__(self, depth, dmodel):
+    def __init__(self, depth, dmodel, dropout=None):
         super().__init__()
-        self.mlp_1 = MLPPij(dmodel, depth, output_dims=1)
+        self.dropout = dropout
+        self.mlp_1 = MLPPij(dmodel, depth, dropout=self.dropout, output_dims=1)
         # self.mlp_2 = MLPPij2(dmodel, output_dims=1024)
 
     def forward(self, image_rep, refl_representation, pixel_rep):
@@ -194,9 +201,10 @@ class ProfilePredictor(torch.nn.Module):
     Outputs p_ij matrix to scale Intensity values
     """
 
-    def __init__(self, dmodel, depth):
+    def __init__(self, dmodel, depth, dropout=None):
         super().__init__()
-        self.mlp_1 = MLPPij(dmodel, depth, output_dims=1)
+        self.dropout = dropout
+        self.mlp_1 = MLPPij(dmodel, depth, dropout=self.dropout, output_dims=1)
 
     def forward(self, refl_representation, pixel_rep):
         sum = pixel_rep + refl_representation.expand_as(pixel_rep)
@@ -211,9 +219,12 @@ class RotationPixelEncoder(torch.nn.Module):
     Encodes pixels into (num_reflection x max_voxel_sixe x d_model)
     """
 
-    def __init__(self, depth, dmodel, d_in_refl=4):
+    def __init__(self, depth, dmodel, d_in_refl=4, dropout=None):
         super().__init__()
-        self.mlp_1 = MLP(dmodel, depth, d_in=d_in_refl, output_dims=dmodel)
+        self.dropout = dropout
+        self.mlp_1 = MLP(
+            dmodel, depth, d_in=d_in_refl, dropout=self.dropout, output_dims=dmodel
+        )
 
     def forward(self, shoebox, mask=None):
         out = self.mlp_1(shoebox)
