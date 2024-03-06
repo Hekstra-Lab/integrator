@@ -59,10 +59,9 @@ class PoissonLikelihood(torch.nn.Module):
         bg,
         q,
         emp_bg,
-        bg_penalty_scaling,
-        profile_scale,
         kl_lognorm_scale,
-        kl_bern_scale,
+        bg_penalty_scaling=None,
+        kl_bern_scale=None,
         mc_samples=100,
         vi=True,
         mask=None,
@@ -81,22 +80,25 @@ class PoissonLikelihood(torch.nn.Module):
             mask: mask for padded data
 
         Returns:
-
         """
+
         # Take sample from LogNormal
         z = q.rsample([mc_samples])
 
         # Set KL term
         kl_term = 0
+
         # rate = (z * pijrep * norm_factor.unsqueeze(-1)) + bg
-        rate = (z * (profile_scale * pijrep)) + bg
+        rate = (z * (pijrep)) + bg
+
         # counts ~ Pois(rate) = Pois(z * p + bg)
         counts = torch.clamp(counts, min=0)
 
         # Empirical background
-        bg_penalty = (bg - emp_bg) ** 2
-        bg_penalty = bg_penalty * mask
-        bg_penalty = bg_penalty.mean() * bg_penalty_scaling
+        bg_penalty = 0
+        # bg_penalty = (bg - emp_bg) ** 2
+        # bg_penalty = bg_penalty * mask
+        # bg_penalty = bg_penalty.mean() * bg_penalty_scaling
 
         if mask is not None:
             ll = torch.distributions.Poisson(rate).log_prob(counts.to(torch.int32))
@@ -118,13 +120,15 @@ class PoissonLikelihood(torch.nn.Module):
 
             # zero out pads
             masked_kl_lognorm = kl_lognorm * mask
-            masked_kl_bern = kl_bern * mask
+            # masked_kl_bern = kl_bern * mask
 
             # total kl
             kl_term = (
-                kl_lognorm_scale * masked_kl_lognorm.mean()
-                + kl_bern_scale * masked_kl_bern.mean()
+                kl_lognorm_scale
+                * masked_kl_lognorm.mean()
+                # + kl_bern_scale * masked_kl_bern.mean()
             )
+
             # kl_term = masked_kl_bern.mean()
 
         else:

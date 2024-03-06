@@ -12,12 +12,31 @@ import numpy as np
 
 # %%
 class RotationData(torch.utils.data.Dataset):
-    def __init__(self, max_size=4096, shoebox_dir=None, max_detector_dimension=5000):
+    def __init__(
+        self,
+        max_size=4096,
+        shoebox_dir=None,
+        max_detector_dimension=5000,
+        train_split=0.7,
+        val_split=None,
+        test_split=0.3,
+        seed=60,
+    ):
         self.max_detector_dimension = max_detector_dimension
+        self.seed = seed
+        self.mode = "train"
         self.max_size = max_size
+        self.train_split = train_split
+        self.val_split = val_split
+        self.test_split = test_split if val_split is not None else 1 - train_split
         self.shoebox_dir = shoebox_dir
         self.shoebox_filenames = self._get_shoebox_filenames()
-        self.refl_tables, self.max_voxels = self._get_refl_tables()
+        (
+            self.train_df,
+            self.val_df,
+            self.test_df,
+            self.max_voxels,
+        ) = self._get_refl_tables()
 
     def _get_shoebox_filenames(self):
         """
@@ -156,44 +175,141 @@ class RotationData(torch.utils.data.Dataset):
             # stack dataframe
             final_df = final_df.vstack(df) if final_df is not None else df
         max_voxel = max(max_vox)
+        if self.val_split is not None:
+            self.train_df, self.val_df, self.test_df = self.split_data(final_df)
+        else:
+            (
+                self.train_df,
+                self.test_df,
+            ) = self.split_data(final_df)
+            self.val_df = None
 
-        return final_df, max_voxel
+        return self.train_df, self.val_df, self.test_df, max_voxel
+
+    def split_data(self, refl_tables):
+        np.random.seed(self.seed)
+        total_rows = len(refl_tables)
+        # shuffled_index = pl.arange(0, total_rows).shuffle(seed=None)
+        shuffled_index = np.random.permutation(total_rows)
+
+        # get train set
+        train_size = int(total_rows * self.train_split)
+        train_data = refl_tables.select(pl.all().gather(shuffled_index[:train_size]))
+
+        if self.val_split is not None:
+            val_end = train_size + int(total_rows * self.val_split)
+
+            val_data = refl_tables.select(
+                pl.all().gather(shuffled_index[train_size:val_end])
+            )
+
+            test_data = refl_tables.select(pl.all().gather(shuffled_index[val_end:]))
+
+            return train_data, val_data, test_data
+        else:
+            test_data = refl_tables.select(pl.all().gather(shuffled_index[train_size:]))
+            return train_data, test_data
+
+    def set_mode(self, mode):
+        assert mode in ["train", "test"], "Mode should be 'train' or 'test'"
+        self.mode = mode
 
     def __len__(self):
         """
         Return the length (number of shoeboxes) of the dataset
         """
-        return self.refl_tables.height
+        if self.mode == "train":
+            return self.train_df.height
+        elif self.mode == "validate":
+            return self.val_df.height
+        else:
+            return self.test_df.height
 
     def __getitem__(self, idx):
         """
         Return the (idx)th shoebox
         """
-        coords = self.refl_tables["coordinates"].gather(idx).item()
-        dxy = self.refl_tables["dxy"].gather(idx).item()
-        num_pix = self.refl_tables["num_pix"].gather(idx).item()
-        pad_size = self.max_voxels - len(coords)
-        i_obs = self.refl_tables["intensity_observed"].gather(idx).item()
 
-        pad_coords = torch.nn.functional.pad(
-            coords, (0, 0, 0, max(pad_size, 0)), "constant", 0
-        )
-        pad_dxy = torch.nn.functional.pad(
-            dxy, (0, 0, 0, max(pad_size, 0)), "constant", 0
-        )
-        pad_iobs = torch.nn.functional.pad(
-            i_obs, (0, max(pad_size, 0)), "constant", 0
-        ).unsqueeze(dim=-1)
+        if self.mode == "train":
+            coords = self.train_df["coordinates"].gather(idx).item()
+            dxy = self.train_df["dxy"].gather(idx).item()
+            num_pix = self.train_df["num_pix"].gather(idx).item()
+            pad_size = self.max_voxels - len(coords)
+            i_obs = self.train_df["intensity_observed"].gather(idx).item()
 
-        padded_data = torch.cat((pad_coords, pad_dxy, pad_iobs), dim=1)
+            pad_coords = torch.nn.functional.pad(
+                coords, (0, 0, 0, max(pad_size, 0)), "constant", 0
+            )
+            pad_dxy = torch.nn.functional.pad(
+                dxy, (0, 0, 0, max(pad_size, 0)), "constant", 0
+            )
+            pad_iobs = torch.nn.functional.pad(
+                i_obs, (0, max(pad_size, 0)), "constant", 0
+            ).unsqueeze(dim=-1)
 
-        mask = torch.nn.functional.pad(
-            torch.ones_like(i_obs, dtype=torch.bool),
-            (0, max(pad_size, 0)),
-            "constant",
-            False,
-        )
-        return padded_data, mask
+            padded_data = torch.cat((pad_coords, pad_dxy, pad_iobs), dim=1)
+
+            mask = torch.nn.functional.pad(
+                torch.ones_like(i_obs, dtype=torch.bool),
+                (0, max(pad_size, 0)),
+                "constant",
+                False,
+            )
+            return padded_data, mask
+
+        elif self.mode == "test":
+            coords = self.test_df["coordinates"].gather(idx).item()
+            dxy = self.test_df["dxy"].gather(idx).item()
+            num_pix = self.test_df["num_pix"].gather(idx).item()
+            pad_size = self.max_voxels - len(coords)
+            i_obs = self.test_df["intensity_observed"].gather(idx).item()
+
+            pad_coords = torch.nn.functional.pad(
+                coords, (0, 0, 0, max(pad_size, 0)), "constant", 0
+            )
+            pad_dxy = torch.nn.functional.pad(
+                dxy, (0, 0, 0, max(pad_size, 0)), "constant", 0
+            )
+            pad_iobs = torch.nn.functional.pad(
+                i_obs, (0, max(pad_size, 0)), "constant", 0
+            ).unsqueeze(dim=-1)
+
+            padded_data = torch.cat((pad_coords, pad_dxy, pad_iobs), dim=1)
+
+            mask = torch.nn.functional.pad(
+                torch.ones_like(i_obs, dtype=torch.bool),
+                (0, max(pad_size, 0)),
+                "constant",
+                False,
+            )
+            return padded_data, mask
+
+        else:
+            coords = self.val_df["coordinates"].gather(idx).item()
+            dxy = self.val_df["dxy"].gather(idx).item()
+            num_pix = self.val_df["num_pix"].gather(idx).item()
+            pad_size = self.max_voxels - len(coords)
+            i_obs = self.val_df["intensity_observed"].gather(idx).item()
+
+            pad_coords = torch.nn.functional.pad(
+                coords, (0, 0, 0, max(pad_size, 0)), "constant", 0
+            )
+            pad_dxy = torch.nn.functional.pad(
+                dxy, (0, 0, 0, max(pad_size, 0)), "constant", 0
+            )
+            pad_iobs = torch.nn.functional.pad(
+                i_obs, (0, max(pad_size, 0)), "constant", 0
+            ).unsqueeze(dim=-1)
+
+            padded_data = torch.cat((pad_coords, pad_dxy, pad_iobs), dim=1)
+
+            mask = torch.nn.functional.pad(
+                torch.ones_like(i_obs, dtype=torch.bool),
+                (0, max(pad_size, 0)),
+                "constant",
+                False,
+            )
+            return padded_data, mask
 
 
 # %%
