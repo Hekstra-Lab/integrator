@@ -5,8 +5,10 @@ from .mlp import MLPPij
 from .mlp import MLPPij2
 from .integratration import Integrator
 from .integratration import IntegratorV2
+from .integratration import IntegratorTransformer
 from .integratration import IntegratorBern
 from .encoder import MLPEncoder
+from .encoder import ReflectionTransformerEncoder
 from .encoder import MLPOut1Encoder
 from .encoder import IntensityBgPredictor
 from .encoder import MLPPixelEncoder

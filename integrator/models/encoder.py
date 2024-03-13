@@ -1,6 +1,6 @@
 from pylab import *
 import torch
-from integrator.layers import Linear, ResidualLayer
+from integrator.layers import Linear, ResidualLayer, Transformer
 from integrator.models import MLP, MLPImage, MLPOut1, MLPPij, MLPPij2
 
 
@@ -78,6 +78,44 @@ class RotationReflectionEncoder(torch.nn.Module):
         return pooled_out
 
 
+class ReflectionTransformerEncoder(torch.nn.Module):
+    def __init__(
+        self,
+        depth,
+        dmodel,
+        feature_dim,
+        dropout=None,
+        d_hid=2000,
+        nhead=8,
+        nlayers=6,
+        batch_first=True,
+    ):
+        super().__init__()
+        self.dropout = None
+        self.d_hid = d_hid
+        self.nhead = nhead
+        self.nlayers = nlayers
+        self.batch_first = batch_first
+        self.dmodel = dmodel
+        self.mlp_1 = MLP(
+            dmodel, depth, d_in=feature_dim, dropout=self.dropout, output_dims=dmodel
+        )
+        self.transformer = Transformer(
+            d_model=self.dmodel,
+            d_hid=self.d_hid,
+            nhead=self.nhead,
+            batch_first=self.batch_first,
+            nlayers=self.nlayers,
+        )
+        self.mean_pool = MeanPool()
+
+    def forward(self, shoebox_data, mask=None):
+        out = self.mlp_1(shoebox_data)
+        transformer_out = self.transformer(out, src_mask=mask)
+        pooled_out = self.mean_pool(transformer_out, mask)
+        return pooled_out
+
+
 # Embed shoeboxes
 class MeanPool(torch.nn.Module):
     def __init__(self, dim=-1):
@@ -96,6 +134,24 @@ class MeanPool(torch.nn.Module):
         out = out / denom.unsqueeze(-1)
 
         return out
+
+
+class RotationPixelEncoder(torch.nn.Module):
+    """
+    Encodes pixels into (num_reflection x max_voxel_sixe x d_model)
+    """
+
+    def __init__(self, depth, dmodel, d_in_refl=4, dropout=None):
+        super().__init__()
+        self.dropout = dropout
+        self.mlp_1 = MLP(
+            dmodel, depth, d_in=d_in_refl, dropout=self.dropout, output_dims=dmodel
+        )
+
+    def forward(self, shoebox, mask=None):
+        out = self.mlp_1(shoebox)
+        pixel_rep = torch.relu(out)
+        return pixel_rep
 
 
 class MLPReflEncoder(torch.nn.Module):
@@ -212,21 +268,3 @@ class ProfilePredictor(torch.nn.Module):
         out = torch.softmax(out, axis=-2)
         out = out.squeeze(-1)
         return out
-
-
-class RotationPixelEncoder(torch.nn.Module):
-    """
-    Encodes pixels into (num_reflection x max_voxel_sixe x d_model)
-    """
-
-    def __init__(self, depth, dmodel, d_in_refl=4, dropout=None):
-        super().__init__()
-        self.dropout = dropout
-        self.mlp_1 = MLP(
-            dmodel, depth, d_in=d_in_refl, dropout=self.dropout, output_dims=dmodel
-        )
-
-    def forward(self, shoebox, mask=None):
-        out = self.mlp_1(shoebox)
-        pixel_rep = torch.relu(out)
-        return pixel_rep

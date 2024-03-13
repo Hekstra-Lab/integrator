@@ -36,7 +36,9 @@ class ResidualLayer(torch.nn.Module):
 
 
 class Transformer(torch.nn.Module):
-    def __init__(self, d_model: int, d_hid: int, nhead: int, nlayers: int):
+    def __init__(
+        self, d_model: int, d_hid: int, nhead: int, nlayers: int, batch_first=True
+    ):
         super().__init__()
 
         # Layers ,

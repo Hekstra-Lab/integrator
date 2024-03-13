@@ -178,6 +178,7 @@ def train_and_eval(
     # Evaluation Loop
     integrator.eval()
     eval_metrics = {}
+    val_loss = []
 
     rotation_data.set_mode = "test"
     eval_loader = DataLoader(rotation_data, batch_size=batch_size, shuffle=False)
@@ -425,4 +426,6 @@ with open("hyperparameter_results.csv", "w", newline="") as csvfile:
 # rotation_data.refl_tables["background.mean"].max()
 # rotation_data.refl_tables["background.mean"].min()
 
+
 # %%
+print(integrator)
