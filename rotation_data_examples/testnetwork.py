@@ -1,12 +1,10 @@
 import torch
 import math
-import csv
 import polars as pl
 import numpy as np
 from integrator.io import RotationData
 from tqdm import trange
 from tqdm import tqdm
-import matplotlib.pyplot as plt
 from integrator.models import (
     LogNormDistribution,
     ProfilePredictor,
@@ -17,17 +15,15 @@ from integrator.models import (
     PoissonLikelihood,
 )
 from torch.utils.data import DataLoader
-import itertools
 
-# %%
 # Hyperparameters
 steps = 10000
-batch_size = 100
+batch_size = 10
 max_size = 1024
 beta = 1.0
 eps = 1e-12
 depth = 10
-learning_rate = 0.0001
+learning_rate = 0.001
 dmodel = 64
 feature_dim = 7
 mc_samples = 100
@@ -39,25 +35,21 @@ dropout = 0.5
 
 bg_penalty_scaling = [0, 1]
 kl_bern_scale = [0, 1]
-kl_lognorm_scale = [1]
+kl_lognorm_scale = [0]
 
 # Use GPU if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Loading data
 shoebox_dir = "/Users/luis/integrator/rotation_data_examples/data/"
-# shoebox_dir = "/n/holylabs/LABS/hekstra_lab/Users/laldama"
+# shoebox_dir = "/n/holylabs/LABS/hekstra_lab/Users/laldama/integrator_/rotation_data_examples/data_temp/temp"
 rotation_data = RotationData(shoebox_dir=shoebox_dir, val_split=None)
 
 
-# %%
 # loads a shoebox and corresponding mask
 rotation_data.set_mode("train")
-
 train_loader = DataLoader(rotation_data, batch_size=batch_size, shuffle=True)
 
-
-# %%
 # Encoders
 refl_encoder = RotationReflectionEncoder(depth, dmodel, feature_dim, dropout=dropout)
 intensity_bacground = IntensityBgPredictor(depth, dmodel, dropout=dropout)
@@ -79,11 +71,9 @@ integrator = integrator.to(device)
 # train set empirical background
 emp_bg = rotation_data.train_df["background.mean"].mean()
 
-
-# %%
-
-
 # Trunacated Normal
+
+
 def weight_initializer(weight):
     fan_avg = 0.5 * (weight.shape[-1] + weight.shape[-2])
     std = math.sqrt(1.0 / fan_avg / 10.0)
@@ -126,13 +116,54 @@ def train_and_eval(
     opt = torch.optim.Adam(integrator.parameters(), lr=learning_rate)  # optimizer
     torch.autograd.set_detect_anomaly(True)
 
+    # DataLoader for evaluation
+    eval_loader = DataLoader(rotation_data, batch_size=batch_size, shuffle=False)
+
+    # DIALS Intensity from profile model
+    I_dials_prf = rotation_data.test_df["intensity.prf.value"][
+        0 : n_batches * batch_size
+    ]
+
+    # DIALS Intensity from summation model
+    I_dials_sum = rotation_data.test_df["intensity.prf.value"][
+        0 : n_batches * batch_size
+    ]
+
+    # DataFrame to store evaluation metrics
+    eval_metrics = pl.DataFrame(
+        {
+            "epoch": pl.Series([], dtype=pl.Int64),
+            "average_loss": pl.Series([], dtype=pl.Float64),
+            "test_loss": pl.Series([], dtype=pl.Float32),
+            "min_intensity": pl.Series([], dtype=pl.Float32),
+            "max_intensity": pl.Series([], dtype=pl.Float32),
+            "mean_intensity": pl.Series([], dtype=pl.Float32),
+            "min_sigma": pl.Series([], dtype=pl.Float32),
+            "max_sigma": pl.Series([], dtype=pl.Float32),
+            "mean_sigma": pl.Series([], dtype=pl.Float32),
+            "min_background": pl.Series([], dtype=pl.Float32),
+            "max_background": pl.Series([], dtype=pl.Float32),
+            "mean_background": pl.Series([], dtype=pl.Float32),
+            "min_pij": pl.Series([], dtype=pl.Float32),
+            "max_pij": pl.Series([], dtype=pl.Float32),
+            "mean_pij": pl.Series([], dtype=pl.Float32),
+            "corr_prf": pl.Series([], dtype=pl.Float64),
+            "corr_sum": pl.Series([], dtype=pl.Float64),
+        }
+    )
+    # Array to store predicted Intensities
+    I_pred_arr = np.empty((0, batch_size * n_batches))
+    # Array to store predicted SigI
+    SigI_pred_arr = np.empty((0, batch_size * n_batches))
+
     for epoch in range(num_epochs):
         bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}")
 
+        batch_loss = []
         i = 0
         # Get batch data
         for ims, masks in bar:
-            if i != 1:
+            if i != 2:
                 # ims, masks = next(iter(train_loader))
                 ims = ims.to(device)
                 masks = masks.to(device)
@@ -154,6 +185,7 @@ def train_and_eval(
 
                 # Record metrics
                 trace.append(loss.item())
+                batch_loss.append(loss.item())
                 grad_norm = (
                     sum(
                         p.grad.norm().item() ** 2
@@ -162,270 +194,113 @@ def train_and_eval(
                     )
                     ** 0.5
                 )
-                grad_norms.append(grad_norm)
-                # grad_norms.append(
-                # torch.nn.utils.clip_grad_norm(integrator.parameters(), max_norm=max_size)
-                # )
+                # grad_norms.append(grad_norm)
+                grad_norms.append(
+                    torch.nn.utils.clip_grad_norm(
+                        integrator.parameters(), max_norm=max_size
+                    )
+                )
 
                 bar.set_description(f"Step {(steps+1)}/{steps},Loss:{loss.item():.4f}")
                 i += 1
             else:
                 break
+        # Evaluation Loop
+        integrator.eval()
+        val_loss = []
 
-    final_loss = trace[-1]
-    torch.save(integrator.state_dict(), f"weights_gamma{gamma}.pth")
+        rotation_data.set_mode("train")
 
-    # Evaluation Loop
-    integrator.eval()
-    eval_metrics = {}
-    val_loss = []
+        num_batches = n_batches
+        I, SigI = [], []
+        pij_ = []
+        bg = []
+        counts = []
 
-    rotation_data.set_mode = "test"
-    eval_loader = DataLoader(rotation_data, batch_size=batch_size, shuffle=False)
+        with torch.no_grad():
+            for i, (ims, masks) in enumerate(eval_loader):
+                if i >= num_batches:
+                    break
+                ims = ims.to(device)
+                masks = masks.to(device)
 
-    num_batches = n_batches
-    I, SigI = [], []
-    pij_ = []
-    bg = []
-    counts = []
+                # forward pass
+                output = integrator.get_intensity_sigma_batch(
+                    ims, masks, emp_bg=emp_bg, kl_lognorm_scale=kl_lognorm_scale
+                )
 
-    with torch.no_grad():
-        for i, (ims, masks) in enumerate(eval_loader):
-            if i >= num_batches:
-                break
-            ims = ims.to(device)
-            masks = masks.to(device)
+                I.append(output[0].cpu())
+                SigI.append(output[1].cpu())
+                bg.append(output[2].cpu())
+                pij_.append(output[3].cpu())
+                counts.append(output[4].cpu())
+                val_loss.append(output[5].cpu())
 
-            # forward pass
-            output = integrator.get_intensity_sigma_batch(ims, masks)
+        rotation_data.set_mode("train")
+        # Correlation
 
-            I.append(output[0].cpu())
-            SigI.append(output[1].cpu())
-            bg.append(output[2].cpu())
-            pij_.append(output[3].cpu())
-            counts.append(output[4].cpu())
-    rotation_data.set_mode = "train"
+        # Correlation Calculation
+        I_pred = np.ravel([I])
+        corr_prf = np.corrcoef(I_dials_prf, I_pred)[0][-1]
+        corr_sum = np.corrcoef(I_dials_sum, I_pred)[0][-1]
 
-    # I = np.concatenate(I, axis=0)
-    # SigI = np.concatenate(SigI, axis=0)
-    # bg = np.concatenate(bg, axis=0)
+        I_pred_arr = np.vstack((I_pred_arr, I_pred))
+        SigI_pred_arr = np.vstack((SigI_pred_arr, np.array(SigI).ravel()))
+        eval_metrics = eval_metrics.vstack(
+            pl.DataFrame(
+                {
+                    "epoch": [epoch],
+                    "average_loss": [np.mean([batch_loss])],
+                    "test_loss": [np.mean([val_loss])],
+                    "min_intensity": [np.array(I).ravel().min()],
+                    "max_intensity": [np.array(I).ravel().max()],
+                    "mean_intensity": [np.array(I).ravel().mean()],
+                    "min_sigma": [np.array(SigI).ravel().min()],
+                    "max_sigma": [np.array(SigI).ravel().max()],
+                    "mean_sigma": [np.array(SigI).ravel().mean()],
+                    "min_background": [np.array(bg).ravel().min()],
+                    "max_background": [np.array(bg).ravel().max()],
+                    "mean_background": [np.array(bg).ravel().mean()],
+                    "min_pij": [np.array(pij_).ravel().min()],
+                    "max_pij": [np.array(pij_).ravel().max()],
+                    "mean_pij": [np.array(pij_).ravel().mean()],
+                    "corr_prf": [corr_prf],
+                    "corr_sum": [corr_sum],
+                }
+            )
+        )
 
-    eval_metrics["min_intensity"] = np.array(I).ravel().min()
-    eval_metrics["max_intensity"] = np.array(I).ravel().max()
-    eval_metrics["mean_intensity"] = np.array(I).ravel().mean()
-    eval_metrics["min_sigma"] = np.array(SigI).ravel().min()
-    eval_metrics["max_sigma"] = np.array(SigI).ravel().max()
-    eval_metrics["mean_sigma"] = np.array(SigI).ravel().mean()
-    eval_metrics["min_background"] = np.array(bg).ravel().min()
-    eval_metrics["max_background"] = np.array(bg).ravel().max()
-    eval_metrics["mean_background"] = np.array(bg).ravel().mean()
-    eval_metrics["min_pij"] = np.array(pij_).ravel().min()
-    eval_metrics["max_pij"] = np.array(pij_).ravel().max()
-    eval_metrics["mean_pij"] = np.array(pij_).ravel().mean()
+    # save weights after final epoch
 
-    return final_loss, eval_metrics, I, trace
+    return trace, eval_metrics, I_pred_arr, SigI_pred_arr
 
 
 # %%
 # training loop
 
-results = []
 n_batches = 10
+I_list = []
 steps = len(train_loader)
-for gamma in kl_lognorm_scale:
+
+for i, gamma in enumerate(kl_lognorm_scale):
     try:
-        final_loss, eval_metrics, I_, trace_ = train_and_eval(
+        (trace_, metrics, I_pred_arr, Sig_I_pred_arr) = train_and_eval(
             gamma, n_batches, bg_penalty_scaling=None, kl_bern_scale=None
         )
 
-        # Plotting loss as function of step
-        plt.clf()
-        # plt.plot(np.linspace(0, steps * num_epochs, steps * num_epochs), trace_)
-        plt.plot(np.linspace(0, 2, 2), trace_)
-        plt.ylabel("loss")
-        plt.xlabel("step")
-        plt.savefig(f"loss_gamma_{gamma}.png", dpi=300)
-
-        # Scatter plot of network-intensity vs DIALS summmation model
-        plt.clf()
-        plt.scatter(
-            np.array(I_).ravel(),
-            rotation_data.test_df["intensity.sum.value"][0 : n_batches * batch_size],
-            alpha=0.15,
-        )
-        plt.yscale("log")
-        plt.xscale("log")
-        plt.grid(alpha=0.5)
-        plt.savefig(
-            f"NN_vs_sum_model_gamma_{gamma}.png",
-            dpi=300,
-        )
-
-        # Network vs DIALS profile model
-        plt.clf()
-        plt.scatter(
-            np.array(I_).ravel(),
-            rotation_data.test_df["intensity.prf.value"][0 : n_batches * batch_size],
-            alpha=0.15,
-        )
-        plt.grid(alpha=0.5)
-        plt.yscale("log")
-        plt.xscale("log")
-        plt.savefig(
-            f"NN_vs_prf_model_gamma_{gamma}.png",
-            dpi=300,
-        )
-
-        # append reults
-        results.append(
-            {
-                # "bg_penalty_scaling": beta,
-                # "kl_bern_scale": alpha,
-                "kl_lognorm_scale": gamma,
-                "final_loss": final_loss,
-                "min_intensity": eval_metrics["min_intensity"],
-                "max_intensity": eval_metrics["max_intensity"],
-                "mean_intensity": eval_metrics["mean_intensity"],
-                "min_sigma": eval_metrics["min_sigma"],
-                "max_sigma": eval_metrics["max_sigma"],
-                "mean_sigma": eval_metrics["mean_sigma"],
-                "min_background": eval_metrics["min_background"],
-                "max_background": eval_metrics["max_background"],
-                "mean_background": eval_metrics["mean_background"],
-                "min_pij": eval_metrics["min_pij"],
-                "max_pij": eval_metrics["max_pij"],
-                "mean_pij": eval_metrics["mean_pij"],
-            }
-        )
+        metrics.write_csv(f"bern{gamma}_run{i}.csv")  # Save evaluation metrics
+        np.savetxt(f"trace_run_{i}.csv", trace_, fmt="%s")  # save loss trace
+        np.savetxt(
+            f"I_pred_run_{i}.csv", I_pred_arr, delimiter=","
+        )  # save network predicted intensity
+        np.savetxt(
+            f"SigI_pred_run_{i}.csv", I_pred_arr, delimiter=","
+        )  # save network predicted SigI
+        torch.save(
+            integrator.state_dict(), f"weights_gamma{gamma}.pth"
+        )  # save final network weights
 
     except Exception as e:
         print(f"Failed with kl_lognorm_scale: {gamma}, Error:{e}")
-# %%
-with open("hyperparameter_results.csv", "w", newline="") as csvfile:
-    fieldnames = [
-        # "bg_penalty_scaling",
-        # "kl_bern_scale",
-        "kl_lognorm_scale",
-        "final_loss",
-        "min_intensity",
-        "max_intensity",
-        "mean_intensity",
-        "min_sigma",
-        "max_sigma",
-        "mean_sigma",
-        "min_background",
-        "max_background",
-        "mean_background",
-        "min_pij",
-        "max_pij",
-        "mean_pij",
-    ]
-    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-    writer.writeheader()  # Write the header row
-    for result in results:
-        writer.writerow(result)
 
 # %%
-
-# # DIALS profile intensity
-# rotation_data.refl_tables["intensity.prf.value"].min()
-# rotation_data.refl_tables["intensity.prf.value"].max()
-# rotation_data.refl_tables["intensity.prf.value"].mean()
-
-# # DIALS summation intensity
-# rotation_data.refl_tables["intensity.sum.value"].min()
-# rotation_data.refl_tables["intensity.sum.value"].max()
-# rotation_data.refl_tables["intensity.sum.value"].mean()
-
-
-# %%
-# Stats
-# Mean intensity across dataset
-# print(f"Dataset mean intensity: {np.array(I).ravel().mean()}")
-# print(f"Dataset max intensity: {np.array(I).ravel().max()}")
-# print(f"Dataset mean SigI: {np.array(SigI).ravel().mean()}")
-
-# # profile values
-# np.array(pij_).ravel().min()
-# np.array(pij_).ravel().max()
-# np.array(pij_).ravel().mean()
-
-
-# Stats
-# Mean intensity across dataset
-# print(f"Dataset mean intensity: {np.array(I).ravel().mean()}")
-# print(f"Dataset max intensity: {np.array(I).ravel().max()}")
-# print(f"Dataset mean SigI: {np.array(SigI).ravel().mean()}")
-
-# # profile values
-# np.array(pij_).ravel().min()
-# np.array(pij_).ravel().max()
-# np.array(pij_).ravel().mean()
-
-
-# # Mean background across dataset
-# print(f"Dataset mean background {np.array(bg).ravel().mean()}")
-
-# # Max background
-# print(f"Max background: {np.array(bg).ravel().max()}")
-# print(f"Min background: np.array(bg).ravel().min()")
-
-# # Min background
-# rotation_data.refl_tables.columns
-
-# %%
-# Stats
-# Mean intensity across dataset
-# print(f"Dataset mean intensity: {np.array(I).ravel().mean()}")
-# print(f"Dataset max intensity: {np.array(I).ravel().max()}")
-# print(f"Dataset mean SigI: {np.array(SigI).ravel().mean()}")
-# # profile values
-# np.array(pij_).ravel().min()
-# np.array(pij_).ravel().max()
-# np.array(pij_).ravel().mean()
-
-
-# # DIALS profile intensity
-# rotation_data.refl_tables["intensity.prf.value"].min()
-# rotation_data.refl_tables["intensity.prf.value"].max()
-# rotation_data.refl_tables["intensity.prf.value"].mean()
-
-# # DIALS summation intensity
-# rotation_data.refl_tables["intensity.sum.value"].min()
-# rotation_data.refl_tables["intensity.sum.value"].max()
-# rotation_data.refl_tables["intensity.sum.value"].mean()
-
-# # %%
-# # Plots
-
-# %%
-# Plotting loss as function of step
-# plt.plot(np.linspace(0, steps, steps - 10), trace[10::])
-# plt.ylabel("loss")
-# plt.xlabel("step")
-# plt.show()
-
-# %%
-# # Scatter plot of network-intensity vs DIALS summmation model
-# plt.scatter(
-# np.array(I).ravel(),
-# rotation_data.refl_tables["intensity.sum.value"][0 : num_batches * batch_size],
-# )
-# plt.savefig("intensity_vs_summation_model", dpi=300)
-
-# # Scatter plot of network-intensity vs DIALS profile model
-# plt.scatter(
-# np.array(bg).ravel(), rotation_data.refl_tables["intensity.sum.value"][0:1000]
-# )
-# plt.yscale("log")
-# plt.xscale("log")
-# plt.show()
-# plt.savefig("intensity_vs_profile.png", dpi=300)
-
-# rotation_data.refl_tables["background.mean"].mean()
-# rotation_data.refl_tables["background.mean"].max()
-# rotation_data.refl_tables["background.mean"].min()
-
-
-# %%
-print(integrator)

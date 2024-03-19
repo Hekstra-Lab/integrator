@@ -74,11 +74,11 @@ likelihood = PoissonLikelihood(
 )
 bglognorm = LogNormDistribution(dmodel, eps, beta)
 pixel_transformer = Transformer(
-    d_model=64, d_hid=2000, nhead=8, batch_first=True, nlayers=6
+    d_model=64, d_hid=2000, nhead=8, batch_first=True, dropout=dropout, nlayers=6
 )
 
 refl_transformer = ReflectionTransformerEncoder(
-    depth=depth, dmodel=dmodel, feature_dim=feature_dim, dropout=None
+    depth=depth, dmodel=dmodel, feature_dim=feature_dim, dropout=dropout
 )
 intensity_bacground = IntensityBgPredictor(depth, dmodel, dropout=dropout)
 

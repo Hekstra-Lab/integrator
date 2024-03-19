@@ -98,12 +98,13 @@ class ReflectionTransformerEncoder(torch.nn.Module):
         self.batch_first = batch_first
         self.dmodel = dmodel
         self.mlp_1 = MLP(
-            dmodel, depth, d_in=feature_dim, dropout=self.dropout, output_dims=dmodel
+            dmodel, depth, d_in=feature_dim, dropout=None, output_dims=dmodel
         )
         self.transformer = Transformer(
             d_model=self.dmodel,
             d_hid=self.d_hid,
             nhead=self.nhead,
+            dropout=self.dropout,
             batch_first=self.batch_first,
             nlayers=self.nlayers,
         )

@@ -66,11 +66,15 @@ class IntegratorTransformer(torch.nn.Module):
         mask,
         emp_bg,
         kl_lognorm_scale=None,
+        kl_bern_scale=None,
         bg_penalty_scaling=None,
         mc_samples=100,
     ):
         # norm_factor = self.get_per_spot_normalization(shoebox)
         # shoebox[:, :, -1] = shoebox[:, :, -1] / norm_factor.unsqueeze(-1)
+        self.kl_bern_scale = kl_bern_scale
+        self.kl_lognorm_scale = kl_lognorm_scale
+        self.bg_penalty_scaling = bg_penalty_scaling
         reflrep = self.refl_encoder(shoebox, mask)
         paramrep = self.param_encoder(reflrep)
         pixelrep = self.pixel_encoder(shoebox[:, :, 0:-1])
@@ -82,21 +86,21 @@ class IntegratorTransformer(torch.nn.Module):
         I, SigI = q.mean, q.stddev
         # I, SigI = I * norm_factor, SigI * norm_factor
 
-        # ll, kl_term, bg_penalty = self.likelihood(
-        # counts,
-        # pijrep,
-        # bg,
-        # q,
-        # emp_bg,
-        # kl_lognorm_scale,
-        # mc_samples=mc_samples,
-        # kl_bern_scale=None,
-        # bg_penalty_scaling=None,
-        # mask=mask,
-        # )
-        # nll = -ll.mean()
+        ll, kl_term, bg_penalty = self.likelihood(
+            counts,
+            pijrep,
+            bg,
+            q,
+            emp_bg,
+            kl_lognorm_scale,
+            mc_samples=mc_samples,
+            kl_bern_scale=self.kl_bern_scale,
+            bg_penalty_scaling=self.bg_penalty_scaling,
+            mask=mask,
+        )
+        nll = -ll.mean()
 
-        return I, SigI, bg, pijrep, counts
+        return I, SigI, bg, pijrep, counts, nll
 
     def forward(
         self,
@@ -128,8 +132,8 @@ class IntegratorTransformer(torch.nn.Module):
             emp_bg,
             kl_lognorm_scale,
             mc_samples=mc_samples,
-            kl_bern_scale=None,
             bg_penalty_scaling=None,
+            kl_bern_scale=None,
             mask=mask,
         )
         nll = -ll.mean()
@@ -152,7 +156,7 @@ class IntegratorV2(torch.nn.Module):
         reflencoder: Reflection encoder
         paramencoder:
         pixelencoder:
-        pijencoder:
+        profile_model:
         bglognorm:
         likelihood:
         counts_std:
@@ -164,15 +168,15 @@ class IntegratorV2(torch.nn.Module):
         reflencoder,
         paramencoder,
         pixelencoder,
-        pijencoder,
+        profile_model,
         bglognorm,
         likelihood,
     ):
         super().__init__()
-        self.reflencoder = reflencoder
-        self.paramencoder = paramencoder
-        self.pixelencoder = pixelencoder
-        self.pijencoder = pijencoder
+        self.refl_encoder = reflencoder
+        self.param_encoder = paramencoder
+        self.pixel_encoder = pixelencoder
+        self.profile_model = profile_model
         self.bglognorm = bglognorm
         self.likelihood = likelihood
         self.counts_std = None
@@ -202,19 +206,62 @@ class IntegratorV2(torch.nn.Module):
     def get_per_spot_normalization(self, counts):
         return torch.clamp(counts[:, :, -1], min=0).sum(-1)
 
-    def get_intensity_sigma_batch(self, shoebox, mask):
+    def get_intensity_sigma_batch(
+        self,
+        shoebox,
+        mask,
+        emp_bg,
+        kl_lognorm_scale,
+        kl_bern_scale=None,
+        bg_penalty_scaling=None,
+        mc_samples=100,
+    ):
         # norm_factor = self.get_per_spot_normalization(shoebox)
         # shoebox[:, :, -1] = shoebox[:, :, -1] / norm_factor.unsqueeze(-1)
-        reflrep = self.reflencoder(shoebox, mask)
-        paramrep = self.paramencoder(reflrep)
-        pixelrep = self.pixelencoder(shoebox[:, :, 0:-1])
-        pijrep = self.pijencoder(reflrep, pixelrep)
+        # self.kl_bern_scale = kl_bern_scale
+        # self.kl_lognorm_scale = kl_lognorm_scale
+        # self.bg_penalty_scaling = bg_penalty_scaling
+
+        reflrep = self.refl_encoder(shoebox, mask)
+        paramrep = self.param_encoder(reflrep)
+        pixelrep = self.pixel_encoder(shoebox[:, :, 0:-1])
+        # pixelrep = self.pixel_transfomer(pixelrep, mask)
+        pijrep = self.profile_model(reflrep, pixelrep)
         counts = torch.clamp(shoebox[:, :, -1], min=0)
 
         bg, q = self.bglognorm(paramrep)
         I, SigI = q.mean, q.stddev
         # I, SigI = I * norm_factor, SigI * norm_factor
-        return I, SigI, bg, pijrep, counts
+
+        ll, kl_term, bg_penalty = self.likelihood(
+            counts,
+            pijrep,
+            bg,
+            q,
+            emp_bg,
+            kl_lognorm_scale,
+            mc_samples=mc_samples,
+            kl_bern_scale=None,
+            bg_penalty_scaling=None,
+            mask=mask,
+        )
+        nll = -ll.mean()
+
+        return I, SigI, bg, pijrep, counts, (nll + kl_term)
+
+    # def get_intensity_sigma_batch(self, shoebox, mask):
+    # # norm_factor = self.get_per_spot_normalization(shoebox)
+    # # shoebox[:, :, -1] = shoebox[:, :, -1] / norm_factor.unsqueeze(-1)
+    # reflrep = self.reflencoder(shoebox, mask)
+    # paramrep = self.paramencoder(reflrep)
+    # pixelrep = self.pixelencoder(shoebox[:, :, 0:-1])
+    # pijrep = self.profile_model(reflrep, pixelrep)
+    # counts = torch.clamp(shoebox[:, :, -1], min=0)
+
+    # bg, q = self.bglognorm(paramrep)
+    # I, SigI = q.mean, q.stddev
+    # # I, SigI = I * norm_factor, SigI * norm_factor
+    # return I, SigI, bg, pijrep, counts
 
     def forward(
         self,
@@ -230,10 +277,11 @@ class IntegratorV2(torch.nn.Module):
         # shoebox[..., -1] = shoebox[..., -1] / norm_factor.unsqueeze(-1)
 
         counts = torch.clamp(shoebox[:, :, -1], min=0)
-        reflrep = self.reflencoder(shoebox, mask)
-        paramrep = self.paramencoder(reflrep)
-        pixelrep = self.pixelencoder(shoebox[:, :, 0:-1])
-        pijrep = self.pijencoder(reflrep, pixelrep)
+        shoebox[:, :, -1] = torch.clamp(shoebox[:, :, -1], min=0)
+        reflrep = self.refl_encoder(shoebox, mask)
+        paramrep = self.param_encoder(reflrep)
+        pixelrep = self.pixel_encoder(shoebox[:, :, 0:-1])
+        pijrep = self.profile_model(reflrep, pixelrep)
 
         bg, q = self.bglognorm(paramrep)
 
