@@ -217,14 +217,17 @@ class IntensityBgPredictor(torch.nn.Module):
     Ouputs mu and sigma for LogNorm(mu,sigma) and Background
     """
 
-    def __init__(self, depth, dmodel, dropout=None):
+    def __init__(self, depth, dmodel, dropout=None, beta=1.0, eps=1e-4):
         super().__init__()
+        self.eps = torch.nn.Parameter(data=torch.tensor(eps), requires_grad=False)
+        self.beta = torch.nn.Parameter(data=torch.tensor(beta), requires_grad=False)
         self.dropout = dropout
         self.mlp_1 = MLPOut1(dmodel, depth, dropout=self.dropout, output_dims=2 + 1)
 
     def forward(self, refl_representation):
         out1 = self.mlp_1(refl_representation)
         # out1 = out1.view(out1.shape[0], out1.shape[-1])
+        out1 = torch.nn.functional.softplus(out1, beta=self.beta) + self.eps
         return out1
 
 
@@ -258,14 +261,19 @@ class ProfilePredictor(torch.nn.Module):
     Outputs p_ij matrix to scale Intensity values
     """
 
-    def __init__(self, dmodel, depth, dropout=None):
+    def __init__(self, dmodel, depth, max_pixel, dropout=None):
         super().__init__()
         self.dropout = dropout
-        self.mlp_1 = MLPPij(dmodel, depth, dropout=self.dropout, output_dims=1)
+        self.mlp_1 = MLPPij(dmodel, depth, dropout=self.dropout, output_dims=64)
+        self.mean_pool = MeanPool()
+        self.linear = Linear(64, max_pixel)
 
-    def forward(self, refl_representation, pixel_rep):
+    def forward(self, refl_representation, pixel_rep, mask=None):
         sum = pixel_rep + refl_representation.expand_as(pixel_rep)
         out = self.mlp_1(sum)
-        out = torch.softmax(out, axis=-2)
-        out = out.squeeze(-1)
+        pooled_out = self.mean_pool(out, mask)
+        out = self.linear(pooled_out)
+        out = torch.softmax(out, axis=-1)
+        out = out.unsqueeze(-2)
+
         return out

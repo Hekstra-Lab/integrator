@@ -255,7 +255,7 @@ class RotationData(torch.utils.data.Dataset):
                 "constant",
                 False,
             )
-            return padded_data, mask
+            return torch.clamp(padded_data, min=0), mask
 
         elif self.mode == "test":
             coords = self.test_df["coordinates"].gather(idx).item()
@@ -282,7 +282,7 @@ class RotationData(torch.utils.data.Dataset):
                 "constant",
                 False,
             )
-            return padded_data, mask
+            return torch.clamp(padded_data, min=0), mask
 
         else:
             coords = self.val_df["coordinates"].gather(idx).item()

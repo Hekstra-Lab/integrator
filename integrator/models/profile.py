@@ -78,7 +78,7 @@ class BackgroundLogNorm(torch.nn.Module):
         eps: constant value to avoid 0 values
     """
 
-    def __init__(self, dmodel, eps=1e-12, beta=1.0, dtype=None, device=None):
+    def __init__(self, dmodel, eps=1e-4, beta=1.0, dtype=None, device=None):
         super().__init__()
         self.eps = torch.nn.Parameter(data=torch.tensor(eps), requires_grad=False)
         self.beta = torch.nn.Parameter(data=torch.tensor(beta), requires_grad=False)
@@ -93,7 +93,7 @@ class BackgroundLogNorm(torch.nn.Module):
 
     def forward(self, paramrep, mc_samples=10):
         bg = paramrep[..., -1]
-        bg = self.constraint(bg)
+        # bg = self.constraint(bg)
         params = paramrep[..., 0:2]
         q = self.distribution(params)
         return bg, q
@@ -103,7 +103,7 @@ class LogNormDistribution(BackgroundLogNorm):
     def distribution(self, parameters):
         loc = parameters[..., 0]
         scale = parameters[..., 1]
-        scale = self.constraint(scale)  # softplus
+        # scale = self.constraint(scale)  # softplus
         q = torch.distributions.LogNormal(loc, scale)
         return q
 

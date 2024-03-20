@@ -56,7 +56,7 @@ intensity_bacground = IntensityBgPredictor(depth, dmodel, dropout=dropout)
 pixel_encoder = RotationPixelEncoder(
     depth=depth, dmodel=dmodel, d_in_refl=6, dropout=dropout
 )
-profile_ = ProfilePredictor(dmodel, depth)
+profile_ = ProfilePredictor(dmodel, depth, max_pixel=rotation_data.max_voxels)
 likelihood = PoissonLikelihood(
     beta=beta, eps=eps, prior_mean=prior_mean, prior_std=prior_std
 )
@@ -209,7 +209,7 @@ def train_and_eval(
         integrator.eval()
         val_loss = []
 
-        rotation_data.set_mode("train")
+        rotation_data.set_mode("test")
 
         num_batches = n_batches
         I, SigI = [], []
@@ -218,7 +218,7 @@ def train_and_eval(
         counts = []
 
         with torch.no_grad():
-            for i, (ims, masks) in enumerate(eval_loader):
+            for i, (ims, masks) in enumerate(train_loader):
                 if i >= num_batches:
                     break
                 ims = ims.to(device)
@@ -304,3 +304,71 @@ for i, gamma in enumerate(kl_lognorm_scale):
         print(f"Failed with kl_lognorm_scale: {gamma}, Error:{e}")
 
 # %%
+
+next(iter(train_loader))[0].min()
+print(refl_encoder)
+print(pixel_encoder)
+print(intensity_bacground)
+print(profile_)
+
+
+# 10 images/masks
+
+
+im, mask = next(iter(train_loader))
+counts = im[..., -1]
+
+
+refl_rep = refl_encoder(im, mask)
+param_rep = intensity_bacground(refl_rep)
+
+pix_rep = pixel_encoder(im[:, :, 0:-1])
+
+profile = profile_(refl_rep, pix_rep, mask=mask)
+
+bg, q = bglognorm(param_rep)
+
+
+likelihood(counts, profile, bg, q, emp_bg, kl_lognorm_scale)
+z = q.rsample([100])
+
+(z.squeeze(0) * profile + bg).shape
+
+
+z * profile.squeeze(-2)
+
+z[0] * profile.squeeze(-2)
+
+
+profile.squeeze(-2).sum
+
+
+pool = MeanPool()
+
+integrator(im, mask, emp_bg, kl_lognorm_scale)
+
+pool(out, mask).shape
+
+print(profile_)
+
+# %%
+
+
+# Embed shoeboxes
+class MeanPool(torch.nn.Module):
+    def __init__(self, dim=-2):
+        super().__init__()
+        # self.register_buffer(
+        # "dim",
+        # torch.tensor(),
+        # )
+
+    def forward(self, data, mask=None):
+        out = data.sum(1, keepdim=True)
+        if mask is None:
+            denom = data.shape[-1]
+        else:
+            denom = mask.sum(-1, keepdim=True)
+        out = out / denom.unsqueeze(-1)
+
+        return out

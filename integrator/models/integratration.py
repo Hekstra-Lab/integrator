@@ -79,7 +79,7 @@ class IntegratorTransformer(torch.nn.Module):
         paramrep = self.param_encoder(reflrep)
         pixelrep = self.pixel_encoder(shoebox[:, :, 0:-1])
         pixelrep = self.pixel_transfomer(pixelrep, mask)
-        pijrep = self.profile_model(reflrep, pixelrep)
+        profile = self.profile_model(reflrep, pixelrep)
         counts = torch.clamp(shoebox[:, :, -1], min=0)
 
         bg, q = self.bglognorm(paramrep)
@@ -88,7 +88,7 @@ class IntegratorTransformer(torch.nn.Module):
 
         ll, kl_term, bg_penalty = self.likelihood(
             counts,
-            pijrep,
+            profile,
             bg,
             q,
             emp_bg,
@@ -100,7 +100,7 @@ class IntegratorTransformer(torch.nn.Module):
         )
         nll = -ll.mean()
 
-        return I, SigI, bg, pijrep, counts, nll
+        return I, SigI, bg, profile, counts, nll
 
     def forward(
         self,
@@ -116,17 +116,17 @@ class IntegratorTransformer(torch.nn.Module):
         # shoebox[..., -1] = shoebox[..., -1] / norm_factor.unsqueeze(-1)
 
         counts = torch.clamp(shoebox[:, :, -1], min=0)
-        reflrep = self.refl_encoder(shoebox, mask)
+        reflrep = self.refl_encoder(shoebox, mask=mask)
         paramrep = self.param_encoder(reflrep)
         pixelrep = self.pixel_encoder(shoebox[:, :, 0:-1])
         pixelrep = self.pixel_transfomer(pixelrep, mask)
-        pijrep = self.profile_model(reflrep, pixelrep)
+        profile = self.profile_model(reflrep, pixelrep)
 
         bg, q = self.bglognorm(paramrep)
 
         ll, kl_term, bg_penalty = self.likelihood(
             counts,
-            pijrep,
+            profile,
             bg,
             q,
             emp_bg,
@@ -226,7 +226,7 @@ class IntegratorV2(torch.nn.Module):
         paramrep = self.param_encoder(reflrep)
         pixelrep = self.pixel_encoder(shoebox[:, :, 0:-1])
         # pixelrep = self.pixel_transfomer(pixelrep, mask)
-        pijrep = self.profile_model(reflrep, pixelrep)
+        profile = self.profile_model(reflrep, pixelrep, mask)
         counts = torch.clamp(shoebox[:, :, -1], min=0)
 
         bg, q = self.bglognorm(paramrep)
@@ -235,7 +235,7 @@ class IntegratorV2(torch.nn.Module):
 
         ll, kl_term, bg_penalty = self.likelihood(
             counts,
-            pijrep,
+            profile,
             bg,
             q,
             emp_bg,
@@ -247,7 +247,7 @@ class IntegratorV2(torch.nn.Module):
         )
         nll = -ll.mean()
 
-        return I, SigI, bg, pijrep, counts, (nll + kl_term)
+        return I, SigI, bg, profile, counts, (nll + kl_term)
 
     # def get_intensity_sigma_batch(self, shoebox, mask):
     # # norm_factor = self.get_per_spot_normalization(shoebox)
@@ -255,13 +255,13 @@ class IntegratorV2(torch.nn.Module):
     # reflrep = self.reflencoder(shoebox, mask)
     # paramrep = self.paramencoder(reflrep)
     # pixelrep = self.pixelencoder(shoebox[:, :, 0:-1])
-    # pijrep = self.profile_model(reflrep, pixelrep)
+    # profile = self.profile_model(reflrep, pixelrep)
     # counts = torch.clamp(shoebox[:, :, -1], min=0)
 
     # bg, q = self.bglognorm(paramrep)
     # I, SigI = q.mean, q.stddev
     # # I, SigI = I * norm_factor, SigI * norm_factor
-    # return I, SigI, bg, pijrep, counts
+    # return I, SigI, bg, profile, counts
 
     def forward(
         self,
@@ -277,11 +277,10 @@ class IntegratorV2(torch.nn.Module):
         # shoebox[..., -1] = shoebox[..., -1] / norm_factor.unsqueeze(-1)
 
         counts = torch.clamp(shoebox[:, :, -1], min=0)
-        shoebox[:, :, -1] = torch.clamp(shoebox[:, :, -1], min=0)
         reflrep = self.refl_encoder(shoebox, mask)
         paramrep = self.param_encoder(reflrep)
         pixelrep = self.pixel_encoder(shoebox[:, :, 0:-1])
-        pijrep = self.profile_model(reflrep, pixelrep)
+        profile = self.profile_model(reflrep, pixelrep, mask=mask)
 
         bg, q = self.bglognorm(paramrep)
 
@@ -290,7 +289,7 @@ class IntegratorV2(torch.nn.Module):
 
         ll, kl_term, bg_penalty = self.likelihood(
             counts,
-            pijrep,
+            profile,
             bg,
             q,
             emp_bg,
@@ -433,7 +432,7 @@ class IntegratorBern(torch.nn.Module):
         imagerep = self.imageencoder(reflrep)
         paramrep = self.paramencoder(imagerep, reflrep)
         pixelrep = self.pixelencoder(xy, dxy)
-        pijrep = self.pijencoder(imagerep, reflrep, pixelrep)
+        profile = self.pijencoder(imagerep, reflrep, pixelrep)
 
         q = self.bglognorm.distribution(paramrep)
         I, SigI = q.mean, q.stddev
@@ -446,14 +445,14 @@ class IntegratorBern(torch.nn.Module):
         imagerep = self.imageencoder(reflrep)
         paramrep = self.paramencoder(imagerep, reflrep)
         pixelrep = self.pixelencoder(xy, dxy)
-        pijrep = self.pijencoder(imagerep, reflrep, pixelrep)
+        profile = self.pijencoder(imagerep, reflrep, pixelrep)
 
         bg, q = self.bglognorm(paramrep, dxy)
 
         bg = bg * norm_factor
         # p = p * norm_factor[..., None]
 
-        ll, kl_term = self.likelihood(norm_factor, counts, pijrep, bg, q, mc_samples)
+        ll, kl_term = self.likelihood(norm_factor, counts, profile, bg, q, mc_samples)
         nll = -ll.mean()
 
         return nll + kl_term, bg
