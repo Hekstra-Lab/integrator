@@ -1,5 +1,0 @@
-Traceback (most recent call last):
-  File "/n/holylabs/LABS/hekstra_lab/Users/laldama/integrator_/runs/run1-2023-07-07/integrate.py", line 34, in <module>
-    integrator = Integrator(encoder, profile, likelihood)
-NameError: name 'profile' is not defined
-srun: error: holygpu7c26106: task 0: Exited with exit code 1

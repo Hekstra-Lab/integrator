@@ -5,6 +5,7 @@ from .mlp import MLPPij
 from .mlp import MLPPij2
 from .integratration import Integrator
 from .integratration import IntegratorV2
+from .integratration import IntegratorV3
 from .integratration import IntegratorTransformer
 from .integratration import IntegratorBern
 from .encoder import MLPEncoder
@@ -16,9 +17,12 @@ from .encoder import RotationPixelEncoder
 from .encoder import MLPPijEncoder
 from .encoder import MLPReflEncoder
 from .encoder import RotationReflectionEncoder
+from .encoder import Encoder
 from .encoder import ProfilePredictor
 from .encoder import MLPImageEncoder
 from .likelihood import PoissonLikelihood
+from .likelihood import PoissonLikelihoodV2
 from .profile import EllipticalProfile
 from .profile import LogNormDistribution
+from .profile import DistributionBuilder
 from .transformer import TransformerModel

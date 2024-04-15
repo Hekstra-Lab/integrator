@@ -1,6 +1,0 @@
-  0%|          | 0/10 [00:00<?, ?it/s]  0%|          | 0/10 [00:00<?, ?it/s, loss=1.68e+01, grad=5.18e+01]  0%|          | 0/10 [00:00<?, ?it/s, loss=1.68e+01, grad=5.18e+01]
-Traceback (most recent call last):
-  File "/n/holylabs/LABS/hekstra_lab/Users/laldama/integrator_/runs/run1-2023-07-07/integrate.py", line 65, in <module>
-    I_values.append(I.mean())
-NameError: name 'I_values' is not defined
-srun: error: holygpu7c26106: task 0: Exited with exit code 1

@@ -15,6 +15,7 @@ from integrator.models import (
     PoissonLikelihood,
 )
 from torch.utils.data import DataLoader
+import torch.nn as nn
 
 # Hyperparameters
 steps = 10000
@@ -312,6 +313,14 @@ print(intensity_bacground)
 print(profile_)
 
 
+# %%
+mvnn = DistributionBuilder(dmodel, eps, beta)
+
+mvnn(out1, out2, ims[..., 3:6])
+
+dxy = ims[..., 3:6]
+
+
 # 10 images/masks
 
 
@@ -320,17 +329,30 @@ counts = im[..., -1]
 
 
 refl_rep = refl_encoder(im, mask)
+
+refl_rep.shape
+
 param_rep = intensity_bacground(refl_rep)
 
 pix_rep = pixel_encoder(im[:, :, 0:-1])
 
 profile = profile_(refl_rep, pix_rep, mask=mask)
 
+
+profile.sum(axis=1)
+
+
 bg, q = bglognorm(param_rep)
 
 
 likelihood(counts, profile, bg, q, emp_bg, kl_lognorm_scale)
 z = q.rsample([100])
+
+
+z.shape
+profile.shape
+
+print(profile_)
 
 (z.squeeze(0) * profile + bg).shape
 
@@ -372,3 +394,165 @@ class MeanPool(torch.nn.Module):
         out = out / denom.unsqueeze(-1)
 
         return out
+
+
+print(profile_)
+
+
+# %%
+class RunningMoments:
+    def __init__(self, axis=-2):
+        self.n = 0  # number samples
+        self.s = 0.0  # variance
+        self.mean = 0.0  # mean
+        self.axis = axis
+
+    def update(self, x):
+        k = len(x)  # number of samples
+        self.n += k  # update number samples
+        diff = x - self.mean  # subtract mean from samples
+        self.mean = self.mean + np.sum(diff / self.n, axis=self.axis, keepdims=True)
+        diff *= x - self.mean  # update squared difference
+        self.s = self.s + diff.sum(axis=self.axis, keepdims=True)  # update variance
+
+    @property
+    def var(self):
+        if self.n <= 1:
+            return None
+        return self.s / self.n
+
+    @property
+    def std(self):
+        return np.sqrt(self.var)
+
+
+# %%
+class Standardize(nn.Module):
+    def __init__(
+        self, center=True, feature_dim=7, max_counts=float("inf"), epsilon=1e-6
+    ):
+        super().__init__()
+        self.epsilon = epsilon
+        self.center = center
+        self.max_counts = max_counts
+        self.register_buffer("mean", torch.zeros((1, 1, feature_dim)))
+        self.register_buffer("m2", torch.zeros((1, 1, feature_dim)))
+        self.register_buffer("count", torch.tensor(0.0))
+
+    @property
+    def var(self):
+        m2 = torch.clamp(self.m2, min=self.epsilon)
+        return m2 / self.count.clamp(min=1)
+
+    @property
+    def std(self):
+        return torch.sqrt(self.var)
+
+    def update(self, im, mask=None):
+        if mask is None:
+            k = len(im)
+        else:
+            k = mask.sum()  # count num of pixels in batch
+        self.count += k
+
+        if mask is None:
+            diff = im - self.mean
+        else:
+            diff = (im - self.mean) * mask.unsqueeze(-1)
+
+        self.mean += torch.sum(diff / self.count, dim=(1, 0))
+
+        if mask is None:
+            diff *= im - self.mean
+        else:
+            diff *= (im - self.mean) * mask.unsqueeze(-1)
+        self.m2 += torch.sum(diff, dim=(1, 0))
+
+    def standardize(self, im, mask=None):
+        if mask is None:
+            if self.center:
+                return (im - self.mean) / self.std
+        else:
+            if self.center:
+                return ((im - self.mean) * mask.unsqueeze(-1)) / self.std
+        return im / self.std
+
+    def forward(self, im, mask, training=True):
+        if self.count > self.max_counts:
+            training = False
+        if training:
+            self.update(im, mask)
+        return self.standardize(im, mask)
+
+
+# %%
+l = 10_000
+d = 5
+x = np.arange(l)[..., None] * np.ones((l, d))
+x = x.astype("float32")
+n = RunningMoments()
+s = Standardize(feature_dim=d)
+
+for batch in np.split(x, 10):
+    x_tens = torch.tensor(batch, dtype=torch.float32)
+    n.update(batch)
+    s(x_tens, mask=None)
+    assert np.allclose(n.mean, s.mean)
+    assert np.allclose(n.var, s.var)
+    assert np.allclose(n.std, s.std)
+
+# %%
+torch.tensor(x)
+
+# %%
+
+standardize = Standardize()
+standardize.update(im, mask)
+
+standardize(im, mask=mask).min()
+
+standardize.mean
+
+k = mask.sum()
+mean = torch.sum(im / torch.sum(mask), dim=(1, 0))
+mean
+
+diff = (im * (im - mean)) * mask.unsqueeze(-1)
+diff.shape
+
+
+torch.sum(im, dim=(1, 0)) / torch.sum(mask)
+
+
+# %%
+
+
+epoch = 0
+bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}")
+
+s = Standardize()
+
+for i, (im, mask) in enumerate(bar):
+    if i < 1000:
+        s(im, mask)
+        print(s.var)
+    else:
+        break
+
+from integrator.layers import Linear
+
+
+# %%
+class DynamicLinear(torch.nn.Module):
+    def __init__(self, input_dim, output_dim_2D, output_dim_3D):
+        super().__init__()
+        self.output_dim_2D = output_dim_2D
+        self.output_dim_3D = output_dim_3D
+
+        self.linear1 = Linear(input_dim, self.output_dim_2D)
+        self.linear2 = Linear(input_dim, self.output_dim_3D)
+
+    def forward(self, x, d_flag):
+        out1 = self.linear1(x)
+        out2 = self.linear2(x)
+        return out1, out2

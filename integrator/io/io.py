@@ -4,6 +4,7 @@ import torch
 from scipy.spatial import cKDTree
 import pandas as pd
 import reciprocalspaceship as rs
+import torch.nn as nn
 import glob
 import os
 from dials.array_family import flex
@@ -189,13 +190,13 @@ class RotationData(torch.utils.data.Dataset):
     def split_data(self, refl_tables):
         np.random.seed(self.seed)
         total_rows = len(refl_tables)
-        # shuffled_index = pl.arange(0, total_rows).shuffle(seed=None)
         shuffled_index = np.random.permutation(total_rows)
 
         # get train set
         train_size = int(total_rows * self.train_split)
         train_data = refl_tables.select(pl.all().gather(shuffled_index[:train_size]))
 
+        # get test set
         if self.val_split is not None:
             val_end = train_size + int(total_rows * self.val_split)
 
@@ -232,6 +233,11 @@ class RotationData(torch.utils.data.Dataset):
 
         if self.mode == "train":
             coords = self.train_df["coordinates"].gather(idx).item()
+
+            z_coords = coords[:, 2]  # Extract the z-coordinates
+            z_min = z_coords.min()
+            z_max = z_coords.max()
+
             dxy = self.train_df["dxy"].gather(idx).item()
             num_pix = self.train_df["num_pix"].gather(idx).item()
             pad_size = self.max_voxels - len(coords)
@@ -264,6 +270,10 @@ class RotationData(torch.utils.data.Dataset):
             pad_size = self.max_voxels - len(coords)
             i_obs = self.test_df["intensity_observed"].gather(idx).item()
 
+            z_coords = coords[:, 2]  # Extract the z-coordinates
+            z_min = z_coords.min()
+            z_max = z_coords.max()
+
             pad_coords = torch.nn.functional.pad(
                 coords, (0, 0, 0, max(pad_size, 0)), "constant", 0
             )
@@ -290,6 +300,10 @@ class RotationData(torch.utils.data.Dataset):
             num_pix = self.val_df["num_pix"].gather(idx).item()
             pad_size = self.max_voxels - len(coords)
             i_obs = self.val_df["intensity_observed"].gather(idx).item()
+
+            z_coords = coords[:, 2]  # Extract the z-coordinates
+            z_min = z_coords.min()
+            z_max = z_coords.max()
 
             pad_coords = torch.nn.functional.pad(
                 coords, (0, 0, 0, max(pad_size, 0)), "constant", 0
@@ -778,3 +792,61 @@ class StillData(torch.utils.data.Dataset):
 # masks.append(mask_padded)
 
 # return torch.stack(padded_data), torch.stack(masks)
+
+
+class Standardize(nn.Module):
+    def __init__(
+        self, center=True, feature_dim=7, max_counts=float("inf"), epsilon=1e-6
+    ):
+        super().__init__()
+        self.epsilon = epsilon
+        self.center = center
+        self.max_counts = max_counts
+        self.register_buffer("mean", torch.zeros((1, 1, feature_dim)))
+        self.register_buffer("m2", torch.zeros((1, 1, feature_dim)))
+        self.register_buffer("count", torch.tensor(0.0))
+
+    @property
+    def var(self):
+        m2 = torch.clamp(self.m2, min=self.epsilon)
+        return m2 / self.count.clamp(min=1)
+
+    @property
+    def std(self):
+        return torch.sqrt(self.var)
+
+    def update(self, im, mask=None):
+        if mask is None:
+            k = len(im)
+        else:
+            k = mask.sum()  # count num of pixels in batch
+        self.count += k
+
+        if mask is None:
+            diff = im - self.mean
+        else:
+            diff = (im - self.mean) * mask.unsqueeze(-1)
+
+        self.mean += torch.sum(diff / self.count, dim=(1, 0))
+
+        if mask is None:
+            diff *= im - self.mean
+        else:
+            diff *= (im - self.mean) * mask.unsqueeze(-1)
+        self.m2 += torch.sum(diff, dim=(1, 0))
+
+    def standardize(self, im, mask=None):
+        if mask is None:
+            if self.center:
+                return (im - self.mean) / self.std
+        else:
+            if self.center:
+                return ((im - self.mean) * mask.unsqueeze(-1)) / self.std
+        return im / self.std
+
+    def forward(self, im, mask, training=True):
+        if self.count > self.max_counts:
+            training = False
+        if training:
+            self.update(im, mask)
+        return self.standardize(im, mask)
