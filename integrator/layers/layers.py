@@ -2,13 +2,14 @@ from pylab import *
 import torch
 import math
 from .util import weight_initializer
-from torch.nn import TransformerEncoder, TransformerEncoderLayer
+
 
 class Linear(torch.nn.Linear):
     def reset_parameters(self) -> None:
         self.weight = weight_initializer(self.weight)
         if self.bias is not None:
             torch.nn.init.zeros_(self.bias)
+
 
 class ResidualLayer(torch.nn.Module):
     def __init__(self, dims, dropout=None):
@@ -29,6 +30,3 @@ class ResidualLayer(torch.nn.Module):
         out = self.dropout(out)
         out = self.linear_2(out)
         return out + data
-
-
-
