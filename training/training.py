@@ -40,7 +40,7 @@ kl_lognorm_scale = [0]
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Loading data
-#shoebox_dir = "/Users/luis/integrator/rotation_data_examples/data/"
+# shoebox_dir = "/Users/luis/integrator/rotation_data_examples/data/"
 shoebox_dir = "/n/holylabs/LABS/hekstra_lab/Users/laldama/integrator_/rotation_data_examples/data_temp/temp"
 rotation_data = RotationData(shoebox_dir=shoebox_dir, val_split=None)
 
@@ -72,7 +72,7 @@ def initialize_weights(model):
 # Training Loop
 
 encoder = Encoder(depth, dmodel, feature_dim, dropout=None)
-standardization = Standardize(max_counts = len(train_loader.dataset))
+standardization = Standardize(max_counts=len(train_loader.dataset))
 standardization = standardization.to(device)
 distribution_builder = DistributionBuilder(dmodel, eps, beta)
 poisson_loss = PoissonLikelihoodV2(beta, eps)
@@ -120,8 +120,8 @@ eval_metrics = pl.DataFrame(
         "mean_pij": pl.Series([], dtype=pl.Float32),
         "corr_prf": pl.Series([], dtype=pl.Float64),
         "corr_sum": pl.Series([], dtype=pl.Float64),
-        }
-    )
+    }
+)
 # %%
 # Training loop
 num_epochs = epochs
@@ -227,3 +227,8 @@ with tqdm(total=num_epochs * num_steps, desc="Training") as pbar:
                 }
             )
         )
+eval_metrics.write_csv(f"evaluation_metrics_.csv")
+np.savetxt(f"trace.csv", trace, fmt="%s")
+np.savetxt(f"IPred.csv", I_pred_arr, fmt=",")
+np.savetxt(f"SigIPred.csv", SigI_pred_arr, fmt=",")
+torch.save(integrator.state_dict(), f"weights.pth")
