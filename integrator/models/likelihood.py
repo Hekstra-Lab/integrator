@@ -2,41 +2,37 @@ from pylab import *
 import torch
 from integrator.layers import Linear
 
+
 class PoissonLikelihoodV2(torch.nn.Module):
     """
     Attributes:
         beta:
-        prior_std: std parameter for prior LogNormal
-        prior_mean: mean parameter for prior LogNormal
-        lognorm_scale: scale DKL(LogNorm||LogNorm)
-        prior_bern_p: parameter for prior Bernoulli distribution
-        priorLogNorm: prior LogNormal distribution
-        priorBern: prior Bernoulli distribution
+        p_I_scale: scale DKL(q_I||p_I)
+        p_bg_scale: scale DKL(q_I||p_I)
+        prior_I: prior distribution for intensity
+        prior_bg: prior distribution for background
     """
 
     def __init__(
         self,
         beta=1.0,
         eps=1e-8,
-        prior_bern_p=0.2,
-        prior_mean=3,  # Prior mean for LogNorm
-        prior_std=1,  # Prior std for LogNorm
-        lognorm_scale=0.01,  # influence of DKL(LogNorm||LogNorm) term
-        scale_bern=1,  # influence of DKL(bern||bern) term
+        prior_I=None,
+        prior_bg=None,
+        p_I_scale=0.01,  # influence of DKL(LogNorm||LogNorm) term
+        p_bg_scale=0.01,
     ):
         super().__init__()
         self.eps = torch.nn.Parameter(data=torch.tensor(eps), requires_grad=False)
         self.beta = torch.nn.Parameter(data=torch.tensor(beta), requires_grad=False)
-        self.prior_std = torch.nn.Parameter(
-            data=torch.tensor(prior_std), requires_grad=False
+        self.p_I_scale = torch.nn.Parameter(
+            data=torch.tensor(p_I_scale), requires_grad=False
         )
-        self.prior_mean = torch.nn.Parameter(
-            data=torch.tensor(prior_mean), requires_grad=False
+        self.p_bg_scale = torch.nn.Parameter(
+            data=torch.tensor(p_bg_scale), requires_grad=False
         )
-        self.lognorm_scale = torch.nn.Parameter(
-            data=torch.tensor(lognorm_scale), requires_grad=False
-        )
-        self.priorLogNorm = torch.distributions.LogNormal(prior_mean, prior_std)
+        self.prior_I = prior_I
+        self.prior_bg = prior_bg
 
     def constraint(self, x):
         return x + self.eps
@@ -49,7 +45,7 @@ class PoissonLikelihoodV2(torch.nn.Module):
         profile,
         eps=1e-8,
         mc_samples=10,
-        vi=False,
+        vi=True,
         mask=None,
     ):
         """
@@ -88,16 +84,25 @@ class PoissonLikelihoodV2(torch.nn.Module):
 
         # Calculate KL-divergence
         if vi:
-            # KL(lognorm)
-            q_log_prob = q_I.log_prob(z)
-            p_log_prob = self.priorLogNorm.log_prob(z)
-            kl_lognorm = q_log_prob - p_log_prob
+            # KL(q_I || p_I)
+            q_log_prob_I = q_I.log_prob(z)
+            p_log_prob_I = self.prior_I.log_prob(z)
+            kl_I = q_log_prob_I - p_log_prob_I
+
+            # KL(q_bg || p_bg)
+            q_log_prob_bg = q_bg.log_prob(bg)
+            p_log_prob_bg = self.prior_bg.log_prob(bg)
+            kl_bg = q_log_prob_bg - p_log_prob_bg
 
             # zero out pads
-            masked_kl_lognorm = kl_lognorm * mask
+            masked_kl_I = kl_I * mask
+            masked_kl_bg = kl_bg * mask
 
             # total kl
-            kl_term = masked_kl_lognorm.mean()
+            kl_term = (masked_kl_I.mean() * self.p_I_scale) + (
+                masked_kl_bg.mean() * self.p_bg_scale
+            )
+            kl_term = 0
 
         else:
             kl_term = 0  # set to 0 when vi false

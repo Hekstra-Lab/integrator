@@ -13,6 +13,7 @@ from integrator.models import (
 )
 from torch.utils.data import DataLoader
 import torch.nn as nn
+from rs_distributions import distributions as rsd
 
 # %%
 # Hyperparameters
@@ -24,23 +25,31 @@ beta = 1.0
 mc_samples = 100
 max_size = 1024
 eps = 1e-12
-prior_mean = 7
-prior_std = 1.4
-
 batch_size = 100
 learning_rate = 0.001
 epochs = 10
 
-bg_penalty_scaling = [0, 1]
-kl_bern_scale = [0, 1]
-kl_lognorm_scale = [0]
+# Variational distributions
+intensity_dist = rsd.FoldedNormal
+background_dist = rsd.FoldedNormal
 
+# Prior distributions
+prior_I = torch.distributions.log_normal.LogNormal(
+    loc=torch.tensor(7.0, requires_grad=False),
+    scale=torch.tensor(1.4, requires_grad=False),
+)
+p_I_scale = 0.01
+prior_bg = torch.distributions.log_normal.LogNormal(
+    loc=torch.tensor(1, requires_grad=False),
+    scale=torch.tensor(1, requires_grad=False),
+)
+p_bg_scale = 0.01
 # %%
 # Use GPU if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Loading data
-#shoebox_dir = "/Users/luis/integrator/rotation_data_examples/data/"
+# shoebox_dir = "/Users/luis/integrator/rotation_data_examples/data/"
 shoebox_dir = "/n/holylabs/LABS/hekstra_lab/Users/laldama/integrator_/rotation_data_examples/data_temp/temp"
 rotation_data = RotationData(shoebox_dir=shoebox_dir, val_split=None)
 
@@ -74,8 +83,17 @@ def initialize_weights(model):
 encoder = Encoder(depth, dmodel, feature_dim, dropout=None)
 standardization = Standardize(max_counts=len(train_loader))
 standardization = standardization.to(device)
-distribution_builder = DistributionBuilder(dmodel, eps, beta)
-poisson_loss = PoissonLikelihoodV2(beta, eps)
+distribution_builder = DistributionBuilder(
+    dmodel, intensity_dist, background_dist, eps, beta
+)
+poisson_loss = PoissonLikelihoodV2(
+    beta=beta,
+    eps=eps,
+    prior_I=prior_I,
+    prior_bg=prior_bg,
+    p_I_scale=p_I_scale,
+    p_bg_scale=p_bg_scale,
+)
 integrator = IntegratorV3(encoder, distribution_builder, poisson_loss)
 integrator = integrator.to(device)
 

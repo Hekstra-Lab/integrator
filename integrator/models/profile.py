@@ -3,9 +3,18 @@ import torch
 from integrator.layers import Linear
 from integrator.models import MLP
 
+
 class DistributionBuilder(torch.nn.Module):
     def __init__(
-        self, dmodel, eps=1e-12, beta=1.0, output_dim=13, dtype=None, device=None
+        self,
+        dmodel,
+        intensity_dist,
+        background_dist,
+        eps=1e-12,
+        beta=1.0,
+        output_dim=13,
+        dtype=None,
+        device=None,
     ):
         super().__init__()
         self.eps = torch.nn.Parameter(data=torch.tensor(eps), requires_grad=False)
@@ -13,6 +22,8 @@ class DistributionBuilder(torch.nn.Module):
         self.output_dim = output_dim
         self.input_dim = dmodel
         self.linear1 = Linear(self.input_dim, self.output_dim)
+        self.intensity_dist = intensity_dist
+        self.background_dist = background_dist
 
     def constraint(self, x):
         return torch.nn.functional.softplus(x, beta=self.beta) + self.eps
@@ -21,14 +32,14 @@ class DistributionBuilder(torch.nn.Module):
         loc = params[..., 0]
         scale = params[..., 1]
         scale = self.constraint(scale)
-        q_I = torch.distributions.LogNormal(loc, scale)
+        q_I = self.background_dist(loc, scale)
         return q_I
 
     def background(self, params):
         mu = params[..., 2]
         sigma = params[..., 3]
         sigma = self.constraint(sigma)
-        q_bg = torch.distributions.LogNormal(mu, sigma)
+        q_bg = self.background_dist(mu, sigma)
         return q_bg
 
     def get_params(self, representation):
