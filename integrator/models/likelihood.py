@@ -63,7 +63,9 @@ class PoissonLikelihoodV2(torch.nn.Module):
 
         # Sample from variational distributions
         z = q_I.rsample([mc_samples])
+        z += eps
         bg = q_bg.rsample([mc_samples])
+        bg += eps
 
         # Set KL term
         kl_term = 0
