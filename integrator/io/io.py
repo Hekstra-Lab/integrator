@@ -23,6 +23,17 @@ class RotationData(torch.utils.data.Dataset):
         test_split=0.3,
         seed=60,
     ):
+        """
+        Dataset class for X-ray diffraction rotation data.
+
+        Args:
+            shoebox_dir (str): Directory containing the shoebox files.
+            max_detector_dimension (int): Maximum detector dimension.
+            train_split (float): Fraction of data to use for training.
+            val_split (float): Fraction of data to use for validation.
+            test_split (float): Fraction of data to use for testing.
+            seed (int): Random seed for data splitting.
+        """
         self.max_detector_dimension = max_detector_dimension
         self.seed = seed
         self.mode = "train"
@@ -42,6 +53,9 @@ class RotationData(torch.utils.data.Dataset):
     def _get_shoebox_filenames(self):
         """
         Get the `shoebox_*.refl` names
+
+        Returns:
+            pl.DataFrame: DataFrame containing the shoebox filenames.
         """
         df = pl.DataFrame(
             {"shoebox_filenames": glob.glob(os.path.join(self.shoebox_dir, "shoebox*"))}
@@ -51,12 +65,24 @@ class RotationData(torch.utils.data.Dataset):
     def _get_table(self, filename):
         """
         Get the reflection table
+
+        Args:
+            filename (str): Path to the .refl file
+
+        Returns:
+            Reflection table
         """
         return flex.reflection_table.from_file(filename)
 
     def _get_intensity(self, sbox):
         """
-        Get the observed intensity
+        Get the observed intensity from shoebox object
+
+        Args:
+            sbox (flex.shoebox): shoebox object
+
+        Returns:
+            torch.Tensor: Observed intensity as flattened tensor
         """
         return torch.tensor(
             sbox.data.as_numpy_array().ravel().astype(np.float32), dtype=torch.float32
@@ -65,21 +91,48 @@ class RotationData(torch.utils.data.Dataset):
     def _to_tens(self, element):
         """
         Convert the element to a torch tensor
+
+        Args:
+            element: element to convert to tensor
+
+        Returns:
+            torch.Tensor
         """
         return torch.tensor(element, dtype=torch.float32)
 
     def _get_num_pixels(self, intensities):
         """
         Count the number of voxels in each shoebox
+
+        Args:
+            intensities (torch.Tensor): Observed intensity values of the shoebox
+
+        Returns:
+            int: Number of voxels in the shoebox
         """
         return intensities.numel()
 
     def _get_max_(self, tens):
+        """
+        Get the maximum value of the tensor
+
+        Args:
+            tens (torch.Tensor): Input tensor
+
+        Returns:
+            float: Maximum value of the tensor
+        """
         return tens.max().item()
 
     def _get_rows(self, tbl):
         """
         Drop unused columns
+
+        Args:
+            tbl (flex.reflection_table): Reflection table
+
+        Returns:
+            pl.DataFrame: DataFrame with unused columns dropped
         """
 
         return pl.DataFrame(list(tbl.rows())).drop(
@@ -120,24 +173,45 @@ class RotationData(torch.utils.data.Dataset):
     def _get_coords(self, sbox):
         """
         For a shoebox, get the coordinates of each voxel
+
+        Args:
+            sbox (flex.shoebox): Shoebox object.
+
+        Returns:
+            torch.Tensor: Coordinates of each voxel as a tensor.
         """
         return torch.tensor(sbox.coords().as_numpy_array(), dtype=torch.float32)
 
     def _max_pixel_coordinate(self, coords):
         """
         Find the maximum coordinate value for each entry
+
+        Args:
+            coords (torch.Tensor): Coordinate tensor
+
+        Returns:
+            float: Maximum coordinate value
         """
         return coords.max().item()
 
     def _filter_shoebox(self, max_pix):
         """
         Remove shoeboxes with coordinates outside of the detector dimensions
+
+        Args:
+            max_pix (float): Maximum pixel coordinate
+
+        Returns:
+            bool: True if the shoebox should be removed, False otherwise
         """
         return max_pix > self.max_detector_dimension
 
     def _get_refl_tables(self):
         """
         Build a dataframe of the reflection tables
+
+        Returns:
+            tuple: Train DataFrame, validation DataFrame, test DataFrame, and maximum number of voxels.
         """
         final_df = pl.DataFrame()
 
@@ -188,6 +262,15 @@ class RotationData(torch.utils.data.Dataset):
         return self.train_df, self.val_df, self.test_df, max_voxel
 
     def split_data(self, refl_tables):
+        """
+        Split the reflection tables into train, validation, and test sets
+
+        Args:
+            refl_tables (pl.DataFrame): DataFrame containing the reflection tables
+
+        Returns:
+            tuple: Train DataFrame, validation DataFrame (if applicable), and test DataFrame
+        """
         np.random.seed(self.seed)
         total_rows = len(refl_tables)
         shuffled_index = np.random.permutation(total_rows)
@@ -212,12 +295,22 @@ class RotationData(torch.utils.data.Dataset):
             return train_data, test_data
 
     def set_mode(self, mode):
+        """
+        Set the mode of the dataset ('train' or 'test').
+
+        Args:
+            mode (str): Mode of the dataset.
+        """
+
         assert mode in ["train", "test"], "Mode should be 'train' or 'test'"
         self.mode = mode
 
     def __len__(self):
         """
         Return the length (number of shoeboxes) of the dataset
+
+        Returns:
+            int: Length of the dataset
         """
         if self.mode == "train":
             return self.train_df.height
@@ -229,6 +322,12 @@ class RotationData(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         """
         Return the (idx)th shoebox
+
+        Args:
+            idx (int): Index of the shoebox
+
+        Returns:
+            tuple: Padded data tensor and mask tensor
         """
 
         if self.mode == "train":
@@ -414,10 +513,20 @@ class StillData(torch.utils.data.Dataset):
             mu = 0.0
         return (x - mu) / sigma
 
+
 class Standardize(nn.Module):
     def __init__(
         self, center=True, feature_dim=7, max_counts=float("inf"), epsilon=1e-6
     ):
+        """
+        Initialize the Standardize module
+
+        Args:
+            center (bool): Whether to center the data. Defaults to True
+            feature_dim (int): Number of feature dimensions. Defaults to 7
+            max_counts (float): Maximum number of counts before stopping updates. Defaults to infinity
+            epsilon (float): Small value to avoid division by zero. Defaults to 1e-6
+        """
         super().__init__()
         self.epsilon = epsilon
         self.center = center

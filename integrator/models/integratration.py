@@ -4,11 +4,13 @@ import torch
 
 class IntegratorV3(torch.nn.Module):
     """
+    Integration module
+
     Attributes:
-        encoder: encodes shoeboxes
-        distribution_builder: builds variational distributions and profile
-        likelihood: MLE cost function
-        counts_std:
+        encoder (torch.nn.Module): Encodes shoeboxes.
+        distribution_builder (torch.nn.Module): Builds variational distributions and profile.
+        likelihood (torch.nn.Module): MLE cost function.
+        counts_std (torch.nn.Parameter): Standard deviation of counts. Not trainable.
     """
 
     def __init__(
@@ -24,9 +26,24 @@ class IntegratorV3(torch.nn.Module):
         self.counts_std = None
 
     def set_counts_std(self, value):
+        """
+        Set the standard deviation of counts.
+
+        Args:
+            value (torch.Tensor): Value to set as the standard deviation of counts.
+        """
         self.counts_std = torch.nn.Parameter(value, requires_grad=False)
 
     def get_intensity_sigma(self, shoebox):
+        """
+        Get the intensity and sigma values for the shoebox.
+
+        Args:
+            shoebox (torch.Tensor): Shoebox tensor.
+
+        Returns:
+            tuple: Intensity and sigma values.
+        """
         # lists to store I and SigI
         I, SigI = [], []
 
@@ -54,6 +71,15 @@ class IntegratorV3(torch.nn.Module):
         return I, SigI
 
     def get_per_spot_normalization(self, counts):
+        """
+        Get the per-spot normalization.
+
+        Args:
+            counts (torch.Tensor): Counts tensor.
+
+        Returns:
+            torch.Tensor: Per-spot normalization.
+        """
         return torch.clamp(counts[:, :, -1], min=0).sum(-1)
 
     def get_intensity_sigma_batch(
@@ -62,6 +88,17 @@ class IntegratorV3(torch.nn.Module):
         mask,
         mc_samples=100,
     ):
+        """
+        Get the intensity, sigma, profile, counts, and loss for a batch of shoeboxes.
+
+        Args:
+            shoebox (torch.Tensor): Shoebox tensor.
+            mask (torch.Tensor): Mask tensor.
+            mc_samples (int): Number of Monte Carlo samples. Defaults to 100.
+
+        Returns:
+            tuple: Intensity, sigma, profile, counts, and loss.
+        """
         # photon counts
         counts = torch.clamp(shoebox[..., -1], min=0)
 
@@ -94,6 +131,17 @@ class IntegratorV3(torch.nn.Module):
         mask,
         mc_samples=100,
     ):
+        """
+        Forward pass of the integrator.
+
+        Args:
+            shoebox (torch.Tensor): Shoebox tensor
+            mask (torch.Tensor): Mask tensor
+            mc_samples (int): Number of Monte Carlo samples. Defaults to 100.
+
+        Returns:
+            torch.Tensor: Negative log-likelihood loss
+        """
         # todo
         # Do not clamp counts
         counts = torch.clamp(shoebox[..., -1], min=0)
@@ -120,6 +168,12 @@ class IntegratorV3(torch.nn.Module):
         return nll + kl_term
 
     def grad_norm(self):
+        """
+        Calculate the gradient norm of the model parameters.
+
+        Returns:
+            torch.Tensor: Gradient norm.
+        """
         grads = [
             param.grad.detach().flatten()
             for param in self.parameters()

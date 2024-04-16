@@ -1,7 +1,7 @@
 from pylab import *
 import torch
 from integrator.layers import Linear, ResidualLayer
-from integrator.models import MLP, MLPOut1
+from integrator.models import MLP
 
 
 class Encoder(torch.nn.Module):
@@ -41,19 +41,3 @@ class MeanPool(torch.nn.Module):
         out = out / denom.unsqueeze(-1)
 
         return out
-
-
-class IntensityBgPredictor(torch.nn.Module):
-    """
-    Ouputs mu and sigma for LogNorm(mu,sigma) and Background
-    """
-
-    def __init__(self, depth, dmodel, dropout=None, beta=1.0, eps=1e-4):
-        super().__init__()
-        self.dropout = dropout
-        self.mlp_1 = MLPOut1(dmodel, depth, dropout=self.dropout, output_dims=2 + 1)
-
-    def forward(self, refl_representation):
-        out1 = self.mlp_1(refl_representation)
-        out1 = out1.view(out1.shape[0], out1.shape[-1])
-        return out1
