@@ -40,8 +40,8 @@ kl_lognorm_scale = [0]
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Loading data
-# shoebox_dir = "/Users/luis/integrator/rotation_data_examples/data/"
-shoebox_dir = "/n/holylabs/LABS/hekstra_lab/Users/laldama/integrator_/rotation_data_examples/data_temp/temp"
+shoebox_dir = "/Users/luis/integrator/rotation_data_examples/data/"
+# shoebox_dir = "/n/holylabs/LABS/hekstra_lab/Users/laldama/integrator_/rotation_data_examples/data_temp/temp"
 rotation_data = RotationData(shoebox_dir=shoebox_dir, val_split=None)
 
 # Set data loader to training mode
@@ -122,6 +122,13 @@ eval_metrics = pl.DataFrame(
         "corr_sum": pl.Series([], dtype=pl.Float64),
     }
 )
+
+# Array to store predicted Intensities
+I_pred_arr = np.empty((0, batch_size * n_batches))
+# Array to store predicted SigI
+SigI_pred_arr = np.empty((0, batch_size * n_batches))
+
+
 # %%
 # Training loop
 num_epochs = epochs
