@@ -27,9 +27,9 @@ eps = 1e-12
 prior_mean = 7
 prior_std = 1.4
 
-batch_size = 10
+batch_size = 100
 learning_rate = 0.001
-epochs = 50
+epochs = 10
 
 bg_penalty_scaling = [0, 1]
 kl_bern_scale = [0, 1]
@@ -83,7 +83,7 @@ trace = []
 grad_norms = []
 steps = len(train_loader)
 bar = trange(steps)
-n_batches = 10
+n_batches = 100
 
 # Optimizer
 opt = torch.optim.Adam(integrator.parameters(), lr=learning_rate)
