@@ -38,19 +38,19 @@ prior_I = torch.distributions.log_normal.LogNormal(
     loc=torch.tensor(7.0, requires_grad=False),
     scale=torch.tensor(1.4, requires_grad=False),
 )
-p_I_scale = 0.01
-prior_bg = torch.distributions.log_normal.LogNormal(
-    loc=torch.tensor(1, requires_grad=False),
-    scale=torch.tensor(1, requires_grad=False),
-)
-p_bg_scale = 0.01
+p_I_scale = 0.1
+#prior_bg = torch.distributions.normal.Normal(
+#    loc=torch.tensor(10, requires_grad=False),
+#    scale=torch.tensor(2, requires_grad=False),
+#)
+#p_bg_scale = 0.1
 # %%
 # Use GPU if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Loading data
 # shoebox_dir = "/Users/luis/integrator/rotation_data_examples/data/"
-shoebox_dir = "/n/holylabs/LABS/hekstra_lab/Users/laldama/integrator_/rotation_data_examples/data_temp/temp"
+shoebox_dir = "/n/holylabs/LABS/hekstra_lab/Users/laldama/integrator_/rotation_data_examples/data_temp/"
 rotation_data = RotationData(shoebox_dir=shoebox_dir, val_split=None)
 
 # Set data loader to training mode
@@ -89,10 +89,8 @@ distribution_builder = DistributionBuilder(
 poisson_loss = PoissonLikelihoodV2(
     beta=beta,
     eps=eps,
-    prior_I=prior_I,
-    prior_bg=prior_bg,
-    p_I_scale=p_I_scale,
-    p_bg_scale=p_bg_scale,
+    prior_I=None,
+    prior_bg=None,
 )
 integrator = IntegratorV3(encoder, distribution_builder, poisson_loss)
 integrator = integrator.to(device)

@@ -62,10 +62,8 @@ class PoissonLikelihoodV2(torch.nn.Module):
         """
 
         # Sample from variational distributions
-        z = q_I.rsample([mc_samples])
-        z += eps
-        bg = q_bg.rsample([mc_samples])
-        bg += eps
+        z = q_I.rsample([mc_samples]) + eps
+        bg = q_bg.rsample([mc_samples]) + eps
 
         # Set KL term
         kl_term = 0
@@ -86,25 +84,20 @@ class PoissonLikelihoodV2(torch.nn.Module):
 
         # Calculate KL-divergence
         if vi:
-            # KL(q_I || p_I)
-            q_log_prob_I = q_I.log_prob(z)
-            p_log_prob_I = self.prior_I.log_prob(z)
-            kl_I = q_log_prob_I - p_log_prob_I
+            # Calculate KL-divergence only if the corresponding priors and distributions are available
+            if q_I is not None and self.prior_I is not None:
+                kl_I = (q_I.log_prob(z) - self.prior_I.log_prob(z))
+                if mask is not None:
+                    kl_I = kl_I * mask
+                kl_term += kl_I.mean() * self.p_I_scale
 
-            # KL(q_bg || p_bg)
-            q_log_prob_bg = q_bg.log_prob(bg)
-            p_log_prob_bg = self.prior_bg.log_prob(bg)
-            kl_bg = q_log_prob_bg - p_log_prob_bg
+            if q_bg is not None and self.prior_bg is not None:
+                kl_bg = (q_bg.log_prob(bg) - self.prior_bg.log_prob(bg))
+                if mask is not None:
+                    kl_bg = kl_bg * mask
+                kl_term += kl_bg.mean() * self.p_bg_scale
 
             # zero out pads
-            masked_kl_I = kl_I * mask
-            masked_kl_bg = kl_bg * mask
-
-            # total kl
-            kl_term = (masked_kl_I.mean() * self.p_I_scale) + (
-                masked_kl_bg.mean() * self.p_bg_scale
-            )
-            kl_term = 0
 
         else:
             kl_term = 0  # set to 0 when vi false
