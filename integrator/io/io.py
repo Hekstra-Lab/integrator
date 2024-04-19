@@ -85,7 +85,9 @@ class RotationData(torch.utils.data.Dataset):
             torch.Tensor: Observed intensity as flattened tensor
         """
         return torch.tensor(
-            sbox.data.as_numpy_array().ravel().astype(np.float32), dtype=torch.float32
+            sbox.data.as_numpy_array().ravel().astype(np.float32),
+            dtype=torch.float32,
+            requires_grad=False,
         )
 
     def _to_tens(self, element):
@@ -98,7 +100,7 @@ class RotationData(torch.utils.data.Dataset):
         Returns:
             torch.Tensor
         """
-        return torch.tensor(element, dtype=torch.float32)
+        return torch.tensor(element, dtype=torch.float32, requires_grad=False)
 
     def _get_num_pixels(self, intensities):
         """
@@ -123,6 +125,9 @@ class RotationData(torch.utils.data.Dataset):
             float: Maximum value of the tensor
         """
         return tens.max().item()
+
+    def _filter_dead_shoeboxes(self, intensities):
+        return (intensities < 0).all()
 
     def _get_rows(self, tbl):
         """
@@ -194,6 +199,9 @@ class RotationData(torch.utils.data.Dataset):
         """
         return coords.max().item()
 
+    def _mask_dead_pixels(self, coords):
+        return ~(coords < 0)
+
     def _filter_shoebox(self, max_pix):
         """
         Remove shoeboxes with coordinates outside of the detector dimensions
@@ -238,12 +246,26 @@ class RotationData(torch.utils.data.Dataset):
                     pl.Series("dxy", dxy),
                 ]
             )
+
+            # masks for dead pixels
+            dead_pixel_mask = df["intensity_observed"].map_elements(
+                self._mask_dead_pixels
+            )
+            df = df.with_columns([pl.Series("dead_pixel_mask", dead_pixel_mask)])
+
+            # get num pixels
             num_pixel = df["intensity_observed"].map_elements(self._get_num_pixels)
             max_coord = df["coordinates"].map_elements(self._max_pixel_coordinate)
             df = df.with_columns(
                 [pl.Series("max_coord", max_coord), pl.Series("num_pix", num_pixel)]
             )
+            dead_pixels = df["intensity_observed"].map_elements(
+                self._filter_dead_shoeboxes
+            )
+            df = df.with_columns([pl.Series("all_pixels_dead", dead_pixels)])
             df = df.filter(pl.col("max_coord") < 5000)  # returns greater than 5000
+            df = df.filter(pl.col("all_pixels_dead") == 0)
+
             max_vox.append(df.select(pl.col("num_pix").max()).item())
             # max_vox = max(max_vox).item()
 
@@ -341,6 +363,7 @@ class RotationData(torch.utils.data.Dataset):
             num_pix = self.train_df["num_pix"].gather(idx).item()
             pad_size = self.max_voxels - len(coords)
             i_obs = self.train_df["intensity_observed"].gather(idx).item()
+            dead_pixel_mask = self.train_df["dead_pixel_mask"].gather(idx).item()
 
             pad_coords = torch.nn.functional.pad(
                 coords, (0, 0, 0, max(pad_size, 0)), "constant", 0
@@ -352,6 +375,10 @@ class RotationData(torch.utils.data.Dataset):
                 i_obs, (0, max(pad_size, 0)), "constant", 0
             ).unsqueeze(dim=-1)
 
+            dead_pixel_mask_padded = torch.nn.functional.pad(
+                dead_pixel_mask, (0, max(pad_size, 0)), "constant", 0
+            ).unsqueeze(dim=-1)
+
             padded_data = torch.cat((pad_coords, pad_dxy, pad_iobs), dim=1)
 
             mask = torch.nn.functional.pad(
@@ -360,7 +387,7 @@ class RotationData(torch.utils.data.Dataset):
                 "constant",
                 False,
             )
-            return torch.clamp(padded_data, min=0), mask
+            return padded_data, mask, dead_pixel_mask_padded
 
         elif self.mode == "test":
             coords = self.test_df["coordinates"].gather(idx).item()
@@ -368,6 +395,7 @@ class RotationData(torch.utils.data.Dataset):
             num_pix = self.test_df["num_pix"].gather(idx).item()
             pad_size = self.max_voxels - len(coords)
             i_obs = self.test_df["intensity_observed"].gather(idx).item()
+            dead_pixel_mask = self.test_df["dead_pixel_mask"].gather(idx).item()
 
             z_coords = coords[:, 2]  # Extract the z-coordinates
             z_min = z_coords.min()
@@ -385,13 +413,17 @@ class RotationData(torch.utils.data.Dataset):
 
             padded_data = torch.cat((pad_coords, pad_dxy, pad_iobs), dim=1)
 
+            dead_pixel_mask_padded = torch.nn.functional.pad(
+                dead_pixel_mask, (0, max(pad_size, 0)), "constant", 0
+            ).unsqueeze(dim=-1)
+
             mask = torch.nn.functional.pad(
                 torch.ones_like(i_obs, dtype=torch.bool),
                 (0, max(pad_size, 0)),
                 "constant",
                 False,
             )
-            return torch.clamp(padded_data, min=0), mask
+            return padded_data, mask, dead_pixel_mask_padded
 
         else:
             coords = self.val_df["coordinates"].gather(idx).item()
@@ -399,6 +431,7 @@ class RotationData(torch.utils.data.Dataset):
             num_pix = self.val_df["num_pix"].gather(idx).item()
             pad_size = self.max_voxels - len(coords)
             i_obs = self.val_df["intensity_observed"].gather(idx).item()
+            dead_pixel_mask = self.val_df["dead_pixel_mask"].gather(idx).item()
 
             z_coords = coords[:, 2]  # Extract the z-coordinates
             z_min = z_coords.min()
@@ -416,13 +449,18 @@ class RotationData(torch.utils.data.Dataset):
 
             padded_data = torch.cat((pad_coords, pad_dxy, pad_iobs), dim=1)
 
+            dead_pixel_mask_padded = torch.nn.functional.pad(
+                dead_pixel_mask, (0, max(pad_size, 0)), "constant", 0
+            ).unsqueeze(dim=-1)
+
             mask = torch.nn.functional.pad(
                 torch.ones_like(i_obs, dtype=torch.bool),
                 (0, max(pad_size, 0)),
                 "constant",
                 False,
             )
-            return padded_data, mask
+
+            return padded_data, mask, dead_pixel_mask_padded
 
 
 class StillData(torch.utils.data.Dataset):
@@ -512,70 +550,3 @@ class StillData(torch.utils.data.Dataset):
         else:
             mu = 0.0
         return (x - mu) / sigma
-
-
-class Standardize(nn.Module):
-    def __init__(
-        self, center=True, feature_dim=7, max_counts=float("inf"), epsilon=1e-6
-    ):
-        """
-        Initialize the Standardize module
-
-        Args:
-            center (bool): Whether to center the data. Defaults to True
-            feature_dim (int): Number of feature dimensions. Defaults to 7
-            max_counts (float): Maximum number of counts before stopping updates. Defaults to infinity
-            epsilon (float): Small value to avoid division by zero. Defaults to 1e-6
-        """
-        super().__init__()
-        self.epsilon = epsilon
-        self.center = center
-        self.max_counts = max_counts
-        self.register_buffer("mean", torch.zeros((1, 1, feature_dim)))
-        self.register_buffer("m2", torch.zeros((1, 1, feature_dim)))
-        self.register_buffer("count", torch.tensor(0.0))
-
-    @property
-    def var(self):
-        m2 = torch.clamp(self.m2, min=self.epsilon)
-        return m2 / self.count.clamp(min=1)
-
-    @property
-    def std(self):
-        return torch.sqrt(self.var)
-
-    def update(self, im, mask=None):
-        if mask is None:
-            k = len(im)
-        else:
-            k = mask.sum()  # count num of pixels in batch
-        self.count += k
-
-        if mask is None:
-            diff = im - self.mean
-        else:
-            diff = (im - self.mean) * mask.unsqueeze(-1)
-
-        self.mean += torch.sum(diff / self.count, dim=(1, 0))
-
-        if mask is None:
-            diff *= im - self.mean
-        else:
-            diff *= (im - self.mean) * mask.unsqueeze(-1)
-        self.m2 += torch.sum(diff, dim=(1, 0))
-
-    def standardize(self, im, mask=None):
-        if mask is None:
-            if self.center:
-                return (im - self.mean) / self.std
-        else:
-            if self.center:
-                return ((im - self.mean) * mask.unsqueeze(-1)) / self.std
-        return im / self.std
-
-    def forward(self, im, mask, training=True):
-        if self.count > self.max_counts:
-            training = False
-        if training:
-            self.update(im, mask)
-        return self.standardize(im, mask)

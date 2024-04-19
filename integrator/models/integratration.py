@@ -1,5 +1,6 @@
 from pylab import *
 import torch
+from integrator.layers import Standardize
 
 
 class IntegratorV3(torch.nn.Module):
@@ -15,11 +16,13 @@ class IntegratorV3(torch.nn.Module):
 
     def __init__(
         self,
+        standardize,
         encoder,
         distribution_builder,
         likelihood,
     ):
         super().__init__()
+        self.standardize = standardize
         self.encoder = encoder
         self.distribution_builder = distribution_builder
         self.likelihood = likelihood
@@ -34,7 +37,7 @@ class IntegratorV3(torch.nn.Module):
         """
         self.counts_std = torch.nn.Parameter(value, requires_grad=False)
 
-    def get_intensity_sigma(self, shoebox):
+    def get_intensity_sigma(self, shoebox, dead_pixel_mask):
         """
         Get the intensity and sigma values for the shoebox.
 
@@ -47,14 +50,16 @@ class IntegratorV3(torch.nn.Module):
         # lists to store I and SigI
         I, SigI = [], []
 
-        # pixel coordinates
-        xyz = shoebox[..., 0:3]
-
-        # pixel distances to centroid
-        dxyz = shoebox[..., 3:6]
-
         # observed photon counts
         counts = torch.clamp(shoebox[..., -1], min=0)
+
+        shoebox_ = self.standardize(shoebox, dead_pixel_mask.squeeze(-1))
+
+        # pixel coordinates
+        xyz = shoebox_[..., 0:3]
+
+        # pixel distances to centroid
+        dxyz = shoebox_[..., 3:6]
 
         for batch in zip(
             torch.split(xyz, batch_size, dim=0),
@@ -85,7 +90,7 @@ class IntegratorV3(torch.nn.Module):
     def get_intensity_sigma_batch(
         self,
         shoebox,
-        mask,
+        dead_pixel_mask,
         mc_samples=100,
     ):
         """
@@ -102,11 +107,12 @@ class IntegratorV3(torch.nn.Module):
         # photon counts
         counts = torch.clamp(shoebox[..., -1], min=0)
 
+        shoebox_ = self.standardize(shoebox, dead_pixel_mask.squeeze(-1))
         # distances to centroid
-        dxyz = shoebox[..., 3:6]
+        dxyz = shoebox_[..., 3:6]
 
         # encode shoebox
-        representation = self.encoder(shoebox, mask)
+        representation = self.encoder(shoebox_, dead_pixel_mask)
 
         # build q_bg, q_I, and profile
         q_bg, q_I, profile = self.distribution_builder(representation, dxyz)
@@ -119,7 +125,7 @@ class IntegratorV3(torch.nn.Module):
             q_I,
             profile,
             mc_samples=mc_samples,
-            mask=mask,
+            mask=dead_pixel_mask.squeeze(-1),
         )
         nll = -ll.mean()
 
@@ -128,7 +134,8 @@ class IntegratorV3(torch.nn.Module):
     def forward(
         self,
         shoebox,
-        mask,
+        padding_mask,
+        dead_pixel_mask,
         mc_samples=100,
     ):
         """
@@ -136,21 +143,24 @@ class IntegratorV3(torch.nn.Module):
 
         Args:
             shoebox (torch.Tensor): Shoebox tensor
-            mask (torch.Tensor): Mask tensor
+            padding_mask (torch.Tensor): Mask of padded entries
+            dead_pixel_mask (torch.Tensor): Mask of dead pixels and padded entries
             mc_samples (int): Number of Monte Carlo samples. Defaults to 100.
 
         Returns:
             torch.Tensor: Negative log-likelihood loss
         """
-        # todo
+
         # Do not clamp counts
-        counts = torch.clamp(shoebox[..., -1], min=0)
+        counts = shoebox[..., -1]
+
+        shoebox_ = self.standardize(shoebox, dead_pixel_mask.squeeze(-1))
 
         # distances to centroid
-        dxyz = shoebox[..., 3:6]
+        dxyz = shoebox_[..., 3:6]
 
         # encode shoebox
-        representation = self.encoder(shoebox, mask)
+        representation = self.encoder(shoebox_, dead_pixel_mask)
 
         # build q_I, q_bg, and profile
         q_bg, q_I, profile = self.distribution_builder(representation, dxyz)
@@ -161,7 +171,7 @@ class IntegratorV3(torch.nn.Module):
             q_I,
             profile,
             mc_samples=mc_samples,
-            mask=mask,
+            mask=dead_pixel_mask.squeeze(-1),
         )
         nll = -ll.mean()
 

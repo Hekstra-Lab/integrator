@@ -76,23 +76,23 @@ class PoissonLikelihoodV2(torch.nn.Module):
 
         if mask is not None:
             # Mask out padded terms
-            ll = torch.distributions.Poisson(rate).log_prob(counts.to(torch.int32))
+            ll = torch.distributions.Poisson(rate).log_prob(counts)
             ll = ll * mask
 
         else:
-            ll = torch.distributions.Poisson(rate).log_prob(counts.to(torch.int32))
+            ll = torch.distributions.Poisson(rate).log_prob(counts)
 
         # Calculate KL-divergence
         if vi:
             # Calculate KL-divergence only if the corresponding priors and distributions are available
             if q_I is not None and self.prior_I is not None:
-                kl_I = (q_I.log_prob(z) - self.prior_I.log_prob(z))
+                kl_I = q_I.log_prob(z) - self.prior_I.log_prob(z)
                 if mask is not None:
                     kl_I = kl_I * mask
                 kl_term += kl_I.mean() * self.p_I_scale
 
             if q_bg is not None and self.prior_bg is not None:
-                kl_bg = (q_bg.log_prob(bg) - self.prior_bg.log_prob(bg))
+                kl_bg = q_bg.log_prob(bg) - self.prior_bg.log_prob(bg)
                 if mask is not None:
                     kl_bg = kl_bg * mask
                 kl_term += kl_bg.mean() * self.p_bg_scale

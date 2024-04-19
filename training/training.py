@@ -1,8 +1,7 @@
 import torch
 import polars as pl
-import math
 import numpy as np
-from integrator.io import RotationData, Standardize
+from integrator.io import RotationData
 from tqdm import trange
 from tqdm import tqdm
 from integrator.models import (
@@ -14,6 +13,7 @@ from integrator.models import (
 from torch.utils.data import DataLoader
 import torch.nn as nn
 from rs_distributions import distributions as rsd
+from integrator.layers import Standardize
 
 # %%
 # Hyperparameters
@@ -39,11 +39,12 @@ prior_I = torch.distributions.log_normal.LogNormal(
     scale=torch.tensor(1.4, requires_grad=False),
 )
 p_I_scale = 0.1
-#prior_bg = torch.distributions.normal.Normal(
+# prior_bg = torch.distributions.normal.Normal(
 #    loc=torch.tensor(10, requires_grad=False),
 #    scale=torch.tensor(2, requires_grad=False),
-#)
-#p_bg_scale = 0.1
+# )
+# p_bg_scale = 0.1
+
 # %%
 # Use GPU if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -59,30 +60,9 @@ rotation_data.set_mode("train")
 # training loader
 train_loader = DataLoader(rotation_data, batch_size=batch_size, shuffle=True)
 
-
-# %%
-# Weight initializer
-def weight_initializer(weight):
-    fan_avg = 0.5 * (weight.shape[-1] + weight.shape[-2])
-    std = math.sqrt(1.0 / fan_avg / 10.0)
-    a = -2.0 * std
-    b = 2.0 * std
-    torch.nn.init.trunc_normal_(weight, 0.0, std, a, b)
-    return weight
-
-
-def initialize_weights(model):
-    with torch.no_grad():
-        for p in model.parameters():
-            if p.dim() > 1:
-                weight_initializer(p)
-
-
 # Training Loop
-
 encoder = Encoder(depth, dmodel, feature_dim, dropout=None)
 standardization = Standardize(max_counts=len(train_loader))
-standardization = standardization.to(device)
 distribution_builder = DistributionBuilder(
     dmodel, intensity_dist, background_dist, eps, beta
 )
@@ -92,7 +72,7 @@ poisson_loss = PoissonLikelihoodV2(
     prior_I=None,
     prior_bg=None,
 )
-integrator = IntegratorV3(encoder, distribution_builder, poisson_loss)
+integrator = IntegratorV3(standardization, encoder, distribution_builder, poisson_loss)
 integrator = integrator.to(device)
 
 trace = []
@@ -114,7 +94,6 @@ I_dials_prf = rotation_data.test_df["intensity.prf.value"][0 : n_batches * batch
 
 # DIALS Intensity from summation model
 I_dials_sum = rotation_data.test_df["intensity.prf.value"][0 : n_batches * batch_size]
-
 
 # DataFrame to store evaluation metrics
 eval_metrics = pl.DataFrame(
@@ -144,7 +123,6 @@ I_pred_arr = np.empty((0, batch_size * n_batches))
 # Array to store predicted SigI
 SigI_pred_arr = np.empty((0, batch_size * n_batches))
 
-
 # %%
 # Training loop
 num_epochs = epochs
@@ -155,15 +133,15 @@ with tqdm(total=num_epochs * num_steps, desc="Training") as pbar:
         batch_loss = []
         i = 0
 
-        # Get batch data
-        for step, (ims, masks) in enumerate(train_loader):
-            ims = ims.to(device)
+        # Get batch of data
+        for step, (sbox, masks, dead_pixel_mask) in enumerate(train_loader):
+            sbox = sbox.to(device)
             masks = masks.to(device)
-            ims_ = standardization(ims, masks)
+            dead_pixel_mask = dead_pixel_mask.to(device)
 
             # Forward pass
             opt.zero_grad()
-            loss = integrator(ims_, masks, mc_samples=mc_samples)
+            loss = integrator(sbox, masks, dead_pixel_mask, mc_samples=mc_samples)
 
             # Backward pass
             loss.backward()
@@ -203,16 +181,16 @@ with tqdm(total=num_epochs * num_steps, desc="Training") as pbar:
 
         # Evaluation loop
         with torch.no_grad():
-            for i, (ims, masks) in enumerate(train_loader):
+            for i, (sbox, masks, dead_pixel_mask) in enumerate(train_loader):
                 if i >= num_batches:
                     break
-                ims = ims.to(device)
+                sbox = ims.to(device)
                 masks = masks.to(device)
-                ims_ = standardization(ims, masks)
-                masks = masks.to(device)
+                dead_pixel_mask = dead_pixel_mask.to(device)
+                sbox_ = standardization(sbox, masks)
 
                 # forward pass
-                output = integrator.get_intensity_sigma_batch(ims_, masks)
+                output = integrator.get_intensity_sigma_batch(sbox_, dead_pixel_mask)
 
                 I.append(output[0].cpu())
                 SigI.append(output[1].cpu())
@@ -250,6 +228,7 @@ with tqdm(total=num_epochs * num_steps, desc="Training") as pbar:
                 }
             )
         )
+
 eval_metrics.write_csv(f"evaluation_metrics_.csv")
 np.savetxt(f"trace.csv", trace, fmt="%s")
 np.savetxt(f"IPred.csv", I_pred_arr, delimiter=",")

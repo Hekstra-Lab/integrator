@@ -12,7 +12,7 @@ class DistributionBuilder(torch.nn.Module):
         background_dist,
         eps=1e-12,
         beta=1.0,
-        output_dim=13,
+        output_dim=10,
         dtype=None,
         device=None,
     ):
@@ -52,7 +52,7 @@ class DistributionBuilder(torch.nn.Module):
         }
         chol = torch.distributions.transforms.CorrCholeskyTransform(cache_size=0)
         L = chol(params[..., 4:7])
-        mu = params[..., 10:]
+        mu = params[..., 7:]
         mvn = torch.distributions.multivariate_normal.MultivariateNormal(
             mu, scale_tril=L
         )
