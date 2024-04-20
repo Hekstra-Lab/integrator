@@ -70,7 +70,10 @@ class PoissonLikelihoodV2(torch.nn.Module):
 
         # Calculate the rate
         rate = (z * (profile)) + bg
-        rate = rate + eps
+        #print(f'rate_min:{rate.min()},rate_max:{rate.max()}')
+        #print(f'z_min:{z.min()},z_max:{z.max()}')
+        #print(f'bg_min:{bg.min()},bg_max:{bg.max()}')
+        #print(f'profile_min:{profile.min()},profile_max:{profile.max()}')
 
         counts = torch.clamp(counts, min=0)  # do not clamp, use a mask instead
 

@@ -32,18 +32,20 @@ epochs = 10
 # Variational distributions
 intensity_dist = rsd.FoldedNormal
 background_dist = rsd.FoldedNormal
+#intensity_dist = torch.distributions.log_normal.LogNormal
+#background_dist = torch.distributions.log_normal.LogNormal
 
 # Prior distributions
 prior_I = torch.distributions.log_normal.LogNormal(
     loc=torch.tensor(7.0, requires_grad=False),
     scale=torch.tensor(1.4, requires_grad=False),
 )
-p_I_scale = 0.1
-# prior_bg = torch.distributions.normal.Normal(
-#    loc=torch.tensor(10, requires_grad=False),
-#    scale=torch.tensor(2, requires_grad=False),
-# )
-# p_bg_scale = 0.1
+p_I_scale = .1
+prior_bg = torch.distributions.normal.Normal(
+    loc=torch.tensor(10, requires_grad=False),
+    scale=torch.tensor(1, requires_grad=False),
+ )
+p_bg_scale = 0.1
 
 # %%
 # Use GPU if available
@@ -69,8 +71,10 @@ distribution_builder = DistributionBuilder(
 poisson_loss = PoissonLikelihoodV2(
     beta=beta,
     eps=eps,
-    prior_I=None,
-    prior_bg=None,
+    prior_I=prior_I,
+    prior_bg=prior_bg,
+    p_I_scale=p_I_scale,
+    p_bg_scale = p_bg_scale
 )
 integrator = IntegratorV3(standardization, encoder, distribution_builder, poisson_loss)
 integrator = integrator.to(device)
@@ -184,13 +188,12 @@ with tqdm(total=num_epochs * num_steps, desc="Training") as pbar:
             for i, (sbox, masks, dead_pixel_mask) in enumerate(train_loader):
                 if i >= num_batches:
                     break
-                sbox = ims.to(device)
+                sbox = sbox.to(device)
                 masks = masks.to(device)
                 dead_pixel_mask = dead_pixel_mask.to(device)
-                sbox_ = standardization(sbox, masks)
 
                 # forward pass
-                output = integrator.get_intensity_sigma_batch(sbox_, dead_pixel_mask)
+                output = integrator.get_intensity_sigma_batch(sbox, dead_pixel_mask)
 
                 I.append(output[0].cpu())
                 SigI.append(output[1].cpu())

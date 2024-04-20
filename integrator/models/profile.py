@@ -9,7 +9,7 @@ class DistributionBuilder(torch.nn.Module):
         self,
         dmodel,
         intensity_dist,
-        background_dist,
+        background_d1st,
         eps=1e-12,
         beta=1.0,
         output_dim=10,
@@ -33,7 +33,7 @@ class DistributionBuilder(torch.nn.Module):
         scale = params[..., 1]
         scale = self.constraint(scale)
         q_I = self.background_dist(loc, scale)
-        return q_I
+        return q_I,loc,scale
 
     def background(self, params):
         mu = params[..., 2]
@@ -67,6 +67,7 @@ class DistributionBuilder(torch.nn.Module):
         q_bg = self.background(params)
 
         # variational intensity distribution
-        q_I = self.intensity_distribution(params)
+        q_I,loc,scale = self.intensity_distribution(params)
+        #print(f'loc_min:{loc.min()},loc_max{loc.max()},scale_min:{scale.min()},scale_max:{scale.max()}')
 
         return q_bg, q_I, profile
