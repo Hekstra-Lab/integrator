@@ -70,39 +70,21 @@ class PoissonLikelihoodV2(torch.nn.Module):
 
         # Calculate the rate
         rate = (z * (profile)) + bg
-        #print(f'rate_min:{rate.min()},rate_max:{rate.max()}')
-        #print(f'z_min:{z.min()},z_max:{z.max()}')
-        #print(f'bg_min:{bg.min()},bg_max:{bg.max()}')
-        #print(f'profile_min:{profile.min()},profile_max:{profile.max()}')
+        # rate = rate * mask if mask is not None else rate
 
-        counts = torch.clamp(counts, min=0)  # do not clamp, use a mask instead
+        # counts = torch.clamp(counts, min=0)  # do not clamp, use a mask instead
 
-        if mask is not None:
-            # Mask out padded terms
-            ll = torch.distributions.Poisson(rate).log_prob(counts)
-            ll = ll * mask
+        ll = torch.distributions.Poisson(rate).log_prob(counts)
+        ll = ll * mask if mask is not None else ll
 
-        else:
-            ll = torch.distributions.Poisson(rate).log_prob(counts)
+        # Calculate KL-divergence only if the corresponding priors and distributions are available
+        if q_I is not None and self.prior_I is not None:
+            kl_I = q_I.log_prob(z) - self.prior_I.log_prob(z)
+            kl_term += kl_I.mean() * self.p_I_scale
 
-        # Calculate KL-divergence
-        if vi:
-            # Calculate KL-divergence only if the corresponding priors and distributions are available
-            if q_I is not None and self.prior_I is not None:
-                kl_I = q_I.log_prob(z) - self.prior_I.log_prob(z)
-                if mask is not None:
-                    kl_I = kl_I * mask
-                kl_term += kl_I.mean() * self.p_I_scale
-
-            if q_bg is not None and self.prior_bg is not None:
-                kl_bg = q_bg.log_prob(bg) - self.prior_bg.log_prob(bg)
-                if mask is not None:
-                    kl_bg = kl_bg * mask
-                kl_term += kl_bg.mean() * self.p_bg_scale
-
-            # zero out pads
-
-        else:
-            kl_term = 0  # set to 0 when vi false
+        if q_bg is not None and self.prior_bg is not None:
+            kl_bg = q_bg.log_prob(bg) - self.prior_bg.log_prob(bg)
+            # kl_bg = kl_bg * mask if mask is not None else kl_bg
+            kl_term += kl_bg.mean() * self.p_bg_scale
 
         return ll, kl_term

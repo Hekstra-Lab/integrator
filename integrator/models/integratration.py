@@ -106,10 +106,12 @@ class IntegratorV3(torch.nn.Module):
         """
         # photon counts
         counts = torch.clamp(shoebox[..., -1], min=0)
+        counts = counts.detach()
 
         shoebox_ = self.standardize(shoebox, dead_pixel_mask.squeeze(-1))
         # distances to centroid
         dxyz = shoebox_[..., 3:6]
+        dxyz = dxyz.detach()
 
         # encode shoebox
         representation = self.encoder(shoebox_, dead_pixel_mask)
@@ -134,7 +136,7 @@ class IntegratorV3(torch.nn.Module):
     def forward(
         self,
         shoebox,
-        padding_mask,
+        # padding_mask,
         dead_pixel_mask,
         mc_samples=100,
     ):
@@ -151,13 +153,16 @@ class IntegratorV3(torch.nn.Module):
             torch.Tensor: Negative log-likelihood loss
         """
 
-        # Do not clamp counts
-        counts = shoebox[..., -1]
+        # get counts
+        counts = torch.clamp(shoebox[..., -1], min=0)
+        counts = counts.detach()
 
+        # standardize data
         shoebox_ = self.standardize(shoebox, dead_pixel_mask.squeeze(-1))
 
         # distances to centroid
         dxyz = shoebox_[..., 3:6]
+        dxyz = dxyz.detach()
 
         # encode shoebox
         representation = self.encoder(shoebox_, dead_pixel_mask)
@@ -165,6 +170,7 @@ class IntegratorV3(torch.nn.Module):
         # build q_I, q_bg, and profile
         q_bg, q_I, profile = self.distribution_builder(representation, dxyz)
 
+        # calculate ll and kl
         ll, kl_term = self.likelihood(
             counts,
             q_bg,

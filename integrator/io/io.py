@@ -4,23 +4,18 @@ import torch
 from scipy.spatial import cKDTree
 import pandas as pd
 import reciprocalspaceship as rs
-import torch.nn as nn
 import glob
 import os
 from dials.array_family import flex
 import numpy as np
 
 
-# %%
 class RotationData(torch.utils.data.Dataset):
     def __init__(
         self,
         max_size=4096,
         shoebox_dir=None,
         max_detector_dimension=5000,
-        train_split=0.7,
-        val_split=None,
-        test_split=0.3,
         seed=60,
     ):
         """
@@ -38,15 +33,10 @@ class RotationData(torch.utils.data.Dataset):
         self.seed = seed
         self.mode = "train"
         self.max_size = max_size
-        self.train_split = train_split
-        self.val_split = val_split
-        self.test_split = test_split if val_split is not None else 1 - train_split
         self.shoebox_dir = shoebox_dir
         self.shoebox_filenames = self._get_shoebox_filenames()
         (
-            self.train_df,
-            self.val_df,
-            self.test_df,
+            self.df,
             self.max_voxels,
         ) = self._get_refl_tables()
 
@@ -272,60 +262,8 @@ class RotationData(torch.utils.data.Dataset):
             # stack dataframe
             final_df = final_df.vstack(df) if final_df is not None else df
         max_voxel = max(max_vox)
-        if self.val_split is not None:
-            self.train_df, self.val_df, self.test_df = self.split_data(final_df)
-        else:
-            (
-                self.train_df,
-                self.test_df,
-            ) = self.split_data(final_df)
-            self.val_df = None
 
-        return self.train_df, self.val_df, self.test_df, max_voxel
-
-    def split_data(self, refl_tables):
-        """
-        Split the reflection tables into train, validation, and test sets
-
-        Args:
-            refl_tables (pl.DataFrame): DataFrame containing the reflection tables
-
-        Returns:
-            tuple: Train DataFrame, validation DataFrame (if applicable), and test DataFrame
-        """
-        np.random.seed(self.seed)
-        total_rows = len(refl_tables)
-        shuffled_index = np.random.permutation(total_rows)
-
-        # get train set
-        train_size = int(total_rows * self.train_split)
-        train_data = refl_tables.select(pl.all().gather(shuffled_index[:train_size]))
-
-        # get test set
-        if self.val_split is not None:
-            val_end = train_size + int(total_rows * self.val_split)
-
-            val_data = refl_tables.select(
-                pl.all().gather(shuffled_index[train_size:val_end])
-            )
-
-            test_data = refl_tables.select(pl.all().gather(shuffled_index[val_end:]))
-
-            return train_data, val_data, test_data
-        else:
-            test_data = refl_tables.select(pl.all().gather(shuffled_index[train_size:]))
-            return train_data, test_data
-
-    def set_mode(self, mode):
-        """
-        Set the mode of the dataset ('train' or 'test').
-
-        Args:
-            mode (str): Mode of the dataset.
-        """
-
-        assert mode in ["train", "test"], "Mode should be 'train' or 'test'"
-        self.mode = mode
+        return final_df, max_voxel
 
     def __len__(self):
         """
@@ -334,12 +272,7 @@ class RotationData(torch.utils.data.Dataset):
         Returns:
             int: Length of the dataset
         """
-        if self.mode == "train":
-            return self.train_df.height
-        elif self.mode == "validate":
-            return self.val_df.height
-        else:
-            return self.test_df.height
+        return self.df.height
 
     def __getitem__(self, idx):
         """
@@ -352,115 +285,46 @@ class RotationData(torch.utils.data.Dataset):
             tuple: Padded data tensor and mask tensor
         """
 
-        if self.mode == "train":
-            coords = self.train_df["coordinates"].gather(idx).item()
+        I_prf_val = self.df["intensity.prf.value"].gather(idx).item()
+        I_prf_var = self.df["intensity.prf.variance"].gather(idx).item()
+        I_sum_val = self.df["intensity.prf.value"].gather(idx).item()
+        I_sum_var = self.df["intensity.prf.variance"].gather(idx).item()
+        DIALS_I = (I_prf_val, I_prf_var, I_sum_val, I_sum_var)
+        coords = self.df["coordinates"].gather(idx).item()
 
-            z_coords = coords[:, 2]  # Extract the z-coordinates
-            z_min = z_coords.min()
-            z_max = z_coords.max()
+        z_coords = coords[:, 2]  # Extract the z-coordinates
+        z_min = z_coords.min()
+        z_max = z_coords.max()
 
-            dxy = self.train_df["dxy"].gather(idx).item()
-            num_pix = self.train_df["num_pix"].gather(idx).item()
-            pad_size = self.max_voxels - len(coords)
-            i_obs = self.train_df["intensity_observed"].gather(idx).item()
-            dead_pixel_mask = self.train_df["dead_pixel_mask"].gather(idx).item()
+        dxy = self.df["dxy"].gather(idx).item()
+        num_pix = self.df["num_pix"].gather(idx).item()
+        pad_size = self.max_voxels - len(coords)
+        i_obs = self.df["intensity_observed"].gather(idx).item()
+        dead_pixel_mask = self.df["dead_pixel_mask"].gather(idx).item()
 
-            pad_coords = torch.nn.functional.pad(
-                coords, (0, 0, 0, max(pad_size, 0)), "constant", 0
-            )
-            pad_dxy = torch.nn.functional.pad(
-                dxy, (0, 0, 0, max(pad_size, 0)), "constant", 0
-            )
-            pad_iobs = torch.nn.functional.pad(
-                i_obs, (0, max(pad_size, 0)), "constant", 0
-            ).unsqueeze(dim=-1)
+        pad_coords = torch.nn.functional.pad(
+            coords, (0, 0, 0, max(pad_size, 0)), "constant", 0
+        )
+        pad_dxy = torch.nn.functional.pad(
+            dxy, (0, 0, 0, max(pad_size, 0)), "constant", 0
+        )
+        pad_iobs = torch.nn.functional.pad(
+            i_obs, (0, max(pad_size, 0)), "constant", 0
+        ).unsqueeze(dim=-1)
 
-            dead_pixel_mask_padded = torch.nn.functional.pad(
-                dead_pixel_mask, (0, max(pad_size, 0)), "constant", 0
-            ).unsqueeze(dim=-1)
+        dead_pixel_mask_padded = torch.nn.functional.pad(
+            dead_pixel_mask, (0, max(pad_size, 0)), "constant", 0
+        ).unsqueeze(dim=-1)
 
-            padded_data = torch.cat((pad_coords, pad_dxy, pad_iobs), dim=1)
+        padded_data = torch.cat((pad_coords, pad_dxy, pad_iobs), dim=1)
 
-            mask = torch.nn.functional.pad(
-                torch.ones_like(i_obs, dtype=torch.bool),
-                (0, max(pad_size, 0)),
-                "constant",
-                False,
-            )
-            return padded_data, mask, dead_pixel_mask_padded
-
-        elif self.mode == "test":
-            coords = self.test_df["coordinates"].gather(idx).item()
-            dxy = self.test_df["dxy"].gather(idx).item()
-            num_pix = self.test_df["num_pix"].gather(idx).item()
-            pad_size = self.max_voxels - len(coords)
-            i_obs = self.test_df["intensity_observed"].gather(idx).item()
-            dead_pixel_mask = self.test_df["dead_pixel_mask"].gather(idx).item()
-
-            z_coords = coords[:, 2]  # Extract the z-coordinates
-            z_min = z_coords.min()
-            z_max = z_coords.max()
-
-            pad_coords = torch.nn.functional.pad(
-                coords, (0, 0, 0, max(pad_size, 0)), "constant", 0
-            )
-            pad_dxy = torch.nn.functional.pad(
-                dxy, (0, 0, 0, max(pad_size, 0)), "constant", 0
-            )
-            pad_iobs = torch.nn.functional.pad(
-                i_obs, (0, max(pad_size, 0)), "constant", 0
-            ).unsqueeze(dim=-1)
-
-            padded_data = torch.cat((pad_coords, pad_dxy, pad_iobs), dim=1)
-
-            dead_pixel_mask_padded = torch.nn.functional.pad(
-                dead_pixel_mask, (0, max(pad_size, 0)), "constant", 0
-            ).unsqueeze(dim=-1)
-
-            mask = torch.nn.functional.pad(
-                torch.ones_like(i_obs, dtype=torch.bool),
-                (0, max(pad_size, 0)),
-                "constant",
-                False,
-            )
-            return padded_data, mask, dead_pixel_mask_padded
-
-        else:
-            coords = self.val_df["coordinates"].gather(idx).item()
-            dxy = self.val_df["dxy"].gather(idx).item()
-            num_pix = self.val_df["num_pix"].gather(idx).item()
-            pad_size = self.max_voxels - len(coords)
-            i_obs = self.val_df["intensity_observed"].gather(idx).item()
-            dead_pixel_mask = self.val_df["dead_pixel_mask"].gather(idx).item()
-
-            z_coords = coords[:, 2]  # Extract the z-coordinates
-            z_min = z_coords.min()
-            z_max = z_coords.max()
-
-            pad_coords = torch.nn.functional.pad(
-                coords, (0, 0, 0, max(pad_size, 0)), "constant", 0
-            )
-            pad_dxy = torch.nn.functional.pad(
-                dxy, (0, 0, 0, max(pad_size, 0)), "constant", 0
-            )
-            pad_iobs = torch.nn.functional.pad(
-                i_obs, (0, max(pad_size, 0)), "constant", 0
-            ).unsqueeze(dim=-1)
-
-            padded_data = torch.cat((pad_coords, pad_dxy, pad_iobs), dim=1)
-
-            dead_pixel_mask_padded = torch.nn.functional.pad(
-                dead_pixel_mask, (0, max(pad_size, 0)), "constant", 0
-            ).unsqueeze(dim=-1)
-
-            mask = torch.nn.functional.pad(
-                torch.ones_like(i_obs, dtype=torch.bool),
-                (0, max(pad_size, 0)),
-                "constant",
-                False,
-            )
-
-            return padded_data, mask, dead_pixel_mask_padded
+        # mask = torch.nn.functional.pad(
+        # torch.ones_like(i_obs, dtype=torch.bool),
+        # (0, max(pad_size, 0)),
+        # "constant",
+        # False,
+        # )
+        return padded_data, dead_pixel_mask_padded, DIALS_I
 
 
 class StillData(torch.utils.data.Dataset):
