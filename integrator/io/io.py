@@ -287,8 +287,8 @@ class RotationData(torch.utils.data.Dataset):
 
         I_prf_val = self.df["intensity.prf.value"].gather(idx).item()
         I_prf_var = self.df["intensity.prf.variance"].gather(idx).item()
-        I_sum_val = self.df["intensity.prf.value"].gather(idx).item()
-        I_sum_var = self.df["intensity.prf.variance"].gather(idx).item()
+        I_sum_val = self.df["intensity.sum.value"].gather(idx).item()
+        I_sum_var = self.df["intensity.sum.variance"].gather(idx).item()
         DIALS_I = (I_prf_val, I_prf_var, I_sum_val, I_sum_var)
         coords = self.df["coordinates"].gather(idx).item()
 
