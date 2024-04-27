@@ -2,6 +2,7 @@ from pylab import *
 import torch
 from integrator.layers import Linear
 from integrator.models import MLP
+from rs_distributions.transforms import FillScaleTriL
 
 
 class DistributionBuilder(torch.nn.Module):
@@ -12,7 +13,7 @@ class DistributionBuilder(torch.nn.Module):
         background_dist,
         eps=1e-12,
         beta=1.0,
-        output_dim=10,
+        output_dim=13,
         dtype=None,
         device=None,
     ):
@@ -24,6 +25,7 @@ class DistributionBuilder(torch.nn.Module):
         self.linear1 = Linear(self.input_dim, self.output_dim)
         self.intensity_dist = intensity_dist
         self.background_dist = background_dist
+        self.L_transfrom = FillScaleTriL()
 
     def constraint(self, x):
         return torch.nn.functional.softplus(x, beta=self.beta) + self.eps
@@ -51,8 +53,9 @@ class DistributionBuilder(torch.nn.Module):
             "dtype": dxy.dtype,
         }
         chol = torch.distributions.transforms.CorrCholeskyTransform(cache_size=0)
-        L = chol(params[..., 4:7])
-        mu = params[..., 7:]
+        mu = params[..., 4:7]
+        L = params[..., 7:]
+        L = self.L_transfrom(L)
         mvn = torch.distributions.multivariate_normal.MultivariateNormal(
             mu, scale_tril=L
         )
@@ -71,3 +74,4 @@ class DistributionBuilder(torch.nn.Module):
         # print(f'loc_min:{loc.min()},loc_max{loc.max()},scale_min:{scale.min()},scale_max:{scale.max()}')
 
         return q_bg, q_I, profile
+
