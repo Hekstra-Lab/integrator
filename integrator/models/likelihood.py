@@ -45,7 +45,6 @@ class PoissonLikelihoodV2(torch.nn.Module):
         profile,
         eps=1e-8,
         mc_samples=10,
-        vi=True,
         mask=None,
     ):
         """

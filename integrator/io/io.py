@@ -16,7 +16,6 @@ class RotationData(torch.utils.data.Dataset):
         max_size=4096,
         shoebox_dir=None,
         max_detector_dimension=5000,
-        seed=60,
     ):
         """
         Dataset class for X-ray diffraction rotation data.
@@ -27,10 +26,8 @@ class RotationData(torch.utils.data.Dataset):
             train_split (float): Fraction of data to use for training.
             val_split (float): Fraction of data to use for validation.
             test_split (float): Fraction of data to use for testing.
-            seed (int): Random seed for data splitting.
         """
         self.max_detector_dimension = max_detector_dimension
-        self.seed = seed
         self.mode = "train"
         self.max_size = max_size
         self.shoebox_dir = shoebox_dir
