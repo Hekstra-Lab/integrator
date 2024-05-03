@@ -106,32 +106,40 @@ class IntegratorV3(torch.nn.Module):
         """
         # photon counts
         counts = torch.clamp(shoebox[..., -1], min=0)
-        counts = counts.detach()
 
         shoebox_ = self.standardize(shoebox, dead_pixel_mask.squeeze(-1))
         # distances to centroid
         dxyz = shoebox_[..., 3:6]
-        dxyz = dxyz.detach()
 
         # encode shoebox
         representation = self.encoder(shoebox_, dead_pixel_mask)
 
         # build q_bg, q_I, and profile
-        q_bg, q_I, profile = self.distribution_builder(representation, dxyz)
+        q_bg, q_I, profile = self.distribution_builder(representation, dxyz,dead_pixel_mask)
 
         I, SigI = q_I.mean, q_I.stddev
+        bg = q_bg.mean
 
+        # calculate ll and kl
         ll, kl_term = self.likelihood(
-            counts=counts,
-            q_bg=q_bg,
-            q_I=q_I,
-            profile=profile,
+            counts,
+            q_bg,
+            q_I,
+            profile,
             mc_samples=mc_samples,
             mask=dead_pixel_mask.squeeze(-1),
         )
-        nll = -ll.mean()
 
-        return I, SigI, profile, counts, (nll + kl_term)
+        ll_mean = torch.mean(ll,dim=0,keepdims=True) #mean across mc_samples
+        masked_ll_mean = ll_mean * dead_pixel_mask.squeeze(-1)
+        nll = -(torch.sum(masked_ll_mean)/torch.sum(dead_pixel_mask))
+
+#        diff = (rate - counts.unsqueeze(0))
+#        diff_squared = diff**2
+#        diff_squared_mean = diff_squared.mean(dim=0)
+#        reconstruction = torch.sum(diff_squared.mean(dim=0)*dead_pixel_mask.squeeze(-1))/torch.sum(dead_pixel_mask)
+
+        return I, SigI, profile, counts, (nll + kl_term),bg
 
     def forward(
         self,
@@ -155,14 +163,12 @@ class IntegratorV3(torch.nn.Module):
 
         # get counts
         counts = torch.clamp(shoebox[..., -1], min=0)
-        counts = counts.detach()
 
         # standardize data
         shoebox_ = self.standardize(shoebox, dead_pixel_mask.squeeze(-1))
 
         # distances to centroid
         dxyz = shoebox_[..., 3:6]
-        dxyz = dxyz.detach()
 
         # encode shoebox
         representation = self.encoder(shoebox_, dead_pixel_mask)
@@ -181,9 +187,17 @@ class IntegratorV3(torch.nn.Module):
             mc_samples=mc_samples,
             mask=dead_pixel_mask.squeeze(-1),
         )
-        nll = -ll.mean()
 
-        return nll + kl_term
+        ll_mean = torch.mean(ll,dim=0,keepdims=True) #mean across mc_samples
+        masked_ll_mean = ll_mean * dead_pixel_mask.squeeze(-1)
+        nll = -(torch.sum(masked_ll_mean)/torch.sum(dead_pixel_mask))
+
+#        diff = rate - counts.unsqueeze(0)
+#        diff_squared = diff**2
+#        diff_squared_mean = diff_squared.mean(dim=0)
+#        reconstruction = torch.sum(diff_squared_mean*dead_pixel_mask.squeeze(-1))/torch.sum(dead_pixel_mask)
+
+        return nll  + kl_term
 
     def grad_norm(self):
         """
@@ -305,18 +319,16 @@ class IntegratorPerPixel(torch.nn.Module):
         """
         # photon counts
         counts = torch.clamp(shoebox[..., -1], min=0)
-        counts = counts.detach()
 
         shoebox_ = self.standardize(shoebox, dead_pixel_mask.squeeze(-1))
         # distances to centroid
         dxyz = shoebox_[..., 3:6]
-        dxyz = dxyz.detach()
 
         # encode shoebox
         representation = self.reflection_encoder(shoebox_, dead_pixel_mask)
 
         # build q_bg, q_I, and profile
-        q_bg, q_I, profile = self.distribution_builder(representation, dxyz)
+        q_bg, q_I, profile = self.distribution_builder(representation, dxyz,dead_pixel_mask)
 
         I, SigI = q_I.mean, q_I.stddev
 
@@ -354,7 +366,6 @@ class IntegratorPerPixel(torch.nn.Module):
 
         # get counts
         counts = torch.clamp(shoebox[..., -1], min=0)
-        counts = counts.detach()
 
         # standardize data
         shoebox_ = self.standardize(shoebox, dead_pixel_mask.squeeze(-1))

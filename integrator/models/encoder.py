@@ -33,11 +33,12 @@ class MeanPool(torch.nn.Module):
         )
 
     def forward(self, data, mask=None):
-        out = data.sum(1, keepdim=True)
+        data = data * mask
+        out = torch.sum(data,dim=1,keepdim=True)
         if mask is None:
             denom = data.shape[-1]
         else:
-            denom = mask.sum(-2, keepdim=True)
+            denom = torch.sum(mask,dim=-2, keepdim=True)
         out = out / denom
 
         return out

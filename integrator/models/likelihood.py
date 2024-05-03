@@ -84,6 +84,6 @@ class PoissonLikelihoodV2(torch.nn.Module):
         if q_bg is not None and self.prior_bg is not None:
             kl_bg = q_bg.log_prob(bg) - self.prior_bg.log_prob(bg)
             # kl_bg = kl_bg * mask if mask is not None else kl_bg
-            kl_term += kl_bg.mean() * self.p_bg_scale
+            kl_term += kl_bg.mean() *self.p_bg_scale
 
         return ll, kl_term
