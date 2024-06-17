@@ -101,6 +101,9 @@ class RotationData(torch.utils.data.Dataset):
         """
         return intensities.numel()
 
+    def _get_z_dims(self, coords):
+        return len(coords[:, -1].unique())
+
     def _get_max_(self, tens):
         """
         Get the maximum value of the tensor
@@ -286,15 +289,21 @@ class RotationData(torch.utils.data.Dataset):
         I_prf_var = self.df["intensity.prf.variance"].gather(idx).item()
         I_sum_val = self.df["intensity.sum.value"].gather(idx).item()
         I_sum_var = self.df["intensity.sum.variance"].gather(idx).item()
+        bg_sum_val = self.df["background.sum.value"].gather(idx).item()
+        bg_sum_var = self.df["background.sum.variance"].gather(idx).item()
+        bg_sum_mean = self.df["background.mean"].gather(idx).item()
         DIALS_I = (I_prf_val, I_prf_var, I_sum_val, I_sum_var)
+        DIALS_bg = (bg_sum_val, bg_sum_var, bg_sum_mean)
+        row_idx = idx
         coords = self.df["coordinates"].gather(idx).item()
 
-        z_coords = coords[:, 2]  # Extract the z-coordinates
-        z_min = z_coords.min()
-        z_max = z_coords.max()
+        z_coords = len(coords[:, 2].unique())  # Extract the z-coordinates
+        if z_coords == 1:
+            is_flat = torch.tensor(True)
+        else:
+            is_flat = torch.tensor(False)
 
         dxy = self.df["dxy"].gather(idx).item()
-        num_pix = self.df["num_pix"].gather(idx).item()
         pad_size = self.max_voxels - len(coords)
         i_obs = self.df["intensity_observed"].gather(idx).item()
         dead_pixel_mask = self.df["dead_pixel_mask"].gather(idx).item()
@@ -315,99 +324,19 @@ class RotationData(torch.utils.data.Dataset):
 
         padded_data = torch.cat((pad_coords, pad_dxy, pad_iobs), dim=1)
 
-        # mask = torch.nn.functional.pad(
-        # torch.ones_like(i_obs, dtype=torch.bool),
-        # (0, max(pad_size, 0)),
-        # "constant",
-        # False,
-        # )
-        return padded_data, dead_pixel_mask_padded, DIALS_I
-
-
-class StillData(torch.utils.data.Dataset):
-
-    """
-    Attributes:
-        image_files: filename of diffraction image
-        prediction_files: filename of prediction file
-        max_size: max shoebox dimensions
-    """
-
-    def __init__(self, image_files, prediction_files, max_size=4096):
-        self.image_files = image_files
-        self.prediction_files = prediction_files
-        self.max_size = max_size
-
-    def __len__(self):
-        return len(self.image_files)
-
-    def get_data_set(self, idx):
-        # image_file = self.image_files[idx]
-        prediction_file = self.prediction_files[idx]
-        ds = rs.read_precognition(prediction_file)
-        ds = (
-            ds.reset_index().groupby(["X", "Y"]).first().reset_index()
-        )  # Needed to remove harmonics
-        return ds
-
-    def __getitem__(self, idx):
-        image_file = self.image_files[idx]
-        ds = self.get_data_set(idx)
-        pix = imread(image_file)
-        x = ds.X.to_numpy("float32")
-        y = ds.Y.to_numpy("float32")
-
-        xy = np.column_stack((x, y))
-        pxy = np.indices(pix.shape).T.reshape((-1, 2))
-        tree = cKDTree(xy)
-        d, pidx = tree.query(pxy)
-        dxy = pxy - centroids[pidx]
-
-        df = pd.DataFrame(
-            {
-                "counts": pix.flatten(),
-                "dist": d,
-                "x": pxy[:, 0],
-                "y": pxy[:, 1],
-                "dx": dxy[:, 0],
-                "dy": dxy[:, 1],
-                "idx": pidx,
-            }
+        pad_mask = torch.nn.functional.pad(
+            torch.ones_like(i_obs, dtype=torch.bool),
+            (0, max(pad_size, 0)),
+            "constant",
+            False,
         )
-        df["dist_rank"] = (
-            df[["idx", "dist"]].groupby("idx").rank(method="first").astype("int") - 1
+
+        return (
+            padded_data,
+            dead_pixel_mask_padded,
+            DIALS_I,
+            DIALS_bg,
+            idx,
+            pad_mask,
+            is_flat,
         )
-        m = self.max_size
-        n = len(centroids)
-        df = df[df.dist_rank < m]
-
-        idx_1, idx_2 = df.idx.to_numpy(), df.dist_rank.to_numpy()
-        mask = torch.zeros((n, m), dtype=torch.bool)
-        mask[idx_1, idx_2] = True
-
-        counts = torch.zeros((n, m), dtype=torch.float32)
-        counts[idx_1, idx_2] = torch.tensor(df.counts.to_numpy("float32"))
-
-        xy = torch.zeros((n, m, 2), dtype=torch.float32)
-        xy[idx_1, idx_2, 0] = torch.tensor(df.x.to_numpy("float32"))
-        xy[idx_1, idx_2, 1] = torch.tensor(df.y.to_numpy("float32"))
-
-        dxy = torch.zeros((n, m, 2), dtype=torch.float32)
-        dxy[idx_1, idx_2, 0] = torch.tensor(df.dx.to_numpy("float32"))
-        dxy[idx_1, idx_2, 1] = torch.tensor(df.dy.to_numpy("float32"))
-
-        # Standardized
-        idx = torch.clone(xy)
-        xy = self.standardize(xy)
-        dxy = self.standardize(dxy)
-
-        return idx, xy, dxy, counts, mask
-
-    @staticmethod
-    def standardize(x, center=True):
-        d = x.shape[-1]
-        if center:
-            mu = x.reshape((-1, d)).mean(0)
-        else:
-            mu = 0.0
-        return (x - mu) / sigma
