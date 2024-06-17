@@ -2,8 +2,7 @@ from pylab import *
 import torch
 from integrator.layers import Standardize
 
-
-class IntegratorV3(torch.nn.Module):
+class Integrator(torch.nn.Module):
     """
     Integration module
 
@@ -28,124 +27,18 @@ class IntegratorV3(torch.nn.Module):
         self.likelihood = likelihood
         self.counts_std = None
 
-    def set_counts_std(self, value):
-        """
-        Set the standard deviation of counts.
-
-        Args:
-            value (torch.Tensor): Value to set as the standard deviation of counts.
-        """
-        self.counts_std = torch.nn.Parameter(value, requires_grad=False)
-
-    def get_intensity_sigma(self, shoebox, dead_pixel_mask):
-        """
-        Get the intensity and sigma values for the shoebox.
-
-        Args:
-            shoebox (torch.Tensor): Shoebox tensor.
-
-        Returns:
-            tuple: Intensity and sigma values.
-        """
-        # lists to store I and SigI
-        I, SigI = [], []
-
-        # observed photon counts
-        counts = torch.clamp(shoebox[..., -1], min=0)
-
-        shoebox_ = self.standardize(shoebox, dead_pixel_mask.squeeze(-1))
-
-        # pixel coordinates
-        xyz = shoebox_[..., 0:3]
-
-        # pixel distances to centroid
-        dxyz = shoebox_[..., 3:6]
-
-        for batch in zip(
-            torch.split(xyz, batch_size, dim=0),
-            torch.split(dxyz, batch_size, dim=0),
-            torch.split(counts, batch_size, dim=0),
-        ):
-            # device where parameters are located
-            device = next(self.parameters()).device
-
-            i, s = self.get_intensity_sigma_batch(*(i.to(device=device) for i in batch))
-            I.append(i.detach().cpu().numpy())
-            SigI.append(s.detach().cpu().numpy())
-        I, SigI = np.concatenate(I), np.concatenate(SigI)
-        return I, SigI
-
-    def get_per_spot_normalization(self, counts):
-        """
-        Get the per-spot normalization.
-
-        Args:
-            counts (torch.Tensor): Counts tensor.
-
-        Returns:
-            torch.Tensor: Per-spot normalization.
-        """
-        return torch.clamp(counts[:, :, -1], min=0).sum(-1)
-
-    def get_intensity_sigma_batch(
-        self,
-        shoebox,
-        dead_pixel_mask,
-        mc_samples=100,
-    ):
-        """
-        Get the intensity, sigma, profile, counts, and loss for a batch of shoeboxes.
-
-        Args:
-            shoebox (torch.Tensor): Shoebox tensor.
-            mask (torch.Tensor): Mask tensor.
-            mc_samples (int): Number of Monte Carlo samples. Defaults to 100.
-
-        Returns:
-            tuple: Intensity, sigma, profile, counts, and loss.
-        """
-        # photon counts
-        counts = torch.clamp(shoebox[..., -1], min=0)
-
-        shoebox_ = self.standardize(shoebox, dead_pixel_mask.squeeze(-1))
-        # distances to centroid
-        dxyz = shoebox_[..., 3:6]
-
-        # encode shoebox
-        representation = self.encoder(shoebox_, dead_pixel_mask)
-
-        # build q_bg, q_I, and profile
-        q_bg, q_I, profile = self.distribution_builder(representation, dxyz,dead_pixel_mask)
-
-        I, SigI = q_I.mean, q_I.stddev
-        bg = q_bg.mean
-
-        # calculate ll and kl
-        ll, kl_term = self.likelihood(
-            counts,
-            q_bg,
-            q_I,
-            profile,
-            mc_samples=mc_samples,
-            mask=dead_pixel_mask.squeeze(-1),
-        )
-
-        ll_mean = torch.mean(ll,dim=0,keepdims=True) #mean across mc_samples
-        masked_ll_mean = ll_mean * dead_pixel_mask.squeeze(-1)
-        nll = -(torch.sum(masked_ll_mean)/torch.sum(dead_pixel_mask))
-
-#        diff = (rate - counts.unsqueeze(0))
-#        diff_squared = diff**2
-#        diff_squared_mean = diff_squared.mean(dim=0)
-#        reconstruction = torch.sum(diff_squared.mean(dim=0)*dead_pixel_mask.squeeze(-1))/torch.sum(dead_pixel_mask)
-
-        return I, SigI, profile, counts, (nll + kl_term),bg
+    def check_gradients(self):
+        for name, param in self.named_parameters():
+            if param.grad is not None:
+                print(f"{name} gradient norm: {param.grad.norm().item()}")
+            else:
+                print(f"{name} has no gradients")
 
     def forward(
         self,
         shoebox,
-        # padding_mask,
         dead_pixel_mask,
+        is_flat,
         mc_samples=100,
     ):
         """
@@ -163,239 +56,47 @@ class IntegratorV3(torch.nn.Module):
 
         # get counts
         counts = torch.clamp(shoebox[..., -1], min=0)
+        # dxyz = shoebox[..., 3:6]
 
         # standardize data
         shoebox_ = self.standardize(shoebox, dead_pixel_mask.squeeze(-1))
+        dxyz = shoebox[..., 3:6]
+        # dxy = shoebox_[..., 3:5]
+        # dxy = shoebox[..., 3:5]
 
         # distances to centroid
-        dxyz = shoebox_[..., 3:6]
 
         # encode shoebox
-        representation = self.encoder(shoebox_, dead_pixel_mask)
+        representation = self.encoder(shoebox_, dead_pixel_mask.unsqueeze(-1))
 
         # build q_I, q_bg, and profile
-        q_bg, q_I, profile = self.distribution_builder(
-            representation, dxyz, dead_pixel_mask
+        q_bg, q_I, profile, L  = self.distribution_builder(
+            representation, dxyz, dead_pixel_mask,is_flat
         )
+        # q_I, profile = self.distribution_builder(representation, dxyz, dead_pixel_mask)
 
         # calculate ll and kl
-        ll, kl_term = self.likelihood(
+        ll, kl_term, rate_ = self.likelihood(
             counts,
             q_bg,
             q_I,
             profile,
+            L,
             mc_samples=mc_samples,
             mask=dead_pixel_mask.squeeze(-1),
         )
 
-        ll_mean = torch.mean(ll,dim=0,keepdims=True) #mean across mc_samples
-        masked_ll_mean = ll_mean * dead_pixel_mask.squeeze(-1)
-        nll = -(torch.sum(masked_ll_mean)/torch.sum(dead_pixel_mask))
+        ll_mean = torch.mean(ll, dim=1 ) * dead_pixel_mask.squeeze(
+            -1
+        )  # mean across mc_samples
+        nll = -(torch.sum(ll_mean) / torch.sum(dead_pixel_mask))
 
-#        diff = rate - counts.unsqueeze(0)
-#        diff_squared = diff**2
-#        diff_squared_mean = diff_squared.mean(dim=0)
-#        reconstruction = torch.sum(diff_squared_mean*dead_pixel_mask.squeeze(-1))/torch.sum(dead_pixel_mask)
+        if self.training == True:
+            # return nll + kl_term
+            return (nll + kl_term, rate_, q_I, profile, q_bg, counts,L)
 
-        return nll  + kl_term
-
-    def grad_norm(self):
-        """
-        Calculate the gradient norm of the model parameters.
-
-        Returns:
-            torch.Tensor: Gradient norm.
-        """
-        grads = [
-            param.grad.detach().flatten()
-            for param in self.parameters()
-            if param.grad is not None
-        ]
-        norm = torch.cat(grads).norm()
-        return norm
-
-
-class IntegratorPerPixel(torch.nn.Module):
-    """
-    Integration module
-
-    Attributes:
-        reflection_encoder (torch.nn.Module): Encodes shoeboxes.
-        distribution_builder (torch.nn.Module): Builds variational distributions and profile.
-        likelihood (torch.nn.Module): MLE cost function.
-        counts_std (torch.nn.Parameter): Standard deviation of counts. Not trainable.
-    """
-
-    def __init__(
-        self,
-        standardize,
-        reflection_encoder,
-        pixel_encoder,
-        distribution_builder,
-        likelihood,
-    ):
-        super().__init__()
-        self.standardize = standardize
-        self.reflection_encoder = reflection_encoder
-        self.distribution_builder = distribution_builder
-        self.likelihood = likelihood
-        self.counts_std = None
-
-    def set_counts_std(self, value):
-        """
-        Set the standard deviation of counts.
-
-        Args:
-            value (torch.Tensor): Value to set as the standard deviation of counts.
-        """
-        self.counts_std = torch.nn.Parameter(value, requires_grad=False)
-
-    def get_intensity_sigma(self, shoebox, dead_pixel_mask):
-        """
-        Get the intensity and sigma values for the shoebox.
-
-        Args:
-            shoebox (torch.Tensor): Shoebox tensor.
-
-        Returns:
-            tuple: Intensity and sigma values.
-        """
-        # lists to store I and SigI
-        I, SigI = [], []
-
-        # observed photon counts
-        counts = torch.clamp(shoebox[..., -1], min=0)
-
-        shoebox_ = self.standardize(shoebox, dead_pixel_mask.squeeze(-1))
-
-        # pixel coordinates
-        xyz = shoebox_[..., 0:3]
-
-        # pixel distances to centroid
-        dxyz = shoebox_[..., 3:6]
-
-        for batch in zip(
-            torch.split(xyz, batch_size, dim=0),
-            torch.split(dxyz, batch_size, dim=0),
-            torch.split(counts, batch_size, dim=0),
-        ):
-            # device where parameters are located
-            device = next(self.parameters()).device
-
-            i, s = self.get_intensity_sigma_batch(*(i.to(device=device) for i in batch))
-            I.append(i.detach().cpu().numpy())
-            SigI.append(s.detach().cpu().numpy())
-        I, SigI = np.concatenate(I), np.concatenate(SigI)
-        return I, SigI
-
-    def get_per_spot_normalization(self, counts):
-        """
-        Get the per-spot normalization.
-
-        Args:
-            counts (torch.Tensor): Counts tensor.
-
-        Returns:
-            torch.Tensor: Per-spot normalization.
-        """
-        return torch.clamp(counts[:, :, -1], min=0).sum(-1)
-
-    def get_intensity_sigma_batch(
-        self,
-        shoebox,
-        dead_pixel_mask,
-        mc_samples=100,
-    ):
-        """
-        Get the intensity, sigma, profile, counts, and loss for a batch of shoeboxes.
-
-        Args:
-            shoebox (torch.Tensor): Shoebox tensor.
-            mask (torch.Tensor): Mask tensor.
-            mc_samples (int): Number of Monte Carlo samples. Defaults to 100.
-
-        Returns:
-            tuple: Intensity, sigma, profile, counts, and loss.
-        """
-        # photon counts
-        counts = torch.clamp(shoebox[..., -1], min=0)
-
-        shoebox_ = self.standardize(shoebox, dead_pixel_mask.squeeze(-1))
-        # distances to centroid
-        dxyz = shoebox_[..., 3:6]
-
-        # encode shoebox
-        representation = self.reflection_encoder(shoebox_, dead_pixel_mask)
-
-        # build q_bg, q_I, and profile
-        q_bg, q_I, profile = self.distribution_builder(representation, dxyz,dead_pixel_mask)
-
-        I, SigI = q_I.mean, q_I.stddev
-
-        ll, kl_term = self.likelihood(
-            counts=counts,
-            q_bg=q_bg,
-            q_I=q_I,
-            profile=profile,
-            mc_samples=mc_samples,
-            mask=dead_pixel_mask.squeeze(-1),
-        )
-        nll = -ll.mean()
-
-        return I, SigI, profile, counts, (nll + kl_term)
-
-    def forward(
-        self,
-        shoebox,
-        # padding_mask,
-        dead_pixel_mask,
-        mc_samples=100,
-    ):
-        """
-        Forward pass of the integrator.
-
-        Args:
-            shoebox (torch.Tensor): Shoebox tensor
-            padding_mask (torch.Tensor): Mask of padded entries
-            dead_pixel_mask (torch.Tensor): Mask of dead pixels and padded entries
-            mc_samples (int): Number of Monte Carlo samples. Defaults to 100.
-
-        Returns:
-            torch.Tensor: Negative log-likelihood loss
-        """
-
-        # get counts
-        counts = torch.clamp(shoebox[..., -1], min=0)
-
-        # standardize data
-        shoebox_ = self.standardize(shoebox, dead_pixel_mask.squeeze(-1))
-        shoebox_pixel = shoebox_[:, :, 0:-1]
-
-        # distances to centroid
-        dxyz = shoebox_[..., 3:6]
-        dxyz = dxyz.detach()
-
-        # encode reflections
-        reflection_representation = self.reflection_encoder(shoebox_, dead_pixel_mask)
-
-        # encode pixels
-        pixel_representation = self.pixel_representation(shoebox_pixel, dead_pixel_mask)
-
-        # build q_I, q_bg, and profile
-        q_bg, q_I, profile = self.distribution_builder(representation, dxyz)
-
-        # calculate ll and kl
-        ll, kl_term = self.likelihood(
-            counts,
-            q_bg,
-            q_I,
-            profile,
-            mc_samples=mc_samples,
-            mask=dead_pixel_mask.squeeze(-1),
-        )
-        nll = -ll.mean()
-
-        return nll + kl_term
+        else:
+            return (nll + kl_term, rate_, q_I, profile, q_bg, counts,L)
 
     def grad_norm(self):
         """
