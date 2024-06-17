@@ -2,6 +2,7 @@ from pylab import *
 import torch
 from integrator.layers import Standardize
 
+
 class Integrator(torch.nn.Module):
     """
     Integration module
@@ -70,8 +71,8 @@ class Integrator(torch.nn.Module):
         representation = self.encoder(shoebox_, dead_pixel_mask.unsqueeze(-1))
 
         # build q_I, q_bg, and profile
-        q_bg, q_I, profile, L  = self.distribution_builder(
-            representation, dxyz, dead_pixel_mask,is_flat
+        q_bg, q_I, profile, L = self.distribution_builder(
+            representation, dxyz, dead_pixel_mask, is_flat
         )
         # q_I, profile = self.distribution_builder(representation, dxyz, dead_pixel_mask)
 
@@ -86,17 +87,17 @@ class Integrator(torch.nn.Module):
             mask=dead_pixel_mask.squeeze(-1),
         )
 
-        ll_mean = torch.mean(ll, dim=1 ) * dead_pixel_mask.squeeze(
+        ll_mean = torch.mean(ll, dim=1) * dead_pixel_mask.squeeze(
             -1
         )  # mean across mc_samples
         nll = -(torch.sum(ll_mean) / torch.sum(dead_pixel_mask))
 
         if self.training == True:
             # return nll + kl_term
-            return (nll + kl_term, rate_, q_I, profile, q_bg, counts,L)
+            return (nll + kl_term, rate_, q_I, profile, q_bg, counts, L)
 
         else:
-            return (nll + kl_term, rate_, q_I, profile, q_bg, counts,L)
+            return (nll + kl_term, rate_, q_I, profile, q_bg, counts, L)
 
     def grad_norm(self):
         """

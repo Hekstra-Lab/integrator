@@ -4,6 +4,8 @@ import math
 from integrator.layers import Linear
 from integrator.models import MLP
 from rs_distributions.transforms import FillScaleTriL
+from torch.distributions.transforms import ExpTransform
+
 
 class DistributionBuilder(torch.nn.Module):
     def __init__(
@@ -23,12 +25,14 @@ class DistributionBuilder(torch.nn.Module):
         self.beta = torch.nn.Parameter(data=torch.tensor(beta), requires_grad=False)
         self.output_dim = output_dim
         self.linear1 = Linear(dmodel, 4)
-        self.linear_L = Linear(dmodel,6)
+        self.linear_L = Linear(dmodel, 6)
         # self.linear_L_2D = Linear(dmodel, 3)
         # self.linear_L_3D = Linear(dmodel, 6)
         self.intensity_dist = intensity_dist
         self.background_dist = background_dist
-        self.L_transform = FillScaleTriL(diag_transform=ExpTransform())
+        self.L_transform = FillScaleTriL(
+            diag_transform=torch.distributions.transforms.ExpTransform()
+        )
         self.batch_size = batch_size
 
     def constraint(self, x):
@@ -43,18 +47,18 @@ class DistributionBuilder(torch.nn.Module):
         return q_I
 
     # def init_weights(self):
-        # L_weights = self.linear_L.weight.data
-        # L_bias = self.linear_L.bias.data
+    # L_weights = self.linear_L.weight.data
+    # L_bias = self.linear_L.bias.data
 
-        # scale = 0.01
-        # torch.nn.init.uniform_(L_weights, -scale, scale)
-        # torch.nn.init.uniform_(L_bias, 1 - scale, 1 + scale)
+    # scale = 0.01
+    # torch.nn.init.uniform_(L_weights, -scale, scale)
+    # torch.nn.init.uniform_(L_bias, 1 - scale, 1 + scale)
 
-        # L_weights.zero_()
-        # L_bias.zero_()
-        # L_bias[0] = 1.0
-        # L_bias[2] = 1.0
-        # L_bias[5] = 1.0
+    # L_weights.zero_()
+    # L_bias.zero_()
+    # L_bias[0] = 1.0
+    # L_bias[2] = 1.0
+    # L_bias[5] = 1.0
 
     def background(self, params):
         mu = params[..., 2]
@@ -82,33 +86,30 @@ class DistributionBuilder(torch.nn.Module):
         )
         log_probs = mvn.log_prob(dxyz)
         profile = torch.exp(log_probs)
-        return profile,L
+        return profile, L
 
     # def MVNProfile2D(self,L_params,dxy,mask):
-        # factory_kwargs={
-            # "device":dxy.device,
-            # "dtype":dxy.dtype
-            # }
+    # factory_kwargs={
+    # "device":dxy.device,
+    # "dtype":dxy.dtype
+    # }
 
-        # batch_size = L_params.size(0)
-        # mu = torch.zeros((batch_size, 1, 2), requires_grad=False, **factory_kwargs)
-        # L_2d = self.L_transform(L_params)
-        # mu = torch.zeros((batch_size, 1, 2), requires_grad=False, **factory_kwargs)
-        # mvn = torch.distributions.multivariate_normal.MultivariateNormal(
-            # mu, scale_tril=L_2d
-        # )
-        # log_probs = mvn.log_prob(dxy)
-        # profile = torch.exp(log_probs)
+    # batch_size = L_params.size(0)
+    # mu = torch.zeros((batch_size, 1, 2), requires_grad=False, **factory_kwargs)
+    # L_2d = self.L_transform(L_params)
+    # mu = torch.zeros((batch_size, 1, 2), requires_grad=False, **factory_kwargs)
+    # mvn = torch.distributions.multivariate_normal.MultivariateNormal(
+    # mu, scale_tril=L_2d
+    # )
+    # log_probs = mvn.log_prob(dxy)
+    # profile = torch.exp(log_probs)
 
-        # L = torch.zeros((batch_size,1,3,3),**factory_kwargs)
-        # L[:,:,:2,:2] = L_2d
-        # return profile,L
+    # L = torch.zeros((batch_size,1,3,3),**factory_kwargs)
+    # L[:,:,:2,:2] = L_2d
+    # return profile,L
 
     def MVNProfile2D(self, L_params, dxy, mask):
-        factory_kwargs = {
-            "device": dxy.device,
-            "dtype": dxy.dtype
-        }
+        factory_kwargs = {"device": dxy.device, "dtype": dxy.dtype}
 
         batch_size = L_params.size(0)
         mu = torch.zeros((batch_size, 1, 2), requires_grad=False, **factory_kwargs)
@@ -129,7 +130,6 @@ class DistributionBuilder(torch.nn.Module):
         q_bg = self.background(params)
         q_I = self.intensity_distribution(params)
 
-
         if (isflat).all() == True:
             L_params = self.linear_L(representation)
             dxy = dxyz[..., :2]
@@ -137,11 +137,11 @@ class DistributionBuilder(torch.nn.Module):
             profile, L = self.MVNProfile2D(L_params, dxy, mask)
             return q_bg, q_I, profile, L
 
-        elif(isflat).all() == False:
+        elif (isflat).all() == False:
             L_params = self.linear_L(representation)
             dxyz = dxyz.to(torch.float32)
-            profile,L = self.MVNProfile3D(L_params,dxyz,mask)
-            return q_bg,q_I,profile,L
+            profile, L = self.MVNProfile3D(L_params, dxyz, mask)
+            return q_bg, q_I, profile, L
         else:
             rep_2d = representation[isflat]
             rep_3d = representation[~isflat]
@@ -150,16 +150,16 @@ class DistributionBuilder(torch.nn.Module):
             dxy = dxyz[isflat][..., :2]
             dxy = dxy.to(torch.float32)
 
-
             L_params = self.linear_L(representation)
             L_params_2d = L_params[isflat]
             L_params_3d = L_params[~isflat]
 
-
             if is_flat.all() == True:
                 prof_2d, L_2 = self.MVNProfile2D(L_params_2d, dxy, mask[isflat])
                 batch_size = representation.size(0)
-                profile = torch.zeros(batch_size, mask.size(1), dtype=prof_2d.dtype, device=prof_2d.device)
+                profile = torch.zeros(
+                    batch_size, mask.size(1), dtype=prof_2d.dtype, device=prof_2d.device
+                )
                 profile[isflat] = prof_2d
                 profile[~isflat] = prof_3d
 
@@ -173,7 +173,9 @@ class DistributionBuilder(torch.nn.Module):
                 prof_3d, L_3 = self.MVNProfile3D(L_params_3d, dxyz_3d, mask[~isflat])
 
                 batch_size = representation.size(0)
-                profile = torch.zeros(batch_size, mask.size(1), dtype=prof_3d.dtype, device=prof_3d.device)
+                profile = torch.zeros(
+                    batch_size, mask.size(1), dtype=prof_3d.dtype, device=prof_3d.device
+                )
                 profile[isflat] = prof_2d
                 profile[~isflat] = prof_3d
 

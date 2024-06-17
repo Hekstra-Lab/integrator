@@ -1,1 +1,1 @@
-from .io import StillData, RotationData
+from .io import  RotationData

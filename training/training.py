@@ -1,15 +1,17 @@
 import torch
+import os
 import polars as pl
 import pandas as pd
 import numpy as np
 from integrator.io import RotationData
 from tqdm import trange
+from torch.distributions.transforms import ExpTransform
 from tqdm import tqdm
 from integrator.models import (
     Encoder,
     PoissonLikelihoodV2,
     DistributionBuilder,
-    IntegratorV3,
+    Integrator,
 )
 from torch.utils.data import DataLoader
 import torch.nn as nn
@@ -25,272 +27,363 @@ dropout = 0.5
 beta = 1.0
 mc_samples = 100
 max_size = 1024
-eps = 1e-12
+eps = 1e-5
 batch_size = 100
 learning_rate = 0.001
-epochs = 1
 
-# Variational distributions
-intensity_dist = rsd.FoldedNormal
-background_dist = rsd.FoldedNormal
-# intensity_dist = torch.distributions.log_normal.LogNormal
-# background_dist = torch.distributions.log_normal.LogNormal
+# Load training data
+loaded_data_ = torch.load("shoebox_data.pt")
+data_dir = "./training/shoebox_data"
 
-# Prior distributions
-prior_I = torch.distributions.log_normal.LogNormal(
-    loc=torch.tensor(7.0, requires_grad=False),
-    scale=torch.tensor(1.4, requires_grad=False),
+# Get data as list
+data_list = []
+bg_counts = []
+true_rate = []
+true_I = []
+true_bg = []
+true_rate = []
+I_counts = []
+true_covariances = []
+true_weighted_intensity = []
+
+for shoebox_file in os.listdir(data_dir):
+    file_path = os.path.join(data_dir, shoebox_file)
+    if file_path != "./training/shoebox_data/.DS_Store":
+        loaded_data_ = torch.load(file_path)
+        true_I.extend(torch.unbind(loaded_data_["true_intensities"]))
+        true_bg.extend(torch.unbind(loaded_data_["poisson_rate"]))
+        true_rate.extend(torch.unbind(loaded_data_["rates"], dim=0))
+        bg_counts.extend(torch.unbind(loaded_data_["bg_counts"]))
+        I_counts.extend(torch.unbind(loaded_data_["I_counts"]))
+        true_covariances.extend(torch.unbind(loaded_data_["covariances"], dim=0))
+        true_weighted_intensity.extend(torch.unbind(loaded_data_["weighted_intensies"]))
+        data_ = loaded_data_["dataset"]
+        data_ = data_.to(torch.float32)
+        data_list.extend(torch.unbind(data_, dim=0))
+
+# number of voxels in each shoebox
+num_voxels = [x.size(0) for x in data_list]
+
+# list of shoebox shapes
+shapes = [
+    (len(x[:, 0].unique()), len(x[:, 1].unique()), len(x[:, 2].unique()))
+    for x in data_list
+]
+
+# DataFrame to hold data and other relevant information
+df = pl.DataFrame(
+    {
+        "X": data_list,
+        "num_voxels": num_voxels,
+        "shape": shapes,
+        "true_I": true_I,
+        "true_bg": true_bg,
+        "true_rate": true_rate,
+        "bg_counts": bg_counts,
+        "I_counts": I_counts,
+        "true_cov": true_covariances,
+        "true_weighted_intensity": true_weighted_intensity,
+    }
 )
-p_I_scale = 1
-prior_bg = torch.distributions.normal.Normal(
-    loc=torch.tensor(10, requires_grad=False),
-    scale=torch.tensor(1, requires_grad=False),
-)
-p_bg_scale = 1
+
+# Largest number of voxels in a shoebox
+max_voxels = np.unique(num_voxels).max()
+
 
 # %%
-# Use GPU if available
+class SimulatedData(torch.utils.data.Dataset):
+    def __init__(self, df, max_voxels):
+        self.df = df
+        self.max_voxels = max_voxels
+        self.data = df["X"]
+        self.true_I = df["true_I"]
+        self.true_bg = df["true_bg"]
+        self.true_rate = df["true_rate"]
+        self.bg_counts = df["bg_counts"]
+        self.I_counts = df["I_counts"]
+        self.true_cov = df["true_cov"]
+        self.true_weighted_intensity = df["true_weighted_intensity"]
+        self.shapes = df["shape"]
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        shoebox = self.data[idx]
+        shape = self.shapes[idx]
+        num_voxels = shape[0] * shape[1] * shape[2]
+        pad_size = self.max_voxels - num_voxels
+        padded_shoebox = torch.nn.functional.pad(
+            shoebox, (0, 0, 0, max(pad_size, 0)), "constant", 0
+        )
+        I_counts = torch.nn.functional.pad(
+            self.I_counts[idx], (0, max(pad_size, 0)), "constant", 0
+        )
+        weighted_intensity = torch.nn.functional.pad(
+            self.true_weighted_intensity[idx], (0, max(pad_size, 0)), "constant", 0
+        )
+        bg_counts = torch.nn.functional.pad(
+            self.bg_counts[idx], (0, max(pad_size, 0)), "constant", 0
+        )
+
+        pad_mask = torch.nn.functional.pad(
+            torch.ones_like(shoebox[:, -1], dtype=torch.bool),
+            (0, max(pad_size, 0)),
+            "constant",
+            False,
+        )
+        if shape[-1] == 1:
+            is_flat = torch.tensor(True)
+            cov = torch.zeros(3, 3)
+            cov[:2, :2] = self.true_cov[idx]
+        else:
+            is_flat = torch.tensor(False)
+            cov = self.true_cov[idx]
+
+        return (
+            padded_shoebox,
+            pad_mask,
+            self.true_I[idx],
+            cov,
+            self.true_bg[idx],
+            is_flat,
+            bg_counts,
+            I_counts,
+            weighted_intensity,
+            torch.tensor(shape),
+        )
+
+
+simulated_data = SimulatedData(df.sample(fraction=1, shuffle=True), max_voxels)
+
+# train loader
+subset_ratio = 0.001
+subset_size = int(len(simulated_data) * subset_ratio)
+subset_indices = list(range(subset_size))
+subset_data = torch.utils.data.Subset(simulated_data, subset_indices)
+train_subset, test_subset = torch.utils.data.random_split(subset_data, [0.8, 0.2])
+train_loader = DataLoader(train_subset, batch_size=batch_size, shuffle=True)
+test_loader = DataLoader(test_subset, batch_size=batch_size, shuffle=False)
+# train_loader = DataLoader(simulated_data, batch_size=1)
+
+# device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Loading data
-# shoebox_dir = "/Users/luis/integrator/rotation_data_examples/data/"
-shoebox_dir = "/n/holylabs/LABS/hekstra_lab/Users/laldama/integrator_/rotation_data_examples/data_temp/temp"
+# %%
+# Variational distributions
+intensity_dist = rsd.FoldedNormal
 
-rotation_data = RotationData(shoebox_dir=shoebox_dir)
-train_, test_ = torch.utils.data.random_split(rotation_data, [0.8, 0.2])
+# intensity_dist = torch.distributions.log_normal.LogNormal
+background_dist = rsd.FoldedNormal
 
-# train and test loaders
-train_loader = DataLoader(train_, batch_size=batch_size, shuffle=True)
-test_loader = DataLoader(test_, batch_size=batch_size, shuffle=False)
+prior_I = torch.distributions.log_normal.LogNormal(
+    loc=torch.tensor(7.0, requires_grad=False),
+    scale=torch.tensor(1.5, requires_grad=False),
+)
 
-# Layers
-encoder = Encoder(depth, dmodel, feature_dim, dropout=None)
+p_I_scale = 1
+
+prior_bg = torch.distributions.gamma.Gamma(torch.tensor([1.0]), torch.tensor([1]))
+p_bg_scale = 1
+
+prior_profile = torch.distributions.multivariate_normal.MultivariateNormal(
+    torch.zeros(2), true_covariances[0][:2][:, :2]
+)
+
+# %%
+epochs = 2000
+
+# Use GPU if available
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+num_steps = len(train_loader)
+
+grad_norms = []
+q_I_list = []
+q_bg_list = []
+train_profile = []
+train_avg_loss = []
+train_traces = []
+train_rate = []
+train_L = []
+
+test_avg_loss = []
+test_profile = []
+test_rate = []
+test_traces = []
+test_L = []
+
+# evaluate every number of epochs
+evaluate_every = 2
+
+# for i in range(num_runs):
 standardization = Standardize(max_counts=len(train_loader))
+encoder = Encoder(depth, dmodel, feature_dim, dropout=None)
+
 distribution_builder = DistributionBuilder(
     dmodel, intensity_dist, background_dist, eps, beta
 )
+
 poisson_loss = PoissonLikelihoodV2(
     beta=beta,
     eps=eps,
-    prior_I=None,
-    prior_bg=None,
-    p_I_scale=p_I_scale,
-    p_bg_scale=p_bg_scale,
+    prior_I=prior_I,
+    prior_bg=prior_bg,
+    prior_profile=None,
+    p_I_scale=0.0001,
+    p_bg_scale=0.0001,
+    p_profile_scale=0.1,
 )
-integrator = IntegratorV3(standardization, encoder, distribution_builder, poisson_loss)
+
+integrator = Integrator(
+    standardize=standardization,
+    encoder=encoder,
+    distribution_builder=distribution_builder,
+    likelihood=poisson_loss,
+)
+
 integrator = integrator.to(device)
-
-# optimizer
 opt = torch.optim.Adam(integrator.parameters(), lr=learning_rate)
-
-# %%
 trace = []
-grad_norms = []
-steps = len(train_loader)
-bar = trange(steps)
-n_batches = 100
 
-# anomaly detection
-torch.autograd.set_detect_anomaly(True)
+q_I_mean_train_list = []
+q_I_stddev_train_list = []
+q_bg_mean_train_list = []
+q_bg_stddev_train_list = []
+true_L_train_list = []
 
-# DataFrame to store evaluation metrics
-eval_metrics = pl.DataFrame(
-    {
-        "epoch": pl.Series([], dtype=pl.Int64),
-        "average_loss": pl.Series([], dtype=pl.Float64),
-        "test_loss": pl.Series([], dtype=pl.Float32),
-        "train_loss": pl.Series([], dtype=pl.Float32),
-        "min_intensity_test": pl.Series([], dtype=pl.Float32),
-        "max_intensity_test": pl.Series([], dtype=pl.Float32),
-        "mean_intensity_test": pl.Series([], dtype=pl.Float32),
-        "min_sigma_test": pl.Series([], dtype=pl.Float32),
-        "max_sigma_test": pl.Series([], dtype=pl.Float32),
-        "mean_sigma_test": pl.Series([], dtype=pl.Float32),
-        "min_intensity_train": pl.Series([], dtype=pl.Float32),
-        "max_intensity_train": pl.Series([], dtype=pl.Float32),
-        "mean_intensity_train": pl.Series([], dtype=pl.Float32),
-        "min_sigma_train": pl.Series([], dtype=pl.Float32),
-        "max_sigma_train": pl.Series([], dtype=pl.Float32),
-        "mean_sigma_train": pl.Series([], dtype=pl.Float32),
-        # "min_background": pl.Series([], dtype=pl.Float32),
-        # "max_background": pl.Series([], dtype=pl.Float32),
-        # "mean_background": pl.Series([], dtype=pl.Float32),
-        "corr_prf_train": pl.Series([], dtype=pl.Float64),
-        "corr_sum_train": pl.Series([], dtype=pl.Float64),
-        "corr_prf_test": pl.Series([], dtype=pl.Float64),
-        "corr_sum_test": pl.Series([], dtype=pl.Float64),
-    }
-)
-I_pred_train = []
-I_pred_test = []
+train_preds = {
+    "q_I_mean": [],
+    "q_I_stddev": [],
+    "q_bg_mean": [],
+    "q_bg_stddev": [],
+    "L_pred": [],
+    # "rate_pred": [],
+    "profile_pred": [],
+    "true_I": [],
+    "true_L": [],
+    "true_bg": [],
+    "bg_counts": [],
+    "I_counts": [],
+    "weighted_I": [],
+}
 
-# %%
-# Training loop
-num_epochs = epochs
-num_steps = len(train_loader)
+test_preds = {
+    "q_I_mean_list": [],
+    "q_I_stddev_list": [],
+    "q_bg_mean_list": [],
+    "q_bg_stddev_list": [],
+    "L_pred_list": [],
+    "rate_pred_list": [],
+    "profile_pred_list": [],
+    "true_I": [],
+    "true_L": [],
+    "bg_counts": [],
+    "I_counts": [],
+    "weighted_I": [],
+}
 
-with tqdm(total=num_epochs * num_steps, desc="Training") as pbar:
-    for epoch in range(num_epochs):
-        I_train, SigI_train, I_test, SigI_test = [], [], [], []
-        I_dials_prf_train, I_dials_prf_test, I_dials_sum_train, I_dials_sum_test = (
-            [],
-            [],
-            [],
-            [],
-        )
-        batch_loss = []
-
+with tqdm(total=epochs * num_steps, desc="training") as pbar:
+    for epoch in range(epochs):
+        # Train
         integrator.train()
-        # Get batch of data
-        for step, (sbox, dead_pixel_mask, DIALS_I) in enumerate(train_loader):
+        for step, (
+            sbox,
+            mask,
+            true_I,
+            true_L,
+            true_bg,
+            is_flat,
+            bg_counts,
+            I_counts,
+            weighted_I,
+            shape,
+        ) in enumerate(train_loader):
             sbox = sbox.to(device)
-            dead_pixel_mask = dead_pixel_mask.to(device)
+            mask = mask.to(device)
 
-            # Forward and Backward pass
             opt.zero_grad()
-            loss = integrator(sbox, dead_pixel_mask, mc_samples=mc_samples)
+            loss, rate, q_I, profile, q_bg, counts, L = integrator(sbox, mask, is_flat)
             loss.backward()
             opt.step()
-
-            # Store metrics
             trace.append(loss.item())
-            batch_loss.append(loss.item())
-            grad_norm = torch.nn.utils.clip_grad_norm(
+
+            grad_norm = torch.nn.utils.clip_grad_norm_(
                 integrator.parameters(), max_norm=max_size
             )
+
             grad_norms.append(grad_norm)
 
             # Update progress bar
+            if epoch == epochs - 1:
+                train_preds["q_I_mean"].extend(q_I.mean.ravel().tolist())
+                train_preds["q_I_stddev"].extend(q_I.stddev.ravel().tolist())
+                train_preds["q_bg_mean"].extend(q_bg.mean.ravel().tolist())
+                train_preds["q_bg_stddev"].extend(q_bg.stddev.ravel().tolist())
+                train_preds["L_pred"].extend(L.cpu())
+                train_preds["profile_pred"].extend(profile.cpu())
+                # train_preds["rate_pred"].extend(rate.cpu())
+                train_preds["true_I"].extend(true_I.ravel().tolist())
+                train_preds["true_L"].extend(true_L.cpu())
+                train_preds["true_bg"].extend(true_bg.cpu())
+                train_preds["bg_counts"].extend(bg_counts.cpu())
+                train_preds["I_counts"].extend(I_counts.cpu())
+                train_preds["weighted_I"].extend(weighted_I.cpu())
+
             pbar.set_postfix(
                 {
-                    "Epoch": epoch + 1,
-                    "Step": step + 1,
-                    "Loss": loss.item(),
-                    "Grad Norm": grad_norm,
+                    "epoch": epoch + 1,
+                    "step": step + 1,
+                    "loss": loss.item(),
+                    "grad norm": grad_norm,
                 }
             )
+
             pbar.update(1)
 
-        # Evaluation Loop
-        integrator.eval()
-        val_loss_train = []
+        # store metrics/outputs
+        train_avg_loss.append(torch.mean(torch.tensor(trace)))
+        train_rate.append(rate)
+        train_profile.append(profile)
+        train_L.append(L[0])
 
-        num_batches = n_batches
-        pij_ = []
-        bg = []
-        counts = []
+        # # %%
+        # # Evaluate
+        # if (epoch + 1) % evaluate_every == 0 or epoch == epochs - 1:
+        # integrator.eval()
+        # test_loss = []
 
-        I_train, SigI_train = [], []
-        I_dials_prf_train = []
-        I_dials_sum_train = []
+        # with torch.no_grad():
+        # for i, (shoebox, mask, true_I, true_L,true_bg,bg_counts,I_counts,weighted_I) in enumerate(test_loader):
+        # shoebox = shoebox.to(device)
+        # mask = mask.to(device)
 
-        # Evaluation loop for train set
-        with torch.no_grad():
-            for i, (sbox, dead_pixel_mask, DIALS_I) in enumerate(train_loader):
-                if i >= num_batches:
-                    break
-                sbox = sbox.to(device)
-                dead_pixel_mask = dead_pixel_mask.to(device)
+        # # Forward pass
+        # eval_loss, rate, q_I, profile, q_bg, counts, L = integrator(
+        # shoebox, mask,
+        # )
+        # test_loss.append(eval_loss.item())
 
-                # forward pass
-                output = integrator.get_intensity_sigma_batch(sbox, dead_pixel_mask)
+        # if epoch == epochs - 1:
+        # test_preds["q_I_mean_list"].extend(q_I.mean.ravel().tolist())
+        # test_preds["q_I_stddev_list"].extend(
+        # q_I.stddev.ravel().tolist()
+        # )
+        # test_preds["q_bg_mean_list"].extend(q_bg.mean.ravel().tolist())
+        # test_preds["q_bg_stddev_list"].extend(
+        # q_bg.stddev.ravel().tolist()
+        # )
+        # test_preds["L_pred_list"].extend(L)
+        # test_preds["rate_pred_list"].extend(rate)
+        # test_preds["true_I"].extend(true_I.ravel().tolist())
+        # test_preds["true_L"].extend(true_L)
+        # test_preds["profile_pred_list"].extend(profile)
 
-                I_dials_prf_train.append(DIALS_I[0].detach().cpu())
-                I_dials_sum_train.append(DIALS_I[2].detach().cpu())
-                I_train.append(output[0].cpu())
-                SigI_train.append(output[1].cpu())
-                pij_.append(output[2].cpu())
-                counts.append(output[3].cpu())
-                val_loss_train.append(output[4].cpu())
-
-        # Compute evaluation metrics for train set
-        I_dials_prf_ = np.concatenate(I_dials_prf_train)
-        I_dials_sum_ = np.concatenate(I_dials_sum_train)
-        I_pred = np.concatenate(I_train).flatten()
-        I_pred_train.append(I_pred)
-        corr_prf_train = np.corrcoef(I_dials_prf_, I_pred)[0][-1]
-        corr_sum_train = np.corrcoef(I_dials_sum_, I_pred)[0][-1]
-
-        # store I_dials_(sum or pred)_ across epochs
-        I_dials_sum_matrix_train = np.hstack(I_dials_sum_)
-        I_dials_prf_matrix_train = np.hstack(I_dials_prf_)
-
-        # to store test metrics
-        I_test, SigI_test = [], []
-        I_dials_prf_test = []
-        I_dials_sum_test = []
-        # Evaluation loop for test set
-        with torch.no_grad():
-            for i, (sbox, dead_pixel_mask, DIALS_I) in enumerate(test_loader):
-                if i >= num_batches:
-                    break
-                sbox = sbox.to(device)
-                dead_pixel_mask = dead_pixel_mask.to(device)
-
-                # forward pass
-                output = integrator.get_intensity_sigma_batch(sbox, dead_pixel_mask)
-
-                I_dials_prf_test.append(DIALS_I[0].detach().cpu())
-                I_dials_sum_test.append(DIALS_I[2].detach().cpu())
-                I_test.append(output[0].cpu())
-                SigI_test.append(output[1].cpu())
-                pij_.append(output[2].cpu())
-                counts.append(output[3].cpu())
-                val_loss_test.append(output[4].cpu())
-
-        # Compute evaluation metrics for test set
-        I_dials_prf_ = np.concatenate(I_dials_prf_test)
-        I_dials_sum_ = np.concatenate(I_dials_sum_test)
-        I_pred = np.concatenate(I_test).flatten()
-        I_pred_test.append(I_pred)
-        corr_prf_test = np.corrcoef(I_dials_prf_, I_pred)[0][-1]
-        corr_sum_test = np.corrcoef(I_dials_sum_, I_pred)[0][-1]
-
-        # store I_dials_(sum or pred)_ across epochs
-        I_dials_sum_matrix_test = np.hstack(I_dials_sum_)
-        I_dials_prf_matrix_test = np.hstack(I_dials_prf_)
-
-        # store model predictions on test and train sets across epochs
-        I_pred_matrix_test = np.hstack(I_pred_test)
-        I_pred_matrix_train = np.hstack(I_pred_train)
-
-        eval_metrics = eval_metrics.vstack(
-            pl.DataFrame(
-                {
-                    "epoch": [epoch],
-                    "average_loss": [np.mean([batch_loss])],
-                    "test_loss": [np.mean([val_loss_test])],
-                    "train_loss": [np.mean([val_loss_train])],
-                    "min_intensity_test": [np.concatenate(I_test).min()],
-                    "max_intensity_test": [np.concatenate(I_test).max()],
-                    "mean_intensity_test": [np.concatenate(I_test).mean()],
-                    "min_sigma_test": [np.concatenate(SigI_test).min()],
-                    "max_sigma_test": [np.concatenate(SigI_test).max()],
-                    "mean_sigma_test": [np.concatenate(SigI_test).mean()],
-                    "min_intensity_train": [np.concatenate(I_train).min()],
-                    "max_intensity_train": [np.concatenate(I_train).max()],
-                    "mean_intensity_train": [np.concatenate(I_train).mean()],
-                    "min_sigma_train": [np.concatenate(SigI_train).min()],
-                    "max_sigma_train": [np.concatenate(SigI_train).max()],
-                    "mean_sigma_train": [np.concatenate(SigI_train).mean()],
-                    "corr_prf_train": [corr_prf_train],
-                    "corr_sum_train": [corr_sum_train],
-                    "corr_prf_test": [corr_prf_test],
-                    "corr_sum_test": [corr_sum_test],
-                }
-            )
-        )
+        # test_avg_loss.append(torch.mean(torch.tensor(eval_loss)))
 
 
-eval_metrics.write_csv(f"evaluation_metrics_.csv")
-np.savetxt(f"trace.csv", trace, fmt="%s")
-np.savetxt(f"IPred_train.csv", I_pred_matrix_train, delimiter=",")
-np.savetxt(f"Idials_sum_train.csv", I_dials_sum_matrix_train, delimiter=",")
-np.savetxt(f"Idials_prf_train.csv", I_dials_prf_matrix_train, delimiter=",")
-np.savetxt(f"Idials_sum_test.csv", I_dials_sum_matrix_test, delimiter=",")
-np.savetxt(f"Idials_prf_test.csv", I_dials_prf_matrix_test, delimiter=",")
-np.savetxt(f"IPred_test.csv", I_pred_matrix_test, delimiter=",")
-torch.save(integrator.state_dict(), f"weights.pth")
-
-
-# %%
+results = {
+    "train_preds": train_preds,
+    "test_preds": test_preds,
+    "train_avg_loss": train_avg_loss,
+    "test_avg_loss": test_avg_loss,
+}
