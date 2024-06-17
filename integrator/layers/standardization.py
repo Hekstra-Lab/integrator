@@ -9,8 +9,7 @@ from dials.array_family import flex
 import numpy as np
 
 
-
-class Standardize(nn.Module):
+class Standardize(torch.nn.Module):
     def __init__(
         self, center=True, feature_dim=7, max_counts=float("inf"), epsilon=1e-6
     ):
@@ -22,6 +21,12 @@ class Standardize(nn.Module):
         self.register_buffer("m2", torch.zeros((1, 1, feature_dim)))
         self.register_buffer("pixel_count", torch.tensor(0.0))  # Counter for pixels
         self.register_buffer("image_count", torch.tensor(0.0))  # Counter for images
+
+        # Mask to exclude certain features from mean subtraction (0 for exclusion, 1 for inclusion)
+        #self.mean_mask = torch.ones((1, 1, feature_dim)).to(device)
+        #self.mean_mask[
+        #    ..., 3:6
+        #] = 0  # Exclude 4th, 5th, and 6th features (0-based index)
 
     @property
     def var(self):
@@ -59,9 +64,11 @@ class Standardize(nn.Module):
     def standardize(self, im, mask=None):
         if self.center:
             if mask is None:
-                return (im - self.mean) / self.std
+                return (im - self.mean ) / self.std
             else:
-                return ((im - self.mean) * mask.unsqueeze(-1)) / self.std
+                return (
+                    (im - self.mean ) * mask.unsqueeze(-1)
+                ) / self.std
         return im / self.std
 
     def forward(self, im, mask=None, training=True):
@@ -72,4 +79,3 @@ class Standardize(nn.Module):
             self.update(im, mask)
 
         return self.standardize(im, mask)
-
