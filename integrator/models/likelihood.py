@@ -19,6 +19,8 @@ class PoissonLikelihoodV2(torch.nn.Module):
         eps=1e-8,
         prior_I=None,
         prior_bg=None,
+        concentration = None,
+        rate =None ,
         prior_profile=None,
         p_I_scale=0.001,  # influence of DKL(LogNorm||LogNorm) term
         p_bg_scale=0.001,
@@ -36,6 +38,8 @@ class PoissonLikelihoodV2(torch.nn.Module):
         self.prior_profile_scale = torch.nn.Parameter(
             data=torch.tensor(p_profile_scale), requires_grad=False
         )
+        self.register_buffer('concentration', torch.tensor(concentration))
+        self.register_buffer('rate', torch.tensor(rate))
         self.prior_I = prior_I
         self.prior_bg = prior_bg
         self.prior_profile = prior_profile
@@ -63,6 +67,11 @@ class PoissonLikelihoodV2(torch.nn.Module):
 
         Returns: log-likelihood and KL(q|p)
         """
+        counts = counts
+
+        device = counts.device
+
+        #prior_bg = torch.distributions.gamma.Gamma(self.concentration.to(device), self.rate.to(device))
 
         # Sample from variational distributions
         z = q_I.rsample([mc_samples])
@@ -82,20 +91,11 @@ class PoissonLikelihoodV2(torch.nn.Module):
 
         # Calculate KL-divergence only if the corresponding priors and distributions are available
         if q_I is not None and self.prior_I is not None:
-            kl_I = q_I.log_prob(z) - self.prior_I.log_prob(z)
+            kl_I = q_I.log_prob(z + eps) - self.prior_I.log_prob(z + eps)
             kl_term += kl_I.mean() * self.p_I_scale
 
-        if q_bg is not None and self.prior_bg is not None:
-            kl_bg = q_bg.log_prob(bg) - self.prior_bg.log_prob(bg)
+        if q_bg is not None:
+            kl_bg = q_bg.log_prob(bg + eps) - self.prior_bg.log_prob(bg + eps)
             kl_term += kl_bg.mean() * self.p_bg_scale
-
-        if self.prior_profile is not None:
-            profile_dist = torch.distributions.MultivariateNormal(
-                torch.zeros_like(L), scale_tril=L
-            )
-            kl_profile = torch.distributions.kl_divergence(
-                profile_dist, self.prior_profile
-            )
-            kl_term += kl_profile.mean() * self.prior_profile_scale
 
         return ll, kl_term, rate
