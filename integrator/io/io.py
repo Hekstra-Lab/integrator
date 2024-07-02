@@ -340,3 +340,59 @@ class RotationData(torch.utils.data.Dataset):
             pad_mask,
             is_flat,
         )
+
+class RotationDataModule(pytorch_lightning.LightningDataModule):
+    def __init__(
+        self,
+        shoebox_dir,
+        batch_size=32,
+        num_workers=0,
+        train_val_split=0.8,
+        subset_ratio=0.01,
+    ):
+        super().__init__()
+        self.shoebox_dir = shoebox_dir
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.train_val_split = train_val_split
+        self.subset_ratio = subset_ratio
+
+    def setup(self, stage=None):
+        full_dataset = RotationData(shoebox_dir=self.shoebox_dir)
+        self.full_dataset = full_dataset
+
+        # creat subset of data
+        subset_size = int(self.subset_ratio * len(full_dataset))
+        indices = torch.randperm(len(full_dataset)).tolist()
+        subset_indices = indices[:subset_size]
+        subset_dataset = torch.utils.data.Subset(full_dataset, subset_indices)
+
+        # split data into training and validation sets
+        train_size = int(self.train_val_split * subset_size)
+        val_size = subset_size - train_size
+        if train_size + val_size != subset_size:
+            val_size = (
+                subset_size - train_size
+            )  # Adjust to ensure the total size matches
+
+        self.train_dataset, self.val_dataset = torch.utils.data.random_split(
+            subset_dataset, [train_size, val_size]
+        )
+
+    def train_dataloader(self):
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+        )
+
+    def val_dataloader(self):
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+        )
+
+

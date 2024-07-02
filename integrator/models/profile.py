@@ -33,44 +33,37 @@ class DistributionBuilder(torch.nn.Module):
         self.L_transform = FillScaleTriL(diag_transform=ExpTransform())
         self.batch_size = batch_size
 
-    def constraint(self, x, constraint_type):
-        if isinstance(constraint_type, constraints.Positive) or isinstance(
-            constraint_type, constraints.GreaterThan
-        ):
-            return torch.nn.functional.softplus(x, beta=self.beta) + self.eps
-        elif isinstance(constraint_type, constraints.Real):
-            return x
-        else:
-            raise NotImplementedError(f"Constraint {constraint_type} not implemented")
-
-    # def intensity_distribution(self, params):
-    # #loc = self.constraint(params[..., 0])
-    # loc = params[..., 0]
-    # loc = torch.exp(loc)
-    # scale = self.constraint(params[..., 1])
-    # return self.intensity_dist(loc, scale)
-
-    # def background(self, params):
-    # #mu = self.constraint(params[..., 2])
-    # mu = params[..., 2]
-    # sigma = self.constraint(params[..., 3])
-    # return self.background_dist(mu, sigma)
+    def constraint(self, x ):
+        return torch.nn.functional.softplus(x, beta=self.beta) + self.eps
 
     def intensity_distribution(self, params):
-        arg_constraints = self.intensity_dist.arg_constraints
-        constrained_params = [
-            self.constraint(params[..., i], constraint)
-            for i, constraint in enumerate(arg_constraints.values())
-        ]
-        return self.intensity_dist(*constrained_params)
+    # #loc = self.constraint(params[..., 0])
+        loc = params[..., 0]
+        loc = torch.exp(loc)
+        scale = self.constraint(params[..., 1])
+        return self.intensity_dist(loc, scale)
 
     def background(self, params):
-        arg_constraints = self.background_dist.arg_constraints
-        constrained_params = [
-            self.constraint(params[..., i + 2], constraint)
-            for i, constraint in enumerate(arg_constraints.values())
-        ]
-        return self.background_dist(*constrained_params)
+        # #mu = self.constraint(params[..., 2])
+        mu = params[..., 2]
+        sigma = self.constraint(params[..., 3])
+        return self.background_dist(mu, sigma)
+
+    # def intensity_distribution(self, params):
+        # arg_constraints = self.intensity_dist.arg_constraints
+        # constrained_params = [
+            # self.constraint(params[..., i], constraint)
+            # for i, constraint in enumerate(arg_constraints.values())
+        # ]
+        # return self.intensity_dist(*constrained_params)
+
+    # def background(self, params):
+        # arg_constraints = self.background_dist.arg_constraints
+        # constrained_params = [
+            # self.constraint(params[..., i + 2], constraint)
+            # for i, constraint in enumerate(arg_constraints.values())
+        # ]
+        # return self.background_dist(*constrained_params)
 
     def MVNProfile3D(self, L_params, dxyz, mask, device):
         batch_size = L_params.size(0)
