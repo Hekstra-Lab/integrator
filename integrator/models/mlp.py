@@ -2,7 +2,6 @@ from pylab import *
 import torch
 from integrator.layers import Linear, ResidualLayer
 
-
 class MLP(torch.nn.Module):
     """
     If d_in \neq width, you must specify it .

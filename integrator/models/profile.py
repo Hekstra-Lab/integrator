@@ -1,8 +1,6 @@
 from pylab import *
 import torch
-import math
 from integrator.layers import Linear
-from integrator.models import MLP
 from rs_distributions.transforms import FillScaleTriL
 from torch.distributions.transforms import ExpTransform,SoftplusTransform
 import rs_distributions.distributions as rsd
@@ -76,8 +74,8 @@ class DistributionBuilder(torch.nn.Module):
             return q_bg, q_I, profile, L
 
         else:
-            rep_2d = representation[isflat]
-            rep_3d = representation[~isflat]
+            # rep_2d = representation[isflat]
+            # rep_3d = representation[~isflat]
             dxyz_3d = dxyz[~isflat]
             dxy = dxyz[isflat][..., :2]
 
@@ -96,4 +94,3 @@ class DistributionBuilder(torch.nn.Module):
             L[~isflat] = L_3.squeeze(1)
 
             return q_bg, q_I, profile, L
-

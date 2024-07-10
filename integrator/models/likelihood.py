@@ -1,7 +1,5 @@
 from pylab import *
 import torch
-from integrator.layers import Linear
-
 
 class PoissonLikelihoodV2(torch.nn.Module):
     """
@@ -67,15 +65,12 @@ class PoissonLikelihoodV2(torch.nn.Module):
         """
         counts = counts
 
-        device = counts.device
-
-        #prior_bg = torch.distributions.gamma.Gamma(self.concentration.to(device), self.rate.to(device))
 
         # Sample from variational distributions
         z = q_I.rsample([mc_samples])
         bg = q_bg.rsample([mc_samples])
 
-        # Set KL term
+        # Set KL term to zero
         kl_term = 0
 
         # Calculate the rate

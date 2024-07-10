@@ -2,14 +2,13 @@ from pylab import *
 import polars as pl
 import torch
 from scipy.spatial import cKDTree
-import pandas as pd
-import reciprocalspaceship as rs
 import glob
 import os
 from dials.array_family import flex
 import numpy as np
 import pytorch_lightning
 from torch.utils.data import DataLoader
+
 
 class RotationData(torch.utils.data.Dataset):
     def __init__(
@@ -64,8 +63,9 @@ class RotationData(torch.utils.data.Dataset):
         """
         return flex.reflection_table.from_file(filename)
 
-    def _filter_very_weak_shoeboxes(self,intensities):
-        return(intensities < 0).any()
+    def _filter_very_weak_shoeboxes(self, intensities, weak_reflection_threshold=5):
+        # return(intensities < 0).any()
+        return intensities.max().item() <= weak_reflection_threshold
 
     def _get_intensity(self, sbox):
         """
@@ -123,7 +123,7 @@ class RotationData(torch.utils.data.Dataset):
         return tens.max().item()
 
     def _filter_dead_shoeboxes(self, intensities):
-        return (intensities < 0).all()
+        return (intensities < 0).any()
 
     def _get_rows(self, tbl, idx):
         """
@@ -215,7 +215,7 @@ class RotationData(torch.utils.data.Dataset):
         """
         return max_pix > self.max_detector_dimension
 
-    def _get_refl_tables(self,weak_reflection_threshold=5):
+    def _get_refl_tables(self, weak_reflection_threshold=5):
         """
         Build a dataframe of the reflection tables
 
@@ -262,6 +262,14 @@ class RotationData(torch.utils.data.Dataset):
 
             max_coord = df["coordinates"].map_elements(self._max_pixel_coordinate)
 
+            # weak_shoeboxes = df["intensity_observed"].map_elements(
+            # self._filter_very_weak_shoeboxes
+            # )
+
+            weak_shoeboxes = df["intensity_observed"].map_elements(
+                lambda x: self._filter_very_weak_shoeboxes(x, weak_reflection_threshold)
+            )
+
             df = df.with_columns(
                 [pl.Series("max_coord", max_coord), pl.Series("num_pix", num_pixel)]
             )
@@ -270,11 +278,9 @@ class RotationData(torch.utils.data.Dataset):
                 self._filter_dead_shoeboxes
             )
 
-            weak_shoeboxes = df['intensity_observed'].map_elements(self._filter_very_weak_shoeboxes)
+            df = df.with_columns(pl.Series("weak_reflection_threshold", weak_shoeboxes))
 
             df = df.with_columns([pl.Series("all_pixels_dead", dead_pixels)])
-
-            df = df.with_columns(pl.Series('weak_reflection_threshold',weak_shoeboxes))
 
             coord_mask = np.array(df["max_coord"] < 5000)
 
@@ -323,8 +329,8 @@ class RotationData(torch.utils.data.Dataset):
         bg_sum_val = self.df["background.sum.value"].gather(idx).item()
         bg_sum_var = self.df["background.sum.variance"].gather(idx).item()
         bg_sum_mean = self.df["background.mean"].gather(idx).item()
-#        DIALS_I = (I_prf_val, I_prf_var, I_sum_val, I_sum_var)
-#        DIALS_bg = (bg_sum_val, bg_sum_var, bg_sum_mean)
+        #        DIALS_I = (I_prf_val, I_prf_var, I_sum_val, I_sum_var)
+        #        DIALS_bg = (bg_sum_val, bg_sum_var, bg_sum_mean)
         row_idx = idx
         coords = self.df["coordinates"].gather(idx).item()
 
@@ -405,7 +411,7 @@ class RotationDataModule(pytorch_lightning.LightningDataModule):
         full_dataset = RotationData(shoebox_dir=self.shoebox_dir)
         self.full_dataset = full_dataset
 
-        # creat subset of data
+        # create subset of data
         subset_size = int(self.subset_ratio * len(full_dataset))
         indices = torch.randperm(len(full_dataset)).tolist()
         subset_indices = indices[:subset_size]
@@ -429,7 +435,7 @@ class RotationDataModule(pytorch_lightning.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
-            pin_memory=True
+            pin_memory=True,
         )
 
     def val_dataloader(self):
@@ -438,8 +444,12 @@ class RotationDataModule(pytorch_lightning.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            pin_memory=True
+            pin_memory=True,
         )
+
+
+# Data modules for simulated data
+
 
 class SimulatedData(torch.utils.data.Dataset):
     def __init__(self, data, max_voxels):
@@ -512,26 +522,39 @@ class SimulatedData(torch.utils.data.Dataset):
             torch.tensor(shape),
         )
 
+
 class SimulatedDataModule(pytorch_lightning.LightningDataModule):
-        def __init__(self, data_df, max_voxel, batch_size=50, subset_ratio=.1):
-            super().__init__()
-            self.data_df = data_df
-            self.max_voxel = max_voxel
-            self.batch_size = batch_size
-            self.subset_ratio = subset_ratio
+    def __init__(self, data_df, max_voxel, batch_size=50, subset_ratio=0.1):
+        super().__init__()
+        self.data_df = data_df
+        self.max_voxel = max_voxel
+        self.batch_size = batch_size
+        self.subset_ratio = subset_ratio
 
-        def setup(self, stage=None):
-            sim_data = SimulatedData(self.data_df, self.max_voxel)
-            subset_size = int(len(sim_data) * self.subset_ratio)
-            subset_data = torch.utils.data.Subset(sim_data, list(range(subset_size)))
-            train_size = int(0.8 * subset_size)
-            val_size = subset_size - train_size
-            self.train_data, self.val_data = torch.utils.data.random_split(subset_data, [train_size, val_size])
+    def setup(self, stage=None):
+        sim_data = SimulatedData(self.data_df, self.max_voxel)
+        subset_size = int(len(sim_data) * self.subset_ratio)
+        subset_data = torch.utils.data.Subset(sim_data, list(range(subset_size)))
+        train_size = int(0.8 * subset_size)
+        val_size = subset_size - train_size
+        self.train_data, self.val_data = torch.utils.data.random_split(
+            subset_data, [train_size, val_size]
+        )
 
-        def train_dataloader(self):
-            return DataLoader(self.train_data, batch_size=self.batch_size, shuffle=True, pin_memory=True, num_workers=3)
+    def train_dataloader(self):
+        return DataLoader(
+            self.train_data,
+            batch_size=self.batch_size,
+            shuffle=True,
+            pin_memory=True,
+            num_workers=3,
+        )
 
-        def val_dataloader(self):
-            return DataLoader(self.val_data, batch_size=self.batch_size, shuffle=False, pin_memory=True, num_workers=3)
-
-
+    def val_dataloader(self):
+        return DataLoader(
+            self.val_data,
+            batch_size=self.batch_size,
+            shuffle=False,
+            pin_memory=True,
+            num_workers=3,
+        )

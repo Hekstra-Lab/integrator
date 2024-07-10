@@ -1,4 +1,5 @@
 from pylab import *
+import numpy as np
 import math
 import pytorch_lightning
 import torch
@@ -94,6 +95,17 @@ class Integrator(torch.nn.Module):
         return (nll + kl_term, rate_, q_I, profile, q_bg, counts, L)
 
 def frange_cycle_cosine(start, stop, n_epoch, n_cycle=4, ratio=0.8,limit=1):
+    '''
+    A cosine function that cycles over n_epoch with n_cycle periods.
+    The cosine function is scaled by ratio and shifted by start and stop.
+
+    Args:
+        start (float): start value of the cosine function
+        stop (float): stop value of the cosine function
+        n_epoch (int): number of epochs
+        n_cycle (int): number of cycles
+        ratio (float): scaling factor of the cosine function
+    '''
     L = np.ones(n_epoch)
     period = n_epoch / n_cycle
     step = (stop - start) / (period * ratio)  # step is in [0,1]
@@ -171,12 +183,7 @@ class IntegratorModel(pytorch_lightning.LightningModule):
             counts, q_bg, q_I, profile, L, mask=dead_pixel_mask.squeeze(-1)
         )
 
-        num_vox = dead_pixel_mask.sum(1)
-
         ll_mean = torch.mean(ll, dim=1) * dead_pixel_mask.squeeze(-1)
-
-        #weights = np.log(torch.tensor(100))/torch.log(num_vox)
-        #ll_mean = ll_mean.sum(-1)*weights
 
         nll = -(torch.sum(ll_mean) / torch.sum(dead_pixel_mask))
 
@@ -414,5 +421,4 @@ class IntegratorModelSim(pytorch_lightning.LightningModule):
         def configure_optimizers(self):
             optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
             return optimizer
-
 
