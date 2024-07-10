@@ -16,7 +16,7 @@ class PoissonLikelihoodV2(torch.nn.Module):
     def __init__(
         self,
         beta=1.0,
-        eps=1e-8,
+        eps=1e-5,
         prior_I=None,
         prior_bg=None,
         concentration = None,
@@ -38,8 +38,6 @@ class PoissonLikelihoodV2(torch.nn.Module):
         self.prior_profile_scale = torch.nn.Parameter(
             data=torch.tensor(p_profile_scale), requires_grad=False
         )
-        self.register_buffer('concentration', torch.tensor(concentration))
-        self.register_buffer('rate', torch.tensor(rate))
         self.prior_I = prior_I
         self.prior_bg = prior_bg
         self.prior_profile = prior_profile

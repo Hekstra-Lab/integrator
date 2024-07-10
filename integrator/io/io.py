@@ -8,7 +8,8 @@ import glob
 import os
 from dials.array_family import flex
 import numpy as np
-
+import pytorch_lightning
+from torch.utils.data import DataLoader
 
 class RotationData(torch.utils.data.Dataset):
     def __init__(
@@ -16,6 +17,7 @@ class RotationData(torch.utils.data.Dataset):
         max_size=4096,
         shoebox_dir=None,
         max_detector_dimension=5000,
+        weak_reflection_threshold=5,
     ):
         """
         Dataset class for X-ray diffraction rotation data.
@@ -27,6 +29,7 @@ class RotationData(torch.utils.data.Dataset):
             val_split (float): Fraction of data to use for validation.
             test_split (float): Fraction of data to use for testing.
         """
+        self.refl_tables = []
         self.max_detector_dimension = max_detector_dimension
         self.mode = "train"
         self.max_size = max_size
@@ -35,7 +38,7 @@ class RotationData(torch.utils.data.Dataset):
         (
             self.df,
             self.max_voxels,
-        ) = self._get_refl_tables()
+        ) = self._get_refl_tables(weak_reflection_threshold=weak_reflection_threshold)
 
     def _get_shoebox_filenames(self):
         """
@@ -60,6 +63,9 @@ class RotationData(torch.utils.data.Dataset):
             Reflection table
         """
         return flex.reflection_table.from_file(filename)
+
+    def _filter_very_weak_shoeboxes(self,intensities):
+        return(intensities < 0).any()
 
     def _get_intensity(self, sbox):
         """
@@ -119,7 +125,7 @@ class RotationData(torch.utils.data.Dataset):
     def _filter_dead_shoeboxes(self, intensities):
         return (intensities < 0).all()
 
-    def _get_rows(self, tbl):
+    def _get_rows(self, tbl, idx):
         """
         Drop unused columns
 
@@ -130,11 +136,16 @@ class RotationData(torch.utils.data.Dataset):
             pl.DataFrame: DataFrame with unused columns dropped
         """
 
+        tbl["refl_ids"] = flex.int(np.arange(len(tbl)))
+        tbl["tbl_id"] = flex.int(np.zeros(len(tbl)) + idx)
+
         return pl.DataFrame(list(tbl.rows())).drop(
             [
                 # "background.mean",
                 # "background.sum.value",
                 # "background.sum.variance",
+                # "refl_ids",
+                # 'tbl_id',
                 "bbox",
                 "partiality",
                 "d",
@@ -204,7 +215,7 @@ class RotationData(torch.utils.data.Dataset):
         """
         return max_pix > self.max_detector_dimension
 
-    def _get_refl_tables(self):
+    def _get_refl_tables(self,weak_reflection_threshold=5):
         """
         Build a dataframe of the reflection tables
 
@@ -214,9 +225,9 @@ class RotationData(torch.utils.data.Dataset):
         final_df = pl.DataFrame()
 
         max_vox = []
-        for filename in self.shoebox_filenames["shoebox_filenames"]:
+        for idx, filename in enumerate(self.shoebox_filenames["shoebox_filenames"]):
             tbl = self._get_table(filename)  # refl table
-            df = self._get_rows(tbl)  # store refl table as dataframe
+            df = self._get_rows(tbl, idx)  # store refl table as dataframe
 
             # getting coordinates and observed intensity from shoeboxes
             coordinates = df["shoebox"].map_elements(self._get_coords)
@@ -241,23 +252,43 @@ class RotationData(torch.utils.data.Dataset):
             dead_pixel_mask = df["intensity_observed"].map_elements(
                 self._mask_dead_pixels
             )
+
+            dead_pixel_mask = dead_pixel_mask.to_numpy()
+
             df = df.with_columns([pl.Series("dead_pixel_mask", dead_pixel_mask)])
 
             # get num pixels
             num_pixel = df["intensity_observed"].map_elements(self._get_num_pixels)
+
             max_coord = df["coordinates"].map_elements(self._max_pixel_coordinate)
+
             df = df.with_columns(
                 [pl.Series("max_coord", max_coord), pl.Series("num_pix", num_pixel)]
             )
+
             dead_pixels = df["intensity_observed"].map_elements(
                 self._filter_dead_shoeboxes
             )
+
+            weak_shoeboxes = df['intensity_observed'].map_elements(self._filter_very_weak_shoeboxes)
+
             df = df.with_columns([pl.Series("all_pixels_dead", dead_pixels)])
+
+            df = df.with_columns(pl.Series('weak_reflection_threshold',weak_shoeboxes))
+
+            coord_mask = np.array(df["max_coord"] < 5000)
+
+            mask = (coord_mask * (~np.array(dead_pixels).astype(bool))).astype(bool)
+
             df = df.filter(pl.col("max_coord") < 5000)  # returns greater than 5000
+
             df = df.filter(pl.col("all_pixels_dead") == 0)
 
             max_vox.append(df.select(pl.col("num_pix").max()).item())
             # max_vox = max(max_vox).item()
+
+            refls = tbl.select(flex.bool(mask))
+            self.refl_tables.append(refls)
 
             # stack dataframe
             final_df = final_df.vstack(df) if final_df is not None else df
@@ -285,17 +316,22 @@ class RotationData(torch.utils.data.Dataset):
             tuple: Padded data tensor and mask tensor
         """
 
-        I_prf_val = self.df["intensity.prf.value"].gather(idx).item()
-        I_prf_var = self.df["intensity.prf.variance"].gather(idx).item()
-        I_sum_val = self.df["intensity.sum.value"].gather(idx).item()
-        I_sum_var = self.df["intensity.sum.variance"].gather(idx).item()
+        DIALS_I_prf_val = self.df["intensity.prf.value"].gather(idx).item()
+        DIALS_I_prf_var = self.df["intensity.prf.variance"].gather(idx).item()
+        DIALS_I_sum_val = self.df["intensity.sum.value"].gather(idx).item()
+        DIALS_I_sum_var = self.df["intensity.sum.variance"].gather(idx).item()
         bg_sum_val = self.df["background.sum.value"].gather(idx).item()
         bg_sum_var = self.df["background.sum.variance"].gather(idx).item()
         bg_sum_mean = self.df["background.mean"].gather(idx).item()
-        DIALS_I = (I_prf_val, I_prf_var, I_sum_val, I_sum_var)
-        DIALS_bg = (bg_sum_val, bg_sum_var, bg_sum_mean)
+#        DIALS_I = (I_prf_val, I_prf_var, I_sum_val, I_sum_var)
+#        DIALS_bg = (bg_sum_val, bg_sum_var, bg_sum_mean)
         row_idx = idx
         coords = self.df["coordinates"].gather(idx).item()
+
+        x_shape = len(coords[:, 0].unique())
+        y_shape = len(coords[:, 1].unique())
+        z_shape = len(coords[:, 2].unique())
+        shape = (x_shape, y_shape, z_shape)
 
         z_coords = len(coords[:, 2].unique())  # Extract the z-coordinates
         if z_coords == 1:
@@ -303,6 +339,8 @@ class RotationData(torch.utils.data.Dataset):
         else:
             is_flat = torch.tensor(False)
 
+        id = self.df["refl_ids"].gather(idx).item()
+        tbl_id = self.df["tbl_id"].gather(idx).item()
         dxy = self.df["dxy"].gather(idx).item()
         pad_size = self.max_voxels - len(coords)
         i_obs = self.df["intensity_observed"].gather(idx).item()
@@ -320,9 +358,9 @@ class RotationData(torch.utils.data.Dataset):
 
         dead_pixel_mask_padded = torch.nn.functional.pad(
             dead_pixel_mask, (0, max(pad_size, 0)), "constant", 0
-        ).unsqueeze(dim=-1)
+        )
 
-        padded_data = torch.cat((pad_coords, pad_dxy, pad_iobs), dim=1)
+        shoebox = torch.cat((pad_coords, pad_dxy, pad_iobs), dim=1)
 
         pad_mask = torch.nn.functional.pad(
             torch.ones_like(i_obs, dtype=torch.bool),
@@ -332,23 +370,29 @@ class RotationData(torch.utils.data.Dataset):
         )
 
         return (
-            padded_data,
+            shoebox,
             dead_pixel_mask_padded,
-            DIALS_I,
-            DIALS_bg,
+            DIALS_I_prf_val,
+            DIALS_I_prf_var,
+            DIALS_I_sum_val,
+            DIALS_I_sum_var,
             idx,
             pad_mask,
             is_flat,
+            id,
+            tbl_id,
+            torch.tensor(shape),
         )
+
 
 class RotationDataModule(pytorch_lightning.LightningDataModule):
     def __init__(
         self,
         shoebox_dir,
         batch_size=32,
-        num_workers=0,
+        num_workers=4,
         train_val_split=0.8,
-        subset_ratio=0.01,
+        subset_ratio=1,
     ):
         super().__init__()
         self.shoebox_dir = shoebox_dir
@@ -385,6 +429,7 @@ class RotationDataModule(pytorch_lightning.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
+            pin_memory=True
         )
 
     def val_dataloader(self):
@@ -393,6 +438,100 @@ class RotationDataModule(pytorch_lightning.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
+            pin_memory=True
         )
+
+class SimulatedData(torch.utils.data.Dataset):
+    def __init__(self, data, max_voxels):
+        self.data = data
+        self.max_voxels = max_voxels
+        self.true_I = data["true_I"]
+        self.true_bg = data["true_bg"]
+        self.true_rate = data["true_Rij"]
+        self.dxy = data["dxy"]
+        self.coords = data["coords"]
+        self.true_counts = data["true_counts"]
+        self.true_cov = data["true_cov"]
+        self.x_shape = data["x_shape"]
+        self.y_shape = data["y_shape"]
+        self.z_shape = data["z_shape"]
+
+    def __len__(self):
+        return len(self.data["true_bg"])
+
+    def __getitem__(self, idx):
+        shoebox = torch.hstack(
+            [self.coords[idx], self.dxy[idx], self.true_counts[idx].unsqueeze(-1)]
+        ).to(torch.float32)
+        shape = (self.x_shape[idx], self.y_shape[idx], self.z_shape[idx])
+        num_voxels = shape[0] * shape[1] * shape[2]
+        pad_size = self.max_voxels - num_voxels
+
+        padded_shoebox = torch.nn.functional.pad(
+            shoebox, (0, 0, 0, max(pad_size, 0)), "constant", 0
+        )
+
+        true_counts = torch.nn.functional.pad(
+            self.true_counts[idx], (0, max(pad_size, 0)), "constant", 0
+        )
+        true_Rij = torch.nn.functional.pad(
+            self.true_rate[idx], (0, max(pad_size, 0)), "constant", 0
+        )
+
+        pad_mask = torch.nn.functional.pad(
+            torch.ones_like(shoebox[:, -1], dtype=torch.bool),
+            (0, max(pad_size, 0)),
+            "constant",
+            False,
+        )
+
+        if shape[-1] == 1:
+            is_flat = torch.tensor(True)
+            cov = torch.zeros(3, 3)
+            if self.true_cov[idx].size(0) == 2:
+                cov[:2, :2] = self.true_cov[idx]
+            else:
+                cov = self.true_cov[idx]
+        else:
+            is_flat = torch.tensor(False)
+            cov = torch.zeros(3, 3)
+            if self.true_cov[idx].size(0) == 2:
+                cov[:2, :2] = self.true_cov[idx]
+            else:
+                cov = self.true_cov[idx]
+
+        return (
+            padded_shoebox,
+            pad_mask,
+            self.true_I[idx],
+            cov,
+            self.true_bg[idx],
+            is_flat,
+            true_counts,
+            true_Rij,
+            torch.tensor(shape),
+        )
+
+class SimulatedDataModule(pytorch_lightning.LightningDataModule):
+        def __init__(self, data_df, max_voxel, batch_size=50, subset_ratio=.1):
+            super().__init__()
+            self.data_df = data_df
+            self.max_voxel = max_voxel
+            self.batch_size = batch_size
+            self.subset_ratio = subset_ratio
+
+        def setup(self, stage=None):
+            sim_data = SimulatedData(self.data_df, self.max_voxel)
+            subset_size = int(len(sim_data) * self.subset_ratio)
+            subset_data = torch.utils.data.Subset(sim_data, list(range(subset_size)))
+            train_size = int(0.8 * subset_size)
+            val_size = subset_size - train_size
+            self.train_data, self.val_data = torch.utils.data.random_split(subset_data, [train_size, val_size])
+
+        def train_dataloader(self):
+            return DataLoader(self.train_data, batch_size=self.batch_size, shuffle=True, pin_memory=True, num_workers=3)
+
+        def val_dataloader(self):
+            return DataLoader(self.val_data, batch_size=self.batch_size, shuffle=False, pin_memory=True, num_workers=3)
 
 

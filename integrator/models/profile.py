@@ -4,10 +4,9 @@ import math
 from integrator.layers import Linear
 from integrator.models import MLP
 from rs_distributions.transforms import FillScaleTriL
-from torch.distributions.transforms import ExpTransform
+from torch.distributions.transforms import ExpTransform,SoftplusTransform
 import rs_distributions.distributions as rsd
 import torch.distributions.constraints as constraints
-
 
 class DistributionBuilder(torch.nn.Module):
     def __init__(
@@ -17,77 +16,42 @@ class DistributionBuilder(torch.nn.Module):
         background_dist,
         eps=1e-12,
         beta=1.0,
-        output_dim=10,
-        batch_size=10,
     ):
         super().__init__()
         self.register_buffer("eps", torch.tensor(eps))
         self.register_buffer("beta", torch.tensor(beta))
-        self.output_dim = output_dim
-        self.linear1 = Linear(dmodel, 4)
-        self.linear_L_2D = Linear(dmodel, 3)
-        self.linear_L_3D = Linear(dmodel, 6)
-        # self.linear_L = Linear(dmodel, 6)
+        self.linear = Linear(dmodel, 10)  # Single layer for all params
         self.intensity_dist = intensity_dist
         self.background_dist = background_dist
-        self.L_transform = FillScaleTriL(diag_transform=ExpTransform())
-        self.batch_size = batch_size
+        self.L_transform = FillScaleTriL(diag_transform=SoftplusTransform())
 
-    def constraint(self, x ):
+    def constraint(self, x):
         return torch.nn.functional.softplus(x, beta=self.beta) + self.eps
 
     def intensity_distribution(self, params):
-    # #loc = self.constraint(params[..., 0])
-        loc = params[..., 0]
-        loc = torch.exp(loc)
+        loc = self.constraint(params[..., 0])
         scale = self.constraint(params[..., 1])
         return self.intensity_dist(loc, scale)
 
     def background(self, params):
-        # #mu = self.constraint(params[..., 2])
-        mu = params[..., 2]
+        mu = self.constraint(params[..., 2])
         sigma = self.constraint(params[..., 3])
         return self.background_dist(mu, sigma)
 
-    # def intensity_distribution(self, params):
-        # arg_constraints = self.intensity_dist.arg_constraints
-        # constrained_params = [
-            # self.constraint(params[..., i], constraint)
-            # for i, constraint in enumerate(arg_constraints.values())
-        # ]
-        # return self.intensity_dist(*constrained_params)
-
-    # def background(self, params):
-        # arg_constraints = self.background_dist.arg_constraints
-        # constrained_params = [
-            # self.constraint(params[..., i + 2], constraint)
-            # for i, constraint in enumerate(arg_constraints.values())
-        # ]
-        # return self.background_dist(*constrained_params)
-
-    def MVNProfile3D(self, L_params, dxyz, mask, device):
+    def MVNProfile3D(self, L_params, dxyz, device):
         batch_size = L_params.size(0)
-        mu = torch.zeros((batch_size, 1, 3), requires_grad=False, device=device).to(
-            torch.float32
-        )
+        mu = torch.zeros((batch_size, 1, 3), requires_grad=False, device=device).to(torch.float32)
         L = self.L_transform(L_params).to(torch.float32)
-        mvn = torch.distributions.multivariate_normal.MultivariateNormal(
-            mu, scale_tril=L
-        )
+        mvn = torch.distributions.multivariate_normal.MultivariateNormal(mu, scale_tril=L)
         log_probs = mvn.log_prob(dxyz)
         profile = torch.exp(log_probs)
         return profile, L
 
-    def MVNProfile2D(self, L_params, dxy, mask, device):
+    def MVNProfile2D(self, L_params, dxy, device):
         batch_size = L_params.size(0)
-        mu = torch.zeros((batch_size, 1, 2), requires_grad=False, device=device).to(
-            torch.float32
-        )
-        #        L_2d = self.L_transform(L_params[..., :3]).to(torch.float32)
-        L_2d = self.L_transform(L_params).to(torch.float32)
-        mvn = torch.distributions.multivariate_normal.MultivariateNormal(
-            mu, scale_tril=L_2d
-        )
+        mu = torch.zeros((batch_size, 1, 2), requires_grad=False, device=device).to(torch.float32)
+        L_2d = self.L_transform(L_params[..., :3]).to(torch.float32)  # Use only the first three params
+        mvn = torch.distributions.multivariate_normal.MultivariateNormal(mu, scale_tril=L_2d)
         log_probs = mvn.log_prob(dxy)
         profile = torch.exp(log_probs)
         L = torch.zeros((batch_size, 1, 3, 3), device=device)
@@ -96,19 +60,19 @@ class DistributionBuilder(torch.nn.Module):
 
     def forward(self, representation, dxyz, mask, isflat):
         device = representation.device
-        params = self.linear1(representation)
+        params = self.linear(representation)
         q_bg = self.background(params)
         q_I = self.intensity_distribution(params)
 
         if isflat.all():
-            L_params = self.linear_L_2D(representation)
+            L_params = params[..., 4:7]  # First three params for 2D case
             dxy = dxyz[..., :2]
-            profile, L = self.MVNProfile2D(L_params, dxy, mask, device)
+            profile, L = self.MVNProfile2D(L_params, dxy, device)
             return q_bg, q_I, profile, L
 
         elif not isflat.any():
-            L_params = self.linear_L_3D(representation)
-            profile, L = self.MVNProfile3D(L_params, dxyz, mask, device)
+            L_params = params[..., 4:10]  # All six params for 3D case
+            profile, L = self.MVNProfile3D(L_params, dxyz, device)
             return q_bg, q_I, profile, L
 
         else:
@@ -117,17 +81,13 @@ class DistributionBuilder(torch.nn.Module):
             dxyz_3d = dxyz[~isflat]
             dxy = dxyz[isflat][..., :2]
 
-            L_params_2d = self.linear_L_2D(rep_2d)
-            L_params_3d = self.linear_L_3D(rep_3d)
+            L_params_2d = params[isflat][..., 4:7]
+            L_params_3d = params[~isflat][..., 4:10]
 
-            prof_2d, L_2 = self.MVNProfile2D(L_params_2d, dxy, mask[isflat], device)
-            prof_3d, L_3 = self.MVNProfile3D(
-                L_params_3d, dxyz_3d, mask[~isflat], device
-            )
+            prof_2d, L_2 = self.MVNProfile2D(L_params_2d, dxy, device)
+            prof_3d, L_3 = self.MVNProfile3D(L_params_3d, dxyz_3d, device)
             batch_size = representation.size(0)
-            profile = torch.zeros(
-                batch_size, mask.size(1), dtype=prof_3d.dtype, device=device
-            )
+            profile = torch.zeros(batch_size, mask.size(1), dtype=prof_3d.dtype, device=device)
             profile[isflat] = prof_2d
             profile[~isflat] = prof_3d
 
@@ -136,3 +96,4 @@ class DistributionBuilder(torch.nn.Module):
             L[~isflat] = L_3.squeeze(1)
 
             return q_bg, q_I, profile, L
+
