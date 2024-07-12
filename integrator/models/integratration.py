@@ -228,7 +228,7 @@ class IntegratorModel(pytorch_lightning.LightningModule):
             anneal_rate = self.anneal_schedule[self.current_step]
         else:
             anneal_rate = 1.0
-        self.currente_step += 1
+        self.current_step += 1
 
         loss = nll + anneal_rate * kl_term
 
