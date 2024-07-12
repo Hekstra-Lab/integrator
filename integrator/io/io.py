@@ -481,12 +481,13 @@ class SimulatedData(torch.utils.data.Dataset):
             shoebox, (0, 0, 0, max(pad_size, 0)), "constant", 0
         )
 
-        true_counts = torch.nn.functional.pad(
-            self.true_counts[idx], (0, max(pad_size, 0)), "constant", 0
-        )
-        true_Rij = torch.nn.functional.pad(
-            self.true_rate[idx], (0, max(pad_size, 0)), "constant", 0
-        )
+        # Uncomment the following if you want to return the true_counts and the true per-pixel rate (Rij)
+        # true_counts = torch.nn.functional.pad(
+        # self.true_counts[idx], (0, max(pad_size, 0)), "constant", 0
+        # )
+        # true_Rij = torch.nn.functional.pad(
+        # self.true_rate[idx], (0, max(pad_size, 0)), "constant", 0
+        # )
 
         pad_mask = torch.nn.functional.pad(
             torch.ones_like(shoebox[:, -1], dtype=torch.bool),
@@ -517,8 +518,8 @@ class SimulatedData(torch.utils.data.Dataset):
             cov,
             self.true_bg[idx],
             is_flat,
-            true_counts,
-            true_Rij,
+            # true_counts,
+            # true_Rij,
             torch.tensor(shape),
         )
 
