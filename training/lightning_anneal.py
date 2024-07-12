@@ -75,8 +75,6 @@ def main(args):
     prior_bg = torch.distributions.gamma.Gamma(concentration, rate)
 
     prior_I = torch.distributions.exponential.Exponential(rate=torch.tensor(0.01))
-    p_I_scale = args.p_I_scale
-    p_bg_scale = args.p_bg_scale
 
     concentration = torch.tensor([1.0])
     rate = torch.tensor([1])
@@ -102,8 +100,8 @@ def main(args):
         prior_bg=prior_bg,
         concentration=concentration,
         rate=rate,
-        p_I_scale=p_I_scale,
-        p_bg_scale=p_bg_scale,
+        p_I_scale=args.p_I_scale,
+        p_bg_scale=args.p_bg_scale,
     )
 
     total_steps = 1000 * train_loader_len
@@ -166,14 +164,52 @@ if __name__ == "__main__":
     parser.add_argument(
         "--learning_rate", type=float, default=0.001, help="Learning rate"
     )
-    parser.add_argument("--batch_size", type=int, default=50, help="Batch size")
-    parser.add_argument("--epochs", type=int, default=10, help="Number of epochs")
-    parser.add_argument("--n_cycle", type=int, default=4, help="Number of cycles")
-    parser.add_argument("--depth", type=int, default=10, help="Depth of the encoder")
-    parser.add_argument("--dmodel", type=int, default=64, help="Model dimension")
-    parser.add_argument("--feature_dim", type=int, default=7, help="Feature dimension")
-    parser.add_argument("--dropout", type=float, default=0.5, help="Dropout rate")
-    parser.add_argument("--anneal", action="store_true")
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=50,
+        help="Batch size",
+    )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=10,
+        help="Number of epochs",
+    )
+    parser.add_argument(
+        "--n_cycle",
+        type=int,
+        default=4,
+        help="Number of cycles",
+    )
+    parser.add_argument(
+        "--depth",
+        type=int,
+        default=10,
+        help="Depth of the encoder",
+    )
+    parser.add_argument(
+        "--dmodel",
+        type=int,
+        default=64,
+        help="Model dimension",
+    )
+    parser.add_argument(
+        "--feature_dim",
+        type=int,
+        default=7,
+        help="Feature dimension",
+    )
+    parser.add_argument(
+        "--dropout",
+        type=float,
+        default=0.5,
+        help="Dropout rate",
+    )
+    parser.add_argument(
+        "--anneal",
+        action="store_true",
+    )
     parser.add_argument(
         "--beta",
         type=float,
@@ -181,16 +217,28 @@ if __name__ == "__main__":
         help="Beta parameter for the Poisson likelihood",
     )
     parser.add_argument(
-        "--mc_samples", type=int, default=100, help="Number of Monte Carlo samples"
+        "--mc_samples",
+        type=int,
+        default=100,
+        help="Number of Monte Carlo samples",
     )
     parser.add_argument(
-        "--max_size", type=int, default=1024, help="Maximum size for padding"
+        "--max_size",
+        type=int,
+        default=1024,
+        help="Maximum size for padding",
     )
     parser.add_argument(
-        "--eps", type=float, default=1e-5, help="Epsilon value for numerical stability"
+        "--eps",
+        type=float,
+        default=1e-5,
+        help="Epsilon value for numerical stability",
     )
     parser.add_argument(
-        "--weak_data_path", type=str, required=True, help="Path to the weak data file"
+        "--weak_data_path",
+        type=str,
+        required=True,
+        help="Path to the weak data file",
     )
     parser.add_argument(
         "--strong_data_path",
@@ -199,7 +247,10 @@ if __name__ == "__main__":
         help="Path to the strong data file",
     )
     parser.add_argument(
-        "--output_dir", type=str, required=True, help="Directory to store the outputs"
+        "--output_dir",
+        type=str,
+        required=True,
+        help="Directory to store the outputs",
     )
     parser.add_argument(
         "--p_I_scale",

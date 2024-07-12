@@ -134,8 +134,10 @@ class IntegratorModel(pytorch_lightning.LightningModule):
         n_cycle=4,
         ratio=0.5,
         anneal=True,
+        lr=0.001,
     ):
         super().__init__()
+        self.lr = lr
         self.standardize = standardize
         self.encoder = encoder
         self.distribution_builder = distribution_builder
@@ -342,7 +344,7 @@ class IntegratorModel(pytorch_lightning.LightningModule):
         self.validation_step_loss.clear()
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         return optimizer
 
 
