@@ -1,6 +1,7 @@
 from pylab import *
 import torch
 
+
 class PoissonLikelihoodV2(torch.nn.Module):
     """
     Attributes:
@@ -17,12 +18,10 @@ class PoissonLikelihoodV2(torch.nn.Module):
         eps=1e-5,
         prior_I=None,
         prior_bg=None,
-        concentration = None,
-        rate =None ,
-        prior_profile=None,
+        concentration=None,
+        rate=None,
         p_I_scale=0.001,  # influence of DKL(LogNorm||LogNorm) term
         p_bg_scale=0.001,
-        p_profile_scale=0.01,
     ):
         super().__init__()
         self.eps = torch.nn.Parameter(data=torch.tensor(eps), requires_grad=False)
@@ -33,12 +32,8 @@ class PoissonLikelihoodV2(torch.nn.Module):
         self.p_bg_scale = torch.nn.Parameter(
             data=torch.tensor(p_bg_scale), requires_grad=False
         )
-        self.prior_profile_scale = torch.nn.Parameter(
-            data=torch.tensor(p_profile_scale), requires_grad=False
-        )
         self.prior_I = prior_I
         self.prior_bg = prior_bg
-        self.prior_profile = prior_profile
 
     def forward(
         self,
@@ -46,10 +41,8 @@ class PoissonLikelihoodV2(torch.nn.Module):
         q_bg,
         q_I,
         profile,
-        L,
         eps=1e-5,
         mc_samples=100,
-        mask=None,
     ):
         """
         Args:
@@ -65,7 +58,6 @@ class PoissonLikelihoodV2(torch.nn.Module):
         """
         counts = counts
 
-
         # Sample from variational distributions
         z = q_I.rsample([mc_samples])
         bg = q_bg.rsample([mc_samples])
@@ -74,10 +66,8 @@ class PoissonLikelihoodV2(torch.nn.Module):
         kl_term = 0
 
         # Calculate the rate
-        # rate = z.permute(1,0,2) * (profile) + bg.permute(1,0,2)
         rate = z.permute(1, 0, 2) * (profile.unsqueeze(1)) + bg.permute(1, 0, 2)
 
-        # ll = torch.distributions.Poisson(rate).log_prob(counts)
         ll = torch.distributions.Poisson(rate + eps).log_prob(counts.unsqueeze(1))
 
         # ll = ll * mask if mask is not None else ll
