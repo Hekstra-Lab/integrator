@@ -133,7 +133,6 @@ class IntegratorModel(pytorch_lightning.LightningModule):
         total_steps,
         n_cycle=4,
         ratio=0.5,
-        limit=1,
         anneal=True,
     ):
         super().__init__()
@@ -181,7 +180,7 @@ class IntegratorModel(pytorch_lightning.LightningModule):
         self.anneal = anneal
         if self.anneal:
             self.anneal_schedule = frange_cycle_cosine(
-                0.0, 1.0, self.total_steps, n_cycle=n_cycle, ratio=ratio, limit=limit
+                0.0, 1.0, self.total_steps, n_cycle=n_cycle, ratio=ratio
             )
         self.current_step = 0
 
@@ -354,7 +353,6 @@ class IntegratorModelSim(pytorch_lightning.LightningModule):
         total_steps,
         n_cycle=4,
         ratio=0.5,
-        limit=1,
         anneal=True,
         lr=0.001,
     ):
@@ -399,7 +397,7 @@ class IntegratorModelSim(pytorch_lightning.LightningModule):
         self.anneal = anneal
         if self.anneal:
             self.anneal_schedule = frange_cycle_cosine(
-                0.0, 1.0, self.total_steps, n_cycle=n_cycle, ratio=ratio, limit=limit
+                0.0, 1.0, self.total_steps, n_cycle=n_cycle, ratio=ratio
             )
         self.current_step = 0
 
