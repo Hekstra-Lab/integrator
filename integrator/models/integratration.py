@@ -42,7 +42,6 @@ class Integrator(torch.nn.Module):
         dead_pixel_mask,
         is_flat,
         mc_samples=100,
-        min_voxel=None,
     ):
         """
         Forward pass of the integrator.
@@ -57,7 +56,7 @@ class Integrator(torch.nn.Module):
             torch.Tensor: Negative log-likelihood loss
         """
 
-        # get counts
+        # get pixel intensity values
         counts = torch.clamp(shoebox[..., -1], min=0)
 
         # standardize data
@@ -66,16 +65,17 @@ class Integrator(torch.nn.Module):
         # get centroid offsets
         dxyz = shoebox[..., 3:6]
 
-        # encode shoebox
+        # encode shoeboxes
         representation = self.encoder(shoebox_, dead_pixel_mask.unsqueeze(-1))
 
         # build q_I, q_bg, and profile
         q_bg, q_I, profile, L = self.distribution_builder(
             representation, dxyz, dead_pixel_mask, is_flat
         )
+
         # q_I, profile = self.distribution_builder(representation, dxyz, dead_pixel_mask)
 
-        # calculate ll and kl
+        # calculate likelihood and kl-divergence
         ll, kl_term, rate_ = self.likelihood(
             counts,
             q_bg,
@@ -85,12 +85,11 @@ class Integrator(torch.nn.Module):
             mc_samples=mc_samples,
             mask=dead_pixel_mask.squeeze(-1),
         )
-        num_vox = dead_pixel_mask.sum(1)
-        ll_mean = torch.mean(ll, dim=1) * dead_pixel_mask.squeeze(
-            -1
-        )  # mean across mc_samples
-        # weights = np.log(torch.tensor(min_voxel))/torch.log(num_vox)
-        # ll_mean = ll_mean.sum(-1)*weights
+
+        # mean across monte carlo samples
+        ll_mean = torch.mean(ll, dim=1) * dead_pixel_mask.squeeze(-1)
+
+        # negative log-likelihood
         nll = -(torch.sum(ll_mean) / torch.sum(dead_pixel_mask))
 
         return (nll + kl_term, rate_, q_I, profile, q_bg, counts, L)
@@ -217,8 +216,8 @@ class IntegratorModel(pytorch_lightning.LightningModule):
             DIALS_I_prf_var,
             DIALS_I_sum_val,
             DIALS_I_sum_var,
-            idx,
-            pad_mask,
+            # idx,
+            # pad_mask,
             is_flat,
             id,
             tbl_id,
@@ -272,6 +271,7 @@ class IntegratorModel(pytorch_lightning.LightningModule):
 
     def validation_step(self, batch):
         device = self.device
+
         (
             sbox,
             mask,
@@ -279,8 +279,8 @@ class IntegratorModel(pytorch_lightning.LightningModule):
             DIALS_I_prf_var,
             DIALS_I_sum_val,
             DIALS_I_sum_var,
-            idx,
-            pad_mask,
+            # idx,
+            # pad_mask,
             is_flat,
             id,
             tbl_id,
@@ -349,13 +349,31 @@ class IntegratorModel(pytorch_lightning.LightningModule):
 
 
 class IntegratorModelSim(pytorch_lightning.LightningModule):
+    """
+
+    Attributes:
+        standardize: standardization module
+        lr: learning rate
+        encoder: encoder module
+        distribution_builder: distribution builder module
+        likelihood: likelihood module
+        train_avg_loss: list of average training losses
+        validation_avg_loss: list of average validation losses
+        training_step_loss: list of training step losses
+        validation_step_loss: list of validation step losses
+        training_preds: dictionary of training predictions
+        validation_preds: dictionary of validation predictions
+        total_steps: total number of iterations
+        anneal: boolean flag to anneal the KL term
+        current_step: current iteration
+    """
+
     def __init__(
         self,
         encoder,
         distribution_builder,
         likelihood,
         standardize,
-        min_voxel,
         total_steps,
         n_cycle=4,
         ratio=0.5,
@@ -368,7 +386,6 @@ class IntegratorModelSim(pytorch_lightning.LightningModule):
         self.encoder = encoder
         self.distribution_builder = distribution_builder
         self.likelihood = likelihood
-        self.min_voxel = min_voxel
 
         self.train_avg_loss = []
         self.validation_avg_loss = []
@@ -418,8 +435,6 @@ class IntegratorModelSim(pytorch_lightning.LightningModule):
         ll, kl_term, rate = self.likelihood(counts, q_bg, q_I, profile)
         num_vox = dead_pixel_mask.sum(1)
         ll_mean = torch.mean(ll, dim=1) * dead_pixel_mask.squeeze(-1)
-        # weights = torch.log(torch.tensor(self.min_voxel)) / torch.log(torch.tensor(num_vox))
-        # ll_mean = ll_mean.sum(-1) * weights
         nll = -(torch.sum(ll_mean) / torch.sum(dead_pixel_mask))
         return nll, kl_term, rate, q_I, profile, q_bg, counts, L
 

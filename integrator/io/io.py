@@ -368,12 +368,12 @@ class RotationData(torch.utils.data.Dataset):
 
         shoebox = torch.cat((pad_coords, pad_dxy, pad_iobs), dim=1)
 
-        pad_mask = torch.nn.functional.pad(
-            torch.ones_like(i_obs, dtype=torch.bool),
-            (0, max(pad_size, 0)),
-            "constant",
-            False,
-        )
+        # pad_mask = torch.nn.functional.pad(
+        # torch.ones_like(i_obs, dtype=torch.bool),
+        # (0, max(pad_size, 0)),
+        # "constant",
+        # False,
+        # )
 
         return (
             shoebox,
@@ -382,8 +382,8 @@ class RotationData(torch.utils.data.Dataset):
             DIALS_I_prf_var,
             DIALS_I_sum_val,
             DIALS_I_sum_var,
-            idx,
-            pad_mask,
+            # idx,
+            # pad_mask,
             is_flat,
             id,
             tbl_id,
