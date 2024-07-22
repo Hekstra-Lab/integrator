@@ -1,4 +1,5 @@
 import torch
+from dials.array_family import flex
 import argparse
 import pickle
 import os
@@ -114,18 +115,16 @@ def main(args):
 
     trainer.fit(model, data_module)
 
-    # %%
-    # intensity prediction array
     intensity_preds = np.array(model.training_preds["q_I_mean"])
 
     # Reflection id array
-    refl_ids = np.array(model.training_preds["refl_id"])
+    # refl_ids = np.array(model.training_preds["refl_id"])
 
     # Table ids
     tbl_ids = np.unique(np.array(model.training_preds["tbl_id"]))
 
-    # DataFrame to store predictions
-    res_df = pl.DataFrame(
+    # Training predictions
+    train_res_df = pl.DataFrame(
         {
             "tbl_id": model.training_preds["tbl_id"],
             "refl_id": model.training_preds["refl_id"],
@@ -134,27 +133,48 @@ def main(args):
         }
     )
 
-    # for tbl_id in tbl_ids:
-    #    sel = np.asarray([False] * len(rotation_data.refl_tables[tbl_id]))
-    #    filtered_df = res_df.filter(res_df["tbl_id"] == tbl_id)
-    #    reflection_ids = filtered_df["refl_id"].to_list()
-    #    intensity_preds = filtered_df["q_I_mean"].to_list()
-    #    intensity_stddev = filtered_df["q_I_stddev"].to_list()
-
-    #    for i in reflection_ids:
-    #        sel[i] = True
-
-    #    refl_temp_tbl = data_module.full_dataset.refl_tables[tbl_id].select(flex.bool(sel))
-    #    refl_temp_tbl["intensity.sum.value"] = flex.double(intensity_preds)
-    #    refl_temp_tbl["intensity.sum.variance"] = flex.double(intensity_stddev)
-
-    # save the updated reflection table
-    #    refl_temp_tbl.as_file(f"integrator_preds_{tbl_id}.refl")
-
-    # Save weights
-    torch.save(
-        model.state_dict(), os.path.join(args.output_dir, "integrator_weights.pth")
+    # Validation predictions
+    val_res_df = pl.DataFrame(
+        {
+            "tbl_id": model.validation_preds["tbl_id"],
+            "refl_id": model.validation_preds["refl_id"],
+            "q_I_mean": model.validation_preds["q_I_mean"],
+            "q_I_stddev": model.validation_preds["q_I_stddev"],
+        }
     )
+
+    # Concatenate train_res_df and val_res_df
+    res_df = pl.concat([train_res_df, val_res_df])
+
+    # Iterate over reflection id
+    for tbl_id in tbl_ids:
+        sel = np.asarray([False] * len(data_module.full_dataset.refl_tables[tbl_id]))
+
+        filtered_df = res_df.filter(res_df["tbl_id"] == tbl_id)
+
+        # Reflection ids
+        reflection_ids = filtered_df["refl_id"].to_list()
+
+        # Intensity predictions
+        intensity_preds = filtered_df["q_I_mean"].to_list()
+        intensity_stddev = filtered_df["q_I_stddev"].to_list()
+
+        for i in reflection_ids:
+            sel[i] = True
+
+        refl_temp_tbl = data_module.full_dataset.refl_tables[tbl_id].select(
+            flex.bool(sel)
+        )
+
+        refl_temp_tbl["intensity.sum.value"] = flex.double(intensity_preds)
+
+        refl_temp_tbl["intensity.sum.variance"] = flex.double(intensity_stddev)
+
+        # save the updated reflection table
+        refl_temp_tbl.as_file(f"integrator_preds_{tbl_id}.refl")  # Save weights
+        torch.save(
+            model.state_dict(), os.path.join(args.output_dir, "integrator_weights.pth")
+        )
 
     # Function to recursively move tensors to CPU
     def move_to_cpu(data):

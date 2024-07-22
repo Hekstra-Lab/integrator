@@ -65,7 +65,7 @@ class RotationData(torch.utils.data.Dataset):
 
     def _filter_very_weak_shoeboxes(self, intensities, weak_reflection_threshold=5):
         # return(intensities < 0).any()
-        return intensities.max().item() <= weak_reflection_threshold
+        return torch.tensor(intensities).max().item() <= weak_reflection_threshold
 
     def _get_intensity(self, sbox):
         """
@@ -77,11 +77,7 @@ class RotationData(torch.utils.data.Dataset):
         Returns:
             torch.Tensor: Observed intensity as flattened tensor
         """
-        return torch.tensor(
-            sbox.data.as_numpy_array().ravel().astype(np.float32),
-            dtype=torch.float32,
-            requires_grad=False,
-        )
+        return sbox.data.as_numpy_array().ravel().astype(np.float32).tolist()
 
     def _to_tens(self, element):
         """
@@ -105,7 +101,7 @@ class RotationData(torch.utils.data.Dataset):
         Returns:
             int: Number of voxels in the shoebox
         """
-        return intensities.numel()
+        return len(intensities)
 
     def _get_z_dims(self, coords):
         return len(coords[:, -1].unique())
@@ -136,8 +132,8 @@ class RotationData(torch.utils.data.Dataset):
             pl.DataFrame: DataFrame with unused columns dropped
         """
 
-        tbl["refl_ids"] = flex.int(np.arange(len(tbl)))
-        tbl["tbl_id"] = flex.int(np.zeros(len(tbl)) + idx)
+        # tbl["refl_ids"] = flex.int(np.arange(len(tbl)))
+        # tbl["tbl_id"] = flex.int(np.zeros(len(tbl)) + idx)
 
         return pl.DataFrame(list(tbl.rows())).drop(
             [
@@ -230,8 +226,14 @@ class RotationData(torch.utils.data.Dataset):
             df = self._get_rows(tbl, idx)  # store refl table as dataframe
 
             # getting coordinates and observed intensity from shoeboxes
-            coordinates = df["shoebox"].map_elements(self._get_coords)
+            # coordinates = df["shoebox"].map_elements(self._get_coords)
             iobs = df["shoebox"].map_elements(self._get_intensity)
+
+            # detector coordinates
+            coordinates = [
+                torch.tensor(sbox.coords().as_numpy_array(), dtype=torch.float32)
+                for sbox in df["shoebox"]
+            ]
 
             # distance from pixel to centroid
             dxy = [
@@ -242,9 +244,15 @@ class RotationData(torch.utils.data.Dataset):
             ]
             df = df.with_columns(
                 [
+                    pl.Series("x", [x[:, 0].tolist() for x in coordinates]),
+                    pl.Series("y", [x[:, 1].tolist() for x in coordinates]),
+                    pl.Series("z", [x[:, 2].tolist() for x in coordinates]),
                     pl.Series("coordinates", coordinates),
                     pl.Series("intensity_observed", iobs),
-                    pl.Series("dxy", dxy),
+                    # pl.Series("dxy", dxy),
+                    pl.Series("dx", [x[:, 0].tolist() for x in dxy]),
+                    pl.Series("dy", [x[:, 1].tolist() for x in dxy]),
+                    pl.Series("dz", [x[:, 2].tolist() for x in dxy]),
                 ]
             )
 
@@ -253,7 +261,8 @@ class RotationData(torch.utils.data.Dataset):
                 self._mask_dead_pixels
             )
 
-            dead_pixel_mask = dead_pixel_mask.to_numpy()
+            # dead_pixel_mask = dead_pixel_mask.to_numpy()
+            dead_pixel_mask = dead_pixel_mask
 
             df = df.with_columns([pl.Series("dead_pixel_mask", dead_pixel_mask)])
 
@@ -294,10 +303,26 @@ class RotationData(torch.utils.data.Dataset):
             # max_vox = max(max_vox).item()
 
             refls = tbl.select(flex.bool(mask))
+            refls["refl_ids"] = flex.int(np.arange(len(refls)))
+            refls["tbl_id"] = flex.int(np.zeros(len(refls)))
             self.refl_tables.append(refls)
+
+            df = df.with_columns(
+                [
+                    pl.Series("refl_ids", refls["refl_ids"]),
+                    pl.Series("tbl_id", refls["tbl_id"]),
+                ]
+            )
+
+            # df['refl_ids'] = flex.int(np.arange(len(refls)))
+            # df['tbl_id'] = flex.int(np.zeros(len(refls)) + idx)
+
+            # # tbl["tbl_id"] = flex.int(np.zeros(len(tbl)) + idx)
 
             # stack dataframe
             final_df = final_df.vstack(df) if final_df is not None else df
+
+        final_df = final_df.drop(["shoebox", "coordinates"])
         max_voxel = max(max_vox)
 
         return final_df, max_voxel
@@ -332,25 +357,46 @@ class RotationData(torch.utils.data.Dataset):
         #        DIALS_I = (I_prf_val, I_prf_var, I_sum_val, I_sum_var)
         #        DIALS_bg = (bg_sum_val, bg_sum_var, bg_sum_mean)
         row_idx = idx
-        coords = self.df["coordinates"].gather(idx).item()
+        # coords = self.df["coordinates"].gather(idx).item()
+        coords = torch.tensor(
+            [
+                self.df["x"].gather(idx).item(),
+                self.df["y"].gather(idx).item(),
+                self.df["z"].gather(idx).item(),
+            ]
+        ).transpose(0, 1)
 
-        x_shape = len(coords[:, 0].unique())
-        y_shape = len(coords[:, 1].unique())
-        z_shape = len(coords[:, 2].unique())
+        x_shape = len(coords[0].unique())
+        y_shape = len(coords[1].unique())
+        z_shape = len(coords[2].unique())
         shape = (x_shape, y_shape, z_shape)
 
-        z_coords = len(coords[:, 2].unique())  # Extract the z-coordinates
-        if z_coords == 1:
+        if z_shape == 1:
             is_flat = torch.tensor(True)
         else:
             is_flat = torch.tensor(False)
 
         id = self.df["refl_ids"].gather(idx).item()
         tbl_id = self.df["tbl_id"].gather(idx).item()
-        dxy = self.df["dxy"].gather(idx).item()
+
+        # dxy = self.df["dxy"].gather(idx).item()
+        dxy = (
+            torch.tensor(
+                [
+                    self.df["dx"].gather(idx).to_list(),
+                    self.df["dy"].gather(idx).to_list(),
+                    self.df["dz"].gather(idx).to_list(),
+                ]
+            )
+            .squeeze(1)
+            .transpose(0, 1)
+        )
+
         pad_size = self.max_voxels - len(coords)
-        i_obs = self.df["intensity_observed"].gather(idx).item()
-        dead_pixel_mask = self.df["dead_pixel_mask"].gather(idx).item()
+        i_obs = torch.tensor(
+            [self.df["intensity_observed"].gather(idx).item()]
+        ).squeeze(0)
+        dead_pixel_mask = torch.tensor(self.df["dead_pixel_mask"].gather(idx).item())
 
         pad_coords = torch.nn.functional.pad(
             coords, (0, 0, 0, max(pad_size, 0)), "constant", 0
@@ -360,7 +406,7 @@ class RotationData(torch.utils.data.Dataset):
         )
         pad_iobs = torch.nn.functional.pad(
             i_obs, (0, max(pad_size, 0)), "constant", 0
-        ).unsqueeze(dim=-1)
+        ).unsqueeze(-1)
 
         dead_pixel_mask_padded = torch.nn.functional.pad(
             dead_pixel_mask, (0, max(pad_size, 0)), "constant", 0
@@ -374,6 +420,7 @@ class RotationData(torch.utils.data.Dataset):
         # "constant",
         # False,
         # )
+        # return print(pad_coords.shape, pad_dxy.shape, pad_iobs.shape)
 
         return (
             shoebox,

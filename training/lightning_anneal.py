@@ -5,7 +5,7 @@ import pickle
 import os
 import polars as plrs
 import numpy as np
-from integrator.io import SimulatedData, SimulatedDataModule
+from integrator.io import SimulatedDataModule
 from integrator.models import (
     Encoder,
     PoissonLikelihoodV2,
@@ -38,8 +38,6 @@ def main(args):
     dmodel = args.dmodel
     feature_dim = args.feature_dim
     beta = args.beta
-    mc_samples = args.mc_samples
-    max_size = args.max_size
     eps = args.eps
     batch_size = args.batch_size
     learning_rate = args.learning_rate
@@ -81,7 +79,6 @@ def main(args):
     prior_bg = torch.distributions.gamma.Gamma(
         torch.tensor([1.0], device=device), torch.tensor([1], device=device)
     )
-    p_bg_scale = 1
 
     data_module = SimulatedDataModule(loaded_data_, max_voxel, batch_size=batch_size)
     data_module.setup()
@@ -104,14 +101,14 @@ def main(args):
         p_bg_scale=args.p_bg_scale,
     )
 
-    total_steps = 1000 * train_loader_len
+    steps = 1000 * train_loader_len
     model = IntegratorModelSim(
         encoder,
         distribution_builder,
         poisson_loss,
         standardization,
         min_voxel,
-        total_steps=total_steps,
+        total_steps=steps,
         n_cycle=args.n_cycle,
         lr=learning_rate,
         anneal=args.anneal,
