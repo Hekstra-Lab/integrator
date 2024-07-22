@@ -255,13 +255,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--p_I_scale",
         type=float,
-        default=0.001,
+        default=0.0001,
         help="Intensity prior distribution weight",
     )
     parser.add_argument(
         "--p_bg_scale",
         type=float,
-        default=0.001,
+        default=0.0001,
         help="Background prior distribution weight",
     )
 
