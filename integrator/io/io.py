@@ -164,6 +164,8 @@ class RotationData(torch.utils.data.Dataset):
                     coordinates, df["xyzcal.px"].map_elements(self._to_tens)
                 )
             ]
+
+            # Add columns to DataFrame
             df = df.with_columns(
                 [
                     pl.Series("x", [x[:, 0].tolist() for x in coordinates]),
@@ -177,6 +179,7 @@ class RotationData(torch.utils.data.Dataset):
                 ]
             )
 
+            # Mask for dead pixels
             dead_pixel_mask = df["intensity_observed"].list.eval(pl.element().ge(0))
 
             df = df.with_columns([pl.Series("dead_pixel_mask", dead_pixel_mask)])
@@ -204,12 +207,13 @@ class RotationData(torch.utils.data.Dataset):
 
             mask = (coord_mask * (~np.array(dead_pixels).astype(bool))).astype(bool)
 
-            df = df.filter(pl.col("max_coord") < 5000)  # returns greater than 5000
+            df = df.filter(pl.col("max_coord") < 5000)
 
             df = df.filter(pl.col("all_pixels_dead") == 0)
 
             max_vox.append(df.select(pl.col("num_pix").max()).item())
 
+            # Generate ids to identify reflections
             refls = tbl.select(flex.bool(mask))
 
             refls["refl_ids"] = flex.int(np.arange(len(refls)))
@@ -218,6 +222,7 @@ class RotationData(torch.utils.data.Dataset):
 
             self.refl_tables.append(refls)
 
+            # Add ids to DataFrame
             df = df.with_columns(
                 [
                     pl.Series("refl_ids", refls["refl_ids"]),
@@ -228,7 +233,10 @@ class RotationData(torch.utils.data.Dataset):
             # stack dataframe
             final_df = final_df.vstack(df) if final_df is not None else df
 
+        # Drop shoebox and coordinates columns
         final_df = final_df.drop(["shoebox", "coordinates"])
+
+        # Number of voxels in largest shoebox
         max_voxel = max(max_vox)
 
         return final_df, max_voxel
@@ -265,8 +273,9 @@ class RotationData(torch.utils.data.Dataset):
 
         # bg_sum_var = self.df["background.sum.variance"].gather(idx).item()
 
-        bg_sum_mean = self.df["background.mean"].gather(idx).item()
+        # bg_sum_mean = self.df["background.mean"].gather(idx).item()
 
+        # shoebox coordinates
         coords = torch.tensor(
             [
                 self.df["x"].gather(idx).item(),
@@ -275,9 +284,11 @@ class RotationData(torch.utils.data.Dataset):
             ]
         ).transpose(0, 1)
 
+        # shape of the shoebox
         x_shape = len(coords[0].unique())
         y_shape = len(coords[1].unique())
         z_shape = len(coords[2].unique())
+
         shape = (x_shape, y_shape, z_shape)
 
         if z_shape == 1:
@@ -285,9 +296,13 @@ class RotationData(torch.utils.data.Dataset):
         else:
             is_flat = torch.tensor(False)
 
+        # reflection id
         id = self.df["refl_ids"].gather(idx).item()
+
+        # reflection table id
         tbl_id = self.df["tbl_id"].gather(idx).item()
 
+        # distance from pixel to centroid
         dxy = (
             torch.tensor(
                 [
@@ -300,23 +315,33 @@ class RotationData(torch.utils.data.Dataset):
             .transpose(0, 1)
         )
 
+        # padding size
         pad_size = self.max_voxels - len(coords)
 
+        # observed intensity
         i_obs = torch.tensor(
             [self.df["intensity_observed"].gather(idx).item()]
         ).squeeze(0)
+
+        # dead pixel mask
         dead_pixel_mask = torch.tensor(self.df["dead_pixel_mask"].gather(idx).item())
 
+        # padded coordinates
         pad_coords = torch.nn.functional.pad(
             coords, (0, 0, 0, max(pad_size, 0)), "constant", 0
         )
+
+        # padded offsets
         pad_dxy = torch.nn.functional.pad(
             dxy, (0, 0, 0, max(pad_size, 0)), "constant", 0
         )
+
+        # padded observed intensity
         pad_iobs = torch.nn.functional.pad(
             i_obs, (0, max(pad_size, 0)), "constant", 0
         ).unsqueeze(-1)
 
+        # padded dead pixel mask
         dead_pixel_mask_padded = torch.nn.functional.pad(
             dead_pixel_mask, (0, max(pad_size, 0)), "constant", 0
         )
