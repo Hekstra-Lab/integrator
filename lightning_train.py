@@ -35,7 +35,8 @@ learning_rate = 0.001
 epochs = 10
 
 # Load training data
-shoebox_dir = "/Users/luis/integrator/rotation_data_examples/data/"
+#shoebox_dir = "/Users/luis/integrator/rotation_data_examples/data/"
+shoebox_dir = '/n/holylabs/LABS/hekstra_lab/Users/laldama/integrator_/rotation_data_examples/data_temp/temp/'
 
 # Device to train on
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -107,12 +108,12 @@ model = IntegratorModel(
 )
 
 # Logging
-logger = TensorBoardLogger(save_dir="~/integrator_logs", name="integrator_model")
+logger = TensorBoardLogger(save_dir="./integrator_logs", name="integrator_model")
 
 # Checkpoint callback
 checkpoint_callback = ModelCheckpoint(
     monitor="train_loss",
-    dirpath="~/integrator_logs/checkpoints/",
+    dirpath="./integrator_logs/checkpoints/",
     filename="integrator-{epoch:02d}-{train_loss:.2f}",
     save_top_k=3,
     mode="min",
@@ -125,7 +126,7 @@ progress_bar = TQDMProgressBar(refresh_rate=1)
 # Training module
 trainer = Trainer(
     max_epochs=epochs,
-    accelerator="cpu",  # Use "cpu" for CPU training
+    accelerator="auto",  # Use "cpu" for CPU training
     devices="auto",
     num_nodes=1,
     precision="32",  # Use 32-bit precision for CPU
