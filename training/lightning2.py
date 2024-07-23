@@ -1,3 +1,6 @@
+# Run with:
+# python lightning2.py --epochs 10  --dmodel 32 --batch_size 200 --output_dir ./testrun1/ --learning_rate .001 --p_I_scale .0001 --p_bg_scale .0001
+
 import torch
 from dials.array_family import flex
 import argparse
@@ -43,7 +46,10 @@ def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     data_module = RotationDataModule(
-        shoebox_dir=shoebox_dir, batch_size=batch_size, subset_ratio=subset_ratio
+        shoebox_dir=shoebox_dir,
+        batch_size=batch_size,
+        subset_ratio=subset_ratio,
+        num_workers=4,
     )
     data_module.setup()
 
@@ -59,7 +65,7 @@ def main(args):
 
     # Instantiate standardization, encoder, distribution builder, and likelihood
     standardization = Standardize(max_counts=train_loader_len)
-    encoder = Encoder(depth, dmodel, feature_dim, dropout=None)
+    encoder = Encoder(depth, dmodel, feature_dim, dropout=dropout)
     distribution_builder = DistributionBuilder(
         dmodel, intensity_dist, background_dist, eps, beta
     )
@@ -116,14 +122,13 @@ def main(args):
     trainer.fit(model, data_module)
 
     # %%
-    # %%
     # Code to store outputs
 
     # intensity prediction array
     intensity_preds = np.array(model.training_preds["q_I_mean"])
 
     # Reflection id array
-    refl_ids = np.array(model.training_preds["refl_id"])
+    # refl_ids = np.array(model.training_preds["refl_id"])
 
     # Table ids
     tbl_ids = np.unique(np.array(model.training_preds["tbl_id"]))
@@ -164,7 +169,7 @@ def main(args):
         intensity_preds = filtered_df["q_I_mean"].to_list()
         intensity_stddev = filtered_df["q_I_stddev"].to_list()
 
-        for i, id in enumerate(reflection_ids):
+        for id in reflection_ids:
             sel[id] = True
 
         refl_temp_tbl = data_module.full_dataset.refl_tables[tbl_id].select(
@@ -255,7 +260,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dropout",
         type=float,
-        default=0.5,
+        default=None,
         help="Dropout rate",
     )
     parser.add_argument(
