@@ -19,7 +19,7 @@ class RotationData(torch.utils.data.Dataset):
         weak_reflection_threshold=5,
     ):
         """
-        Dataset class for X-ray diffraction rotation data.
+        Dataset class for X-ray diffraction data collected by rotation method
 
         Args:
             shoebox_dir (str): Directory containing the shoebox files.
@@ -53,27 +53,9 @@ class RotationData(torch.utils.data.Dataset):
 
     def _get_table(self, filename):
         """
-        Get the reflection table
-
-        Args:
-            filename (str): Path to the .refl file
-
-        Returns:
-            Reflection table
+        Get reflection table
         """
         return flex.reflection_table.from_file(filename)
-
-    def _get_intensity(self, sbox):
-        """
-        Get the observed intensity from shoebox object
-
-        Args:
-            sbox (flex.shoebox): shoebox object
-
-        Returns:
-            torch.Tensor: Observed intensity as flattened tensor
-        """
-        return sbox.data.as_numpy_array().ravel().astype(np.float32).tolist()
 
     def _to_tens(self, element):
         """
@@ -86,18 +68,6 @@ class RotationData(torch.utils.data.Dataset):
             torch.Tensor
         """
         return torch.tensor(element, dtype=torch.float32, requires_grad=False)
-
-    def _get_max_(self, tens):
-        """
-        Get the maximum value of the tensor
-
-        Args:
-            tens (torch.Tensor): Input tensor
-
-        Returns:
-            float: Maximum value of the tensor
-        """
-        return tens.max().item()
 
     def _get_rows(self, tbl):
         """
@@ -158,18 +128,6 @@ class RotationData(torch.utils.data.Dataset):
         """
         return coords.max().item()
 
-    def _filter_shoebox(self, max_pix):
-        """
-        Remove shoeboxes with coordinates outside of the detector dimensions
-
-        Args:
-            max_pix (float): Maximum pixel coordinate
-
-        Returns:
-            bool: True if the shoebox should be removed, False otherwise
-        """
-        return max_pix > self.max_detector_dimension
-
     def _get_refl_tables(self, weak_reflection_threshold=5):
         """
         Build a dataframe of the reflection tables
@@ -181,14 +139,19 @@ class RotationData(torch.utils.data.Dataset):
 
         max_vox = []
         for idx, filename in enumerate(self.shoebox_filenames["shoebox_filenames"]):
-            tbl = self._get_table(filename)  # refl table
+            # reflection table
+            tbl = self._get_table(filename)
 
-            df = self._get_rows(tbl)  # store refl table as dataframe
+            # reflection table as polars DataFrame
+            df = self._get_rows(tbl)
 
-            # getting coordinates and observed intensity from shoeboxes
-            iobs = df["shoebox"].map_elements(self._get_intensity)
+            # Get Intensity_observed
+            iobs = [
+                sbox.data.as_numpy_array().ravel().astype(np.float32).tolist()
+                for sbox in df["shoebox"]
+            ]
 
-            # detector coordinates
+            # Get detector coordinates
             coordinates = [
                 torch.tensor(sbox.coords().as_numpy_array(), dtype=torch.float32)
                 for sbox in df["shoebox"]
@@ -208,7 +171,6 @@ class RotationData(torch.utils.data.Dataset):
                     pl.Series("z", [x[:, 2].tolist() for x in coordinates]),
                     pl.Series("coordinates", coordinates),
                     pl.Series("intensity_observed", iobs),
-                    # pl.Series("dxy", dxy),
                     pl.Series("dx", [x[:, 0].tolist() for x in dxy]),
                     pl.Series("dy", [x[:, 1].tolist() for x in dxy]),
                     pl.Series("dz", [x[:, 2].tolist() for x in dxy]),
