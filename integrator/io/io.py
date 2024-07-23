@@ -63,10 +63,6 @@ class RotationData(torch.utils.data.Dataset):
         """
         return flex.reflection_table.from_file(filename)
 
-    def _filter_very_weak_shoeboxes(self, intensities, weak_reflection_threshold=5):
-        # return(intensities < 0).any()
-        return torch.tensor(intensities).max().item() <= weak_reflection_threshold
-
     def _get_intensity(self, sbox):
         """
         Get the observed intensity from shoebox object
@@ -91,18 +87,6 @@ class RotationData(torch.utils.data.Dataset):
         """
         return torch.tensor(element, dtype=torch.float32, requires_grad=False)
 
-    def _get_num_pixels(self, intensities):
-        """
-        Count the number of voxels in each shoebox
-
-        Args:
-            intensities (torch.Tensor): Observed intensity values of the shoebox
-
-        Returns:
-            int: Number of voxels in the shoebox
-        """
-        return len(intensities)
-
     def _get_z_dims(self, coords):
         return len(coords[:, -1].unique())
 
@@ -117,9 +101,6 @@ class RotationData(torch.utils.data.Dataset):
             float: Maximum value of the tensor
         """
         return tens.max().item()
-
-    def _filter_dead_shoeboxes(self, intensities):
-        return (intensities < 0).any()
 
     def _get_rows(self, tbl, idx):
         """
@@ -172,18 +153,6 @@ class RotationData(torch.utils.data.Dataset):
             ]
         )
 
-    def _get_coords(self, sbox):
-        """
-        For a shoebox, get the coordinates of each voxel
-
-        Args:
-            sbox (flex.shoebox): Shoebox object.
-
-        Returns:
-            torch.Tensor: Coordinates of each voxel as a tensor.
-        """
-        return torch.tensor(sbox.coords().as_numpy_array(), dtype=torch.float32)
-
     def _max_pixel_coordinate(self, coords):
         """
         Find the maximum coordinate value for each entry
@@ -195,9 +164,6 @@ class RotationData(torch.utils.data.Dataset):
             float: Maximum coordinate value
         """
         return coords.max().item()
-
-    def _mask_dead_pixels(self, coords):
-        return ~(coords < 0)
 
     def _filter_shoebox(self, max_pix):
         """
@@ -226,7 +192,6 @@ class RotationData(torch.utils.data.Dataset):
             df = self._get_rows(tbl, idx)  # store refl table as dataframe
 
             # getting coordinates and observed intensity from shoeboxes
-            # coordinates = df["shoebox"].map_elements(self._get_coords)
             iobs = df["shoebox"].map_elements(self._get_intensity)
 
             # detector coordinates
@@ -256,36 +221,24 @@ class RotationData(torch.utils.data.Dataset):
                 ]
             )
 
-            # masks for dead pixels
-            dead_pixel_mask = df["intensity_observed"].map_elements(
-                self._mask_dead_pixels
-            )
-
-            # dead_pixel_mask = dead_pixel_mask.to_numpy()
-            dead_pixel_mask = dead_pixel_mask
+            dead_pixel_mask = df["intensity_observed"].list.eval(pl.element().ge(0))
 
             df = df.with_columns([pl.Series("dead_pixel_mask", dead_pixel_mask)])
 
-            # get num pixels
-            num_pixel = df["intensity_observed"].map_elements(self._get_num_pixels)
+            # Number of voxels
+            num_pixel = df["intensity_observed"].list.len()
 
             max_coord = df["coordinates"].map_elements(self._max_pixel_coordinate)
 
-            # weak_shoeboxes = df["intensity_observed"].map_elements(
-            # self._filter_very_weak_shoeboxes
-            # )
-
-            weak_shoeboxes = df["intensity_observed"].map_elements(
-                lambda x: self._filter_very_weak_shoeboxes(x, weak_reflection_threshold)
+            weak_shoeboxes = (
+                df["intensity_observed"].list.max() < weak_reflection_threshold
             )
 
             df = df.with_columns(
                 [pl.Series("max_coord", max_coord), pl.Series("num_pix", num_pixel)]
             )
 
-            dead_pixels = df["intensity_observed"].map_elements(
-                self._filter_dead_shoeboxes
-            )
+            dead_pixels = df["intensity_observed"].list.min() < 0
 
             df = df.with_columns(pl.Series("weak_reflection_threshold", weak_shoeboxes))
 
@@ -313,11 +266,6 @@ class RotationData(torch.utils.data.Dataset):
                     pl.Series("tbl_id", refls["tbl_id"]),
                 ]
             )
-
-            # df['refl_ids'] = flex.int(np.arange(len(refls)))
-            # df['tbl_id'] = flex.int(np.zeros(len(refls)) + idx)
-
-            # # tbl["tbl_id"] = flex.int(np.zeros(len(tbl)) + idx)
 
             # stack dataframe
             final_df = final_df.vstack(df) if final_df is not None else df
@@ -356,8 +304,8 @@ class RotationData(torch.utils.data.Dataset):
         bg_sum_mean = self.df["background.mean"].gather(idx).item()
         #        DIALS_I = (I_prf_val, I_prf_var, I_sum_val, I_sum_var)
         #        DIALS_bg = (bg_sum_val, bg_sum_var, bg_sum_mean)
-        row_idx = idx
         # coords = self.df["coordinates"].gather(idx).item()
+
         coords = torch.tensor(
             [
                 self.df["x"].gather(idx).item(),

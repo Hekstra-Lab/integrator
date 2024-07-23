@@ -104,6 +104,7 @@ model = IntegratorModel(
     n_cycle=4,
     lr=learning_rate,
     anneal=False,
+    max_epochs=epochs,
 )
 
 # Logging
@@ -200,3 +201,28 @@ for tbl_id in tbl_ids:
 
     # save the updated reflection table
     refl_temp_tbl.as_file(f"integrator_preds_{tbl_id}.refl")
+
+# %%
+
+data_module = RotationDataModule(
+    shoebox_dir=shoebox_dir, subset_ratio=0.001, num_workers=0
+)
+
+data_module.setup()
+
+
+data_module.full_dataset.df["intensity_observed"].list.max()
+
+data_module.full_dataset.df["intensity_observed"].list.min()
+
+data_module.full_dataset.df["x"].list.unique().list.len()
+
+data_module.full_dataset.df["intensity_observed"].list.max() < 5
+
+data_module.full_dataset.df["intensity_observed"].list.eval(pl.element().ge(0))
+
+
+x_shape = data_module.full_dataset.df['x'].list.unique().list.len()
+y_shape = data_module.full_dataset.df['y'].list.unique().list.len()
+z_shape = data_module.full_dataset.df['z'].list.unique().list.len()
+

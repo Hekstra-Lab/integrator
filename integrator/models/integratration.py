@@ -134,6 +134,7 @@ class IntegratorModel(pytorch_lightning.LightningModule):
         ratio=0.5,
         anneal=True,
         lr=0.001,
+        max_epochs=10,
     ):
         super().__init__()
         self.lr = lr
@@ -144,6 +145,7 @@ class IntegratorModel(pytorch_lightning.LightningModule):
 
         self.train_avg_loss = []
         self.validation_avg_loss = []
+        self.max_epochs = max_epochs
 
         self.training_step_loss = []
         self.validation_step_loss = []
