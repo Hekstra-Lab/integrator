@@ -87,9 +87,6 @@ class RotationData(torch.utils.data.Dataset):
         """
         return torch.tensor(element, dtype=torch.float32, requires_grad=False)
 
-    def _get_z_dims(self, coords):
-        return len(coords[:, -1].unique())
-
     def _get_max_(self, tens):
         """
         Get the maximum value of the tensor
@@ -102,7 +99,7 @@ class RotationData(torch.utils.data.Dataset):
         """
         return tens.max().item()
 
-    def _get_rows(self, tbl, idx):
+    def _get_rows(self, tbl):
         """
         Drop unused columns
 
@@ -112,10 +109,6 @@ class RotationData(torch.utils.data.Dataset):
         Returns:
             pl.DataFrame: DataFrame with unused columns dropped
         """
-
-        # tbl["refl_ids"] = flex.int(np.arange(len(tbl)))
-        # tbl["tbl_id"] = flex.int(np.zeros(len(tbl)) + idx)
-
         return pl.DataFrame(list(tbl.rows())).drop(
             [
                 # "background.mean",
@@ -189,7 +182,8 @@ class RotationData(torch.utils.data.Dataset):
         max_vox = []
         for idx, filename in enumerate(self.shoebox_filenames["shoebox_filenames"]):
             tbl = self._get_table(filename)  # refl table
-            df = self._get_rows(tbl, idx)  # store refl table as dataframe
+
+            df = self._get_rows(tbl)  # store refl table as dataframe
 
             # getting coordinates and observed intensity from shoeboxes
             iobs = df["shoebox"].map_elements(self._get_intensity)
@@ -253,11 +247,13 @@ class RotationData(torch.utils.data.Dataset):
             df = df.filter(pl.col("all_pixels_dead") == 0)
 
             max_vox.append(df.select(pl.col("num_pix").max()).item())
-            # max_vox = max(max_vox).item()
 
             refls = tbl.select(flex.bool(mask))
+
             refls["refl_ids"] = flex.int(np.arange(len(refls)))
-            refls["tbl_id"] = flex.int(np.zeros(len(refls)))
+
+            refls["tbl_id"] = flex.int(np.zeros(len(refls)) + idx)
+
             self.refl_tables.append(refls)
 
             df = df.with_columns(
@@ -296,15 +292,18 @@ class RotationData(torch.utils.data.Dataset):
         """
 
         DIALS_I_prf_val = self.df["intensity.prf.value"].gather(idx).item()
+
         DIALS_I_prf_var = self.df["intensity.prf.variance"].gather(idx).item()
+
         DIALS_I_sum_val = self.df["intensity.sum.value"].gather(idx).item()
+
         DIALS_I_sum_var = self.df["intensity.sum.variance"].gather(idx).item()
-        bg_sum_val = self.df["background.sum.value"].gather(idx).item()
-        bg_sum_var = self.df["background.sum.variance"].gather(idx).item()
+
+        # bg_sum_val = self.df["background.sum.value"].gather(idx).item()
+
+        # bg_sum_var = self.df["background.sum.variance"].gather(idx).item()
+
         bg_sum_mean = self.df["background.mean"].gather(idx).item()
-        #        DIALS_I = (I_prf_val, I_prf_var, I_sum_val, I_sum_var)
-        #        DIALS_bg = (bg_sum_val, bg_sum_var, bg_sum_mean)
-        # coords = self.df["coordinates"].gather(idx).item()
 
         coords = torch.tensor(
             [
@@ -327,7 +326,6 @@ class RotationData(torch.utils.data.Dataset):
         id = self.df["refl_ids"].gather(idx).item()
         tbl_id = self.df["tbl_id"].gather(idx).item()
 
-        # dxy = self.df["dxy"].gather(idx).item()
         dxy = (
             torch.tensor(
                 [
@@ -341,6 +339,7 @@ class RotationData(torch.utils.data.Dataset):
         )
 
         pad_size = self.max_voxels - len(coords)
+
         i_obs = torch.tensor(
             [self.df["intensity_observed"].gather(idx).item()]
         ).squeeze(0)
@@ -362,14 +361,6 @@ class RotationData(torch.utils.data.Dataset):
 
         shoebox = torch.cat((pad_coords, pad_dxy, pad_iobs), dim=1)
 
-        # pad_mask = torch.nn.functional.pad(
-        # torch.ones_like(i_obs, dtype=torch.bool),
-        # (0, max(pad_size, 0)),
-        # "constant",
-        # False,
-        # )
-        # return print(pad_coords.shape, pad_dxy.shape, pad_iobs.shape)
-
         return (
             shoebox,
             dead_pixel_mask_padded,
@@ -377,8 +368,6 @@ class RotationData(torch.utils.data.Dataset):
             DIALS_I_prf_var,
             DIALS_I_sum_val,
             DIALS_I_sum_var,
-            # idx,
-            # pad_mask,
             is_flat,
             id,
             tbl_id,
