@@ -201,7 +201,7 @@ class IntegratorModel(pytorch_lightning.LightningModule):
             q_bg,
             q_I,
             profile,
-            mcsamples=100,
+            # mcsamples=100,
         )
 
         ll_mean = torch.mean(ll, dim=1) * dead_pixel_mask.squeeze(-1)
