@@ -18,8 +18,6 @@ class PoissonLikelihoodV2(torch.nn.Module):
         eps=1e-5,
         prior_I=None,
         prior_bg=None,
-        concentration=None,
-        rate=None,
         p_I_scale=0.001,  # influence of DKL(LogNorm||LogNorm) term
         p_bg_scale=0.001,
     ):
@@ -56,6 +54,7 @@ class PoissonLikelihoodV2(torch.nn.Module):
 
         Returns: log-likelihood and KL(q|p)
         """
+
         counts = counts
 
         # Sample from variational distributions
