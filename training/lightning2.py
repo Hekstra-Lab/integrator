@@ -1,5 +1,5 @@
 # Run with:
-# python lightning2.py --epochs 10  --dmodel 32 --batch_size 200 --output_dir ./testrun1/ --learning_rate .001 --p_I_scale .0001 --p_bg_scale .0001
+# python lightning2.py --epochs 10  --dmodel 32 --batch_size 100 --output_dir ./ --learning_rate .001 --p_I_scale .0001 --p_bg_scale .0001 --subset_ratio 1
 
 import torch
 from dials.array_family import flex
@@ -113,10 +113,10 @@ def main(args):
         num_nodes=1,
         precision="32",
         accumulate_grad_batches=1,
-        check_val_every_n_epoch=100,
+        check_val_every_n_epoch=1,
         callbacks=[checkpoint_callback, progress_bar],
         logger=logger,
-        log_every_n_steps=10,
+        log_every_n_steps=1,
     )
 
     trainer.fit(model, data_module)
