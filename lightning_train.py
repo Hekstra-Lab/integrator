@@ -35,8 +35,8 @@ learning_rate = 0.001
 epochs = 10
 
 # Load training data
-# shoebox_dir = "/Users/luis/integrator/rotation_data_examples/data/"
-shoebox_dir = "/n/holylabs/LABS/hekstra_lab/Users/laldama/integrator_/rotation_data_examples/data_temp/temp/"
+shoebox_dir = "/Users/luis/integrator/rotation_data_examples/data/"
+# shoebox_dir = "/n/holylabs/LABS/hekstra_lab/Users/laldama/integrator_/rotation_data_examples/data_temp/temp/"
 
 # Device to train on
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -176,7 +176,6 @@ val_res_df = pl.DataFrame(
 
 # Concatenate train_res_df and val_res_df
 res_df = pl.concat([train_res_df, val_res_df])
-
 
 # Iterate over reflection id
 for tbl_id in tbl_ids:

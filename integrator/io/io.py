@@ -95,9 +95,8 @@ class RotationData(torch.utils.data.Dataset):
                 "s1",
                 "xyzobs.mm.value",
                 "xyzcal.mm",
-                "xyz.px.variance",
-                "xyzcal.px.value",
-                "xyzcal.px.variance",
+                # "xyzcal.px",
+                "xyzcal.mm",
                 "zeta",
                 "num_pixels.foreground",
                 "flags",
@@ -107,7 +106,6 @@ class RotationData(torch.utils.data.Dataset):
                 # "intensity.sum.variance",
                 # "intensity.prf.variance",
                 "num_pixels.background_used",
-                "num_pixel.foreground",
                 "num_pixels.valid",
                 "xyzobs.mm.variance",
                 "profile.correlation",
@@ -209,7 +207,7 @@ class RotationData(torch.utils.data.Dataset):
 
             df = df.filter(pl.col("max_coord") < 5000)
 
-            df = df.filter(pl.col("all_pixels_dead") == 0)
+            df = df.filter(df["all_pixels_dead"] == False)
 
             max_vox.append(df.select(pl.col("num_pix").max()).item())
 
