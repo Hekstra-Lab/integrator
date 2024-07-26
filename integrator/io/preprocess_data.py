@@ -8,10 +8,10 @@ import glob
 import os
 import numpy as np
 from dials.array_family import flex
+import argparse
 
 
-# %%
-def preprocess_data(shoebox_dir):
+def preprocess_data(shoebox_dir, output_dir):
     shoebox_filenames = glob.glob(os.path.join(shoebox_dir, "shoebox*"))
     final_df = pl.DataFrame()
     max_vox = []
@@ -65,7 +65,6 @@ def preprocess_data(shoebox_dir):
 
         # Number of voxels
         num_pixel = df["intensity_observed"].list.len()
-        # max_coord = df["coordinates"].apply(lambda x: x.max().item())
         max_coord = [x.max().item() for x in df["coordinates"]]
         weak_shoeboxes = df["intensity_observed"].list.max() < 5
         dead_pixels = df["intensity_observed"].list.min() < 0
@@ -90,15 +89,11 @@ def preprocess_data(shoebox_dir):
                 pl.Series("y_shape", y_shape),
                 pl.Series("z_shape", z_shape),
                 pl.Series("is_flat", is_flat),
-                # pl.Series("pad_size", pad_size)
             ]
         )
 
         coord_mask = df["max_coord"] < 5000
         mask = coord_mask & (~dead_pixels)
-        # df = df.filter((df["max_coord"] < 5000))
-        # df = df.filter((df["all_pixels_dead"] == False))
-
         max_vox.append(df.select(pl.col("num_pix").max()).item())
 
         # Generate ids to identify reflections
@@ -182,14 +177,33 @@ def preprocess_data(shoebox_dir):
 
     is_flat_tensor = final_df["is_flat"].filter(mask).to_torch().unsqueeze(1)
 
-    mask_sbox = final_df["mask_sbox"].to_torch().unsqueeze(1)
+    torch.save(shoebox_tensor, os.path.join(output_dir, "shoebox_tensor.pt"))
+    torch.save(
+        padded_dead_pixel_mask,
+        os.path.join(output_dir, "padded_dead_pixel_mask_tensor.pt"),
+    )
+    torch.save(metadata, os.path.join(output_dir, "metadata_tensor.pt"))
+    torch.save(is_flat_tensor, os.path.join(output_dir, "is_flat_tensor.pt"))
 
-    torch.save(shoebox_tensor, "shoebox_tensor.pt")
-    torch.save(padded_dead_pixel_mask, "padded_dead_pixel_mask_tensor.pt")
-    torch.save(metadata, "metadata_tensor.pt")
-    torch.save(is_flat_tensor, "is_flat_tensor.pt")
 
-    # return final_df
+def main():
+    parser = argparse.ArgumentParser(
+        description="Process shoebox .refl files to .pt files"
+    )
+    parser.add_argument(
+        "shoebox_dir", type=str, help="Directory containing shoebox .refl files"
+    )
+    parser.add_argument(
+        "output_dir", type=str, help="Directory to save output .pt files"
+    )
+
+    args = parser.parse_args()
+
+    preprocess_data(args.shoebox_dir, args.output_dir)
+
+
+if __name__ == "__main__":
+    main()  # return final_df
 
 
 # # Example usage:
