@@ -49,18 +49,24 @@ def main(args):
         shoebox_dir=shoebox_dir,
         batch_size=batch_size,
         subset_ratio=subset_ratio,
-        num_workers=4,
+        num_workers=16,
     )
     data_module.setup()
 
     train_loader_len = len(data_module.train_dataloader())
 
     # Variational distributions
+
     intensity_dist = torch.distributions.gamma.Gamma
+
     background_dist = torch.distributions.gamma.Gamma
+
     prior_I = torch.distributions.exponential.Exponential(rate=torch.tensor(1.0))
+
     concentration = torch.tensor([1.0], device=device)
+
     rate = torch.tensor([1.0], device=device)
+
     prior_bg = torch.distributions.gamma.Gamma(concentration, rate)
 
     # Instantiate standardization, encoder, distribution builder, and likelihood
@@ -108,12 +114,13 @@ def main(args):
 
     trainer = Trainer(
         max_epochs=epochs,
-        accelerator="auto",
-        devices="auto",
+        devices=2,
         num_nodes=1,
-        precision="32",
+        accelerator="ddp",
+        precision="16-mixed",
         accumulate_grad_batches=1,
         check_val_every_n_epoch=1,
+        #strategy = DDPStrategy(find_unused_parameters=False)
         callbacks=[checkpoint_callback, progress_bar],
         logger=logger,
         log_every_n_steps=1,

@@ -1,9 +1,8 @@
 #!/bin/bash
-#SBATCH -c 16
 #SBATCH -N 1
 #SBATCH -p gpu
-#SBATCH --gres=gpu:1
-#SBATCH --ntasks-per-node=1
+#SBATCH --gres=gpu:2
+#SBATCH --ntasks-per-node=2
 #SBATCH -t 2-00:00
 #SBATCH --mem=64G
 #SBATCH -o pytorch_%j.out
@@ -24,4 +23,4 @@ mkdir -p $TB_LOGS_DIR
 JOB_ID=$SLURM_JOB_ID
 
 # Run program
-srun python lightning2.py --epochs 10 --dmodel 32 --batch_size 100 --output_dir $OUTPUT_DIR --learning_rate .001 --p_I_scale .0001 --p_bg_scale .0001 --depth 8 --subset_ratio 1 > $OUTPUT_DIR/pytorch_${JOB_ID}.out 2> $OUTPUT_DIR/pytorch_${JOB_ID}.err
+srun python lightning2.py --epochs 20 --dmodel 24 --batch_size 100 --output_dir $OUTPUT_DIR --learning_rate .001 --p_I_scale .0001 --p_bg_scale .0001 --depth 8 --subset_ratio 1 > $OUTPUT_DIR/pytorch_${JOB_ID}.out 2> $OUTPUT_DIR/pytorch_${JOB_ID}.err
