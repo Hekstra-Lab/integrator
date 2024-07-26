@@ -666,21 +666,19 @@ class IntegratorModel(pytorch_lightning.LightningModule):
                 q_bg.stddev.detach().cpu().ravel().tolist()
             )
             self.training_preds["L_pred"].extend(L.detach().cpu())
-            self.training_preds["DIALS_I_prf_val"].extend(
-                DIALS_I_prf_val.detach().cpu()
-            )
-            self.training_preds["DIALS_I_prf_var"].extend(
-                DIALS_I_prf_var.detach().cpu()
-            )
-            self.training_preds["DIALS_I_sum_val"].extend(
-                DIALS_I_sum_val.detach().cpu()
-            )
-            self.training_preds["DIALS_I_sum_var"].extend(
-                DIALS_I_sum_var.detach().cpu()
-            )
-            self.training_preds["shape"].extend(shape.detach().cpu())
-            self.training_preds["refl_id"].extend(id.detach().cpu().numpy())
-            self.training_preds["tbl_id"].extend(tbl_id.detach().cpu().numpy())
+
+            self.training_preds["DIALS_I_prf_val"].extend(metadata[:, 2].detach().cpu())
+            self.training_preds["DIALS_I_prf_var"].extend(metadata[:, 3].detach().cpu())
+
+            self.training_preds["DIALS_I_sum_val"].extend(metadata[:, 0].detach().cpu())
+
+            self.training_preds["DIALS_I_sum_var"].extend(metadata[:, 1].detach().cpu())
+
+            self.training_preds["shape"].extend(metadata[:, 6:].detach().cpu())
+
+            self.training_preds["refl_id"].extend(metadata[:, 5].detach().cpu().numpy())
+
+            self.training_preds["tbl_id"].extend(metadata[:, 4].detach().cpu().numpy())
 
         return loss
 
@@ -717,20 +715,24 @@ class IntegratorModel(pytorch_lightning.LightningModule):
             )
             self.validation_preds["L_pred"].extend(L.detach().cpu())
             self.validation_preds["DIALS_I_prf_val"].extend(
-                DIALS_I_prf_val.detach().cpu()
+                metadata[:, 2].detach().cpu()
             )
             self.validation_preds["DIALS_I_prf_var"].extend(
-                DIALS_I_prf_var.detach().cpu()
+                metadata[:, 3].detach().cpu()
             )
             self.validation_preds["DIALS_I_sum_val"].extend(
-                DIALS_I_sum_val.detach().cpu()
+                metadata[:, 0].detach().cpu()
             )
             self.validation_preds["DIALS_I_sum_var"].extend(
-                DIALS_I_sum_var.detach().cpu()
+                metadata[:, 1].detach().cpu()
             )
-            self.validation_preds["shape"].extend(shape.detach().cpu())
-            self.validation_preds["refl_id"].extend(id.detach().cpu().numpy())
-            self.validation_preds["tbl_id"].extend(tbl_id.detach().cpu().numpy())
+            self.validation_preds["shape"].extend(metadata[:, 6:].detach().cpu())
+            self.validation_preds["refl_id"].extend(
+                metadata[:, 5].detach().cpu().numpy()
+            )
+            self.validation_preds["tbl_id"].extend(
+                metadata[:, 4].detach().cpu().numpy()
+            )
 
         return loss
 

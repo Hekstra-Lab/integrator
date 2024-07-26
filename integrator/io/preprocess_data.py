@@ -8,12 +8,10 @@ import glob
 import os
 import numpy as np
 from dials.array_family import flex
-import pickle
-import pytorch_lightning
 
 
 # %%
-def preprocess_data(shoebox_dir, output_file):
+def preprocess_data(shoebox_dir):
     shoebox_filenames = glob.glob(os.path.join(shoebox_dir, "shoebox*"))
     final_df = pl.DataFrame()
     max_vox = []

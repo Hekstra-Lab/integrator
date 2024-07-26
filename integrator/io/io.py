@@ -7,7 +7,7 @@ import os
 from dials.array_family import flex
 import numpy as np
 import pytorch_lightning
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset, random_split, Subset
 
 
 class RotationData(torch.utils.data.Dataset):
@@ -528,3 +528,76 @@ class SimulatedDataModule(pytorch_lightning.LightningDataModule):
             pin_memory=True,
             num_workers=3,
         )
+
+
+class ShoeboxDataModule(pytorch_lightning.LightningDataModule):
+    def __init__(
+        self,
+        shoebox_data,
+        metadata,
+        is_flat,
+        dead_pixel_mask,
+        batch_size=32,
+        val_split=0.2,
+        test_split=0.1,
+        include_test=False,
+        subset_size=0.1,
+    ):
+        super().__init__()
+        self.shoebox_data = shoebox_data
+        self.metadata = metadata
+        self.is_flat = is_flat
+        self.dead_pixel_mask = dead_pixel_mask
+        self.batch_size = batch_size
+        self.val_split = val_split
+        self.test_split = test_split
+        self.include_test = include_test
+        self.subset_size = subset_size
+
+    def setup(self, stage=None):
+        # Load the tensors
+        shoeboxes = torch.load(self.shoebox_data)
+        metadata = torch.load(self.metadata)
+        is_flat = torch.load(self.is_flat)
+        dead_pixel_mask = torch.load(self.dead_pixel_mask)
+
+        # Create the full dataset
+        full_dataset = TensorDataset(shoeboxes, metadata, is_flat, dead_pixel_mask)
+
+        # Optionally, create a subset of the dataset
+        if self.subset_size is not None and self.subset_size < len(full_dataset):
+            indices = torch.randperm(len(full_dataset))[: self.subset_size]
+            full_dataset = Subset(full_dataset, indices)
+
+        # Calculate lengths for train/val/test splits
+        total_size = len(full_dataset)
+        val_size = int(total_size * self.val_split)
+        if self.include_test:
+            test_size = int(total_size * self.test_split)
+            train_size = total_size - val_size - test_size
+        else:
+            test_size = 0
+            train_size = total_size - val_size
+
+        # Split the dataset
+        if self.include_test:
+            self.train_dataset, self.val_dataset, self.test_dataset = random_split(
+                full_dataset, [train_size, val_size, test_size]
+            )
+        else:
+            self.train_dataset, self.val_dataset = random_split(
+                full_dataset, [train_size, val_size]
+            )
+            self.test_dataset = None
+
+    def train_dataloader(self):
+        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True)
+
+    def val_dataloader(self):
+        return DataLoader(self.val_dataset, batch_size=self.batch_size)
+
+    def test_dataloader(self):
+        if self.include_test:
+            return DataLoader(self.test_dataset, batch_size=self.batch_size)
+        else:
+            return None
