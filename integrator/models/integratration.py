@@ -676,7 +676,7 @@ class IntegratorModel(pytorch_lightning.LightningModule):
 
             # self.training_preds["shape"].extend(metadata[:, 6:].detach().cpu())
 
-            self.training_preds["refl_id"].extend(metadata[:, 5].detach().cpu().numpy())
+            self.training_preds["refl_id"].extend(metadata[:, 4].detach().cpu().numpy())
 
             # self.training_preds["tbl_id"].extend(metadata[:, 4].detach().cpu().numpy())
 
