@@ -558,7 +558,8 @@ class ShoeboxDataModule(pytorch_lightning.LightningDataModule):
         # Load the tensors
         shoeboxes = torch.load(self.shoebox_data)
         metadata = torch.load(self.metadata)
-        is_flat = torch.load(self.is_flat)
+        # is_flat = torch.load(self.is_flat)
+        is_flat = self.is_flat
         dead_pixel_mask = torch.load(self.dead_pixel_mask)
 
         # Create the full dataset

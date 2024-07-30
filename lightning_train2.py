@@ -40,13 +40,17 @@ epochs = 2
 # Device to train on
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+shoebox_file = "./out/shoebox_tensor.pt"
+metadata_file = "./out/metadata_tensor.pt"
+is_flat_file = "./out/is_flat_tensor.pt"
+dead_pixel_mask_file = "./out/padded_dead_pixel_mask_tensor.pt"
 
 # Initialize the DataModule
 data_module = ShoeboxDataModule(
-    shoebox_data="shoebox_tensor.pt",
-    metadata="metadata_tensor.pt",
-    is_flat="is_flat_tensor.pt",
-    dead_pixel_mask="padded_dead_pixel_mask_tensor.pt",
+    shoebox_data=shoebox_file,
+    metadata=metadata_file,
+    is_flat=is_flat_file,
+    dead_pixel_mask=dead_pixel_mask_file,
     batch_size=32,
     val_split=0.2,
     test_split=0.1,
@@ -149,6 +153,7 @@ trainer = Trainer(
 # Train the model
 trainer.fit(model, data_module)
 
+# %%
 # Code to store outputs
 
 refl_ids_train = np.array(model.training_preds["refl_id"], dtype=np.int32)

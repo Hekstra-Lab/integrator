@@ -9,10 +9,12 @@ import os
 import numpy as np
 from dials.array_family import flex
 import argparse
+import torch
 
 
+# %%
 def preprocess_data(shoebox_dir, output_dir):
-    shoebox_filenames = glob.glob(os.path.join(shoebox_dir, "shoebox*"))
+    shoebox_filenames = sorted(glob.glob(os.path.join(shoebox_dir, "shoebox*")))
     final_df = pl.DataFrame()
     max_vox = []
 
@@ -36,7 +38,6 @@ def preprocess_data(shoebox_dir, output_dir):
         ]
 
         # distance from pixel to centroid
-
         centroids = [torch.tensor(x) for x in df["xyzcal.px"]]
 
         dxy = [
@@ -73,8 +74,6 @@ def preprocess_data(shoebox_dir, output_dir):
         x_shape = [len(torch.unique(x[:, 0])) for x in coordinates]
         y_shape = [len(torch.unique(x[:, 1])) for x in coordinates]
         z_shape = [len(torch.unique(x[:, 2])) for x in coordinates]
-
-        shapes = list(zip(x_shape, y_shape, z_shape))
 
         is_flat = [torch.tensor(z == 1).item() for z in z_shape]
 
@@ -114,7 +113,9 @@ def preprocess_data(shoebox_dir, output_dir):
         final_df = final_df.vstack(df) if final_df is not None else df
 
     mask = final_df["mask_sbox"]
+
     max_vox = max(final_df["num_vox"])
+
     pad_size = [max_vox - x for x in final_df["num_vox"].filter(mask)]
 
     padded_coordinates = [
@@ -207,12 +208,7 @@ if __name__ == "__main__":
 
 
 # # Example usage:
-# shoebox_dir = "/Users/luis/integrator/rotation_data_examples/data/"
+shoebox_dir = "/Users/luis/integrator/rotation_data_examples/data/"
 # output_file = "processed_data.pkl"
 
 # preprocess_data(shoebox_dir, output_file)
-
-# torch.load("shoebox_tensor.pt").shape
-# torch.load("padded_dead_pixel_mask_tensor.pt").shape
-# torch.load("metadata_tensor.pt").shape
-# torch.load("is_flat_tensor.pt").shape
