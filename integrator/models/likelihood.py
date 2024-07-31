@@ -39,6 +39,7 @@ class PoissonLikelihoodV2(torch.nn.Module):
         q_bg,
         q_I,
         profile,
+        image_weights,
         eps=1e-5,
         mc_samples=100,
     ):
@@ -65,7 +66,9 @@ class PoissonLikelihoodV2(torch.nn.Module):
         kl_term = 0
 
         # Calculate the rate
-        rate = z.permute(1, 0, 2) * (profile.unsqueeze(1)) + bg.permute(1, 0, 2)
+        rate = image_weights.unsqueeze(1) * (
+            z.permute(1, 0, 2) * (profile.unsqueeze(1)) + bg.permute(1, 0, 2)
+        )
 
         ll = torch.distributions.Poisson(rate + eps).log_prob(counts.unsqueeze(1))
 

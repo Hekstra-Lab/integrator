@@ -616,7 +616,7 @@ class IntegratorModel(pytorch_lightning.LightningModule):
         shoebox_ = self.standardize(shoebox, dead_pixel_mask.squeeze(-1))
         dxyz = shoebox[..., 3:6]
         representation = self.encoder(shoebox_, dead_pixel_mask.unsqueeze(-1))
-        q_bg, q_I, profile, L = self.distribution_builder(
+        q_bg, q_I, profile, L, image_weights = self.distribution_builder(
             representation, dxyz, dead_pixel_mask, is_flat.squeeze(-1)
         )
 
@@ -625,6 +625,7 @@ class IntegratorModel(pytorch_lightning.LightningModule):
             q_bg,
             q_I,
             profile,
+            image_weights,
             # mcsamples=100,
         )
 

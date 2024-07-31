@@ -2,11 +2,13 @@ from pylab import *
 import torch
 from .util import weight_initializer
 
+
 class Linear(torch.nn.Linear):
     def reset_parameters(self) -> None:
         self.weight = weight_initializer(self.weight)
         if self.bias is not None:
             torch.nn.init.zeros_(self.bias)
+
 
 class ResidualLayer(torch.nn.Module):
     def __init__(self, dims, dropout=None):
