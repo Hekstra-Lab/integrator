@@ -530,7 +530,12 @@ class SimulatedDataModule(pytorch_lightning.LightningDataModule):
         )
 
 
-class ShoeboxDataModule(pytorch_lightning.LightningDataModule):
+import torch
+from torch.utils.data import DataLoader, random_split, TensorDataset, Subset
+import pytorch_lightning as pl
+
+
+class ShoeboxDataModule(pl.LightningDataModule):
     def __init__(
         self,
         shoebox_data,
@@ -541,7 +546,7 @@ class ShoeboxDataModule(pytorch_lightning.LightningDataModule):
         val_split=0.2,
         test_split=0.1,
         include_test=False,
-        subset_size=0.1,
+        subset_size=None,
     ):
         super().__init__()
         self.shoebox_data = shoebox_data
@@ -558,12 +563,60 @@ class ShoeboxDataModule(pytorch_lightning.LightningDataModule):
         # Load the tensors
         shoeboxes = torch.load(self.shoebox_data)
         metadata = torch.load(self.metadata)
-        # is_flat = torch.load(self.is_flat)
         is_flat = self.is_flat
         dead_pixel_mask = torch.load(self.dead_pixel_mask)
 
+        # Process the shoeboxes
+        # Assuming shoeboxes shape is (n_samples, 3*21*21, 7)
+        n_samples, _, feature_dim = shoeboxes.shape
+
+        # Reshape to (n_samples, 3, 21, 21, 7)
+        shoeboxes_reshaped = shoeboxes.view(n_samples, 3, 21, 21, feature_dim)
+
+        # Flatten images across z-dimension
+        intensity_flattened = shoeboxes_reshaped[..., -1].sum(
+            dim=1
+        )  # Shape: (n_samples, 21, 21)
+
+        # Mean of other features
+        features_mean = shoeboxes_reshaped[..., :-1].mean(
+            dim=1
+        )  # Shape: (n_samples, 21, 21, 6)
+
+        # Combine intensity and other features
+        processed_shoeboxes = torch.cat(
+            (features_mean, intensity_flattened.unsqueeze(-1)), dim=-1
+        )
+        # Flatten to (n_samples, 21*21, 7)
+        processed_shoeboxes_flattened = processed_shoeboxes.view(
+            n_samples, 21 * 21, feature_dim
+        )
+
+        # Process the mask
+        # Reshape the mask from (n_samples, 3*21*21) to (n_samples, 3, 21, 21)
+        dead_pixel_mask_reshaped = dead_pixel_mask.view(n_samples, 3, 21, 21)
+
+        # Multiply the layers to get (n_samples, 21, 21)
+        processed_mask = dead_pixel_mask_reshaped.prod(
+            dim=1
+        )  # Shape: (n_samples, 21, 21)
+
+        processed_mask_flattened = processed_mask.view(n_samples, 21 * 21)
+
+        valid_indices = ((processed_mask_flattened == 1).sum(-1) != 0).nonzero(
+            as_tuple=True
+        )[0]
+        processed_shoeboxes_flattened = processed_shoeboxes_flattened[valid_indices]
+        metadata = metadata[valid_indices]
+        is_flat = is_flat[valid_indices]
+        processed_mask_flattened = processed_mask_flattened[valid_indices]
+
         # Create the full dataset
-        full_dataset = TensorDataset(shoeboxes, metadata, is_flat, dead_pixel_mask)
+        full_dataset = TensorDataset(
+            processed_shoeboxes_flattened, metadata, is_flat, processed_mask_flattened
+        )
+
+        self.full_dataset = full_dataset
 
         # Optionally, create a subset of the dataset
         if self.subset_size is not None and self.subset_size < len(full_dataset):

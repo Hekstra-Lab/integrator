@@ -34,14 +34,18 @@ class MeanPool(torch.nn.Module):
 
     def forward(self, data, mask=None):
         data = data * mask
-        out = torch.sum(data,dim=1,keepdim=True)
+        out = torch.sum(data, dim=1, keepdim=True)
         if mask is None:
             denom = data.shape[-1]
         else:
-            denom = torch.sum(mask,dim=-2, keepdim=True)
+            denom = torch.sum(mask, dim=-2, keepdim=True)
         out = out / denom
 
         return out
+
+
+# %%
+
 
 # %%
 class RotationPixelEncoder(torch.nn.Module):
@@ -75,6 +79,7 @@ class MLPPij(torch.nn.Module):
         out = self.main(data)
         return out
 
+
 class ProfilePredictor(torch.nn.Module):
     """
     Outputs p_ij matrix to scale Intensity values
@@ -96,4 +101,3 @@ class ProfilePredictor(torch.nn.Module):
         out = out.squeeze(-2)
 
         return out
-

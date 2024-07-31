@@ -616,7 +616,7 @@ class IntegratorModel(pytorch_lightning.LightningModule):
         shoebox_ = self.standardize(shoebox, dead_pixel_mask.squeeze(-1))
         dxyz = shoebox[..., 3:6]
         representation = self.encoder(shoebox_, dead_pixel_mask.unsqueeze(-1))
-        q_bg, q_I, profile, L, image_weights = self.distribution_builder(
+        q_bg, q_I, profile, L = self.distribution_builder(
             representation, dxyz, dead_pixel_mask, is_flat.squeeze(-1)
         )
 
@@ -625,7 +625,7 @@ class IntegratorModel(pytorch_lightning.LightningModule):
             q_bg,
             q_I,
             profile,
-            image_weights,
+            # image_weights,
             # mcsamples=100,
         )
 
@@ -635,53 +635,121 @@ class IntegratorModel(pytorch_lightning.LightningModule):
 
         return nll, kl_term, rate, q_I, profile, q_bg, counts, L
 
-    def training_step(self, batch):
-        device = self.device
-        (sbox, metadata, is_flat, mask) = batch
-        sbox, mask, is_flat = sbox.to(device), mask.to(device), is_flat.to(device)
+    def training_step(self, batch, batch_idx):
+        try:
+            device = self.device
+            (sbox, metadata, is_flat, mask) = batch
+            sbox, mask, is_flat = sbox.to(device), mask.to(device), is_flat.to(device)
 
-        nll, kl_term, rate, q_I, profile, q_bg, counts, L = self(sbox, mask, is_flat)
-
-        if self.anneal:
-            anneal_rate = self.anneal_schedule[self.current_step]
-        else:
-            anneal_rate = 1.0
-        self.current_step += 1
-
-        loss = nll + anneal_rate * kl_term
-
-        self.training_step_loss.append(loss)
-        self.log("train_loss", loss, prog_bar=True)
-
-        if self.current_epoch == self.trainer.max_epochs - 1:
-            self.training_preds["q_I_mean"].extend(
-                q_I.mean.detach().cpu().ravel().tolist()
+            nll, kl_term, rate, q_I, profile, q_bg, counts, L = self(
+                sbox, mask, is_flat
             )
-            self.training_preds["q_I_stddev"].extend(
-                q_I.stddev.detach().cpu().ravel().tolist()
-            )
-            self.training_preds["q_bg_mean"].extend(
-                q_bg.mean.detach().cpu().ravel().tolist()
-            )
-            self.training_preds["q_bg_stddev"].extend(
-                q_bg.stddev.detach().cpu().ravel().tolist()
-            )
-            self.training_preds["L_pred"].extend(L.detach().cpu())
 
-            self.training_preds["DIALS_I_prf_val"].extend(metadata[:, 2].detach().cpu())
-            self.training_preds["DIALS_I_prf_var"].extend(metadata[:, 3].detach().cpu())
+            if self.anneal:
+                anneal_rate = self.anneal_schedule[self.current_step]
+            else:
+                anneal_rate = 1.0
+            self.current_step += 1
 
-            self.training_preds["DIALS_I_sum_val"].extend(metadata[:, 0].detach().cpu())
+            loss = nll + anneal_rate * kl_term
 
-            self.training_preds["DIALS_I_sum_var"].extend(metadata[:, 1].detach().cpu())
+            self.training_step_loss.append(loss)
+            self.log("train_loss", loss, prog_bar=True)
 
-            # self.training_preds["shape"].extend(metadata[:, 6:].detach().cpu())
+            if self.current_epoch == self.trainer.max_epochs - 1:
+                self.training_preds["q_I_mean"].extend(
+                    q_I.mean.detach().cpu().ravel().tolist()
+                )
+                self.training_preds["q_I_stddev"].extend(
+                    q_I.stddev.detach().cpu().ravel().tolist()
+                )
+                self.training_preds["q_bg_mean"].extend(
+                    q_bg.mean.detach().cpu().ravel().tolist()
+                )
+                self.training_preds["q_bg_stddev"].extend(
+                    q_bg.stddev.detach().cpu().ravel().tolist()
+                )
+                self.training_preds["L_pred"].extend(L.detach().cpu())
 
-            self.training_preds["refl_id"].extend(metadata[:, 4].detach().cpu().numpy())
+                self.training_preds["DIALS_I_prf_val"].extend(
+                    metadata[:, 2].detach().cpu()
+                )
+                self.training_preds["DIALS_I_prf_var"].extend(
+                    metadata[:, 3].detach().cpu()
+                )
 
-            # self.training_preds["tbl_id"].extend(metadata[:, 4].detach().cpu().numpy())
+                self.training_preds["DIALS_I_sum_val"].extend(
+                    metadata[:, 0].detach().cpu()
+                )
 
-        return loss
+                self.training_preds["DIALS_I_sum_var"].extend(
+                    metadata[:, 1].detach().cpu()
+                )
+
+                # self.training_preds["shape"].extend(metadata[:, 6:].detach().cpu())
+
+                self.training_preds["refl_id"].extend(
+                    metadata[:, 4].detach().cpu().numpy()
+                )
+
+                # self.training_preds["tbl_id"].extend(metadata[:, 4].detach().cpu().numpy())
+
+            return loss
+
+        except Exception as e:
+            print(f"Error in batch {batch_idx}: {e}")
+            print(f"Batch data: {batch}")
+            # Optionally, save the batch to a file for further inspection
+            torch.save(batch, f"error_batch_{batch_idx}.pt")
+            raise e  # Re-raise the exception to stop training
+
+    # def training_step(self, batch):
+    # device = self.device
+    # (sbox, metadata, is_flat, mask) = batch
+    # sbox, mask, is_flat = sbox.to(device), mask.to(device), is_flat.to(device)
+
+    # nll, kl_term, rate, q_I, profile, q_bg, counts, L = self(sbox, mask, is_flat)
+
+    # if self.anneal:
+    # anneal_rate = self.anneal_schedule[self.current_step]
+    # else:
+    # anneal_rate = 1.0
+    # self.current_step += 1
+
+    # loss = nll + anneal_rate * kl_term
+
+    # self.training_step_loss.append(loss)
+    # self.log("train_loss", loss, prog_bar=True)
+
+    # if self.current_epoch == self.trainer.max_epochs - 1:
+    # self.training_preds["q_I_mean"].extend(
+    # q_I.mean.detach().cpu().ravel().tolist()
+    # )
+    # self.training_preds["q_I_stddev"].extend(
+    # q_I.stddev.detach().cpu().ravel().tolist()
+    # )
+    # self.training_preds["q_bg_mean"].extend(
+    # q_bg.mean.detach().cpu().ravel().tolist()
+    # )
+    # self.training_preds["q_bg_stddev"].extend(
+    # q_bg.stddev.detach().cpu().ravel().tolist()
+    # )
+    # self.training_preds["L_pred"].extend(L.detach().cpu())
+
+    # self.training_preds["DIALS_I_prf_val"].extend(metadata[:, 2].detach().cpu())
+    # self.training_preds["DIALS_I_prf_var"].extend(metadata[:, 3].detach().cpu())
+
+    # self.training_preds["DIALS_I_sum_val"].extend(metadata[:, 0].detach().cpu())
+
+    # self.training_preds["DIALS_I_sum_var"].extend(metadata[:, 1].detach().cpu())
+
+    # # self.training_preds["shape"].extend(metadata[:, 6:].detach().cpu())
+
+    # self.training_preds["refl_id"].extend(metadata[:, 4].detach().cpu().numpy())
+
+    # # self.training_preds["tbl_id"].extend(metadata[:, 4].detach().cpu().numpy())
+
+    # return loss
 
     def validation_step(self, batch):
         device = self.device

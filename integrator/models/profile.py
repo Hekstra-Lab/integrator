@@ -48,11 +48,12 @@ class DistributionBuilder(torch.nn.Module):
         super().__init__()
         self.register_buffer("eps", torch.tensor(eps))
         self.register_buffer("beta", torch.tensor(beta))
-        self.linear = Linear(dmodel, 10)  # Single layer for all params
+        # self.linear = Linear(dmodel, 10)  # Single layer for all params
+        self.linear = Linear(dmodel, 7)  # Single layer for all params
         self.intensity_dist = intensity_dist
         self.background_dist = background_dist
         self.L_transform = FillScaleTriL(diag_transform=SoftplusTransform())
-        self.simpleCNN = SimpleCNN()
+        # self.simpleCNN = SimpleCNN()
 
     def constraint(self, x):
         return torch.nn.functional.softplus(x, beta=self.beta) + self.eps
@@ -68,6 +69,7 @@ class DistributionBuilder(torch.nn.Module):
         return self.background_dist(mu, sigma)
 
     def MVNProfile3D(self, L_params, dxyz, device):
+        print("all3d")
         batch_size = L_params.size(0)
         mu = torch.zeros((batch_size, 1, 3), requires_grad=False, device=device).to(
             torch.float32
@@ -92,8 +94,10 @@ class DistributionBuilder(torch.nn.Module):
         )
         log_probs = mvn.log_prob(dxy)
         profile = torch.exp(log_probs)
+
         L = torch.zeros((batch_size, 1, 3, 3), device=device)
         L[:, :, :2, :2] = L_2d
+
         return profile, L
 
     def forward(self, representation, dxyz, mask, isflat):
@@ -102,26 +106,33 @@ class DistributionBuilder(torch.nn.Module):
         q_bg = self.background(params)
         q_I = self.intensity_distribution(params)
 
-        # test code 2024-07-30
-        L_params = params[..., 4:7]  # First three params for 2D case
+        L_params = params[..., 4:]  # First three params for 2D case
 
-        dxy = dxyz[..., :2]
-
-        # batch_size
         batch_size = L_params.size(0)
-
-        # image weights
-        output = self.simpleCNN(representation)
-        image_weights = F.softmax(output, dim=2).reshape(batch_size, 3 * 21 * 21)
-
+        L_params = params[..., 4:]  # First three params for 2D case
+        dxy = dxyz[..., :2]
         profile, L = self.MVNProfile2D(L_params, dxy, device, batch_size)
 
-        return q_bg, q_I, profile, L, image_weights
+        return q_bg, q_I, profile, L
+
+        # test code 2024-07-30
+
+        # dxy = dxyz[..., :2]
+
+        # batch_size
+
+        # image weights
+        # output = self.simpleCNN(representation)
+        # image_weights = F.softmax(output, dim=2).reshape(batch_size, 3 * 21 * 21)
+
+        # profile, L = self.MVNProfile2D(L_params, dxy, device, batch_size)
+
+        # return q_bg, q_I, profile, L, image_weights
 
         # if isflat.all():
         # L_params = params[..., 4:7]  # First three params for 2D case
         # dxy = dxyz[..., :2]
-        # profile, L = self.MVNProfile2D(L_params, dxy, device)
+        # profile, L = self.MVNProfile2D(L_params, dxy, device, batch_size)
         # return q_bg, q_I, profile, L
 
         # elif not isflat.any():
@@ -138,7 +149,7 @@ class DistributionBuilder(torch.nn.Module):
         # L_params_2d = params[isflat][..., 4:7]
         # L_params_3d = params[~isflat][..., 4:10]
 
-        # prof_2d, L_2 = self.MVNProfile2D(L_params_2d, dxy, device)
+        # prof_2d, L_2 = self.MVNProfile2D(L_params_2d, dxy, device, batch_size)
         # prof_3d, L_3 = self.MVNProfile3D(L_params_3d, dxyz_3d, device)
         # batch_size = representation.size(0)
         # profile = torch.zeros(
