@@ -6,10 +6,11 @@ import glob
 import torch
 import numpy as np
 from dials.array_family import flex
+from rs_distributions import distributions as rsd
 from integrator.models import (
     Encoder,
     PoissonLikelihoodV2,
-    DistributionBuilder,
+    Builder,
 )
 from integrator.layers import Standardize
 from pytorch_lightning import Trainer
@@ -17,14 +18,13 @@ from pytorch_lightning.callbacks import ModelCheckpoint, TQDMProgressBar
 from pytorch_lightning.loggers import TensorBoardLogger
 import polars as pl
 from integrator.layers import Standardize
-from integrator.models import IntegratorModel
 from integrator.io import ShoeboxDataModule
-
+import pickle
 
 # %%
 # Hyperparameters
 depth = 10
-dmodel = 64
+dmodel = 32
 feature_dim = 7
 dropout = 0.5
 beta = 1.0
@@ -33,24 +33,23 @@ max_size = 1024
 eps = 1e-5
 batch_size = 50
 learning_rate = 0.001
-epochs = 2
+epochs = 500
 
+# %%
 # Load training data
 
 # Device to train on
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 
 shoebox_file = "./samples.pt"
 metadata_file = "./metadata.pt"
 dead_pixel_mask_file = "./masks.pt"
 is_flat_file = "./out/is_flat_tensor.pt"
 
-
 size = torch.load(metadata_file).size(0)
 is_flat = torch.ones(size, dtype=torch.bool).unsqueeze(1)
 
-# %%
+sboxes = torch.load(shoebox_file)
 
 # Initialize the DataModule
 data_module = ShoeboxDataModule(
@@ -58,16 +57,18 @@ data_module = ShoeboxDataModule(
     metadata=metadata_file,
     is_flat=is_flat,
     dead_pixel_mask=dead_pixel_mask_file,
-    batch_size=32,
+    batch_size=3,
     val_split=0.2,
     test_split=0.1,
     include_test=False,
-    subset_size=100,
+    subset_size=10,
+    single_sample_index=None,
 )
 
 # Setup data module
 data_module.setup()
 
+# %%
 # Length (number of samples) of train loader
 train_loader_len = len(data_module.train_dataloader())
 
@@ -78,7 +79,7 @@ intensity_dist = torch.distributions.gamma.Gamma
 background_dist = torch.distributions.gamma.Gamma
 
 # Intensity prior distribution
-prior_I = torch.distributions.exponential.Exponential(rate=torch.tensor(1.0))
+prior_I = torch.distributions.exponential.Exponential(rate=torch.tensor(0.05))
 
 # Concentration for background prior distribution
 concentration = torch.tensor([1.0], device=device)
@@ -87,7 +88,11 @@ concentration = torch.tensor([1.0], device=device)
 rate = torch.tensor([1.0], device=device)
 
 # Background prior distribution
-prior_bg = torch.distributions.gamma.Gamma(concentration, rate)
+# prior_bg = torch.distributions.gamma.Gamma(concentration, rate)
+# prior_bg = torch.distributions.exponential.Exponential(rate=torch.tensor(100.0))
+# prior_bg = torch.distributions.log_normal.LogNormal(0, 0.1)
+prior_bg = rsd.FoldedNormal(0, 0.1)
+# prior_bg = torch.distributions.uniform.Uniform(0.0, 3.0)
 
 # Standardization module
 standardization = Standardize(max_counts=train_loader_len)
@@ -96,8 +101,8 @@ standardization = Standardize(max_counts=train_loader_len)
 encoder = Encoder(depth, dmodel, feature_dim, dropout=dropout)
 
 # Distribution builder module
-distribution_builder = DistributionBuilder(
-    dmodel, intensity_dist, background_dist, eps, beta
+distribution_builder = Builder(
+    dmodel, intensity_dist, background_dist, eps, beta, num_components=8
 )
 
 # Loss likelihood module
@@ -107,14 +112,13 @@ poisson_loss = PoissonLikelihoodV2(
     prior_I=prior_I,
     prior_bg=prior_bg,
     p_I_scale=0.0001,
-    p_bg_scale=0.0001,
+    p_bg_scale=0.001,
 )
 
 # Number of steps to train for
 steps = 1000 * train_loader_len
 
 # Integration model
-model = IntegratorModel(
     encoder,
     distribution_builder,
     poisson_loss,
@@ -124,6 +128,7 @@ model = IntegratorModel(
     lr=learning_rate,
     anneal=False,
     max_epochs=epochs,
+    penalty_scale=0.0,
 )
 
 # Logging
@@ -159,10 +164,55 @@ trainer = Trainer(
 # Train the model
 trainer.fit(model, data_module)
 
+model.training_preds["q_I_mean"]
+model.training_preds["DIALS_I_sum_val"]
+model.training_preds["DIALS_I_prf_val"]
+model.training_preds["q_bg_mean"]
+
+# %%
+import matplotlib.pyplot as plt
+
+shoebox = next(iter(data_module.train_dataloader()))[0]
+mask = next(iter(data_module.train_dataloader()))[-1]
+tbl = flex.reflection_table.from_file(
+    "/Users/luis/integrator_mvn/integrator/reflections_.refl"
+)
+
+filter = flex.reflection_table.from_file(
+    "/Users/luis/integrator_mvn/integrator/reflections_.refl"
+)["refl_ids"].as_numpy_array() == int(
+    next(iter(data_module.train_dataloader()))[1][..., -1]
+)
+
+
+xzycal = tbl.select(flex.bool(filter))["xyzcal.px"].as_numpy_array()
+
+xyzobs = tbl.select(flex.bool(filter))["xyzobs.px.value"].as_numpy_array()
+
+
+xcal = xzycal[0][0] - shoebox[0][..., :3][:, 0].min()
+ycal = xzycal[0][1] - shoebox[0][..., :3][:, 1].min()
+xobs = xyzobs[0][0] - shoebox[0][..., :3][:, 0].min()
+yobs = xyzobs[0][1] - shoebox[0][..., :3][:, 1].min()
+
+
+plt.imshow(next(iter(data_module.train_dataloader()))[0][..., -1].reshape(3, 21, 21)[1])
+
+plt.scatter(xcal.item(), ycal.item(), color="red")
+plt.scatter(xobs.item(), yobs.item(), color="blue")
+
+plt.show()
+
+# %%
+plt.imshow(mask[0].reshape(3, 21, 21)[0])
+plt.show()
+
+plt.imshow(shoebox[0][..., 5].reshape(3, 21, 21)[-1])
+plt.show()
+
 
 # %%
 # Code to store outputs
-
 refl_ids_train = np.array(model.training_preds["refl_id"], dtype=np.int32)
 tbl_ids_train = np.array(model.training_preds["tbl_id"], dtype=np.int32)
 refl_ids_val = np.array(model.validation_preds["refl_id"], dtype=np.int32)
@@ -178,6 +228,22 @@ train_res_df = pl.DataFrame(
 )
 
 
+import matplotlib.pyplot as plt
+
+model.training_preds["q_I_mean"]
+model.training_preds["DIALS_I_sum_val"]
+
+plt.plot(
+    model.training_preds["q_I_mean"],
+    model.training_preds["DIALS_I_prf_val"],
+    "o",
+    color="black",
+    alpha=0.2,
+)
+plt.yscale("log")
+plt.xscale("log")
+plt.show()
+
 # Validation predictions
 val_res_df = pl.DataFrame(
     {
@@ -187,39 +253,35 @@ val_res_df = pl.DataFrame(
     }
 )
 
+with open("train_res.pkl", "wb") as f:
+    pickle.dump(model.training_preds, f)
+
+with open("val_res.pkl", "wb") as f:
+    pickle.dump(model.validation_preds, f)
+
 # Concatenate train_res_df and val_res_df
 res_df = pl.concat([train_res_df, val_res_df])
 
-
 # refl file
-refl_dir = "/Users/luis/integrator/rotation_data_examples/data/"
+# refl_dir = "/Users/luis/integrator/rotation_data_examples/data/"
 
-# shoebox filenames
-filenames = glob.glob(os.path.join(refl_dir, "shoebox*"))
+refl_filename = "/Users/luis/integrator_mvn/integrator/reflections_.refl"
+refl_table = flex.reflection_table.from_file(refl_filename)
 
-refl_tables = [flex.reflection_table.from_file(filename) for filename in filenames]
 
-# Iterate over reflection id
-for tbl_id in tbl_ids:
-    sel = np.asarray([False] * len(refl_tables[tbl_id]))
+sel = np.asarray([False] * len(refl_table))
+reflection_ids = res_df["refl_id"].to_list()
+intensity_preds = res_df["q_I_mean"].to_list()
+intensity_stddev = res_df["q_I_stddev"].to_list()
 
-    filtered_df = res_df.filter(res_df["tbl_id"] == tbl_id)
+for i, id in enumerate(reflection_ids):
+    sel[id] = True
 
-    # Reflection ids
-    reflection_ids = filtered_df["refl_id"].to_list()
+refl_temp_tbl = refl_table.select(flex.bool(sel))
 
-    # Intensity predictions
-    intensity_preds = filtered_df["q_I_mean"].to_list()
-    intensity_stddev = filtered_df["q_I_stddev"].to_list()
+refl_temp_tbl["intensity.sum.value"] = flex.double(intensity_preds)
 
-    for i, id in enumerate(reflection_ids):
-        sel[id] = True
+refl_temp_tbl["intensity.sum.variance"] = flex.double(intensity_stddev)
 
-    refl_temp_tbl = refl_tables[tbl_id].select(flex.bool(sel))
-
-    refl_temp_tbl["intensity.sum.value"] = flex.double(intensity_preds)
-
-    refl_temp_tbl["intensity.sum.variance"] = flex.double(intensity_stddev)
-
-    # save the updated reflection table
-    refl_temp_tbl.as_file(f"integrator_preds_{tbl_id}_test.refl")
+# save the updated reflection table
+refl_temp_tbl.as_file(f"integrator_preds_test.refl")

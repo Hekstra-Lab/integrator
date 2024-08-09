@@ -314,7 +314,7 @@ print(profile_)
 
 
 # %%
-mvnn = DistributionBuilder(dmodel, eps, beta)
+mvnn = Builder(dmodel, eps, beta)
 
 mvnn(out1, out2, ims[..., 3:6])
 

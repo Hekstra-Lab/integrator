@@ -232,7 +232,7 @@ class MLP(torch.nn.Module):
 
 
 # %%
-class DistributionBuilder(torch.nn.Module):
+class Builder(torch.nn.Module):
     def __init__(
         self,
         dmodel,
@@ -669,7 +669,7 @@ num_steps = len(train_loader)
 
 standardization = Standardize(max_counts=len(train_loader))
 encoder = Encoder(depth, dmodel, feature_dim, dropout=None)
-distribution_builder = DistributionBuilder(
+distribution_builder = Builder(
     dmodel, intensity_dist, background_dist, eps, beta
 )
 
@@ -717,7 +717,7 @@ num_runs = 50
 # for i in range(num_runs):
 standardization = Standardize(max_counts=len(train_loader))
 encoder = Encoder(depth, dmodel, feature_dim, dropout=None)
-distribution_builder = DistributionBuilder(
+distribution_builder = Builder(
     dmodel, intensity_dist, background_dist, eps, beta
 )
 

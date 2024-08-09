@@ -46,6 +46,8 @@ class MeanPool(torch.nn.Module):
 
 # %%
 
+# %%
+
 
 # %%
 class RotationPixelEncoder(torch.nn.Module):

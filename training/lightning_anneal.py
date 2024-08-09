@@ -9,8 +9,7 @@ from integrator.io import SimulatedDataModule
 from integrator.models import (
     Encoder,
     PoissonLikelihoodV2,
-    DistributionBuilder,
-    IntegratorModelSim,
+    Builder,
 )
 from torch.utils.data import DataLoader
 from rs_distributions import distributions as rsd
@@ -87,7 +86,7 @@ def main(args):
 
     standardization = Standardize(max_counts=train_loader_len)
     encoder = Encoder(depth, dmodel, feature_dim, dropout=None)
-    distribution_builder = DistributionBuilder(
+    distribution_builder = Builder(
         dmodel, intensity_dist, background_dist, eps, beta
     )
     poisson_loss = PoissonLikelihoodV2(
@@ -102,7 +101,6 @@ def main(args):
     )
 
     steps = 1000 * train_loader_len
-    model = IntegratorModelSim(
         encoder,
         distribution_builder,
         poisson_loss,
@@ -157,7 +155,6 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Training script for IntegratorModel")
     parser.add_argument(
         "--learning_rate", type=float, default=0.001, help="Learning rate"
     )

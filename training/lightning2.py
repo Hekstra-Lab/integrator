@@ -11,7 +11,7 @@ from integrator.io import RotationDataModule
 from integrator.models import (
     Encoder,
     PoissonLikelihoodV2,
-    DistributionBuilder,
+    Builder,
 )
 from rs_distributions import distributions as rsd
 from integrator.layers import Standardize
@@ -20,7 +20,6 @@ from pytorch_lightning.callbacks import ModelCheckpoint, TQDMProgressBar
 from pytorch_lightning.loggers import TensorBoardLogger
 import polars as pl
 from integrator.layers import Standardize
-from integrator.models import IntegratorModel
 
 torch.set_float32_matmul_precision("high")
 
@@ -72,7 +71,7 @@ def main(args):
     # Instantiate standardization, encoder, distribution builder, and likelihood
     standardization = Standardize(max_counts=train_loader_len)
     encoder = Encoder(depth, dmodel, feature_dim, dropout=dropout)
-    distribution_builder = DistributionBuilder(
+    distribution_builder = Builder(
         dmodel, intensity_dist, background_dist, eps, beta
     )
     poisson_loss = PoissonLikelihoodV2(
@@ -88,7 +87,6 @@ def main(args):
     print(train_loader_len)
     print(total_steps)
 
-    model = IntegratorModel(
         encoder,
         distribution_builder,
         poisson_loss,
@@ -221,7 +219,6 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Training script for IntegratorModel")
     parser.add_argument(
         "--learning_rate",
         type=float,

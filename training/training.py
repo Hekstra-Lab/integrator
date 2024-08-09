@@ -10,7 +10,7 @@ from tqdm import tqdm
 from integrator.models import (
     Encoder,
     PoissonLikelihoodV2,
-    DistributionBuilder,
+    Builder,
     Integrator,
 )
 from torch.utils.data import DataLoader
@@ -219,7 +219,7 @@ evaluate_every = 2
 standardization = Standardize(max_counts=len(train_loader))
 encoder = Encoder(depth, dmodel, feature_dim, dropout=None)
 
-distribution_builder = DistributionBuilder(
+distribution_builder = Builder(
     dmodel, intensity_dist, background_dist, eps, beta
 )
 
