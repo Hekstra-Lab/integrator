@@ -8,3 +8,5 @@ from .likelihood import LossMixtureModel3D
 from .mixture_model_3d_mvn import MixtureModel3DMVN
 from .mvn_3d_cnn import Integrator
 from .integrator_mvn_3d_cnn import *
+from .mvn_3d_transformer import *
+from .mvn_3d_transformer import IntegratorTransformer
