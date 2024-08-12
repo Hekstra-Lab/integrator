@@ -15,40 +15,61 @@ class Profile(torch.nn.Module):
         super().__init__()
         self.dmodel = dmodel
         self.L_transform = FillScaleTriL(diag_transform=SoftplusTransform())
-        self.mixture_weight_layer = Linear(dmodel, num_components)
-        self.mean_layer = Linear(dmodel, (num_components - 1) * 3)
-        self.scale_layer = Linear(self.dmodel, num_components * 6)
         self.num_components = num_components
 
+        if self.num_components == 1:
+            self.scale_layer = Linear(self.dmodel,6)
+        else:
+            self.mixture_weight_layer = Linear(dmodel, self.num_components)
+            self.mean_layer = Linear(dmodel, (self.num_components - 1) * 3)
+            self.scale_layer = Linear(self.dmodel, self.num_components * 6)
+
+
     def forward(self, representation, dxyz, num_planes=3):
-        num_components = self.num_components
 
         batch_size = representation.size(0)
 
-        mixture_weights = self.mixture_weight_layer(representation).view(
-            batch_size, num_components
-        )
+        if self.num_components == 1:
+            means = torch.zeros((batch_size,1,3),device=representation.device,requires_grad=False).to(torch.float32)
 
-        mixture_weights = F.softmax(mixture_weights, dim=-1)
+            scales = self.scale_layer(representation).view(batch_size, 1, 6)
 
-        means = self.mean_layer(representation).view(batch_size, num_components - 1, 3)
+            L = FillScaleTriL(diag_transform=SoftplusTransform())(scales).to(torch.float32)
 
-        zero_means = torch.zeros((batch_size, 1, 3), device=representation.device)
+            mvn = MultivariateNormal(means, scale_tril=L)
 
-        means = torch.cat([zero_means, means], dim=1)
+            log_probs = mvn.log_prob(dxyz)
 
-        scales = self.scale_layer(representation).view(batch_size, num_components, 6)
+            profile = torch.exp(log_probs)
 
-        L = FillScaleTriL(diag_transform=SoftplusTransform())(scales)
+            return profile, L
 
-        mvn = MultivariateNormal(means, scale_tril=L)
+        else:
+            mixture_weights = self.mixture_weight_layer(representation).view(
+                batch_size, self.num_components
+            )
 
-        mix = Categorical(mixture_weights)
+            mixture_weights = F.softmax(mixture_weights, dim=-1)
 
-        gmm = MixtureSameFamily(mixture_distribution=mix, component_distribution=mvn)
+            means = self.mean_layer(representation).view(batch_size, self.num_components - 1, 3)
 
-        log_probs = gmm.log_prob(dxyz.view(441 * 3, batch_size, 3))
+            zero_means = torch.zeros((batch_size, 1, 3), device=representation.device)
 
-        profile = torch.exp(log_probs).view(batch_size, num_planes * 441)
+            means = torch.cat([zero_means, means], dim=1)
 
-        return profile, L
+            scales = self.scale_layer(representation).view(batch_size, self.num_components, 6)
+
+            L = FillScaleTriL(diag_transform=SoftplusTransform())(scales)
+
+            mvn = MultivariateNormal(means, scale_tril=L)
+
+            mix = Categorical(mixture_weights)
+
+            gmm = MixtureSameFamily(mixture_distribution=mix, component_distribution=mvn)
+
+            log_probs = gmm.log_prob(dxyz.view(441 * 3, batch_size, 3))
+
+            profile = torch.exp(log_probs).view(batch_size, num_planes * 441)
+
+            return profile, L
+

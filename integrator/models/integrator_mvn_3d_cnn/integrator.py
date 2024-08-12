@@ -13,7 +13,6 @@ class Integrator(pytorch_lightning.LightningModule):
         total_steps,
         n_cycle=4,
         ratio=0.5,
-        anneal=True,
         lr=0.001,
         max_epochs=10,
         penalty_scale=0.01,
@@ -64,11 +63,7 @@ class Integrator(pytorch_lightning.LightningModule):
             "tbl_id": [],
         }
         self.total_steps = total_steps + 1
-        self.anneal = anneal
-        if self.anneal:
-            self.anneal_schedule = frange_cycle_cosine(
-                0.0, 1.0, self.total_steps, n_cycle=n_cycle, ratio=ratio
-            )
+
         self.current_step = 0
         self.use_bg_profile = use_bg_profile
 
@@ -83,7 +78,7 @@ class Integrator(pytorch_lightning.LightningModule):
 
         dxyz = shoebox[..., 3:6]
 
-        counts_ = shoebox[..., -1].reshape(shoebox.size(0), 3, 21, 21)
+        counts_ = shoebox_[..., -1].reshape(shoebox.size(0), 3, 21, 21)
         batch_size = counts_.size(0)
 
         counts_ = counts_ * dead_pixel_mask.reshape(batch_size, 3, 21, 21)
@@ -130,13 +125,9 @@ class Integrator(pytorch_lightning.LightningModule):
 
             nll, kl_term, rate, q_I, profile, q_bg, counts, L = self(sbox, mask)
 
-            if self.anneal:
-                anneal_rate = self.anneal_schedule[self.current_step]
-            else:
-                anneal_rate = 1.0
             self.current_step += 1
 
-            loss = nll + anneal_rate * kl_term
+            loss = nll +  kl_term
             self.training_step_loss.append(loss)
             self.log("train_loss", loss, prog_bar=True)
 
@@ -201,12 +192,7 @@ class Integrator(pytorch_lightning.LightningModule):
 
         nll, kl_term, rate, q_I, profile, q_bg, counts, L = self(sbox, mask)
 
-        if self.anneal:
-            anneal_rate = self.anneal_schedule[self.current_step]
-        else:
-            anneal_rate = 1.0
-
-        loss = nll + anneal_rate * kl_term
+        loss = nll +  kl_term
 
         self.validation_step_loss.append(loss)
 

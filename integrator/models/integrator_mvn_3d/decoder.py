@@ -21,6 +21,7 @@ class Decoder(torch.nn.Module):
 
         rate = z.permute(1, 0, 2) * profile.unsqueeze(1) + bg.permute(
             1, 0, 2
-        ) * bg_profile.unsqueeze(1)
+        ) 
+        #* bg_profile.unsqueeze(1)
 
         return rate, z, bg

@@ -12,7 +12,6 @@ class IntensityDistribution(torch.nn.Module):
 
     def intensity_distribution(self, intensity_params):
         loc = self.constraint(intensity_params[..., 0])
-        # loc = intensity_params[..., 0]
         scale = self.constraint(intensity_params[..., 1])
         return self.intensity_dist(loc, scale)
 

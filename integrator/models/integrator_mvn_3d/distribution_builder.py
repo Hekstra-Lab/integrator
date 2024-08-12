@@ -72,11 +72,15 @@ class Builder(torch.nn.Module):
         representation,
         dxyz,
     ):
+
         bg_profile = (
             self.bg_indicator(representation) if self.bg_indicator is not None else None
         )
+
         spot_profile, L = self.spot_profile_model(representation, dxyz)
+
         q_bg = self.background_distribution(representation)
+
         q_I = self.intensity_distribution(representation)
 
         return q_bg, q_I, spot_profile, L, bg_profile

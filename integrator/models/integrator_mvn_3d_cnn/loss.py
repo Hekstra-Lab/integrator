@@ -8,8 +8,8 @@ class Loss(torch.nn.Module):
         eps=1e-5,
         prior_I=None,
         prior_bg=None,
-        p_I_scale=0.001,
-        p_bg_scale=0.001,
+        p_I_scale=0.0001,
+        p_bg_scale=0.0001,
     ):
         super().__init__()
         self.eps = torch.nn.Parameter(data=torch.tensor(eps), requires_grad=False)

@@ -16,6 +16,7 @@ from integrator.models.integrator_mvn_3d_cnn import Decoder
 from integrator.models.integrator_mvn_3d_cnn import Loss
 from integrator.models.integrator_mvn_3d_cnn import Profile
 
+torch.set_float32_matmul_precision("high")
 
 class IntegratorCNN():
     def __init__(
@@ -43,6 +44,7 @@ class IntegratorCNN():
         p_I_scale=0.0001,
         p_bg_scale=0.0001,
         num_components=5,
+        num_workers = 4,
         bg_indicator=BackgroundIndicator(),
     ):
         super().__init__()
@@ -69,6 +71,7 @@ class IntegratorCNN():
         self.p_I_scale = p_I_scale
         self.p_bg_scale = p_bg_scale
         self.num_components = num_components
+        self.num_workers = num_workers,
 
         self.bg_indicator = bg_indicator
         if self.bg_indicator is not None:
@@ -83,8 +86,9 @@ class IntegratorCNN():
             metadata=self.metadata_file,
             dead_pixel_mask=self.dead_pixel_mask_file,
             batch_size=self.batch_size,
-            val_split=0.2,
+            val_split=0.4,
             test_split=0.1,
+            num_workers= self.num_workers,
             include_test=False,
             subset_size=self.subset_size,
             single_sample_index=None,
@@ -148,7 +152,6 @@ class IntegratorCNN():
             total_steps=steps,
             n_cycle=4,
             lr=self.learning_rate,
-            anneal=False,
             max_epochs=self.epochs,
             penalty_scale=0.0,
             use_bg_profile=self.use_bg_profile,
@@ -173,7 +176,7 @@ class IntegratorCNN():
         # Training module
         trainer = Trainer(
             max_epochs=self.epochs,
-            accelerator="cpu",  # Use "cpu" for CPU training
+            accelerator="gpu",  # Use "cpu" for CPU training
             devices="auto",
             num_nodes=1,
             precision="32",  # Use 32-bit precision for CPU

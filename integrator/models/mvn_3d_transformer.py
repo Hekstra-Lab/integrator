@@ -87,7 +87,7 @@ class IntegratorTransformer():
             metadata=self.metadata_file,
             dead_pixel_mask=self.dead_pixel_mask_file,
             batch_size=self.batch_size,
-            val_split=0.2,
+            val_split=0.4,
             test_split=0.1,
             include_test=False,
             subset_size=self.subset_size,
@@ -119,12 +119,12 @@ class IntegratorTransformer():
 
         encoder = Encoder(
                 img_size=21,
-                patch_size=7,
+                patch_size=3,
                 num_hiddens=24,
               mlp_num_hiddens=48,
-                          num_heads=8,
+                          num_heads=2,
                           num_blks=2,
-                          emb_dropout=0.1,
+                          emb_dropout=0.5,
                           blk_dropout=0.1,
                           lr=0.1,
                           )
@@ -162,7 +162,6 @@ class IntegratorTransformer():
             total_steps=steps,
             n_cycle=4,
             lr=self.learning_rate,
-            anneal=False,
             max_epochs=self.epochs,
             penalty_scale=0.0,
             use_bg_profile=self.use_bg_profile,
@@ -187,7 +186,7 @@ class IntegratorTransformer():
         # Training module
         trainer = Trainer(
             max_epochs=self.epochs,
-            accelerator="cpu",  # Use "cpu" for CPU training
+            accelerator="gpu",  # Use "cpu" for CPU training
             devices="auto",
             num_nodes=1,
             precision="32",  # Use 32-bit precision for CPU

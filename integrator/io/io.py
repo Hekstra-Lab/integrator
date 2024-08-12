@@ -670,6 +670,7 @@ class ShoeboxDataModule(pytorch_lightning.LightningDataModule):
         batch_size=32,
         val_split=0.2,
         test_split=0.1,
+        num_workers = 4,
         include_test=False,
         subset_size=None,
         single_sample_index=None,  # Add parameter for single sample index
@@ -684,6 +685,7 @@ class ShoeboxDataModule(pytorch_lightning.LightningDataModule):
         self.include_test = include_test
         self.subset_size = subset_size
         self.single_sample_index = single_sample_index  # Store single sample index
+        self.num_workers = num_workers,
 
     def setup(self, stage=None):
         # Load the tensors
@@ -725,10 +727,10 @@ class ShoeboxDataModule(pytorch_lightning.LightningDataModule):
             self.test_dataset = None
 
     def train_dataloader(self):
-        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True)
+        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, num_workers = 3)
 
     def val_dataloader(self):
-        return DataLoader(self.val_dataset, batch_size=self.batch_size)
+        return DataLoader(self.val_dataset, batch_size=self.batch_size,shuffle=False,num_workers=3)
 
     def test_dataloader(self):
         if self.include_test:

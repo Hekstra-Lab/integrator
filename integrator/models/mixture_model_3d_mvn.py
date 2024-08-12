@@ -1,8 +1,11 @@
 import torch
+
 from integrator.io import ShoeboxDataModule
+
 from rs_distributions import distributions as rsd
+
 from pytorch_lightning import Trainer
-from pytorch_lightning.callbacks import ModelCheckpoint, TQDMProgressBar
+from pytorch_lightning.callbacks import ModelCheckpoint, TQDMProgressBar,DeviceStatsMonitor
 from pytorch_lightning.loggers import TensorBoardLogger
 
 from integrator.layers import Standardize
@@ -25,7 +28,7 @@ class MixtureModel3DMVN():
         depth=10,
         dmodel=32,
         feature_dim=7,
-        dropout=0.5,
+        dropout=None,
         beta=1.0,
         mc_samples=100,
         max_size=1024,
@@ -35,16 +38,16 @@ class MixtureModel3DMVN():
         epochs=500,
         intensity_dist=torch.distributions.gamma.Gamma,
         background_dist=torch.distributions.gamma.Gamma,
-        prior_I=torch.distributions.exponential.Exponential(rate=torch.tensor(0.05)),
-        prior_bg=rsd.FoldedNormal(0, 0.1),
+        prior_I=torch.distributions.exponential.Exponential(rate=torch.tensor(1.0)),
+        prior_bg=torch.distributions.exponential.Exponential(rate=torch.tensor(1.0)),
         device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
         shoebox_file="./samples.pt",
         metadata_file="./metadata.pt",
-        dead_pixel_mask_file="./masks.pt",
+        dead_pixel_mask="./masks.pt",
         subset_size=10,
         p_I_scale=0.0001,
         p_bg_scale=0.0001,
-        num_components=5,
+        num_components=1,
         bg_indicator=None,
     ):
         super().__init__()
@@ -66,7 +69,7 @@ class MixtureModel3DMVN():
         self.device = device
         self.shoebox_file = shoebox_file
         self.metadata_file = metadata_file
-        self.dead_pixel_mask_file = dead_pixel_mask_file
+        self.dead_pixel_mask = dead_pixel_mask
         self.subset_size = subset_size
         self.p_I_scale = p_I_scale
         self.p_bg_scale = p_bg_scale
@@ -78,9 +81,9 @@ class MixtureModel3DMVN():
         data_module = ShoeboxDataModule(
             shoebox_data=self.shoebox_file,
             metadata=self.metadata_file,
-            dead_pixel_mask=self.dead_pixel_mask_file,
+            dead_pixel_mask=self.dead_pixel_mask,
             batch_size=self.batch_size,
-            val_split=0.2,
+            val_split=0.4,
             test_split=0.1,
             include_test=False,
             subset_size=self.subset_size,
@@ -97,6 +100,7 @@ class MixtureModel3DMVN():
         return data_module
 
     def BuildModel(self):
+
         # Intensity prior distribution
         standardization = Standardize(max_counts=self.train_loader_len)
 
@@ -148,7 +152,6 @@ class MixtureModel3DMVN():
             total_steps=steps,
             n_cycle=4,
             lr=self.learning_rate,
-            anneal=False,
             max_epochs=self.epochs,
             penalty_scale=0.0,
         )
@@ -165,6 +168,7 @@ class MixtureModel3DMVN():
             save_top_k=3,
             mode="min",
         )
+        device_stats = DeviceStatsMonitor()
 
         # Progress bar
         progress_bar = TQDMProgressBar(refresh_rate=1)
@@ -172,13 +176,13 @@ class MixtureModel3DMVN():
         # Training module
         trainer = Trainer(
             max_epochs=self.epochs,
-            accelerator="cpu",  # Use "cpu" for CPU training
+            accelerator="gpu",  # Use "cpu" for CPU training
             devices="auto",
             num_nodes=1,
             precision="32",  # Use 32-bit precision for CPU
             accumulate_grad_batches=1,
             check_val_every_n_epoch=1,
-            callbacks=[checkpoint_callback, progress_bar],
+            callbacks=[checkpoint_callback, progress_bar,device_stats],
             logger=logger,
             log_every_n_steps=10,
         )
