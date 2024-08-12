@@ -16,7 +16,7 @@ class Integrator(pytorch_lightning.LightningModule):
         lr=0.001,
         max_epochs=10,
         penalty_scale=0.01,
-        use_bg_profile=False,
+        use_bg_profile=True,
     ):
         super().__init__()
         self.lr = lr
@@ -81,11 +81,12 @@ class Integrator(pytorch_lightning.LightningModule):
         counts_ = shoebox_[..., -1].reshape(shoebox.size(0), 3, 21, 21)
         batch_size = counts_.size(0)
 
-        counts_ = counts_ * dead_pixel_mask.reshape(batch_size, 3, 21, 21)
+        #counts_ = counts_ * dead_pixel_mask.reshape(batch_size, 3, 21, 21)
+        counts_ = counts.reshape(batch_size,3,21,21) * dead_pixel_mask.reshape(batch_size, 3, 21, 21)
 
-        x = shoebox_[..., 0].reshape(shoebox.size(0), 3, 21, 21)[:, 0, :, :]
-        y = shoebox_[..., 1].reshape(shoebox.size(0), 3, 21, 21)[:, 0, :, :]
-        z = shoebox_[..., 2].reshape(shoebox.size(0), 3, 21, 21)[:, 0, :, :]
+        #x = shoebox_[..., 0].reshape(shoebox.size(0), 3, 21, 21)[:, 0, :, :]
+        #y = shoebox_[..., 1].reshape(shoebox.size(0), 3, 21, 21)[:, 0, :, :]
+        #z = shoebox_[..., 2].reshape(shoebox.size(0), 3, 21, 21)[:, 0, :, :]
 
         # shoebox_ = torch.cat(
         # [x.unsqueeze(1), y.unsqueeze(1), z.unsqueeze(1), counts_], dim=1

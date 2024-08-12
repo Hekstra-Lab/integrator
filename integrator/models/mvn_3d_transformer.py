@@ -1,14 +1,16 @@
 import torch
-import rs_distributions.distributions as rsd
 import torch.nn as nn
-from integrator.layers import Linear
+
 import math
-from integrator.models.integrator_mvn_transformer import Integrator
-from integrator.models.integrator_mvn_transformer import BackgroundIndicator
-from pytorch_lightning.loggers import TensorBoardLogger
+
+import rs_distributions.distributions as rsd
+
+from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint, TQDMProgressBar
+
 from integrator.models.integrator_mvn_transformer import BackgroundDistribution
+from integrator.models.integrator_mvn_transformer import Integrator
 from integrator.models.integrator_mvn_transformer import BackgroundIndicator
 from integrator.models.integrator_mvn_transformer import Builder
 from integrator.models.integrator_mvn_transformer import IntensityDistribution
@@ -16,9 +18,11 @@ from integrator.models.integrator_mvn_transformer import Encoder
 from integrator.models.integrator_mvn_transformer import Decoder
 from integrator.models.integrator_mvn_transformer import Loss
 from integrator.models.integrator_mvn_transformer import Profile
-from pytorch_lightning import Trainer
+
 from integrator.io import ShoeboxDataModule
+
 from integrator.layers import Standardize
+from integrator.layers import Linear
 
 
 class IntegratorTransformer():
@@ -48,7 +52,17 @@ class IntegratorTransformer():
         p_bg_scale=0.0001,
         num_components=5,
         bg_indicator=BackgroundIndicator(),
+        img_size=21,
+        patch_size =7,
+        num_hiddens=24,
+        mlp_num_hiddens=48,
+        num_blks = 2,
+        num_heads = 8,
+        emb_dropout=0.5,
+        blk_dropout=0.1,
+        lr=0.1,
     ):
+
         super().__init__()
         self.depth = depth
         self.dmodel = dmodel
@@ -73,6 +87,14 @@ class IntegratorTransformer():
         self.p_I_scale = p_I_scale
         self.p_bg_scale = p_bg_scale
         self.num_components = num_components
+        self.img_size=img_size
+        self.patch_size = patch_size
+        self.num_blks = num_blks,
+        self.num_heads = num_heads,
+        self.num_hiddens = num_hiddens,
+        self.blk_dropout=blk_dropout,
+        self.emb_dropout=emb_dropout,
+        self.mlp_num_hiddens=mlp_num_hiddens,
 
         self.bg_indicator = bg_indicator
         if self.bg_indicator is not None:
@@ -87,7 +109,7 @@ class IntegratorTransformer():
             metadata=self.metadata_file,
             dead_pixel_mask=self.dead_pixel_mask_file,
             batch_size=self.batch_size,
-            val_split=0.4,
+            val_split=0.3,
             test_split=0.1,
             include_test=False,
             subset_size=self.subset_size,
@@ -119,15 +141,16 @@ class IntegratorTransformer():
 
         encoder = Encoder(
                 img_size=21,
-                patch_size=3,
-                num_hiddens=24,
-              mlp_num_hiddens=48,
-                          num_heads=2,
-                          num_blks=2,
-                          emb_dropout=0.5,
-                          blk_dropout=0.1,
+                patch_size=7,
+                num_hiddens=512,
+                mlp_num_hiddens=2048,
+                num_heads=8,
+                num_blks= 2,
+                emb_dropout=.1,
+                blk_dropout=.1,
                           lr=0.1,
                           )
+
         # Variational distribution and profile builder
 
         builder = Builder(

@@ -6,7 +6,7 @@ from integrator.models import MLP
 import torch.nn as nn
 
 class PatchEmbedding(nn.Module):
-    def __init__(self, img_size=21, patch_size=7, num_hiddens=512, use_cnn=False):
+    def __init__(self, img_size=21, patch_size=7, num_hiddens=512, use_cnn=True):
         super().__init__()
 
         def _make_tuple(x):
@@ -206,7 +206,8 @@ class Encoder(torch.nn.Module):
         self.cls_token = nn.Parameter(torch.zeros(1, 1, num_hiddens))
         
         # Correct number of steps for positional embedding
-        num_steps = 3*49 + 1  # 27 patches + 1 class token = 28 positions
+        #num_steps = 3*49 + 1  # 27 patches + 1 class token = 28 positions
+        num_steps = self.patch_embedding.num_patches + 1  # 27 patches + 1 class token = 28 positions
         self.pos_embedding = nn.Parameter(torch.randn(1, num_steps, num_hiddens))
         
         self.dropout = nn.Dropout(emb_dropout)
@@ -232,8 +233,9 @@ class Encoder(torch.nn.Module):
         X = torch.cat((self.cls_token.expand(X.shape[0], -1, -1), X), 1)  # Adding the class token, now X.shape[1] = 28
         
         # Ensure positional embedding size matches
-        X = self.dropout(X + self.pos_embedding[:, :X.shape[1], :])  
-        
+        #X = self.dropout(X + self.pos_embedding[:, :X.shape[1], :])  
+        X = self.dropout(X + self.pos_embedding)
+
         for blk in self.blks:
             X = blk(X)
         return self.head(X[:, 0])

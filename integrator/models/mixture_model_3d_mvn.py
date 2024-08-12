@@ -83,7 +83,7 @@ class MixtureModel3DMVN():
             metadata=self.metadata_file,
             dead_pixel_mask=self.dead_pixel_mask,
             batch_size=self.batch_size,
-            val_split=0.4,
+            val_split=0.3,
             test_split=0.1,
             include_test=False,
             subset_size=self.subset_size,

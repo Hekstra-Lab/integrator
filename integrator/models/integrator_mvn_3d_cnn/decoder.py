@@ -14,7 +14,7 @@ class Decoder(torch.nn.Module):
         profile,
         bg_profile,
         mc_samples=100,
-        use_bg_profile=False,
+        use_bg_profile=True,
     ):
         # Sample from variational distributions
         z = q_I.rsample([mc_samples])

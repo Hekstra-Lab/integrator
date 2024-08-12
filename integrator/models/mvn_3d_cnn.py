@@ -8,7 +8,7 @@ from integrator.layers import Standardize
 from integrator.io import ShoeboxDataModule
 
 from integrator.models.integrator_mvn_3d_cnn import BackgroundDistribution
-from integrator.models.mixture_model_3d_mvn import BackgroundIndicator
+from integrator.models.integrator_mvn_3d_cnn import BackgroundIndicator
 from integrator.models.integrator_mvn_3d_cnn import DistributionBuilder
 from integrator.models.integrator_mvn_3d_cnn import IntensityDistribution
 from integrator.models.integrator_mvn_3d_cnn import Encoder
@@ -45,7 +45,7 @@ class IntegratorCNN():
         p_bg_scale=0.0001,
         num_components=5,
         num_workers = 4,
-        bg_indicator=BackgroundIndicator(),
+        bg_indicator=BackgroundIndicator(dmodel=64),
     ):
         super().__init__()
         self.depth = depth
@@ -86,7 +86,7 @@ class IntegratorCNN():
             metadata=self.metadata_file,
             dead_pixel_mask=self.dead_pixel_mask_file,
             batch_size=self.batch_size,
-            val_split=0.4,
+            val_split=0.3,
             test_split=0.1,
             num_workers= self.num_workers,
             include_test=False,

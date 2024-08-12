@@ -45,18 +45,18 @@ class Profile(torch.nn.Module):
 
         else:
             mixture_weights = self.mixture_weight_layer(representation).view(
-                batch_size, num_components
+                batch_size, self.num_components
             )
 
             mixture_weights = F.softmax(mixture_weights, dim=-1)
 
-            means = self.mean_layer(representation).view(batch_size, num_components - 1, 3)
+            means = self.mean_layer(representation).view(batch_size, self.num_components - 1, 3)
 
             zero_means = torch.zeros((batch_size, 1, 3), device=representation.device)
 
             means = torch.cat([zero_means, means], dim=1)
 
-            scales = self.scale_layer(representation).view(batch_size, num_components, 6)
+            scales = self.scale_layer(representation).view(batch_size, self.num_components, 6)
 
             L = FillScaleTriL(diag_transform=SoftplusTransform())(scales)
 
