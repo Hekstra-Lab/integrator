@@ -19,6 +19,12 @@ class Decoder(torch.nn.Module):
         z = q_I.rsample([mc_samples])
         bg = q_bg.rsample([mc_samples])
 
-        rate = z.permute(1, 0, 2) * profile.unsqueeze(1) + bg.permute(1, 0, 2)
+        if bg_profile is not None:
+            rate = z.permute(1, 0, 2) * profile.unsqueeze(1) + bg.permute(
+                1, 0, 2
+            ) * bg_profile.unsqueeze(1)
+
+        else:
+            rate = z.permute(1, 0, 2) * profile.unsqueeze(1) + bg.permute(1, 0, 2)
 
         return rate, z, bg

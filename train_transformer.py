@@ -60,16 +60,17 @@ def main(args):
         test_split=args.test_split,
     )
     trainer, integrator_model = model.BuildModel(
-            img_size=args.img_size,
-            patch_size=args.patch_size,
-            num_hiddens=args.num_hiddens,
-            mlp_num_hiddens=args.mlp_num_hiddens,
-            num_heads=args.num_heads,
-            num_blks=args.num_blks,
-            emb_dropout=args.emb_dropout,
-            blk_dropout=args.blk_dropout,
-            lr=args.lr,
-            )
+        img_size=args.img_size,
+        patch_size=args.patch_size,
+        num_hiddens=args.num_hiddens,
+        mlp_num_hiddens=args.mlp_num_hiddens,
+        num_heads=args.num_heads,
+        num_blks=args.num_blks,
+        emb_dropout=args.emb_dropout,
+        blk_dropout=args.blk_dropout,
+        lr=args.lr,
+        precision=args.precision,
+    )
     trainer.fit(integrator_model, data_module)
 
     outwriter = OutWriter(
@@ -107,6 +108,8 @@ def main(args):
     with open(os.path.join(args.out_dir, "results.pkl"), "wb") as f:
         pickle.dump(results_cpu, f)
 
+
+# %%
 
 # %%
 if __name__ == "__main__":
@@ -299,8 +302,11 @@ if __name__ == "__main__":
         type=float,
         default=0.1,
     )
-
-
+    parser.add_argument(
+        "--precision",
+        type=str,
+        default="32",
+    )
 
     args = parser.parse_args()
 

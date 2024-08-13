@@ -51,7 +51,7 @@ class IntegratorTransformer:
         p_I_scale=0.0001,
         p_bg_scale=0.0001,
         num_components=5,
-        bg_indicator=BackgroundIndicator(),
+        bg_indicator=False,
         img_size=21,
         patch_size=7,
         num_hiddens=24,
@@ -94,12 +94,10 @@ class IntegratorTransformer:
         self.blk_dropout = (blk_dropout,)
         self.emb_dropout = (emb_dropout,)
         self.mlp_num_hiddens = (mlp_num_hiddens,)
-
-        self.bg_indicator = bg_indicator
-        if self.bg_indicator is not None:
-            self.use_bg_profile = True
+        if bg_indicator:
+            self.bg_indicator = BackgroundIndicator()
         else:
-            self.use_bg_profile = False
+            self.bg_indicator = None
 
     def LoadData(self, val_split=0.3, test_split=0.1):
         # Initialize the DataModule
@@ -135,6 +133,7 @@ class IntegratorTransformer:
         emb_dropout=0.1,
         blk_dropout=0.1,
         lr=0.1,
+        precision="32",
     ):
         # Intensity prior distribution
         standardization = Standardize(max_counts=self.train_loader_len)
@@ -221,7 +220,7 @@ class IntegratorTransformer:
             accelerator="gpu",  # Use "cpu" for CPU training
             devices="auto",
             num_nodes=1,
-            precision="32",  # Use 32-bit precision for CPU
+            precision=precision,  # Use 32-bit precision for CPU
             accumulate_grad_batches=1,
             check_val_every_n_epoch=1,
             callbacks=[checkpoint_callback, progress_bar],

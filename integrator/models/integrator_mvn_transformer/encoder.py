@@ -1,9 +1,8 @@
 from pylab import *
 import math
 import torch
-from integrator.layers import Linear, ResidualLayer
-from integrator.models import MLP
 import torch.nn as nn
+
 
 class PatchEmbedding(nn.Module):
     def __init__(self, img_size=21, patch_size=7, num_hiddens=512, use_cnn=True):
@@ -26,7 +25,7 @@ class PatchEmbedding(nn.Module):
                 num_hiddens, kernel_size=self.patch_size, stride=self.patch_size
             )
         else:
-            self.proj = nn.Linear(self.patch_size[0] * self.patch_size[1] , num_hiddens)
+            self.proj = nn.Linear(self.patch_size[0] * self.patch_size[1], num_hiddens)
 
     def forward(self, X):
         if self.use_cnn:
@@ -35,11 +34,16 @@ class PatchEmbedding(nn.Module):
         else:
             batch_size, channels, height, width = X.shape
             # Extract patches using unfold
-            patches = X.unfold(2, self.patch_size[0], self.patch_size[0]).unfold(3, self.patch_size[1], self.patch_size[1])
-            patches = patches.contiguous().view(batch_size, channels, -1, self.patch_size[0] * self.patch_size[1])
-            patches = patches.permute(0, 2, 1, 3).reshape(batch_size, 3*49, self.patch_size[0] * self.patch_size[1])
+            patches = X.unfold(2, self.patch_size[0], self.patch_size[0]).unfold(
+                3, self.patch_size[1], self.patch_size[1]
+            )
+            patches = patches.contiguous().view(
+                batch_size, channels, -1, self.patch_size[0] * self.patch_size[1]
+            )
+            patches = patches.permute(0, 2, 1, 3).reshape(
+                batch_size, 3 * 49, self.patch_size[0] * self.patch_size[1]
+            )
             return self.proj(patches)
-
 
 
 def masked_softmax(X, valid_lens):  # @save
@@ -183,7 +187,6 @@ class ViTBlock(nn.Module):
         return X + self.mlp(self.ln2(X))
 
 
-
 class Encoder(torch.nn.Module):
     """Vision Transformer."""
 
@@ -204,12 +207,14 @@ class Encoder(torch.nn.Module):
         super().__init__()
         self.patch_embedding = PatchEmbedding(img_size, patch_size, num_hiddens)
         self.cls_token = nn.Parameter(torch.zeros(1, 1, num_hiddens))
-        
+
         # Correct number of steps for positional embedding
-        #num_steps = 3*49 + 1  # 27 patches + 1 class token = 28 positions
-        num_steps = self.patch_embedding.num_patches + 1  # 27 patches + 1 class token = 28 positions
+        # num_steps = 3*49 + 1  # 27 patches + 1 class token = 28 positions
+        num_steps = (
+            self.patch_embedding.num_patches + 1
+        )  # 27 patches + 1 class token = 28 positions
         self.pos_embedding = nn.Parameter(torch.randn(1, num_steps, num_hiddens))
-        
+
         self.dropout = nn.Dropout(emb_dropout)
         self.blks = nn.Sequential()
         for i in range(num_blks):
@@ -230,10 +235,12 @@ class Encoder(torch.nn.Module):
 
     def forward(self, X):
         X = self.patch_embedding(X)  # Output shape: [batch_size, 27, num_hiddens]
-        X = torch.cat((self.cls_token.expand(X.shape[0], -1, -1), X), 1)  # Adding the class token, now X.shape[1] = 28
-        
+        X = torch.cat(
+            (self.cls_token.expand(X.shape[0], -1, -1), X), 1
+        )  # Adding the class token, now X.shape[1] = 28
+
         # Ensure positional embedding size matches
-        #X = self.dropout(X + self.pos_embedding[:, :X.shape[1], :])  
+        # X = self.dropout(X + self.pos_embedding[:, :X.shape[1], :])
         X = self.dropout(X + self.pos_embedding)
 
         for blk in self.blks:

@@ -6,7 +6,6 @@ import math
 from integrator.layers import Linear
 
 
-
 def frange_cycle_cosine(start, stop, n_epoch, n_cycle=4, ratio=0.8):
     """
     A cosine function that cycles over n_epoch with n_cycle periods.
@@ -43,14 +42,9 @@ class Integrator(pytorch_lightning.LightningModule):
         decoder,
         loss_model,
         total_steps,
-        n_cycle=4,
-        ratio=0.5,
         lr=0.001,
         max_epochs=10,
         penalty_scale=0.00,
-        dmode=64,
-        dropout=0.0,
-        use_bg_profile=False,
     ):
         super().__init__()
         self.lr = lr
@@ -129,7 +123,12 @@ class Integrator(pytorch_lightning.LightningModule):
             representation, dxyz
         )
 
-        rate, z, bg = self.decoder(q_bg, q_I, profile, bg_profile)
+        rate, z, bg = self.decoder(
+            q_bg,
+            q_I,
+            profile,
+            bg_profile,
+        )
 
         nll, kl_term = self.loss_model(
             rate,
@@ -151,7 +150,9 @@ class Integrator(pytorch_lightning.LightningModule):
             (
                 sbox,
                 mask,
-            ) = sbox.to(device), mask.to(device)
+            ) = sbox.to(
+                device
+            ), mask.to(device)
 
             nll, kl_term, rate, q_I, profile, q_bg, counts, L = self(sbox, mask)
 
@@ -161,7 +162,7 @@ class Integrator(pytorch_lightning.LightningModule):
             self.training_step_loss.append(loss)
             self.log("train_loss", loss, prog_bar=True)
 
-            if self.current_epoch == self.trainer.max_epochs - 1:
+            if self.current_epoch == self.max_epochs - 1:
                 self.training_preds["q_I_mean"].extend(
                     q_I.mean.detach().cpu().ravel().tolist()
                 )
@@ -221,13 +222,13 @@ class Integrator(pytorch_lightning.LightningModule):
 
         nll, kl_term, rate, q_I, profile, q_bg, counts, L = self(sbox, mask)
 
-        loss = nll +  kl_term
+        loss = nll + kl_term
 
         self.validation_step_loss.append(loss)
 
         self.log("val_loss", loss, prog_bar=True, sync_dist=True)
 
-        if self.current_epoch == self.trainer.max_epochs - 1:
+        if self.current_epoch == self.max_epochs - 1:
             self.validation_preds["q_I_mean"].extend(
                 q_I.mean.detach().cpu().ravel().tolist()
             )
@@ -277,6 +278,6 @@ class Integrator(pytorch_lightning.LightningModule):
         self.validation_step_loss.clear()
 
     def configure_optimizers(self):
-#        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
-        optimizer = torch.optim.SGD(self.parameters(),lr=self.lr,momentum=0.9)
+        #        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+        optimizer = torch.optim.SGD(self.parameters(), lr=self.lr, momentum=0.9)
         return optimizer
