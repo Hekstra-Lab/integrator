@@ -80,9 +80,6 @@ class MixtureModel3DMVN:
         else:
             self.bg_indicator = None
 
-
-
-
     def LoadData(
         self,
         subset_size=10,
