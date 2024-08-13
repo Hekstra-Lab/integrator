@@ -260,7 +260,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--conv1_in_channel",
         type=int,
-        default=1,
+        default=3,
     )
     parser.add_argument(
         "--conv1_out_channel",

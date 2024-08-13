@@ -46,7 +46,7 @@ class IntegratorCNN:
         p_bg_scale=0.0001,
         num_components=5,
         num_workers=4,
-        bg_indicator=BackgroundIndicator(dmodel=64),
+        bg_indicator=False,
     ):
         super().__init__()
         self.depth = depth
@@ -75,10 +75,11 @@ class IntegratorCNN:
         self.num_workers = num_workers
 
         self.bg_indicator = bg_indicator
-        if self.bg_indicator is not None:
-            self.use_bg_profile = True
+
+        if bg_indicator:
+            self.bg_indicator = BackgroundIndicator(dmodel=self.dmodel)
         else:
-            self.use_bg_profile = False
+            self.bg_indicator = None
 
     def LoadData(self, val_split=0.3, test_split=0.1):
         # Initialize the DataModule

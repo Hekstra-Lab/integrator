@@ -16,7 +16,6 @@ class Integrator(pytorch_lightning.LightningModule):
         lr=0.001,
         max_epochs=10,
         penalty_scale=0.01,
-        use_bg_profile=True,
     ):
         super().__init__()
         self.lr = lr
@@ -65,7 +64,6 @@ class Integrator(pytorch_lightning.LightningModule):
         self.total_steps = total_steps + 1
 
         self.current_step = 0
-        self.use_bg_profile = use_bg_profile
 
     def forward(
         self,
@@ -101,7 +99,10 @@ class Integrator(pytorch_lightning.LightningModule):
         )
 
         rate, z, bg = self.decoder(
-            q_bg, q_I, profile, bg_profile, use_bg_profile=self.use_bg_profile
+            q_bg,
+            q_I,
+            profile,
+            bg_profile,
         )
 
         nll, kl_term = self.loss_model(
