@@ -25,7 +25,7 @@ from integrator.layers import Standardize
 from integrator.layers import Linear
 
 
-class IntegratorTransformer():
+class IntegratorTransformer:
     def __init__(
         self,
         depth=10,
@@ -53,16 +53,15 @@ class IntegratorTransformer():
         num_components=5,
         bg_indicator=BackgroundIndicator(),
         img_size=21,
-        patch_size =7,
+        patch_size=7,
         num_hiddens=24,
         mlp_num_hiddens=48,
-        num_blks = 2,
-        num_heads = 8,
+        num_blks=2,
+        num_heads=8,
         emb_dropout=0.5,
         blk_dropout=0.1,
         lr=0.1,
     ):
-
         super().__init__()
         self.depth = depth
         self.dmodel = dmodel
@@ -87,14 +86,14 @@ class IntegratorTransformer():
         self.p_I_scale = p_I_scale
         self.p_bg_scale = p_bg_scale
         self.num_components = num_components
-        self.img_size=img_size
+        self.img_size = img_size
         self.patch_size = patch_size
-        self.num_blks = num_blks,
-        self.num_heads = num_heads,
-        self.num_hiddens = num_hiddens,
-        self.blk_dropout=blk_dropout,
-        self.emb_dropout=emb_dropout,
-        self.mlp_num_hiddens=mlp_num_hiddens,
+        self.num_blks = (num_blks,)
+        self.num_heads = (num_heads,)
+        self.num_hiddens = (num_hiddens,)
+        self.blk_dropout = (blk_dropout,)
+        self.emb_dropout = (emb_dropout,)
+        self.mlp_num_hiddens = (mlp_num_hiddens,)
 
         self.bg_indicator = bg_indicator
         if self.bg_indicator is not None:
@@ -102,15 +101,15 @@ class IntegratorTransformer():
         else:
             self.use_bg_profile = False
 
-    def LoadData(self):
+    def LoadData(self, val_split=0.3, test_split=0.1):
         # Initialize the DataModule
         data_module = ShoeboxDataModule(
             shoebox_data=self.shoebox_file,
             metadata=self.metadata_file,
             dead_pixel_mask=self.dead_pixel_mask_file,
             batch_size=self.batch_size,
-            val_split=0.3,
-            test_split=0.1,
+            val_split=val_split,
+            test_split=test_split,
             include_test=False,
             subset_size=self.subset_size,
             single_sample_index=None,
@@ -125,7 +124,18 @@ class IntegratorTransformer():
 
         return data_module
 
-    def BuildModel(self):
+    def BuildModel(
+        self,
+        img_size=21,
+        patch_size=7,
+        num_hiddens=24,
+        mlp_num_hiddens=48,
+        num_heads=2,
+        num_blks=2,
+        emb_dropout=0.1,
+        blk_dropout=0.1,
+        lr=0.1,
+    ):
         # Intensity prior distribution
         standardization = Standardize(max_counts=self.train_loader_len)
 
@@ -140,17 +150,16 @@ class IntegratorTransformer():
         )
 
         encoder = Encoder(
-                img_size=21,
-                patch_size=3,
-                num_hiddens=48,
-                mlp_num_hiddens=96,
-                num_heads=8,
-                num_blks= 2,
-                emb_dropout=.3,
-                blk_dropout=.1,
-                          lr=0.1,
-                          )
-
+            img_size=img_size,
+            patch_size=patch_size,
+            num_hiddens=num_hiddens,
+            mlp_num_hiddens=mlp_num_hiddens,
+            num_heads=num_heads,
+            num_blks=num_blks,
+            emb_dropout=emb_dropout,
+            blk_dropout=blk_dropout,
+            lr=lr,
+        )
         # Variational distribution and profile builder
 
         builder = Builder(
