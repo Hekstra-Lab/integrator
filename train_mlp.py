@@ -8,12 +8,12 @@ import pickle
 from integrator.utils import OutWriter
 import json
 
+
 def main(args):
+    os.makedirs(args.out_dir, exist_ok=True)
 
-    os.makedirs(args.out_dir,exist_ok=True)
-
-    with open(os.path.join(args.out_dir,'hyperparameters.json'),'w') as f:
-        json.dump(vars(args),f,indent=4)
+    with open(os.path.join(args.out_dir, "hyperparameters.json"), "w") as f:
+        json.dump(vars(args), f, indent=4)
 
     model = MixtureModel3DMVN(
         depth=args.depth,
@@ -32,9 +32,9 @@ def main(args):
         prior_I=torch.distributions.exponential.Exponential(rate=torch.tensor(1.0)),
         prior_bg=torch.distributions.exponential.Exponential(rate=torch.tensor(1.0)),
         device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-        shoebox_file = args.shoebox_file,
-        metadata_file = args.metadata_file,
-        dead_pixel_mask = args.dead_pixel_mask,
+        shoebox_file=args.shoebox_file,
+        metadata_file=args.metadata_file,
+        dead_pixel_mask=args.dead_pixel_mask,
         subset_size=args.subset_size,
         p_I_scale=args.p_I_scale,
         p_bg_scale=args.p_bg_scale,
@@ -42,8 +42,15 @@ def main(args):
         bg_indicator=None,
     )
 
-    data_module = model.LoadData()
-    trainer, integrator_model = model.BuildModel()
+    data_module = model.LoadData(
+        subset_size=args.subset_size,
+        val_split=args.val_split,
+    )
+
+    trainer, integrator_model = model.BuildModel(
+        precision=args.precision,
+    )
+
     trainer.fit(integrator_model, data_module)
 
     # Write outputs to reflection table
@@ -85,7 +92,6 @@ def main(args):
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
@@ -176,7 +182,7 @@ if __name__ == "__main__":
         "--out_dir",
         type=str,
         required=True,
-        default='./out/out_mlp/',
+        default="./out/out_mlp/",
         help="Directory to store the outputs",
     )
 
@@ -186,7 +192,7 @@ if __name__ == "__main__":
         default=0.0001,
         help="Intensity prior distribution weight",
     )
-    
+
     parser.add_argument(
         "--p_bg_scale",
         type=float,
@@ -194,12 +200,7 @@ if __name__ == "__main__":
         help="Background prior distribution weight",
     )
 
-    parser.add_argument(
-            "--subset_ratio", 
-        type=float, 
-        default=1, 
-        help="Subset ratio"
-            )
+    parser.add_argument("--subset_ratio", type=float, default=1, help="Subset ratio")
 
     parser.add_argument(
         "--num_components",
@@ -211,14 +212,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--refl_file_name",
         type=str,
-        default='./data/hewl_816/reflections_.refl',
+        default="./data/hewl_816/reflections_.refl",
         help="Reflection file name",
     )
 
     parser.add_argument(
         "--out_filename",
         type=str,
-        default='out.refl',
+        default="out.refl",
         help="Output filename",
     )
 
@@ -227,67 +228,79 @@ if __name__ == "__main__":
         type=int,
         default=410000,
         help="Cardinatlity of data subset",
-        )
+    )
 
     parser.add_argument(
         "--bg_indicator",
         type=BackgroundIndicator(),
-        default = None,
+        default=None,
         help="Background indicator",
-        )
+    )
 
     parser.add_argument(
-        "--shoebox_file", 
-        type=str, 
+        "--shoebox_file",
+        type=str,
         default="./data/hewl_816/samples.pt",
-        )
-
+    )
 
     parser.add_argument(
-        "--metadata_file", 
-        type=str, 
+        "--metadata_file",
+        type=str,
         default="./data/hewl_816/metadata.pt",
-            )
+    )
 
     parser.add_argument(
-        "--dead_pixel_mask", 
-        type=str, 
+        "--dead_pixel_mask",
+        type=str,
         default="./data/hewl_816/masks.pt",
-        )
+    )
+    parser.add_argument(
+        "--val_split",
+        type=float,
+        default=0.3,
+        help="Validation split",
+    )
+    parser.add_argument(
+        "--precision",
+        type=int,
+        default=32,
+        help="Precision",
+    )
 
     args = parser.parse_args()
     main(args)
 
+
 # %%
 
 # arg_defaults = {
-    # "learning_rate": 0.001,
-    # "batch_size": 10,
-    # "epochs": 1000,
-    # "n_cycle": 4,
-    # "depth": 10,
-    # "dmodel": 64,
-    # "feature_dim": 7,
-    # "dropout": None,
-    # "anneal": False,
-    # "beta": 1.0,
-    # "mc_samples": 100,
-    # "max_size": 1024,
-    # "eps": 1e-5,
-    # "out_dir": "./",
-    # "p_I_scale": 0.0001,
-    # "p_bg_scale": 0.0001,
-    # "subset_ratio": 0.1,
-    # "num_components": 3,
-    # "subset_size": 2,
-    # "bg_indicator": BackgroundIndicator(),
+# "learning_rate": 0.001,
+# "batch_size": 10,
+# "epochs": 1000,
+# "n_cycle": 4,
+# "depth": 10,
+# "dmodel": 64,
+# "feature_dim": 7,
+# "dropout": None,
+# "anneal": False,
+# "beta": 1.0,
+# "mc_samples": 100,
+# "max_size": 1024,
+# "eps": 1e-5,
+# "out_dir": "./",
+# "p_I_scale": 0.0001,
+# "p_bg_scale": 0.0001,
+# "subset_ratio": 0.1,
+# "num_components": 3,
+# "subset_size": 2,
+# "bg_indicator": BackgroundIndicator(),
 # }
 
 # args = argparse.Namespace()
 
 # for key, value in arg_defaults.items():
-    # if not hasattr(args, key):
-        # setattr(args, key, value)
+# if not hasattr(args, key):
+# setattr(args, key, value)
 
 # main(args)
 
@@ -296,30 +309,30 @@ if __name__ == "__main__":
 
 # # Model Specifications
 # model = MixtureModel3DMVN(
-    # depth=10,
-    # dmodel=32,
-    # feature_dim=7,
-    # dropout=0.5,
-    # beta=1.0,
-    # mc_samples=100,
-    # max_size=1024,
-    # eps=1e-5,
-    # batch_size=10,
-    # learning_rate=0.001,
-    # epochs=10,
-    # intensity_dist=torch.distributions.gamma.Gamma,
-    # background_dist=torch.distributions.gamma.Gamma,
-    # prior_I=torch.distributions.exponential.Exponential(rate=torch.tensor(0.05)),
-    # prior_bg=rsd.FoldedNormal(0, 0.1),
-    # device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-    # shoebox_file="./samples.pt",
-    # metadata_file="./metadata.pt",
-    # dead_pixel_mask_file="./masks.pt",
-    # subset_size=100,
-    # p_I_scale=0.0001,
-    # p_bg_scale=0.0001,
-    # num_components=3,
-    # bg_indicator=BackgroundIndicator(),
+# depth=10,
+# dmodel=32,
+# feature_dim=7,
+# dropout=0.5,
+# beta=1.0,
+# mc_samples=100,
+# max_size=1024,
+# eps=1e-5,
+# batch_size=10,
+# learning_rate=0.001,
+# epochs=10,
+# intensity_dist=torch.distributions.gamma.Gamma,
+# background_dist=torch.distributions.gamma.Gamma,
+# prior_I=torch.distributions.exponential.Exponential(rate=torch.tensor(0.05)),
+# prior_bg=rsd.FoldedNormal(0, 0.1),
+# device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+# shoebox_file="./samples.pt",
+# metadata_file="./metadata.pt",
+# dead_pixel_mask_file="./masks.pt",
+# subset_size=100,
+# p_I_scale=0.0001,
+# p_bg_scale=0.0001,
+# num_components=3,
+# bg_indicator=BackgroundIndicator(),
 # )
 
 # # Load Data
@@ -333,6 +346,6 @@ if __name__ == "__main__":
 
 # # Write outputs
 # outwriter = OutWriter(
-    # integrator_model, "reflections_.refl", "integrator_preds_test_2024-08-08.refl"
+# integrator_model, "reflections_.refl", "integrator_preds_test_2024-08-08.refl"
 # )
 # outwriter.write_output()

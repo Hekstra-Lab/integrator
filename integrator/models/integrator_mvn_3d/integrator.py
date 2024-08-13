@@ -40,8 +40,6 @@ class Integrator(pytorch_lightning.LightningModule):
         decoder,
         loss_model,
         total_steps,
-        n_cycle=4,
-        ratio=1.0,
         lr=0.001,
         max_epochs=10,
         penalty_scale=0.0,
@@ -131,7 +129,9 @@ class Integrator(pytorch_lightning.LightningModule):
             (
                 sbox,
                 mask,
-            ) = sbox.to(device), mask.to(device)
+            ) = sbox.to(
+                device
+            ), mask.to(device)
 
             nll, kl_term, rate, q_I, profile, q_bg, counts, L = self(sbox, mask)
 
@@ -140,7 +140,7 @@ class Integrator(pytorch_lightning.LightningModule):
             self.training_step_loss.append(loss)
             self.log("train_loss", loss, prog_bar=True)
 
-            if self.current_epoch == self.trainer.max_epochs - 1:
+            if self.current_epoch == self.max_epochs - 1:
                 self.training_preds["q_I_mean"].extend(
                     q_I.mean.detach().cpu().ravel().tolist()
                 )
@@ -206,7 +206,7 @@ class Integrator(pytorch_lightning.LightningModule):
 
         self.log("val_loss", loss, prog_bar=True, sync_dist=True)
 
-        if self.current_epoch == self.trainer.max_epochs - 1:
+        if self.current_epoch == self.max_epochs - 1:
             self.validation_preds["q_I_mean"].extend(
                 q_I.mean.detach().cpu().ravel().tolist()
             )

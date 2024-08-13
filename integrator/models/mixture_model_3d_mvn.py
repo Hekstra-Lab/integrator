@@ -1,11 +1,12 @@
 import torch
-
 from integrator.io import ShoeboxDataModule
-
 from rs_distributions import distributions as rsd
-
 from pytorch_lightning import Trainer
-from pytorch_lightning.callbacks import ModelCheckpoint, TQDMProgressBar,DeviceStatsMonitor
+from pytorch_lightning.callbacks import (
+    ModelCheckpoint,
+    TQDMProgressBar,
+    DeviceStatsMonitor,
+)
 from pytorch_lightning.loggers import TensorBoardLogger
 
 from integrator.layers import Standardize
@@ -22,7 +23,7 @@ from integrator.models.integrator_mvn_3d import IntensityDistribution
 from integrator.models.integrator_mvn_3d import Integrator
 
 
-class MixtureModel3DMVN():
+class MixtureModel3DMVN:
     def __init__(
         self,
         depth=10,
@@ -76,18 +77,25 @@ class MixtureModel3DMVN():
         self.num_components = num_components
         self.bg_indicator = bg_indicator
 
-    def LoadData(self):
+    def LoadData(
+        self,
+        subset_size=10,
+        val_split=0.3,
+        test_split=0.1,
+        include_test=False,
+        single_sample_index=None,
+    ):
         # Initialize the DataModule
         data_module = ShoeboxDataModule(
             shoebox_data=self.shoebox_file,
             metadata=self.metadata_file,
             dead_pixel_mask=self.dead_pixel_mask,
             batch_size=self.batch_size,
-            val_split=0.3,
-            test_split=0.1,
-            include_test=False,
-            subset_size=self.subset_size,
-            single_sample_index=None,
+            val_split=val_split,
+            test_split=test_split,
+            include_test=include_test,
+            subset_size=subset_size,
+            single_sample_index=single_sample_index,
         )
 
         # Setup data module
@@ -99,8 +107,7 @@ class MixtureModel3DMVN():
 
         return data_module
 
-    def BuildModel(self):
-
+    def BuildModel(self, precision=32):
         # Intensity prior distribution
         standardization = Standardize(max_counts=self.train_loader_len)
 
@@ -150,7 +157,6 @@ class MixtureModel3DMVN():
             decoder,
             loss_model,
             total_steps=steps,
-            n_cycle=4,
             lr=self.learning_rate,
             max_epochs=self.epochs,
             penalty_scale=0.0,
@@ -179,10 +185,10 @@ class MixtureModel3DMVN():
             accelerator="gpu",  # Use "cpu" for CPU training
             devices="auto",
             num_nodes=1,
-            precision="32",  # Use 32-bit precision for CPU
+            precision=precision,  # Use 32-bit precision for CPU
             accumulate_grad_batches=1,
             check_val_every_n_epoch=1,
-            callbacks=[checkpoint_callback, progress_bar,device_stats],
+            callbacks=[checkpoint_callback, progress_bar, device_stats],
             logger=logger,
             log_every_n_steps=10,
         )

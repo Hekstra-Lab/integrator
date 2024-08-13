@@ -99,7 +99,7 @@ class ProfilePredictor(torch.nn.Module):
         out = self.mlp_1(sum)
         pooled_out = self.mean_pool(out, mask)
         out = self.linear(pooled_out)
-        out = torch.softmax(out, axis=-1)
+        out = torch.softmax(out, dim=-1)
         out = out.squeeze(-2)
 
         return out
