@@ -10,6 +10,8 @@ import pickle
 import os
 import json
 
+torch.set_float32_matmul_precision("medium")
+
 
 def main(args):
     os.makedirs(args.out_dir, exist_ok=True)
@@ -63,6 +65,7 @@ def main(args):
         maxpool_kernel_size=args.maxpool_kernel_size,
         maxpool_stride=args.maxpool_stride,
         maxpool_padding=args.maxpool_padding,
+        precision=args.precision,
     )
 
     trainer.fit(integrator_model, data_module)
@@ -326,6 +329,11 @@ if __name__ == "__main__":
         "--maxpool_padding",
         type=int,
         default=0,
+    )
+    parser.add_argument(
+        "--precision",
+        type=str,
+        default="32",
     )
 
     args = parser.parse_args()
