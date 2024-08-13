@@ -58,10 +58,12 @@ class Profile(torch.nn.Module):
 
             zero_means = torch.zeros((batch_size, 1, 3), device=representation.device)
 
-            means = torch.cat([zero_means, means], dim=1)
+            means = torch.cat([zero_means, means], dim=1).to(torch.float32)
 
-            scales = self.scale_layer(representation).view(
-                batch_size, self.num_components, 6
+            scales = (
+                self.scale_layer(representation)
+                .view(batch_size, self.num_components, 6)
+                .to(torch.float32)
             )
 
             L = self.L_transform(scales)
