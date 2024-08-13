@@ -6,8 +6,8 @@ class Loss(torch.nn.Module):
         self,
         beta=1.0,
         eps=1e-5,
-        prior_I=None,
-        prior_bg=None,
+        prior_I=torch.distributions.exponential.Exponential(1.0),
+        prior_bg=torch.distributions.exponential.Exponential(1.0),
         p_I_scale=0.001,
         p_bg_scale=0.001,
     ):

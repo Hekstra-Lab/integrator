@@ -22,7 +22,6 @@ from integrator.models.integrator_mvn_transformer import Profile
 from integrator.io import ShoeboxDataModule
 
 from integrator.layers import Standardize
-from integrator.layers import Linear
 
 
 class IntegratorTransformer:

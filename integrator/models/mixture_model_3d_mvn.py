@@ -49,7 +49,7 @@ class MixtureModel3DMVN:
         p_I_scale=0.0001,
         p_bg_scale=0.0001,
         num_components=1,
-        bg_indicator=None,
+        bg_indicator=False,
     ):
         super().__init__()
         self.depth = depth
@@ -75,7 +75,13 @@ class MixtureModel3DMVN:
         self.p_I_scale = p_I_scale
         self.p_bg_scale = p_bg_scale
         self.num_components = num_components
-        self.bg_indicator = bg_indicator
+        if bg_indicator:
+            self.bg_indicator = BackgroundIndicator()
+        else:
+            self.bg_indicator = None
+
+
+
 
     def LoadData(
         self,

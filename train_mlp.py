@@ -8,6 +8,8 @@ import pickle
 from integrator.utils import OutWriter
 import json
 
+torch.set_float32_matmul_precision("medium")
+
 
 def main(args):
     os.makedirs(args.out_dir, exist_ok=True)
@@ -39,7 +41,7 @@ def main(args):
         p_I_scale=args.p_I_scale,
         p_bg_scale=args.p_bg_scale,
         num_components=args.num_components,
-        bg_indicator=None,
+        bg_indicator=args.bg_indicator,
     )
 
     data_module = model.LoadData(
@@ -232,8 +234,8 @@ if __name__ == "__main__":
 
     parser.add_argument(
         "--bg_indicator",
-        type=BackgroundIndicator(),
-        default=None,
+        type=bool,
+        default=False,
         help="Background indicator",
     )
 
