@@ -21,10 +21,9 @@ class Decoder(torch.nn.Module):
         bg = q_bg.rsample([mc_samples])
 
         if use_bg_profile:
-            rate = (
-                z.permute(1, 0, 2) * profile.unsqueeze(1)
-                + bg.permute(1, 0, 2) 
-            )
+            rate = z.permute(1, 0, 2) * profile.unsqueeze(1) + bg.permute(
+                1, 0, 2
+            ) * bg_profile.unsqueeze(1)
         else:
             rate = z.permute(1, 0, 2) * profile.unsqueeze(1) + bg.permute(1, 0, 2)
 

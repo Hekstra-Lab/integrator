@@ -18,7 +18,8 @@ from integrator.models.integrator_mvn_3d_cnn import Profile
 
 torch.set_float32_matmul_precision("high")
 
-class IntegratorCNN():
+
+class IntegratorCNN:
     def __init__(
         self,
         depth=10,
@@ -44,7 +45,7 @@ class IntegratorCNN():
         p_I_scale=0.0001,
         p_bg_scale=0.0001,
         num_components=5,
-        num_workers = 4,
+        num_workers=4,
         bg_indicator=BackgroundIndicator(dmodel=64),
     ):
         super().__init__()
@@ -71,7 +72,7 @@ class IntegratorCNN():
         self.p_I_scale = p_I_scale
         self.p_bg_scale = p_bg_scale
         self.num_components = num_components
-        self.num_workers = num_workers,
+        self.num_workers = num_workers
 
         self.bg_indicator = bg_indicator
         if self.bg_indicator is not None:
@@ -79,16 +80,16 @@ class IntegratorCNN():
         else:
             self.use_bg_profile = False
 
-    def LoadData(self):
+    def LoadData(self, val_split=0.3, test_split=0.1):
         # Initialize the DataModule
         data_module = ShoeboxDataModule(
             shoebox_data=self.shoebox_file,
             metadata=self.metadata_file,
             dead_pixel_mask=self.dead_pixel_mask_file,
             batch_size=self.batch_size,
-            val_split=0.3,
-            test_split=0.1,
-            num_workers= self.num_workers,
+            val_split=val_split,
+            test_split=test_split,
+            num_workers=self.num_workers,
             include_test=False,
             subset_size=self.subset_size,
             single_sample_index=None,
@@ -103,7 +104,24 @@ class IntegratorCNN():
 
         return data_module
 
-    def BuildModel(self):
+    def BuildModel(
+        self,
+        use_bn=True,
+        conv1_in_channel=3,
+        conv1_out_channel=64,
+        conv1_kernel_size=3,
+        conv1_stride=1,
+        conv1_padding=1,
+        layer1_num_blocks=3,
+        conv2_out_channel=128,
+        layer2_stride=1,
+        layer2_num_blocks=3,
+        maxpool_in_channel=64,
+        maxpool_out_channel=64,
+        maxpool_kernel_size=2,
+        maxpool_stride=2,
+        maxpool_padding=0,
+    ):
         # Intensity prior distribution
         standardization = Standardize(max_counts=self.train_loader_len)
 
@@ -117,7 +135,24 @@ class IntegratorCNN():
             self.dmodel, self.intensity_dist
         )
 
-        encoder = Encoder()
+        encoder = Encoder(
+            use_bn=use_bn,
+            conv1_in_channel=conv1_in_channel,
+            conv1_out_channel=conv1_out_channel,
+            conv1_kernel_size=conv1_kernel_size,
+            conv1_stride=conv1_stride,
+            conv1_padding=conv1_padding,
+            layer1_num_blocks=layer1_num_blocks,
+            conv2_out_channel=conv2_out_channel,
+            layer2_stride=layer2_stride,
+            layer2_num_blocks=layer2_num_blocks,
+            maxpool_in_channel=maxpool_in_channel,
+            maxpool_out_channel=maxpool_out_channel,
+            maxpool_kernel_size=maxpool_kernel_size,
+            maxpool_stride=maxpool_stride,
+            maxpool_padding=maxpool_padding,
+        )
+
         # Variational distribution and profile builder
 
         builder = DistributionBuilder(
