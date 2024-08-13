@@ -191,11 +191,9 @@ class IntegratorTransformer:
             decoder,
             loss_model,
             total_steps=steps,
-            n_cycle=4,
             lr=self.learning_rate,
             max_epochs=self.epochs,
             penalty_scale=0.0,
-            use_bg_profile=self.use_bg_profile,
         )
 
         logger = TensorBoardLogger(

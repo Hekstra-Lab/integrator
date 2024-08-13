@@ -43,7 +43,7 @@ def main(args):
         p_I_scale=args.p_I_scale,
         p_bg_scale=args.p_bg_scale,
         num_components=args.num_components,
-        bg_indicator=None,
+        bg_indicator=args.bg_indicator,
         patch_size=7,
         img_size=21,
         num_hiddens=24,
@@ -242,7 +242,8 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--bg_indicator",
-        type=BackgroundIndicator(dmodel=64),
+        type=bool,
+        default=False,
         help="Background indicator",
     )
     parser.add_argument(
