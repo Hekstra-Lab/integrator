@@ -110,7 +110,7 @@ if __name__ == "__main__":
     parser.add_argument("--subset_size", type=int, default=410000)
     parser.add_argument("--p_I_scale", type=float, default=0.0001)
     parser.add_argument("--p_bg_scale", type=float, default=0.0001)
-    parser.add_argument("--num_components", type=int, default=5)
+    parser.add_argument("--num_components", type=int, default=3)
     parser.add_argument("--refl_file_name", default='./data/hewl_816/reflections_.refl',type=str)
     parser.add_argument("--out_filename", type=str,default='out.refl',)
     parser.add_argument("--out_dir", type=str, default="./out/out_resnet/")

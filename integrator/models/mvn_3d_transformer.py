@@ -141,12 +141,12 @@ class IntegratorTransformer():
 
         encoder = Encoder(
                 img_size=21,
-                patch_size=7,
-                num_hiddens=512,
-                mlp_num_hiddens=2048,
+                patch_size=3,
+                num_hiddens=48,
+                mlp_num_hiddens=96,
                 num_heads=8,
                 num_blks= 2,
-                emb_dropout=.1,
+                emb_dropout=.3,
                 blk_dropout=.1,
                           lr=0.1,
                           )

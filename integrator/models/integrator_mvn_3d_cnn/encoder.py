@@ -47,15 +47,17 @@ class Encoder(nn.Module):
     def __init__(self, use_bn=True):
         super(Encoder, self).__init__()
         self.use_bn = use_bn
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=0, bias=False)
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
         if self.use_bn:
             self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
+        #self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
+        self.maxpool = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=2, stride=2, padding=0, bias=False)
+        #self.maxpool = nn.Conv2d(kernel_size=2, stride=2, padding=1)
 
         # Define the layers in the sequence they are applied
-        self.layer1 = self._make_layer(64, 64, 4, use_bn=self.use_bn)
-#        self.layer2 = self._make_layer(64, 128, 3, stride=2, use_bn=self.use_bn)
+        self.layer1 = self._make_layer(64, 64, 3, use_bn=self.use_bn)
+        self.layer2 = self._make_layer(64, 128, 3,stride=1, use_bn=self.use_bn)
         # self.layer3 = self._make_layer(128, 256, 3, stride=2, use_bn=self.use_bn)
         # self.layer4 = self._make_layer(256, 512, 2, stride=2, use_bn=self.use_bn)
 
@@ -79,8 +81,8 @@ class Encoder(nn.Module):
         x = self.maxpool(x)
 
         x = self.layer1(x)
-        #x = self.layer2(x)
-        # x = self.layer3(x)
+        x = self.layer2(x)
+        #x = self.layer3(x)
         # x = self.layer4(x)
 
         x = self.avgpool(x)
