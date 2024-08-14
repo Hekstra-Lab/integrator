@@ -55,11 +55,11 @@ class Profile(torch.nn.Module):
 
             zero_means = torch.zeros((batch_size, 1, 3), device=representation.device)
 
-            means = torch.cat([zero_means, means], dim=1)
+            means = torch.cat([zero_means, means], dim=1).to(torch.float32)
 
             scales = self.scale_layer(representation).view(batch_size, num_components, 6)
 
-            L = FillScaleTriL(diag_transform=SoftplusTransform())(scales)
+            L = FillScaleTriL(diag_transform=SoftplusTransform())(scales).to(torch.float32)
 
             mvn = MultivariateNormal(means, scale_tril=L)
 

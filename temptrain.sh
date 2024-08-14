@@ -2,6 +2,9 @@
 #SBATCH -c 4
 #SBATCH -N 1
 #SBATCH -p gpu_test
+
+
+
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks-per-node=1
 #SBATCH -t 0-03:00

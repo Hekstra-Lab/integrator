@@ -72,17 +72,19 @@ class Integrator(pytorch_lightning.LightningModule):
     ):
         counts = torch.clamp(shoebox[..., -1], min=0)
 
-        # shoebox_ = self.standardize(shoebox, dead_pixel_mask.squeeze(-1))
+        shoebox_ = self.standardize(shoebox, dead_pixel_mask.squeeze(-1))
 
         dxyz = shoebox[..., 3:6]
 
-        # counts_ = shoebox_[..., -1].reshape(shoebox.size(0), 3, 21, 21)
+        counts_ = shoebox_[..., -1].reshape(shoebox.size(0), 3, 21, 21)
+
         batch_size = counts.size(0)
 
-        # counts_ = counts_ * dead_pixel_mask.reshape(batch_size, 3, 21, 21)
-        counts_ = counts.reshape(batch_size, 3, 21, 21) * dead_pixel_mask.reshape(
-            batch_size, 3, 21, 21
-        )
+        counts_ = counts_ * dead_pixel_mask.reshape(batch_size, 3, 21, 21)
+
+        #counts_ = counts.reshape(batch_size, 3, 21, 21) * dead_pixel_mask.reshape(
+        #    batch_size, 3, 21, 21
+        #)
 
         # x = shoebox_[..., 0].reshape(shoebox.size(0), 3, 21, 21)[:, 0, :, :]
         # y = shoebox_[..., 1].reshape(shoebox.size(0), 3, 21, 21)[:, 0, :, :]

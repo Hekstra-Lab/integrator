@@ -23,8 +23,8 @@ class Residual(nn.Module):
         if self.use_bn:
             self.bn1 = nn.BatchNorm2d(out_channels)
             self.bn2 = nn.BatchNorm2d(out_channels)
-            if self.conv3:
-                self.bn3 = nn.BatchNorm2d(out_channels)
+#            if self.conv3:
+#                self.bn3 = nn.BatchNorm2d(out_channels)
 
     def forward(self, X):
         Y = self.conv1(X)
@@ -37,8 +37,8 @@ class Residual(nn.Module):
 
         if self.conv3:
             X = self.conv3(X)
-            if self.use_bn:
-                X = self.bn3(X)
+            #if self.use_bn:
+            #    X = self.bn3(X)
         Y += X
         return F.relu(Y)
 
@@ -49,18 +49,18 @@ class Encoder(nn.Module):
         use_bn=True,
         conv1_in_channel=3,
         conv1_out_channel=64,
-        conv1_kernel_size=3,
-        conv1_stride=1,
-        conv1_padding=1,
+        conv1_kernel_size=7,
+        conv1_stride=2,
+        conv1_padding=3,
         layer1_num_blocks=3,
         conv2_out_channel=128,
         layer2_stride=1,
         layer2_num_blocks=3,
         maxpool_in_channel=64,
         maxpool_out_channel=64,
-        maxpool_kernel_size=2,
+        maxpool_kernel_size=3,
         maxpool_stride=2,
-        maxpool_padding=0,
+        maxpool_padding=1,
     ):
         super(Encoder, self).__init__()
         self.use_bn = use_bn
@@ -75,28 +75,27 @@ class Encoder(nn.Module):
         if self.use_bn:
             self.bn1 = nn.BatchNorm2d(conv1_out_channel)
         self.relu = nn.ReLU(inplace=True)
-        # self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
-        self.maxpool = nn.Conv2d(
-            in_channels=maxpool_in_channel,
-            out_channels=maxpool_out_channel,
-            kernel_size=maxpool_kernel_size,
-            stride=maxpool_stride,
-            padding=maxpool_padding,
-            bias=False,
-        )
-        # self.maxpool = nn.Conv2d(kernel_size=2, stride=2, padding=1)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=1, padding=0)
+#        self.maxpool = nn.Conv2d(
+#            in_channels=maxpool_in_channel,
+#            out_channels=maxpool_out_channel,
+#            kernel_size=maxpool_kernel_size,
+#            stride=maxpool_stride,
+#            padding=maxpool_padding,
+#            bias=False,
+#        )
 
         # Define the layers in the sequence they are applied
         self.layer1 = self._make_layer(
             conv1_out_channel, conv1_out_channel, layer1_num_blocks, use_bn=self.use_bn
         )
-        self.layer2 = self._make_layer(
-            conv1_out_channel,
-            conv2_out_channel,
-            layer2_num_blocks,
-            stride=layer2_stride,
-            use_bn=self.use_bn,
-        )
+        #self.layer2 = self._make_layer(
+        #    conv1_out_channel,
+        #    conv2_out_channel,
+        #    layer2_num_blocks,
+        #    stride=layer2_stride,
+        #    use_bn=self.use_bn,
+        #)
         # self.layer3 = self._make_layer(128, 256, 3, stride=2, use_bn=self.use_bn)
         # self.layer4 = self._make_layer(256, 512, 2, stride=2, use_bn=self.use_bn)
 
@@ -120,7 +119,7 @@ class Encoder(nn.Module):
         x = self.maxpool(x)
 
         x = self.layer1(x)
-        x = self.layer2(x)
+        #x = self.layer2(x)
         # x = self.layer3(x)
         # x = self.layer4(x)
 

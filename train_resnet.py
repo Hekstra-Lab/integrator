@@ -10,8 +10,6 @@ import pickle
 import os
 import json
 
-torch.set_float32_matmul_precision("medium")
-
 
 def main(args):
     os.makedirs(args.out_dir, exist_ok=True)
@@ -35,6 +33,7 @@ def main(args):
         background_dist=torch.distributions.gamma.Gamma,
         prior_I=torch.distributions.exponential.Exponential(rate=torch.tensor(1.0)),
         prior_bg=torch.distributions.exponential.Exponential(rate=torch.tensor(1.0)),
+        #prior_bg= rsd.FoldedNormal(0,1.0),
         device=args.device,
         shoebox_file=args.shoebox_file,
         metadata_file=args.metadata_file,
@@ -47,7 +46,7 @@ def main(args):
         #        num_workers = 4
     )
 
-    data_module = model.LoadData()
+    data_module = model.LoadData(args.val_split)
 
     trainer, integrator_model = model.BuildModel(
         use_bn=args.use_bn,
@@ -257,7 +256,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--use_bn",
         type=bool,
-        default=False,
+        default=True,
         help="Use batch normalization",
     )
     parser.add_argument(
@@ -283,7 +282,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--conv1_padding",
         type=int,
-        default=1,
+        default=0,
     )
     parser.add_argument(
         "--layer1_num_blocks",
@@ -328,13 +327,19 @@ if __name__ == "__main__":
     parser.add_argument(
         "--maxpool_padding",
         type=int,
-        default=0,
+        default=1,
     )
     parser.add_argument(
         "--precision",
         type=str,
         default="32",
     )
+    parser.add_argument(
+            "--val_split",
+            type=float,
+            default=0.3,
+            help="Validation split",
+            )
 
     args = parser.parse_args()
 

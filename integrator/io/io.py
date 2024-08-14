@@ -727,10 +727,10 @@ class ShoeboxDataModule(pytorch_lightning.LightningDataModule):
             self.test_dataset = None
 
     def train_dataloader(self):
-        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, num_workers = 3)
+        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, num_workers = 3,drop_last=True)
 
     def val_dataloader(self):
-        return DataLoader(self.val_dataset, batch_size=self.batch_size,shuffle=False,num_workers=3)
+        return DataLoader(self.val_dataset, batch_size=self.batch_size,shuffle=False,num_workers=3,drop_last=True)
 
     def test_dataloader(self):
         if self.include_test:
