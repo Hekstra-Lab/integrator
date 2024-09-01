@@ -1,46 +1,25 @@
 from setuptools import setup, find_packages
 
-# Get version number
-def getVersionNumber():
-    with open("integrator/VERSION", "r") as vfile:
-        version = vfile.read().strip()
-    return version
-
-
-__version__ = getVersionNumber()
-
-PROJECT_URLS = {
-}
-
-
-LONG_DESCRIPTION = """
-"""
-
 setup(
-    name="integrator",
-    version=__version__,
-    author="Kevin M. Dalton",
-    author_email="kmdalton@fas.harvard.edu",
-    license="MIT",
+    name="yourpackage",
+    version="0.1.0",
+    description="Your modified package description.",
+    long_description=open("README.md").read(),
+    long_description_content_type="text/markdown",
+    author="Your Name",
+    author_email="your.email@example.com",
+    url="https://github.com/yourusername/yourpackage",  # Your forked repo URL
+    packages=find_packages(where="src"),
+    package_dir={"": "src"},
     include_package_data=True,
-    packages=find_packages(),
-    long_description=LONG_DESCRIPTION,
-    description="Merging crystallography data without much physics.",
-    project_urls=PROJECT_URLS,
-    python_requires=">=3.8,<3.12",
-    url="https://github.com/kmdalton/integrator",
     install_requires=[
-        "reciprocalspaceship>=0.9.16",
-        "tqdm",
-        "matplotlib",
-        "seaborn",
+        "some_dependency",
+        # Add other dependencies here
     ],
-    scripts=[
+    classifiers=[
+        "Programming Language :: Python :: 3",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: OS Independent",
     ],
-    entry_points={
-        "console_scripts": [
-        ]
-    },
-    setup_requires=["pytest-runner"],
-    tests_require=["pytest", "pytest-cov", "pytest-xdist>=3"],
+    python_requires=">=3.7",
 )
