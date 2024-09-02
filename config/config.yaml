@@ -1,0 +1,46 @@
+# config.yaml
+#
+# Model Specification
+encoder_type: "FcResNet"  # FcResNet or CNNResNet
+profile_type: "SoftmaxProfile"  # MVNProfile Or SoftmaxProfile
+
+# training
+epochs: 2 # number of epochs
+dmodel: 64 # hidden layer size
+p_I_scale: 0.0001 # scale for prior intensity
+p_bg_scale: 0.0001 # scale for prior background
+
+# Data
+# Paths relative to /integrator/data/
+shoebox_data: "simulated_hewl_816/simulated_samples.pt"
+metadata: "simulated_hewl_816/simulated_metadata.pt"
+dead_pixel_mask: "simulated_hewl_816/simulated_masks.pt"
+
+# DataLoader
+batch_size: 8 # batch size
+val_split: 0.2 # validation split
+test_split: 0.1
+num_workers: 1
+include_test: False
+subset_size: 15 # number of samples to use for training
+single_sample_index: null
+
+# CNNResNet Specific
+C: 6 # number of channels
+Z: 3 # number of images
+H: 21 # shoebox height
+W: 21 # shoebox width
+rank: 5 # number of rank-1 tensors for tensor decomposition
+
+
+# FcResNet Specific
+depth: 10 # network depth
+feature_dim: 7 # number of features for FCResNet
+
+# Misc
+dropout: null # dropout rate
+
+input_dim: 64 # input dimension
+channels: 3
+height: 21
+width: 21
