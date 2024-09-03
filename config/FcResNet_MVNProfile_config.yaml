@@ -1,0 +1,43 @@
+epochs: 800
+dmodel: 64
+batch_size: 200
+val_split: 0.2
+test_split: 0.1
+num_workers: 1
+include_test: false
+subset_size: 1000
+single_sample_index: null
+C: 6
+Z: 3
+H: 21
+W: 21
+rank: 5
+depth: 10
+feature_dim: 7
+dropout: null
+input_dim: 64
+channels: 3
+height: 21
+width: 21
+p_I_scale: 0.0001
+p_bg_scale: 0.0001
+p_I:
+  distribution: Exponential
+  rate: 0.1
+p_bg:
+  distribution: Exponential
+  rate: 0.1
+q_I:
+  distribution: Gamma
+q_bg:
+  distribution: Gamma
+accelerator: gpu
+precision: 32
+learning_rate: 0.001
+total_steps: null
+shoebox_data: simulated_hewl_816/simulated_samples.pt
+metadata: simulated_hewl_816/simulated_metadata.pt
+dead_pixel_mask: simulated_hewl_816/simulated_masks.pt
+name: FcResNet_MVNProfile
+encoder_type: FcResNet
+profile_type: MVNProfile
