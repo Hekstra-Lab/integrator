@@ -1,9 +1,8 @@
 import yaml
 import os
 
-# Base configuration with focused parameters
+# Base configuration 
 base_config = {
-    # Existing parameters
     "epochs": 800,
     "dmodel": 64,
     "batch_size": 200,
@@ -25,8 +24,6 @@ base_config = {
     "channels": 3,
     "height": 21,
     "width": 21,
-
-    # Focused parameters
     "p_I_scale": 0.0001,
     "p_bg_scale": 0.0001,
     "p_I": {
@@ -52,7 +49,7 @@ base_config = {
     "dead_pixel_mask": "simulated_hewl_816/simulated_masks.pt"
 }
 
-# Configurations to generate
+# Configurations
 configs = [
     {"name": "CNNResNet_MVNProfile", "encoder_type": "CNNResNet", "profile_type": "MVNProfile"},
     {"name": "CNNResNet_SoftmaxProfile", "encoder_type": "CNNResNet", "profile_type": "SoftmaxProfile"},
@@ -63,7 +60,7 @@ configs = [
 # Ensure the config directory exists
 os.makedirs("config", exist_ok=True)
 
-# Custom YAML representer for None type
+# to handle NONE in yaml file
 def represent_none(self, _):
     return self.represent_scalar('tag:yaml.org,2002:null', 'null')
 
