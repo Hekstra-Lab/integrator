@@ -15,6 +15,7 @@ class ShoeboxDataModule(pl.LightningDataModule):
         include_test=False,
         subset_size=None,
         single_sample_index=None,
+        cutoff=None,
     ):
         super().__init__()
         self.data_dir = data_dir
@@ -25,12 +26,19 @@ class ShoeboxDataModule(pl.LightningDataModule):
         self.subset_size = subset_size
         self.single_sample_index = single_sample_index
         self.num_workers = num_workers
+        self.cutoff = cutoff
 
     def setup(self, stage=None):
         # Load the tensors
-        shoeboxes = torch.load(os.path.join(self.data_dir, 'samples.pt'))
-        metadata = torch.load(os.path.join(self.data_dir, 'metadata.pt'))
-        dead_pixel_mask = torch.load(os.path.join(self.data_dir, 'masks.pt'))
+        shoeboxes = torch.load(os.path.join(self.data_dir, "samples.pt"))
+        metadata = torch.load(os.path.join(self.data_dir, "metadata.pt"))
+        dead_pixel_mask = torch.load(os.path.join(self.data_dir, "masks.pt"))
+
+        if self.cutoff is not None:
+            selection = metadata[:, 0] < self.cutoff
+            shoeboxes = shoeboxes[selection]
+            metadata = metadata[selection]
+            dead_pixel_mask = dead_pixel_mask[selection]
 
         self.H = torch.unique(shoeboxes[..., 0], dim=1).size(-1)
         self.W = torch.unique(shoeboxes[..., 1], dim=1).size(-1)
@@ -45,7 +53,7 @@ class ShoeboxDataModule(pl.LightningDataModule):
 
         # Optionally, create a subset of the dataset
         if self.subset_size is not None and self.subset_size < len(full_dataset):
-            indices = torch.randperm(len(full_dataset))[:self.subset_size]
+            indices = torch.randperm(len(full_dataset))[: self.subset_size]
             full_dataset = Subset(full_dataset, indices)
 
         # Calculate lengths for train/val/test splits
@@ -90,7 +98,7 @@ class ShoeboxDataModule(pl.LightningDataModule):
     def test_dataloader(self):
         if self.include_test:
             return DataLoader(
-                self.test_dataset, 
+                self.test_dataset,
                 batch_size=self.batch_size,
                 num_workers=self.num_workers,
                 pin_memory=True,
