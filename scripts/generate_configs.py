@@ -4,14 +4,14 @@ import os
 # Base configuration with focused parameters
 base_config = {
     # Existing parameters
-    "epochs": 800,
+    "epochs": 30,
     "dmodel": 64,
-    "batch_size": 200,
-    "val_split": 0.2,
+    "batch_size": 50,
+    "val_split": 0.05,
     "test_split": 0.1,
-    "num_workers": 1,
+    "num_workers": 4,
     "include_test": False,
-    "subset_size": 1000,
+    "subset_size": 1900000,
     "single_sample_index": None,
     "C": 6,
     "Z": 3,
@@ -31,11 +31,11 @@ base_config = {
     "p_bg_scale": 0.0001,
     "p_I": {
         "distribution": "Exponential",
-        "rate": 0.1
+        "rate": 1.0
     },
     "p_bg": {
         "distribution": "Exponential",
-        "rate": 0.1
+        "rate": 1.0
     },
     "q_I": {
         "distribution": "Gamma"
@@ -44,20 +44,21 @@ base_config = {
         "distribution": "Gamma"
     },
     "accelerator": "gpu",
-    "precision": 32,
+    "precision": "32",
     "learning_rate": 0.001,
     "total_steps": None,
-    "shoebox_data": "simulated_hewl_816/simulated_samples.pt",
-    "metadata": "simulated_hewl_816/simulated_metadata.pt",
-    "dead_pixel_mask": "simulated_hewl_816/simulated_masks.pt"
+    "shoebox_dir":"hewl_816/",
+    "shoebox_data": "hewl_816/",
+    "metadata": "hewl_816/metadata.pt",
+    "dead_pixel_mask": "hewl_816/masks.pt"
 }
 
 # Configurations to generate
 configs = [
-    {"name": "CNNResNet_MVNProfile", "encoder_type": "CNNResNet", "profile_type": "MVNProfile"},
-    {"name": "CNNResNet_SoftmaxProfile", "encoder_type": "CNNResNet", "profile_type": "SoftmaxProfile"},
-    {"name": "FcResNet_MVNProfile", "encoder_type": "FcResNet", "profile_type": "MVNProfile"},
-    {"name": "FcResNet_SoftmaxProfile", "encoder_type": "FcResNet", "profile_type": "SoftmaxProfile"}
+    {"name": "CNNResNet_MVN", "encoder_type": "CNNResNet", "profile_type": "MVNProfile"},
+    {"name": "CNNResNet_Softmax", "encoder_type": "CNNResNet", "profile_type": "SoftmaxProfile"},
+    {"name": "FcResNet_MVN", "encoder_type": "FcResNet", "profile_type": "MVNProfile"},
+    {"name": "FcResNet_Softmax", "encoder_type": "FcResNet", "profile_type": "SoftmaxProfile"}
 ]
 
 # Ensure the config directory exists
