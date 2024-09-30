@@ -96,6 +96,7 @@ class Integrator(pytorch_lightning.LightningModule):
     ):
         counts = torch.clamp(samples[..., -1], min=0)
         dxyz = samples[..., 3:6]
+        deal_pixel_mask = torch.ones_like(dead_pixel_mask)
         shoebox_ = self.standardize(samples, dead_pixel_mask.squeeze(-1))
 
         representation = self.encoder(shoebox_, dead_pixel_mask)

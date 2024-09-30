@@ -1,12 +1,9 @@
 import yaml
 import os
 
-# Base configuration 
-base_config = {
-<<<<<<< HEAD
-=======
+# Default Config
+default_config = {
     "epochs": 800,
->>>>>>> 0a67c148d1e108ae523b6a15e9967c3bf9a7ef59
     "dmodel": 64,
     "batch_size": 50,
     "val_split": 0.05,
@@ -72,7 +69,7 @@ yaml.SafeDumper.add_representer(type(None), represent_none)
 
 # Generate configs
 for config in configs:
-    full_config = base_config.copy()
+    full_config = default_config.copy()
     full_config.update(config)
     
     filename = f"config/{config['name']}_config.yaml"
