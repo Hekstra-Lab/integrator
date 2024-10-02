@@ -155,6 +155,7 @@ def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
         include_test=config["include_test"],
         subset_size=config["subset_size"],
         single_sample_index=config["single_sample_index"],
+        cutoff=config["cutoff"],
     )
 
     data_module.setup()
