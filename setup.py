@@ -1,42 +1,32 @@
 from setuptools import setup, find_packages
 
-
-# Get version number
-def getVersionNumber():
-    with open("integrator/VERSION", "r") as vfile:
-        version = vfile.read().strip()
-    return version
-
-
-__version__ = getVersionNumber()
-
-PROJECT_URLS = {}
-
-
-LONG_DESCRIPTION = """
-"""
-
 setup(
     name="integrator",
-    version=__version__,
-    author="Kevin M. Dalton",
-    author_email="kmdalton@fas.harvard.edu",
-    license="MIT",
+    version="0.1.0",
+    description="A package for integrating X-ray diffraction data with variational inference.",
+    long_description=open("README.md").read(),
+    long_description_content_type="text/markdown",
+    author="Luis Aldama, Kevin Dalton",
+    author_email="luis_aldama@g.harvard.edu, kmdalton@slac.stanford.edu",
+    url="https://github.com/Hekstra-Lab/integrator/tree/integrator_mvn",
+    packages=find_packages(where="src"),
+    package_dir={"": "src"},
     include_package_data=True,
-    packages=find_packages(),
-    long_description=LONG_DESCRIPTION,
-    description="Merging crystallography data without much physics.",
-    project_urls=PROJECT_URLS,
-    python_requires=">=3.8,<3.12",
-    url="https://github.com/kmdalton/integrator",
     install_requires=[
-        "reciprocalspaceship>=0.9.16",
-        "tqdm",
-        "matplotlib",
-        "seaborn",
+        #      "dials==3.17.dev0",
+        "matplotlib==3.8.2",
+        "numpy>=1.21,<2.0",  # Use a version of numpy compatible with matplotlib
+        "polars==1.6.0",
+        "pytorch_lightning==2.2.1",
+        "rs_distributions==0.0.2",
+        "scipy==1.14.1",
+        "setuptools==69.0.3",
+        "torch==2.1.2",
     ],
-    scripts=[],
-    entry_points={"console_scripts": []},
-    setup_requires=["pytest-runner"],
-    tests_require=["pytest", "pytest-cov", "pytest-xdist>=3"],
+    classifiers=[
+        "Programming Language :: Python :: 3",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: OS Independent",
+    ],
+    python_requires=">=3.7",
 )
