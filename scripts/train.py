@@ -24,7 +24,8 @@ from integrator.utils import OutWriter
 from integrator.utils import Plotter
 from integrator.utils.logger import init_tensorboard_logger
 
-#torch.set_float32_matmul_precision('high')
+# torch.set_float32_matmul_precision('high')
+
 
 def get_experiment_counter(model_type, profile_type, base_dir="logs/outputs"):
     """Get the next experiment number for the given date, model type, and profile type."""
@@ -53,6 +54,7 @@ def get_experiment_counter(model_type, profile_type, base_dir="logs/outputs"):
 
     return counters[key]
 
+
 def generate_experiment_dir(config, base_dir="logs/outputs"):
     """Generate a unique directory for each experiment with a running counter."""
     model_type = config.get("encoder_type", "UnknownModel")
@@ -73,15 +75,19 @@ def generate_experiment_dir(config, base_dir="logs/outputs"):
 
     return experiment_dir
 
+
 def load_config(config_path):
     with open(config_path, "r") as file:
         config = yaml.safe_load(file)
 
     # Resolve paths
     base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data"))
-    config["data_dir"] = os.path.join(base_path, os.path.dirname(config["shoebox_data"]))
+    config["data_dir"] = os.path.join(
+        base_path, os.path.dirname(config["shoebox_data"])
+    )
 
     return config
+
 
 def get_encoder(config):
     encoder_type = config.get("encoder_type")
@@ -106,6 +112,7 @@ def get_encoder(config):
     else:
         raise ValueError(f"Unknown encoder type: {encoder_type}")
 
+
 def get_profile(config):
     profile_type = config.get("profile_type")
 
@@ -121,6 +128,15 @@ def get_profile(config):
         )
     else:
         raise ValueError(f"Unknown profile type: {profile_type}")
+
+
+def get_prior_distribution(config):
+    """Create a torch distribution for priors based on the config."""
+    dist_name = config["distribution"]
+    params = {k: v for k, v in config.items() if k != "distribution"}
+
+    return getattr(torch.distributions, dist_name)(**params)
+
 
 def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
     # Generate a unique directory for this experiment
@@ -152,18 +168,20 @@ def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
     loss = Loss(
         p_I_scale=config["p_I_scale"],
         p_bg_scale=config["p_bg_scale"],
-        p_I=getattr(torch.distributions, config["p_I"]["distribution"])(config["p_I"]["rate"]),
-        #p_bg=getattr(torch.distributions, config["p_bg"]["distribution"])(config["p_bg"]["rate"])
-        p_bg = torch.distributions.normal.Normal(0,0.5)
+        # p_I=getattr(torch.distributions, config["p_I"]["distribution"])(config["p_I"]["rate"]),
+        # p_bg=getattr(torch.distributions, config["p_bg"]["distribution"])(config["p_bg"]["rate"])
+        # p_bg = torch.distributions.normal.Normal(0,0.5),
+        p_I=get_prior_distribution(config["p_I"]),
+        p_bg=get_prior_distribution(config["p_bg"]),
     )
 
     q_bg = BackgroundDistribution(
-        config["dmodel"], 
-        q_bg=getattr(torch.distributions, config["q_bg"]["distribution"])
+        config["dmodel"],
+        q_bg=getattr(torch.distributions, config["q_bg"]["distribution"]),
     )
     q_I = IntensityDistribution(
-        config["dmodel"], 
-        q_I=getattr(torch.distributions, config["q_I"]["distribution"])
+        config["dmodel"],
+        q_I=getattr(torch.distributions, config["q_I"]["distribution"]),
     )
 
     # Define the directory to save images
@@ -197,9 +215,8 @@ def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
     if resume_from_checkpoint:
         print(f"Loading weights from checkpoint: {resume_from_checkpoint}")
         checkpoint = torch.load(resume_from_checkpoint)
-        integrator_model.load_state_dict(checkpoint['state_dict'], strict=False)
+        integrator_model.load_state_dict(checkpoint["state_dict"], strict=False)
         print("Weights loaded successfully")
-
 
     # Setup logging and checkpointing
     checkpoint_callback = ModelCheckpoint(
@@ -231,11 +248,26 @@ def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
 
     return integrator_model, experiment_dir
 
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Training script for integrator model.")
-    parser.add_argument("--config", type=str, default="config/config.yaml", help="Path to the config file.")
-    parser.add_argument("--resume", type=str, help="Path to checkpoint to resume training.")
-    parser.add_argument("--log_dir", type=str, default="logs/outputs", help="Directory where logs will be saved.")
+    parser = argparse.ArgumentParser(
+        description="Training script for integrator model."
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="config/config.yaml",
+        help="Path to the config file.",
+    )
+    parser.add_argument(
+        "--resume", type=str, help="Path to checkpoint to resume training."
+    )
+    parser.add_argument(
+        "--log_dir",
+        type=str,
+        default="logs/outputs",
+        help="Directory where logs will be saved.",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -244,7 +276,9 @@ if __name__ == "__main__":
     log_dir = args.log_dir
     os.makedirs(log_dir, exist_ok=True)
 
-    model, experiment_dir = train(config, resume_from_checkpoint=args.resume, log_dir=args.log_dir)
+    model, experiment_dir = train(
+        config, resume_from_checkpoint=args.resume, log_dir=args.log_dir
+    )
 
     # Ensure the output directory exists
     output_refl_dir = os.path.join(experiment_dir, "out")
@@ -254,7 +288,9 @@ if __name__ == "__main__":
 
     outwriter = OutWriter(
         model,
-        os.path.join("/n/holylabs/LABS/hekstra_lab/Users/laldama/integratorv2/integrator/data/pass1/reflections_.refl"),
+        os.path.join(
+            "/n/holylabs/LABS/hekstra_lab/Users/laldama/integratorv2/integrator/data/pass1/reflections_.refl"
+        ),
         output_refl_file,
     )
 
