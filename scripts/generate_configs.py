@@ -3,7 +3,7 @@ import os
 
 # Default Config
 default_config = {
-    "epochs": 800,
+    "epochs": 15,
     "dmodel": 64,
     "batch_size": 50,
     "val_split": 0.05,
@@ -27,7 +27,8 @@ default_config = {
     "p_I_scale": 0.0001,
     "p_bg_scale": 0.0001,
     "p_I": {"distribution": "Exponential", "rate": 1.0},
-    "p_bg": {"distribution": "Exponential", "rate": 1.0},
+    #"p_bg": {"distribution": "Exponential", "rate": 1.0},
+    "p_bg": {"distribution": "Normal", "loc": 0.0, "scale": 0.5},
     "q_I": {"distribution": "Gamma"},
     "q_bg": {"distribution": "Gamma"},
     "accelerator": "gpu",
@@ -36,9 +37,11 @@ default_config = {
     "total_steps": None,
     "shoebox_dir": "hewl_816/",
     "shoebox_data": "hewl_816/",
+    "data_path": "/n/holylabs/LABS/hekstra_lab/Users/laldama/integratorv2/integrator/data",
+    "dataset_path": "hewl_816/reflections_.refl",
     "metadata": "hewl_816/metadata.pt",
     "dead_pixel_mask": "hewl_816/masks.pt",
-    "cutoff": None,
+    "cutoff": 300,
 }
 
 # Configurations

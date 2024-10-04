@@ -285,14 +285,16 @@ if __name__ == "__main__":
     output_refl_dir = os.path.join(experiment_dir, "out")
 
     # Output file paths
-    output_refl_file = os.path.join(output_refl_dir, "out.refl")
+    output_refl_file = os.path.join(output_refl_dir, "NN.refl")
+    output_refl_file2 = os.path.join(output_refl_dir, "DIALS_sum_NN.refl")
+    output_refl_file3 = os.path.join(output_refl_dir, "DIALS_sum_NN_subset.refl")
 
     outwriter = OutWriter(
         model,
-        os.path.join(
-            "/n/holylabs/LABS/hekstra_lab/Users/laldama/integratorv2/integrator/data/pass1/reflections_.refl"
-        ),
+        os.path.join(config['data_path'],config['dataset_path']),
         output_refl_file,
+        out_file_name2 = output_refl_file2,
+        out_file_name3 = output_refl_file3
     )
 
     outwriter.write_output()
