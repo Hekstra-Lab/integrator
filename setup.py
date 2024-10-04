@@ -13,7 +13,7 @@ setup(
     package_dir={"": "src"},
     include_package_data=True,
     install_requires=[
-  #      "dials==3.17.dev0",
+        #      "dials==3.17.dev0",
         "matplotlib==3.8.2",
         "numpy>=1.21,<2.0",  # Use a version of numpy compatible with matplotlib
         "polars==1.6.0",
