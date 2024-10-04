@@ -6,31 +6,50 @@ import numpy as np
 class OutWriter:
     def __init__(
         self,
-        output_dict,
+        train_dict,
+        val_dict,
         refl_file_name,
         out_file_name,
         out_file_name2="nn_only.refl",
         out_file_name3="dials_sum_nn_weak.refl",
     ):
-        self.output_dict = output_dict
+        # self.output_dict = output_dict
         self.refl_file_name = refl_file_name
         self.out_file_name = out_file_name
         self.out_file_name2 = out_file_name2
         self.out_file_name3 = out_file_name3
+        self.train_dict = train_dict
+        self.val_dict = val_dict
 
     def write_output(self):
+        # train_res_df = pl.DataFrame(
+        # {
+        # "refl_id": self.output_dict.training_preds["refl_id"],
+        # "q_I_mean": self.output_dict.training_preds["q_I_mean"],
+        # "q_I_stddev": self.output_dict.training_preds["q_I_stddev"],
+        # }
+        # )
+        # val_res_df = pl.DataFrame(
+        # {
+        # "refl_id": self.output_dict.validation_preds["refl_id"],
+        # "q_I_mean": self.output_dict.validation_preds["q_I_mean"],
+        # "q_I_stddev": self.output_dict.validation_preds["q_I_stddev"],
+        # }
+        # )
+
         train_res_df = pl.DataFrame(
             {
-                "refl_id": self.output_dict.training_preds["refl_id"],
-                "q_I_mean": self.output_dict.training_preds["q_I_mean"],
-                "q_I_stddev": self.output_dict.training_preds["q_I_stddev"],
+                "refl_id": self.train_dict["refl_id"],
+                "q_I_mean": self.train_dict["q_I_mean"],
+                "q_I_stddev": self.train_dict["q_I_stddev"],
             }
         )
+
         val_res_df = pl.DataFrame(
             {
-                "refl_id": self.output_dict.validation_preds["refl_id"],
-                "q_I_mean": self.output_dict.validation_preds["q_I_mean"],
-                "q_I_stddev": self.output_dict.validation_preds["q_I_stddev"],
+                "refl_id": self.val_dict["refl_id"],
+                "q_I_mean": self.val_dict["q_I_mean"],
+                "q_I_stddev": self.val_dict["q_I_stddev"],
             }
         )
 
@@ -79,4 +98,4 @@ class OutWriter:
         temp2["intensity.prf.variance"] = flex.double(intensity_dials_variance)
         temp2.as_file(self.out_file_name3)
 
-        return
+        return sel

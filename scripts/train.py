@@ -21,7 +21,7 @@ from integrator.model import (
     Decoder,
 )
 from integrator.utils import OutWriter
-from integrator.utils import Plotter
+import integrator.utils as utils
 from integrator.utils.logger import init_tensorboard_logger
 
 # torch.set_float32_matmul_precision('high')
@@ -247,7 +247,16 @@ def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
     # Start training
     trainer.fit(integrator_model, data_module)
 
-    return integrator_model, experiment_dir
+    val_predictions = integrator_model.evaluate_full_dataset(
+        data_module.val_dataloader()
+    )
+
+    train_predictions = integrator_model.evaluate_full_dataset(
+        data_module.train_dataloader()
+    )
+    return train_predictions, val_predictions, experiment_dir, integrator_model
+
+    # return integrator_model, experiment_dir
 
 
 if __name__ == "__main__":
@@ -277,7 +286,7 @@ if __name__ == "__main__":
     log_dir = args.log_dir
     os.makedirs(log_dir, exist_ok=True)
 
-    model, experiment_dir = train(
+    train_preds, val_preds, experiment_dir, model = train(
         config, resume_from_checkpoint=args.resume, log_dir=args.log_dir
     )
 
@@ -290,14 +299,15 @@ if __name__ == "__main__":
     output_refl_file3 = os.path.join(output_refl_dir, "DIALS_sum_NN_subset.refl")
 
     outwriter = OutWriter(
-        model,
-        os.path.join(config['data_path'],config['dataset_path']),
+        train_preds,
+        val_preds,
+        os.path.join(config["data_path"], config["dataset_path"]),
         output_refl_file,
-        out_file_name2 = output_refl_file2,
-        out_file_name3 = output_refl_file3
+        out_file_name2=output_refl_file2,
+        out_file_name3=output_refl_file3,
     )
 
-    outwriter.write_output()
+    sel = outwriter.write_output()
 
     # Extract encoder_type, profile_type, and batch_size from config
     encoder_type = config.get("encoder_type", "UnknownEncoder")
@@ -305,11 +315,42 @@ if __name__ == "__main__":
     batch_size = config.get("batch_size", "UnknownBatchSize")
 
     # Plotting
-    plotter = Plotter(
-        output_refl_file, output_refl_dir, encoder_type, profile_type, batch_size
+    # plotter = Plotter(
+    # output_refl_file, output_refl_dir, encoder_type, profile_type, batch_size
+    # )
+
+    utils.plot_intensities(
+        nn_refl=output_refl_file,
+        dials_refl=os.path.join(config["data_path"], config["dataset_path"]),
+        sel=sel,
+        output_dir=output_refl_dir,
+        encoder_type="cnn",
+        profile_type="softmax",
+        batch_size=10,
+        out_png_filename="intensity_comparison_full.png",
     )
-    plotter.plot_uncertainty(save=True, display=False)
-    plotter.plot_intensities(save=True, display=False)
+
+    utils.plot_intensities(
+        nn_refl=output_refl_file2,
+        dials_refl=os.path.join(config["data_path"], config["dataset_path"]),
+        sel=sel,
+        output_dir=output_refl_dir,
+        encoder_type="cnn",
+        profile_type="softmax",
+        batch_size=10,
+        out_png_filename="intensity_comparison.png",
+    )
+
+    utils.plot_intensities(
+        nn_refl=output_refl_file3,
+        dials_refl=os.path.join(config["data_path"], config["dataset_path"]),
+        sel=sel,
+        output_dir=output_refl_dir,
+        encoder_type="cnn",
+        profile_type="softmax",
+        batch_size=10,
+        out_png_filename="intensity_comparison_subset.png",
+    )
 
     config_copy_path = os.path.join(experiment_dir, "config.yaml")
     with open(config_copy_path, "w") as f:

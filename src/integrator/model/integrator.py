@@ -141,7 +141,6 @@ class Integrator(pytorch_lightning.LightningModule):
         self.log("kl_term", kl_term, prog_bar=True)
         self.log("mean_bg", bg.mean.mean(), prog_bar=True)
 
-
         if self.current_epoch == self.trainer.max_epochs - 1:
             # Save predictions
             self.training_preds["q_I_mean"].extend(
@@ -179,8 +178,6 @@ class Integrator(pytorch_lightning.LightningModule):
         self.log("kl_term", kl_term, prog_bar=True)
         self.log("mean_bg", bg.mean.mean(), prog_bar=True)
 
-
-
         if self.current_epoch == self.trainer.max_epochs - 1:
             self.validation_preds["q_I_mean"].extend(
                 q_I.mean.detach().cpu().ravel().tolist()
@@ -208,6 +205,43 @@ class Integrator(pytorch_lightning.LightningModule):
             self.validation_preds["profile"].extend(profile.detach().cpu().numpy())
 
         return loss
+
+    def evaluate_full_dataset(self, dataloader):
+        self.eval()  # Set the model to evaluation mode
+        all_predictions = {
+            "q_I_mean": [],
+            "q_I_stddev": [],
+            "q_bg_mean": [],
+            "q_bg_stddev": [],
+            "counts": [],
+            "profile": [],
+            "refl_id": [],
+            # Add other fields as needed
+        }
+
+        with torch.no_grad():  # Disable gradient computation for inference
+            for batch in dataloader:
+                samples, metadata, dead_pixel_mask = batch
+                samples = samples.to(self.device)
+                dead_pixel_mask = dead_pixel_mask.to(self.device)
+
+                nll, kl_term, rate, q_I, profile, bg, counts = self(
+                    samples, dead_pixel_mask
+                )
+
+                all_predictions["q_I_mean"].extend(
+                    q_I.mean.detach().cpu().ravel().tolist()
+                )
+                all_predictions["q_I_stddev"].extend(
+                    q_I.stddev.detach().cpu().ravel().tolist()
+                )
+                all_predictions["q_bg_mean"].extend(bg.mean.detach().cpu().numpy())
+                all_predictions["counts"].extend(counts.detach().cpu().numpy())
+                all_predictions["profile"].extend(profile.detach().cpu().numpy())
+                all_predictions["refl_id"].extend(metadata[:, 4].detach().cpu().numpy())
+                # Add other necessary fields from `metadata` and `q_bg`
+
+        return all_predictions
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)

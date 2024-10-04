@@ -18,46 +18,6 @@ class Plotter:
     def _get_output_path(self, filename):
         return os.path.join(self.output_dir, filename)
 
-    def plot_uncertainty(
-        self,
-        save=False,
-        out_png_filename="uncertainty_comparison.png",
-        title=None,
-        ylabel="DIALS Sig(I)",
-        xlabel="Network Sig(I)",
-        display=True,
-    ):
-        q_I_stddev = self.refl_tbl["intensity.sum.variance"].as_numpy_array()
-        dials_I_stddev = self.refl_tbl["intensity.prf.variance"].as_numpy_array()
-
-        # plot variance
-        plt.clf()
-        plt.plot([0, 1e6], [0, 1e6], "r", alpha=0.3)
-        plt.scatter(q_I_stddev, dials_I_stddev, alpha=0.1, color="black")
-        plt.yscale("log")
-        plt.xscale("log")
-        plt.ylim(1, 1e6)
-        plt.xlim(1, 1e6)
-        plt.gca().set_aspect("equal", adjustable="box")  # Set aspect ratio to be equal
-        plt.ylabel(ylabel)
-        plt.xlabel(xlabel)
-
-        # Create title if not provided
-        if title is None:
-            title = (
-                f"Network vs. DIALS Sig(I)\n"
-                f"Encoder: {self.encoder_type}, Profile: {self.profile_type}, "
-                f"Batch Size: {self.batch_size}"
-            )
-        plt.title(title, fontsize=10)
-        plt.grid(alpha=0.3)
-        if save:
-            full_path = self._get_output_path(out_png_filename)
-            plt.savefig(full_path, dpi=600)
-        if display:
-            plt.show()
-        plt.clf()
-
     def plot_intensities(
         self,
         ylabel="DIALS intensity",
@@ -150,6 +110,114 @@ def visualize_shoebox(shoebox, color_weight=2, cmap="gray"):
     cbar.set_label("Counts")
 
     plt.show()
+
+
+def plot_uncertainty(
+    save=False,
+    out_png_filename="uncertainty_comparison.png",
+    nn_refl=None,
+    dials_refl=None,
+    sel=None,
+    output_dir=None,
+    encoder_type=None,
+    profile_type=None,
+    batch_size=None,
+    title=None,
+    ylabel="DIALS Sig(I)",
+    xlabel="Network Sig(I)",
+    display=True,
+):
+    nn_refl_tbl = flex.reflection_table.from_file(nn_refl)
+    dials_refl_tbl = flex.reflection_table.from_file(dials_refl)
+    selection = dials_refl_tbl.select(flex.bool(sel))
+
+    q_I_stddev = nn_refl_tbl["intensity.sum.variance"].as_numpy_array()
+    dials_I_stddev = selection["intensity.sum.variance"].as_numpy_array()
+
+    # q_I_stddev = self.refl_tbl["intensity.sum.variance"].as_numpy_array()
+    # dials_I_stddev = self.refl_tbl["intensity.prf.variance"].as_numpy_array()
+
+    # plot variance
+    plt.clf()
+    plt.plot([0, 1e6], [0, 1e6], "r", alpha=0.3)
+    plt.scatter(q_I_stddev, dials_I_stddev, alpha=0.1, color="black")
+    plt.yscale("log")
+    plt.xscale("log")
+    plt.ylim(1, 1e6)
+    plt.xlim(1, 1e6)
+    plt.gca().set_aspect("equal", adjustable="box")  # Set aspect ratio to be equal
+    plt.ylabel(ylabel)
+    plt.xlabel(xlabel)
+
+    # Create title if not provided
+    if title is None:
+        title = (
+            f"Network vs. DIALS Sig(I)\n"
+            f"Encoder: {encoder_type}, Profile: {profile_type}, "
+            f"Batch Size: {batch_size}"
+        )
+    plt.title(title, fontsize=10)
+    plt.grid(alpha=0.3)
+    if save:
+        full_path = os.path.join(output_dir, out_png_filename)
+        plt.savefig(full_path, dpi=600)
+    if display:
+        plt.show()
+    plt.clf()
+
+
+def plot_intensities(
+    ylabel="DIALS intensity",
+    xlabel="Network intensity",
+    title=None,
+    save=False,
+    nn_refl=None,
+    dials_refl=None,
+    sel=None,
+    output_dir=None,
+    encoder_type=None,
+    profile_type=None,
+    batch_size=None,
+    out_png_filename="intensity_comparison.png",
+    display=True,
+):
+    nn_refl_tbl = flex.reflection_table.from_file(nn_refl)
+    dials_refl_tbl = flex.reflection_table.from_file(dials_refl)
+    selection = dials_refl_tbl.select(flex.bool(sel))
+
+    q_I_mean = nn_refl_tbl["intensity.sum.value"].as_numpy_array()
+    dials_I = selection["intensity.sum.value"].as_numpy_array()
+
+    plt.clf()
+    plt.plot([0, 1e6], [0, 1e6], "r", alpha=0.3)
+    plt.scatter(q_I_mean, dials_I, alpha=0.5, color="black")
+    plt.yscale("log")
+    plt.xscale("log")
+    plt.ylim(0.1, 1e6)
+    plt.xlim(0.1, 1e6)
+
+    plt.gca().set_aspect("equal", adjustable="box")  # Set aspect ratio to be equal
+    plt.ylabel(ylabel)
+    plt.xlabel(xlabel)
+    plt.grid(alpha=0.3)
+
+    # Create title if not provided
+    if title is None:
+        title = (
+            f"Predicted vs. DIALS intensity\n"
+            f"Encoder: {encoder_type}, Profile: {profile_type}, "
+            f"Batch Size: {batch_size}"
+        )
+    plt.title(title)
+
+    if save:
+        full_path = os.path.join(output_dir, out_png_filename)
+        plt.savefig(full_path, dpi=600)
+
+    if display:
+        plt.show()
+    plt.clf()
+    return
 
 
 if __name__ == "__main__":
