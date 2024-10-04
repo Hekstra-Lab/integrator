@@ -8,7 +8,7 @@ class OutWriter:
         self,
         train_dict,
         val_dict,
-        refl_file_name,
+        refl_file_name,  # dials reflections file
         out_file_name,
         out_file_name2="nn_only.refl",
         out_file_name3="dials_sum_nn_weak.refl",

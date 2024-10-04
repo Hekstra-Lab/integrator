@@ -182,10 +182,19 @@ def plot_intensities(
     display=True,
 ):
     nn_refl_tbl = flex.reflection_table.from_file(nn_refl)
+
     dials_refl_tbl = flex.reflection_table.from_file(dials_refl)
+
+    sel = np.asarray([False] * len(dials_refl_tbl))
+
+    refl_ids = nn_refl_tbl["refl_ids"].as_numpy_array()
+    for id in refl_ids:
+        sel[id] = True
+
     selection = dials_refl_tbl.select(flex.bool(sel))
 
-    q_I_mean = nn_refl_tbl["intensity.sum.value"].as_numpy_array()
+    q_I_mean = nn_refl_tbl["intensity.prf.value"].as_numpy_array()
+
     dials_I = selection["intensity.sum.value"].as_numpy_array()
 
     plt.clf()
