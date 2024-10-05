@@ -324,10 +324,12 @@ if __name__ == "__main__":
         dials_refl=os.path.join(config["data_path"], config["dataset_path"]),
         sel=sel,
         output_dir=output_refl_dir,
-        encoder_type="cnn",
-        profile_type="softmax",
-        batch_size=10,
+        encoder_type=encoder_type,
+        profile_type=profile_type,
+        batch_size=batch_size,
         out_png_filename="intensity_comparison_full.png",
+        save=True,
+        display=False
     )
 
     utils.plot_intensities(
@@ -335,10 +337,12 @@ if __name__ == "__main__":
         dials_refl=os.path.join(config["data_path"], config["dataset_path"]),
         sel=sel,
         output_dir=output_refl_dir,
-        encoder_type="cnn",
-        profile_type="softmax",
-        batch_size=10,
+        encoder_type=encoder_type,
+        profile_type=profile_type,
+        batch_size=batch_size,
         out_png_filename="intensity_comparison.png",
+        save=True,
+        display=False
     )
 
     utils.plot_intensities(
@@ -350,6 +354,8 @@ if __name__ == "__main__":
         profile_type="softmax",
         batch_size=10,
         out_png_filename="intensity_comparison_subset.png",
+        save=True,
+        display=False
     )
 
     config_copy_path = os.path.join(experiment_dir, "config.yaml")
