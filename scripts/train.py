@@ -160,6 +160,13 @@ def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
 
     data_module.setup()
 
+    train_size = len(data_module.train_dataloader())
+    val_size = len(data_module.val_dataloader())
+    gradient_steps = config["gradient_steps"]
+    batch_size = config["batch_size"]
+    epochs = (gradient_steps * batch_size) // train_size
+
+
     # Initialize model components
     encoder = get_encoder(config)
     profile = get_profile(config)
@@ -169,9 +176,6 @@ def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
     loss = Loss(
         p_I_scale=config["p_I_scale"],
         p_bg_scale=config["p_bg_scale"],
-        # p_I=getattr(torch.distributions, config["p_I"]["distribution"])(config["p_I"]["rate"]),
-        # p_bg=getattr(torch.distributions, config["p_bg"]["distribution"])(config["p_bg"]["rate"])
-        # p_bg = torch.distributions.normal.Normal(0,0.5),
         p_I=get_prior_distribution(config["p_I"]),
         p_bg=get_prior_distribution(config["p_bg"]),
     )
@@ -200,7 +204,8 @@ def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
         encoder_type=config["encoder_type"],
         profile_type=config["profile_type"],
         total_steps=config["total_steps"],
-        max_epochs=config["epochs"],
+        # max_epochs=config["epochs"],
+        max_epochs=epochs,
         dmodel=config["dmodel"],
         batch_size=config["batch_size"],
         rank=config["rank"],
@@ -232,7 +237,7 @@ def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
 
     # Setup trainer
     trainer = Trainer(
-        max_epochs=config["epochs"],
+        max_epochs=epochs,
         accelerator=config["accelerator"],
         devices=1,
         num_nodes=1,
@@ -315,10 +320,6 @@ if __name__ == "__main__":
     batch_size = config.get("batch_size", "UnknownBatchSize")
 
     # Plotting
-    # plotter = Plotter(
-    # output_refl_file, output_refl_dir, encoder_type, profile_type, batch_size
-    # )
-
     utils.plot_intensities(
         nn_refl=output_refl_file,
         dials_refl=os.path.join(config["data_path"], config["dataset_path"]),
@@ -329,7 +330,7 @@ if __name__ == "__main__":
         batch_size=batch_size,
         out_png_filename="intensity_comparison_full.png",
         save=True,
-        display=False
+        display=False,
     )
 
     utils.plot_intensities(
@@ -342,7 +343,7 @@ if __name__ == "__main__":
         batch_size=batch_size,
         out_png_filename="intensity_comparison.png",
         save=True,
-        display=False
+        display=False,
     )
 
     utils.plot_intensities(
@@ -350,12 +351,12 @@ if __name__ == "__main__":
         dials_refl=os.path.join(config["data_path"], config["dataset_path"]),
         sel=sel,
         output_dir=output_refl_dir,
-        encoder_type="cnn",
-        profile_type="softmax",
-        batch_size=10,
+        encoder_type=encoder_type,
+        profile_type=profile_type,
+        batch_size=batch_size,
         out_png_filename="intensity_comparison_subset.png",
         save=True,
-        display=False
+        display=False,
     )
 
     config_copy_path = os.path.join(experiment_dir, "config.yaml")

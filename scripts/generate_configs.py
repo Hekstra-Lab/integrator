@@ -27,7 +27,7 @@ default_config = {
     "p_I_scale": 0.0001,
     "p_bg_scale": 0.001,
     "p_I": {"distribution": "Exponential", "rate": 1.0},
-    #"p_bg": {"distribution": "Exponential", "rate": 1.0},
+    # "p_bg": {"distribution": "Exponential", "rate": 1.0},
     "p_bg": {"distribution": "Normal", "loc": 0.0, "scale": 0.5},
     "q_I": {"distribution": "Gamma"},
     "q_bg": {"distribution": "Gamma"},
@@ -42,6 +42,7 @@ default_config = {
     "metadata": "hewl_816/metadata.pt",
     "dead_pixel_mask": "hewl_816/masks.pt",
     "cutoff": 300,
+    "gradient_steps": 50000,
 }
 
 # Configurations
