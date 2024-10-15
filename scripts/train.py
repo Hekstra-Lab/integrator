@@ -186,6 +186,9 @@ def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
     standardize = Standardize()
     decoder = Decoder(dirichlet=config.get("dirichlet", False))
 
+    alpha = torch.ones(3 * 21 * 21) * 0.5
+    alpha = alpha.to(device)
+
     loss = Loss(
         p_I_scale=config["p_I_scale"],
         p_bg_scale=config["p_bg_scale"],
@@ -193,7 +196,7 @@ def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
         p_I=get_prior_distribution(config["p_I"]),
         p_bg=get_prior_distribution(config["p_bg"]),
         # p_p=get_prior_distribution(config["p_p"]),
-        p_p=torch.distributions.dirichlet.Dirichlet(torch.ones(3 * 21 * 21) * 0.5),
+        p_p= torch.distributions.dirichlet.Dirichlet(alpha),
         device=device,
     )
 

@@ -21,6 +21,7 @@ class Loss(torch.nn.Module):
         self.eps = torch.nn.Parameter(data=torch.tensor(eps), requires_grad=False)
         self.beta = torch.nn.Parameter(data=torch.tensor(beta), requires_grad=False)
         self.p_I = p_I
+        self.p_p = p_p
         self.p_bg = p_bg
         self.p_I_scale = torch.nn.Parameter(
             data=torch.tensor(p_I_scale), requires_grad=False
@@ -33,7 +34,6 @@ class Loss(torch.nn.Module):
         )
         self.mc_samples = mc_samples
         self.device = device
-        self.p_p = p_p.to(self.device)
 
     def forward(
         self,
