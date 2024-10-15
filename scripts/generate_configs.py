@@ -10,12 +10,7 @@ default_config = {
     "val_split": 0.05,
     "test_split": 0.1,
     "num_workers": 4,
-    "p_p": {
-        "distribution": "Dirichlet",
-        "concentration": torch.ones(
-            3 * 21 * 21
-        ),  # Added the missing key-value structure
-    },
+    "p_p": {"distribution": "Dirichlet", "concentration_shape": [3, 21, 21]},
     "include_test": False,
     "subset_size": 1900000,
     "single_sample_index": None,

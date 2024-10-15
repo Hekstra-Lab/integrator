@@ -139,6 +139,12 @@ def get_profile(config):
 def get_prior_distribution(config):
     """Create a torch distribution for priors based on the config."""
     dist_name = config["distribution"]
+
+    if dist_name == "Dirichlet":
+        concentration_shape = config["concentration_shape"]
+        concentration = torch.ones(*concentration_shape)
+        return torch.distributions.Dirichlet(concentration)
+
     params = {k: v for k, v in config.items() if k != "distribution"}
 
     return getattr(torch.distributions, dist_name)(**params)
