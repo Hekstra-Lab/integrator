@@ -166,7 +166,6 @@ def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
     batch_size = config["batch_size"]
     epochs = (gradient_steps * batch_size) // train_size
 
-
     # Initialize model components
     encoder = get_encoder(config)
     profile = get_profile(config)
