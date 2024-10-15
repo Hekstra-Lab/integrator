@@ -1,4 +1,4 @@
-jmport torch
+import torch
 
 
 class Decoder(torch.nn.Module):

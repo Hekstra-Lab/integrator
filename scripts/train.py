@@ -178,6 +178,8 @@ def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
     batch_size = config["batch_size"]
     epochs = (gradient_steps * batch_size) // train_size
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     # Initialize model components
     encoder = get_encoder(config)
     profile = get_profile(config)
@@ -192,6 +194,7 @@ def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
         p_bg=get_prior_distribution(config["p_bg"]),
         # p_p=get_prior_distribution(config["p_p"]),
         p_p=torch.distributions.dirichlet.Dirichlet(torch.ones(3 * 21 * 21) * 0.5),
+        device=device,
     )
 
     q_bg = BackgroundDistribution(
