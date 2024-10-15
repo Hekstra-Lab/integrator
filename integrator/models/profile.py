@@ -1,4 +1,4 @@
-from pylab import *
+jrom pylab import *
 import torch
 from integrator.layers import Linear, ResidualLayer
 from integrator.models import MLP

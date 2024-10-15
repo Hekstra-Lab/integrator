@@ -182,7 +182,7 @@ def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
     encoder = get_encoder(config)
     profile = get_profile(config)
     standardize = Standardize()
-    decoder = Decoder()
+    decoder = Decoder(dirichlet=config.get("dirichlet", False)
 
     loss = Loss(
         p_I_scale=config["p_I_scale"],
