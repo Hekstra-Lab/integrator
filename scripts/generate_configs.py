@@ -28,6 +28,7 @@ default_config = {
     "width": 21,
     "p_I_scale": 0.0001,
     "p_bg_scale": 0.001,
+    "p_p_scale": 0.001,
     "p_I": {"distribution": "Exponential", "rate": 1.0},
     "p_bg": {"distribution": "Normal", "loc": 0.0, "scale": 0.5},
     "q_I": {"distribution": "Gamma"},
