@@ -11,7 +11,7 @@
 
 # Check if model type is provided
 if [ $# -eq 0 ]; then
-    echo "Please provide a model type: FcResNet_Softmax, FcResNet_MVN, CNNResNet_Softmax, or CNNResNet_MVN"
+    echo "Please provide a model type: FcResNet_Softmax, FcResNet_MVN, CNNResNet_Softmax, CNNResNet_MVN, FcResNet_Dirichlet, or CNNResNet_Dirichlet"
     exit 1
 fi
 
@@ -26,8 +26,10 @@ fi
 
 if [[ $MODEL_TYPE == *Softmax ]]; then
     PROFILE="Softmax"
-else
+elif [[ $MODEL_TYPE == *MVN ]]; then
     PROFILE="MVN"
+else
+    PROFILE="Dirichlet"
 fi
 
 #SBATCH -J "${ENCODER}_${PROFILE}"
@@ -73,22 +75,22 @@ def fix_json_file(file_path):
     try:
         with open(file_path, 'r') as f:
             content = f.read().strip()
-        
+
         # Remove any extra closing braces at the end
         while content.endswith('}}'):
             content = content[:-1]
-        
+
         # Ensure the content ends with a single closing brace
         if not content.endswith('}'):
             content += '}'
-        
+
         # Try to parse the modified content
         data = json.loads(content)
-        
+
         # Write the corrected JSON back to the file
         with open(file_path, 'w') as f:
             json.dump(data, f, indent=2)
-        
+
         print(f'Successfully fixed experiment counter file: {file_path}')
     except json.JSONDecodeError as e:
         print(f'Error in JSON file {file_path}: {str(e)}')
@@ -100,14 +102,8 @@ fix_json_file('$COUNTER_FILE')
 fi
 
 # Run the training script
-#echo "Starting training for ${ENCODER} with ${PROFILE} profile, using config: $CONFIG_FILE"
-#python -u scripts/train.py --config $CONFIG_FILE --resume /n/holylabs/LABS/hekstra_lab/Users/laldama/integratorv2/integrator/logs/outputs/CNNResNet_SoftmaxProfile_20240908_025/checkpoints/integrator-epoch=05-train_loss=1.23.ckpt  --log_dir $LOG_DIR 2>&1 | tee -a $LOG_DIR/training_log_${SLURM_JOB_ID}.txt 
-
-
-# Run the training script
 echo "Starting training for ${ENCODER} with ${PROFILE} profile, using config: $CONFIG_FILE"
-python -u scripts/train.py --config $CONFIG_FILE --log_dir $LOG_DIR 2>&1 | tee -a $LOG_DIR/training_log_${SLURM_JOB_ID}.txt 
-
+python -u scripts/train.py --config $CONFIG_FILE --log_dir $LOG_DIR 2>&1 | tee -a $LOG_DIR/training_log_${SLURM_JOB_ID}.txt
 
 # Deactivate the micromamba environment
 micromamba deactivate

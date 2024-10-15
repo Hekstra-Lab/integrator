@@ -17,6 +17,7 @@ from integrator.model import (
     SoftmaxProfile,
     BackgroundDistribution,
     IntensityDistribution,
+    DirichletProfile,
     Loss,
     Decoder,
 )
@@ -118,6 +119,11 @@ def get_profile(config):
 
     if profile_type == "MVNProfile":
         return MVNProfile(dmodel=config.get("dmodel", 64), rank=config.get("rank", 3))
+    elif profile_type == "DirichletProfile":
+        return DirichletProfile(
+            dmodel=config.get("dmodel", 64),
+            num_components=config.get("num_components", 3 * 21 * 21),
+        )
     elif profile_type == "SoftmaxProfile":
         return SoftmaxProfile(
             input_dim=config.get("input_dim", 64),
@@ -175,8 +181,10 @@ def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
     loss = Loss(
         p_I_scale=config["p_I_scale"],
         p_bg_scale=config["p_bg_scale"],
+        p_p_scale=config["p_p_scale"],
         p_I=get_prior_distribution(config["p_I"]),
         p_bg=get_prior_distribution(config["p_bg"]),
+        p_p=get_prior_distribution(config["p_p"]),
     )
 
     q_bg = BackgroundDistribution(
@@ -321,19 +329,22 @@ if __name__ == "__main__":
     # Plotting
     utils.plot_intensities(
         nn_refl=output_refl_file,
+        title="NNProfileIntensity vs. DIALSIntensity",
         dials_refl=os.path.join(config["data_path"], config["dataset_path"]),
         sel=sel,
         output_dir=output_refl_dir,
         encoder_type=encoder_type,
         profile_type=profile_type,
         batch_size=batch_size,
-        out_png_filename="intensity_comparison_full.png",
+        out_png_filename="I_weighted_sum.png",
+        intensity_column="I_weighted_sum",
         save=True,
         display=False,
     )
 
     utils.plot_intensities(
         nn_refl=output_refl_file2,
+        title="NNProfileIntensity vs. DIALSIntensity",
         dials_refl=os.path.join(config["data_path"], config["dataset_path"]),
         sel=sel,
         output_dir=output_refl_dir,
@@ -341,19 +352,7 @@ if __name__ == "__main__":
         profile_type=profile_type,
         batch_size=batch_size,
         out_png_filename="intensity_comparison.png",
-        save=True,
-        display=False,
-    )
-
-    utils.plot_intensities(
-        nn_refl=output_refl_file3,
-        dials_refl=os.path.join(config["data_path"], config["dataset_path"]),
-        sel=sel,
-        output_dir=output_refl_dir,
-        encoder_type=encoder_type,
-        profile_type=profile_type,
-        batch_size=batch_size,
-        out_png_filename="intensity_comparison_subset.png",
+        intensity_column="I_weighted_sum",
         save=True,
         display=False,
     )

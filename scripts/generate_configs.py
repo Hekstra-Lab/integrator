@@ -1,5 +1,6 @@
 import yaml
 import os
+import torch
 
 # Default Config
 default_config = {
@@ -9,6 +10,12 @@ default_config = {
     "val_split": 0.05,
     "test_split": 0.1,
     "num_workers": 4,
+    "p_p": {
+        "distribution": "Dirichlet",
+        "concentration": torch.ones(
+            3 * 21 * 21
+        ),  # Added the missing key-value structure
+    },
     "include_test": False,
     "subset_size": 1900000,
     "single_sample_index": None,
@@ -27,7 +34,6 @@ default_config = {
     "p_I_scale": 0.0001,
     "p_bg_scale": 0.001,
     "p_I": {"distribution": "Exponential", "rate": 1.0},
-    # "p_bg": {"distribution": "Exponential", "rate": 1.0},
     "p_bg": {"distribution": "Normal", "loc": 0.0, "scale": 0.5},
     "q_I": {"distribution": "Gamma"},
     "q_bg": {"distribution": "Gamma"},
@@ -62,6 +68,17 @@ configs = [
         "name": "FcResNet_Softmax",
         "encoder_type": "FcResNet",
         "profile_type": "SoftmaxProfile",
+    },
+    # Adding the new Dirichlet profile types
+    {
+        "name": "CNNResNet_Dirichlet",
+        "encoder_type": "CNNResNet",
+        "profile_type": "DirichletProfile",
+    },
+    {
+        "name": "FcResNet_Dirichlet",
+        "encoder_type": "FcResNet",
+        "profile_type": "DirichletProfile",
     },
 ]
 
