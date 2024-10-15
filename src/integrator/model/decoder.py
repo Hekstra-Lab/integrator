@@ -4,8 +4,10 @@ import torch
 class Decoder(torch.nn.Module):
     def __init__(
         self,
+        dirichlet=False,
     ):
         super().__init__()
+        self.dirichlet = dirichlet
 
     def forward(
         self,
@@ -18,6 +20,9 @@ class Decoder(torch.nn.Module):
         z = q_I.rsample([mc_samples]).unsqueeze(-1)
         bg = q_bg.rsample([mc_samples]).unsqueeze(-1)
 
-        rate = z.permute(1, 0, 2) * profile.unsqueeze(1) + bg.permute(1, 0, 2)
+        if self.dirichlet:
+            rate = z.permute(1, 0, 2) * profile.permute(1, 0, 2) + bg.permute(1, 0, 2)
+        else:
+            rate = z.permute(1, 0, 2) * profile.unsqueeze(1) + bg.permute(1, 0, 2)
 
         return rate

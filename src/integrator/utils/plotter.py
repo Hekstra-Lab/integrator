@@ -179,6 +179,7 @@ def plot_intensities(
     profile_type=None,
     batch_size=None,
     out_png_filename="intensity_comparison.png",
+    intensity_column="intensity.sum.value",
     display=True,
 ):
     nn_refl_tbl = flex.reflection_table.from_file(nn_refl)
@@ -193,7 +194,7 @@ def plot_intensities(
 
     selection = dials_refl_tbl.select(flex.bool(sel))
 
-    q_I_mean = nn_refl_tbl["intensity.prf.value"].as_numpy_array()
+    q_I_mean = nn_refl_tbl[intensity_column].as_numpy_array()
 
     dials_I = selection["intensity.sum.value"].as_numpy_array()
 

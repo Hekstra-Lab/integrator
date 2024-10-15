@@ -141,3 +141,26 @@ class MVNProfile(torch.nn.Module):
             profile = torch.exp(log_probs).view(batch_size, num_planes * 441)
 
             return profile
+
+
+class DirichletProfile(torch.nn.Module):
+    """
+    Dirichlet profile model
+    """
+
+    def __init__(self, dmodel, rank=None, mc_samples=100, num_components=3 * 21 * 21):
+        super().__init__()
+        self.dmodel = dmodel
+        self.mc_samples = mc_samples
+        self.num_components = num_components
+        self.alpha_layer = Linear(self.dmodel, self.num_components)
+        self.rank = rank
+
+    def forward(self, representation):
+        alphas = self.alpha_layer(representation)
+        alphas = F.softplus(alphas)
+        q_p = torch.distributions.Dirichlet(alphas)
+
+        profile = q_p.rsample([self.mc_samples])
+
+        return profile, q_p

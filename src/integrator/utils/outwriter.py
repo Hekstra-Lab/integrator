@@ -12,6 +12,7 @@ class OutWriter:
         out_file_name,
         out_file_name2="nn_only.refl",
         out_file_name3="dials_sum_nn_weak.refl",
+        dirichlet=False,
     ):
         # self.output_dict = output_dict
         self.refl_file_name = refl_file_name
@@ -20,28 +21,16 @@ class OutWriter:
         self.out_file_name3 = out_file_name3
         self.train_dict = train_dict
         self.val_dict = val_dict
+        self.dirichlet = dirichlet
 
     def write_output(self):
-        # train_res_df = pl.DataFrame(
-        # {
-        # "refl_id": self.output_dict.training_preds["refl_id"],
-        # "q_I_mean": self.output_dict.training_preds["q_I_mean"],
-        # "q_I_stddev": self.output_dict.training_preds["q_I_stddev"],
-        # }
-        # )
-        # val_res_df = pl.DataFrame(
-        # {
-        # "refl_id": self.output_dict.validation_preds["refl_id"],
-        # "q_I_mean": self.output_dict.validation_preds["q_I_mean"],
-        # "q_I_stddev": self.output_dict.validation_preds["q_I_stddev"],
-        # }
-        # )
-
         train_res_df = pl.DataFrame(
             {
                 "refl_id": self.train_dict["refl_id"],
                 "q_I_mean": self.train_dict["q_I_mean"],
                 "q_I_stddev": self.train_dict["q_I_stddev"],
+                "I_weighted_sum": self.train_dict["weighted_sum"],
+                "I_masked_sum": self.train_dict["masked_sum"],
             }
         )
 
@@ -50,6 +39,8 @@ class OutWriter:
                 "refl_id": self.val_dict["refl_id"],
                 "q_I_mean": self.val_dict["q_I_mean"],
                 "q_I_stddev": self.val_dict["q_I_stddev"],
+                "I_weighted_sum": self.val_dict["weighted_sum"],
+                "I_masked_sum": self.val_dict["masked_sum"],
             }
         )
 
@@ -67,6 +58,8 @@ class OutWriter:
         reflection_ids = res_df["refl_id"].cast(pl.Int32).to_list()
         intensity_preds = res_df["q_I_mean"].to_list()
         intensity_variance = res_df["q_I_variance"].to_list()
+        intensity_prf_preds = res_df["I_masked_sum"].to_list()
+        intensity_wsum_preds = res_df["I_weighted_sum"].to_list()
 
         for id in reflection_ids:
             sel[id] = True
@@ -77,11 +70,15 @@ class OutWriter:
         # combination of dials.sum and network predictions
         temp["intensity.prf.value"] = flex.double(intensity_preds)
         temp["intensity.prf.variance"] = flex.double(intensity_variance)
+        temp["I_masked_sum"] = flex.double(intensity_prf_preds)
+        temp["I_weighted_sum"] = flex.double(intensity_wsum_preds)
         temp.as_file(self.out_file_name)
 
         # network only predictions
         temp["intensity.sum.value"] = flex.double(intensity_preds)
         temp["intensity.sum.variance"] = flex.double(intensity_variance)
+        temp["I_masked_sum"] = flex.double(intensity_prf_preds)
+        temp["I_weighted_sum"] = flex.double(intensity_wsum_preds)
         temp.as_file(self.out_file_name2)
 
         # Replaces intensity.prf.value and intensity.prf.variance columns with intensity.sum.value
@@ -96,6 +93,10 @@ class OutWriter:
         temp2 = tbl
         temp2["intensity.prf.value"] = flex.double(intensity_dials_sum)
         temp2["intensity.prf.variance"] = flex.double(intensity_dials_variance)
+        intensity_dials_sum[indices] = intensity_prf_preds
+
+        temp2["I_masked_sum"] = flex.double(intensity_dials_sum)
+        temp["I_weighted_sum"] = flex.double(intensity_wsum_preds)
         temp2.as_file(self.out_file_name3)
 
         return sel
