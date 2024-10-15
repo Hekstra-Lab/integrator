@@ -242,10 +242,9 @@ class Integrator(pytorch_lightning.LightningModule):
             "DIALS_I_prf_val": [],
             "DIALS_I_prf_var": [],
             "profile_intensity": [],
-            "monte_carlo": [],
-            "weighted_sum": [],
+            "profile_intensity_2": [],
+            "profile_intensity_3": [],
             "alphas": [],
-            "masked_sum": [],
             # Add other fields as needed
         }
 
@@ -264,7 +263,7 @@ class Integrator(pytorch_lightning.LightningModule):
                         (counts - bg.mean.unsqueeze(-1)) * qp.mean, dim=-1
                     )
 
-                    all_predictions["weighted_sum"].extend(
+                    all_predictions["profile_intensity"].extend(
                         prof_intensity.detach().cpu().ravel().tolist()
                     )
                     bg_samples = bg.sample([100])
@@ -275,7 +274,7 @@ class Integrator(pytorch_lightning.LightningModule):
                     result_tensor = counts.unsqueeze(0) - bg_expanded
                     weights = qp.sample([100])
                     result_tensor = (result_tensor * weights).sum(-1).mean(0)
-                    all_predictions["monte_carlo"].extend(
+                    all_predictions["profile_intensity_2"].extend(
                         result_tensor.detach().cpu().ravel().tolist()
                     )
 
@@ -284,7 +283,7 @@ class Integrator(pytorch_lightning.LightningModule):
                     prof_intensity = torch.sum(
                         (counts - bg.mean.unsqueeze(-1)) * prof_mask, dim=-1
                     )
-                    all_predictions["masked_sum"].extend(
+                    all_predictions["profile_intensity_3"].extend(
                         prof_intensity.detach().cpu().ravel().tolist()
                     )
                     all_predictions["alphas"].extend(
@@ -302,14 +301,7 @@ class Integrator(pytorch_lightning.LightningModule):
                         (counts - bg.mean.unsqueeze(-1)) * prof_mask, dim=-1
                     )
 
-                    all_predictions["masked_sum"].extend(
-                        prof_intensity.detach().cpu().ravel().tolist()
-                    )
-                    prof_intensity = torch.sum(
-                        (counts - bg.mean.unsqueeze(-1)) * profile, dim=-1
-                    )
-
-                    all_predictions["weighted_sum"].extend(
+                    all_predictions["profile_intensity"].extend(
                         prof_intensity.detach().cpu().ravel().tolist()
                     )
                     all_predictions["profile"].extend(profile.detach().cpu().numpy())

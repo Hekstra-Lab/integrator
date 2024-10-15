@@ -228,6 +228,7 @@ def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
         W=config["W"],
         lr=config["learning_rate"],
         images_dir=images_dir,
+        dirichlet=config.get("dirichlet", False),
     )
 
     # Load weights from checkpoint if provided

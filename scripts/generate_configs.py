@@ -44,6 +44,7 @@ default_config = {
     "metadata": "hewl_816/metadata.pt",
     "dead_pixel_mask": "hewl_816/masks.pt",
     "cutoff": 300,
+    "dirichlet": True,
     "gradient_steps": 50000,
 }
 
