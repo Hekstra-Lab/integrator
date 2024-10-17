@@ -46,13 +46,6 @@ class SoftmaxProfile(nn.Module):
             batch_size, self.rank, self.width
         )  # (batch_size, rank, 21)
 
-        # A = torch.nn.functional.softmax(A)
-        # B = torch.nn.functional.softmax(B)
-        # C = torch.nn.functional.softmax(C)
-        # A = torch.nn.functional.softplus(A)
-        # B = torch.nn.functional.softplus(B)
-        # C = torch.nn.functional.softplus(C)
-
         # Reconstruct the background tensor using CP decomposition
         background = torch.einsum(
             "brc,brh,brw->bchw", A, B, C
@@ -91,13 +84,10 @@ class MVNProfile(torch.nn.Module):
         batch_size = representation.size(0)
 
         if self.num_components == 1:
-            # means = torch.zeros(
-            # (batch_size, 1, 3), device=representation.device, requires_grad=False
-            # ).to(torch.float32)
-
             means = self.mean_layer(representation).view(batch_size, 1, 3)
 
             scales = self.scale_layer(representation).view(batch_size, 1, 6)
+
             scales = torch.sigmoid(scales)
 
             L = self.L_transform(scales).to(torch.float32)

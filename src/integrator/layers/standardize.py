@@ -14,12 +14,6 @@ class Standardize(torch.nn.Module):
         self.register_buffer("pixel_count", torch.tensor(0.0))  # Counter for pixels
         self.register_buffer("image_count", torch.tensor(0.0))  # Counter for images
 
-        # Mask to exclude certain features from mean subtraction (0 for exclusion, 1 for inclusion)
-        # self.mean_mask = torch.ones((1, 1, feature_dim)).to(device)
-        # self.mean_mask[
-        #    ..., 3:6
-        # ] = 0  # Exclude 4th, 5th, and 6th features (0-based index)
-
     @property
     def var(self):
         m2 = torch.clamp(self.m2, min=self.epsilon)
