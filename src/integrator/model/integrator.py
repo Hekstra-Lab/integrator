@@ -1,4 +1,5 @@
 import torch
+from pytorch_lightning.callbacks import ModelCheckpoint
 import os
 import matplotlib.pyplot as plt
 import pytorch_lightning
@@ -6,6 +7,34 @@ import numpy as np
 
 
 class Integrator(pytorch_lightning.LightningModule):
+    """
+    Attributes:
+        dirichlet:
+        encoder_type:
+        profile_type:
+        batch_size:
+        max_epochs:
+        encoder:
+        profile:
+        decoder:
+        loss:
+        standardize:
+        dmodel:
+        rank:
+        C:
+        Z:
+        H:
+        W:
+        num_pixels:
+        lr:
+        images_dir:
+        training_preds:
+        validation_preds:
+        q_bg:
+        q_I:
+        current_step:
+    """
+
     def __init__(
         self,
         encoder,
@@ -200,65 +229,88 @@ class Integrator(pytorch_lightning.LightningModule):
         return loss
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
-            samples, metadata, dead_pixel_mask = batch
-            samples = samples.to(self.device)
-            dead_pixel_mask = dead_pixel_mask.to(self.device)
+        samples, metadata, dead_pixel_mask = batch
+        samples = samples.to(self.device)
+        dead_pixel_mask = dead_pixel_mask.to(self.device)
 
-            if self.dirichlet:
-                nll,kl_term, rate, q_I, profile, qp, bg, counts = self(samples, dead_pixel_mask)
-                prof_intensity = torch.sum((counts - bg.mean.unsqueeze(-1)) * qp.mean, dim=-1)
-                
-                # Compute weighted_sum
-                bg_samples = bg.sample([100])
-                bg_expanded = bg_samples.unsqueeze(-1).expand(-1, -1, profile.size(-1))
-                result_tensor = counts.unsqueeze(0) - bg_expanded
-                weights = qp.sample([100])
-                weighted_sum = (result_tensor * weights).sum(-1).mean(0)
-                
-                # Compute masked_sum
-                prof_mask = qp.mean > self.hparams.get("threshold", 0.01)
-                masked_sum = torch.sum((counts - bg.mean.unsqueeze(-1)) * prof_mask, dim=-1)
-                
-                return {
-                    "q_I_mean": q_I.mean,
-                    "q_I_stddev": q_I.stddev,
-                    "q_bg_mean": bg.mean,
-                    "q_bg_stddev": bg.stddev,
-                    "counts": counts,
-                    "profile": qp.mean,
-                    "refl_id": metadata[:, 4],
-                    "DIALS_I_sum_val": metadata[:, 0],
-                    "DIALS_I_sum_var": metadata[:, 1],
-                    "DIALS_I_prf_val": metadata[:, 2],
-                    "DIALS_I_prf_var": metadata[:, 3],
-                    "profile_intensity": prof_intensity,
-                    "weighted_sum": weighted_sum,
-                    "masked_sum": masked_sum,
-                    "alphas": qp.concentration
-                }
-            else:
-                rate, q_I, profile, bg, counts = self(samples, dead_pixel_mask)
-                prof_mask = profile > self.hparams.get("threshold", 0.01)
-                prof_intensity = torch.sum((counts - bg.mean.unsqueeze(-1)) * prof_mask, dim=-1)
-                
-                return {
-                    "q_I_mean": q_I.mean,
-                    "q_I_stddev": q_I.stddev,
-                    "q_bg_mean": bg.mean,
-                    "q_bg_stddev": bg.stddev,
-                    "counts": counts,
-                    "profile": profile,
-                    "refl_id": metadata[:, 4],
-                    "DIALS_I_sum_val": metadata[:, 0],
-                    "DIALS_I_sum_var": metadata[:, 1],
-                    "DIALS_I_prf_val": metadata[:, 2],
-                    "DIALS_I_prf_var": metadata[:, 3],
-                    "profile_intensity": prof_intensity
-                }
+        if self.dirichlet:
+            nll, kl_term, rate, q_I, profile, qp, bg, counts = self(
+                samples, dead_pixel_mask
+            )
+            prof_intensity = torch.sum(
+                (counts - bg.mean.unsqueeze(-1)) * qp.mean, dim=-1
+            )
 
+            # Compute weighted_sum
+            bg_samples = bg.sample([100])
+            bg_expanded = bg_samples.unsqueeze(-1).expand(-1, -1, profile.size(-1))
+            result_tensor = counts.unsqueeze(0) - bg_expanded
+            weights = qp.sample([100])
+            weighted_sum = (result_tensor * weights).sum(-1).mean(0)
+
+            # Compute masked_sum
+            prof_mask = qp.mean > self.hparams.get("threshold", 0.01)
+            masked_sum = torch.sum((counts - bg.mean.unsqueeze(-1)) * prof_mask, dim=-1)
+
+            return {
+                "q_I_mean": q_I.mean,
+                "q_I_stddev": q_I.stddev,
+                "q_bg_mean": bg.mean,
+                "q_bg_stddev": bg.stddev,
+                "counts": counts,
+                "profile": qp.mean,
+                "refl_id": metadata[:, 4],
+                "DIALS_I_sum_val": metadata[:, 0],
+                "DIALS_I_sum_var": metadata[:, 1],
+                "DIALS_I_prf_val": metadata[:, 2],
+                "DIALS_I_prf_var": metadata[:, 3],
+                "profile_intensity": prof_intensity,
+                "weighted_sum": weighted_sum,
+                "masked_sum": masked_sum,
+                "alphas": qp.concentration,
+            }
+        else:
+            rate, q_I, profile, bg, counts = self(samples, dead_pixel_mask)
+            prof_mask = profile > self.hparams.get("threshold", 0.01)
+            prof_intensity = torch.sum(
+                (counts - bg.mean.unsqueeze(-1)) * prof_mask, dim=-1
+            )
+
+            return {
+                "q_I_mean": q_I.mean,
+                "q_I_stddev": q_I.stddev,
+                "q_bg_mean": bg.mean,
+                "q_bg_stddev": bg.stddev,
+                "counts": counts,
+                "profile": profile,
+                "refl_id": metadata[:, 4],
+                "DIALS_I_sum_val": metadata[:, 0],
+                "DIALS_I_sum_var": metadata[:, 1],
+                "DIALS_I_prf_val": metadata[:, 2],
+                "DIALS_I_prf_var": metadata[:, 3],
+                "profile_intensity": prof_intensity,
+            }
+
+    def configure_callbacks(self):
+        callbacks = []
+
+        # Callback to save the best model based on validation loss
+        best_model_callback = ModelCheckpoint(
+            monitor="val_loss",
+            filename="best-checkpoint-{epoch:02d}-{val_loss:.2f}",
+            save_top_k=1,
+            mode="min",
+        )
+        callbacks.append(best_model_callback)
+        
+        # Callback to save the final model weights
+        final_weights_callback = ModelCheckpoint(
+            filename="final_weights",
+            save_last=True,
+            save_weights_only=True,
+        )
+        callbacks.append(final_weights_callback)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         return optimizer
-
-

@@ -3,7 +3,18 @@ import polars as pl
 import numpy as np
 from dials.array_family import flex
 
+
 class OutWriter:
+    """
+    Attributes:
+        predictions:
+        refl_file_name:
+        out_file_name:
+        out_file_name2:
+        out_file_name3:
+        dirichlet:
+    """
+
     def __init__(
         self,
         predictions,
@@ -31,15 +42,15 @@ class OutWriter:
                 "refl_id": self.tensor_to_numpy(self.predictions["refl_id"]),
                 "q_I_mean": self.tensor_to_numpy(self.predictions["q_I_mean"]),
                 "q_I_stddev": self.tensor_to_numpy(self.predictions["q_I_stddev"]),
-                "I_weighted_sum": self.tensor_to_numpy(self.predictions["weighted_sum"]),
+                "I_weighted_sum": self.tensor_to_numpy(
+                    self.predictions["weighted_sum"]
+                ),
                 "I_masked_sum": self.tensor_to_numpy(self.predictions["masked_sum"]),
             }
         )
 
         # adding variance column
-        res_df = res_df.with_columns(
-            (pl.col("q_I_stddev") ** 2).alias("q_I_variance")
-        )
+        res_df = res_df.with_columns((pl.col("q_I_stddev") ** 2).alias("q_I_variance"))
 
         res_df = res_df.sort(pl.col("refl_id"))
         tbl = flex.reflection_table.from_file(self.refl_file_name)

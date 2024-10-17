@@ -12,13 +12,22 @@ from pytorch_lightning.callbacks import ModelCheckpoint, TQDMProgressBar
 from integrator import ShoeboxDataModule
 from integrator.layers import Standardize
 from integrator.model import (
-    CNNResNet, FcResNet, MVNProfile,Integrator, SoftmaxProfile, BackgroundDistribution,
-    IntensityDistribution, DirichletProfile, Loss, Decoder
+    CNNResNet,
+    FcResNet,
+    MVNProfile,
+    Integrator,
+    SoftmaxProfile,
+    BackgroundDistribution,
+    IntensityDistribution,
+    DirichletProfile,
+    Loss,
+    Decoder,
 )
 from integrator.utils import OutWriter
 import integrator.utils as utils
 
-torch.set_float32_matmul_precision('high')
+torch.set_float32_matmul_precision("high")
+
 
 def get_experiment_counter(model_type, profile_type, base_dir="logs/outputs"):
     """Get the next experiment number for the given date, model type, and profile type."""
@@ -45,6 +54,7 @@ def get_experiment_counter(model_type, profile_type, base_dir="logs/outputs"):
 
     return counters[key]
 
+
 def generate_experiment_dir(config, base_dir="logs/outputs"):
     """Generate a unique directory for each experiment with a running counter."""
     model_type = config.get("encoder_type", "UnknownModel")
@@ -62,7 +72,16 @@ def generate_experiment_dir(config, base_dir="logs/outputs"):
 
     return experiment_dir
 
+
 def load_config(config_path):
+    """
+
+    Args:
+        config_path ():
+
+    Returns:
+
+    """
     with open(config_path, "r") as file:
         config = yaml.safe_load(file)
 
@@ -73,7 +92,19 @@ def load_config(config_path):
 
     return config
 
+
 def get_encoder(config):
+    """
+
+    Args:
+        config ():
+
+    Raises:
+        ValueError:
+
+    Returns:
+
+    """
     encoder_type = config.get("encoder_type")
 
     if encoder_type == "CNNResNet":
@@ -96,16 +127,22 @@ def get_encoder(config):
     else:
         raise ValueError(f"Unknown encoder type: {encoder_type}")
 
+
 def get_profile(config):
+    """
+    Function to get the correct profile based on the config.
+    """
     profile_type = config.get("profile_type")
 
     if profile_type == "MVNProfile":
         return MVNProfile(dmodel=config.get("dmodel", 64), rank=config.get("rank", 3))
+
     elif profile_type == "DirichletProfile":
         return DirichletProfile(
             dmodel=config.get("dmodel", 64),
             num_components=config.get("num_components", 3 * 21 * 21),
         )
+
     elif profile_type == "SoftmaxProfile":
         return SoftmaxProfile(
             input_dim=config.get("input_dim", 64),
@@ -116,6 +153,7 @@ def get_profile(config):
         )
     else:
         raise ValueError(f"Unknown profile type: {profile_type}")
+
 
 def get_prior_distribution(config):
     """Create a torch distribution for priors based on the config."""
@@ -130,7 +168,18 @@ def get_prior_distribution(config):
 
     return getattr(torch.distributions, dist_name)(**params)
 
+
 def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
+    """
+
+    Args:
+        config ():
+        resume_from_checkpoint ():
+        log_dir ():
+
+    Returns:
+
+    """
     experiment_dir = generate_experiment_dir(config, log_dir)
 
     logger = TensorBoardLogger(save_dir="logs", name="tensorboard_logs")
@@ -237,7 +286,19 @@ def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
 
     return integrator_model, experiment_dir
 
+
 def evaluate(model, data_module, experiment_dir, config):
+    """
+
+    Args:
+        model ():
+        data_module ():
+        experiment_dir ():
+        config ():
+
+    Returns:
+
+    """
     trainer = Trainer(
         accelerator=config["accelerator"],
         devices=1,
@@ -324,11 +385,27 @@ def evaluate(model, data_module, experiment_dir, config):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Training and evaluation script for integrator model.")
-    parser.add_argument("--config", type=str, default="config/config.yaml", help="Path to the config file.")
-    parser.add_argument("--resume", type=str, help="Path to checkpoint to resume training.")
-    parser.add_argument("--log_dir", type=str, default="logs/outputs", help="Directory where logs will be saved.")
-    parser.add_argument("--evaluate", action="store_true", help="Run evaluation on trained model")
+    parser = argparse.ArgumentParser(
+        description="Training and evaluation script for integrator model."
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="config/config.yaml",
+        help="Path to the config file.",
+    )
+    parser.add_argument(
+        "--resume", type=str, help="Path to checkpoint to resume training."
+    )
+    parser.add_argument(
+        "--log_dir",
+        type=str,
+        default="logs/outputs",
+        help="Directory where logs will be saved.",
+    )
+    parser.add_argument(
+        "--evaluate", action="store_true", help="Run evaluation on trained model"
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -337,13 +414,17 @@ if __name__ == "__main__":
     os.makedirs(log_dir, exist_ok=True)
 
     if not args.evaluate:
-        model, experiment_dir = train(config, resume_from_checkpoint=args.resume, log_dir=args.log_dir)
+        model, experiment_dir = train(
+            config, resume_from_checkpoint=args.resume, log_dir=args.log_dir
+        )
     else:
         if args.resume:
             weights_path = args.resume
             experiment_dir = os.path.dirname(os.path.dirname(weights_path))
         else:
-            raise ValueError("Please provide a checkpoint file using --resume when using --evaluate")
+            raise ValueError(
+                "Please provide a checkpoint file using --resume when using --evaluate"
+            )
 
         if not os.path.exists(weights_path):
             raise FileNotFoundError(f"Checkpoint file not found: {weights_path}")
@@ -363,7 +444,7 @@ if __name__ == "__main__":
     )
     data_module.setup()
 
-    sel = evaluate(model, data_module, experiment_dir,config)
+    sel = evaluate(model, data_module, experiment_dir, config)
 
     config_copy_path = os.path.join(experiment_dir, "config.yaml")
     with open(config_copy_path, "w") as f:
@@ -376,4 +457,3 @@ if __name__ == "__main__":
             f.write(model_summary)
 
     print("Evaluation and output generation complete.")
-

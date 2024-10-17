@@ -3,7 +3,26 @@ import os
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader, random_split, Subset, TensorDataset
 
+
 class ShoeboxDataModule(pl.LightningDataModule):
+    """
+    Attributes:
+        data_dir:
+        batch_size:
+        val_split:
+        test_split:
+        include_test:
+        subset_size:
+        single_sample_index:
+        num_workers:
+        cutoff:
+        full_dataset:
+        H:
+        W:
+        Z:
+        full_dataset:
+    """
+
     def __init__(
         self,
         data_dir,
@@ -53,7 +72,7 @@ class ShoeboxDataModule(pl.LightningDataModule):
 
         # Optionally, create a subset of the dataset
         if self.subset_size is not None and self.subset_size < len(self.full_dataset):
-            indices = torch.randperm(len(self.full_dataset))[:self.subset_size]
+            indices = torch.randperm(len(self.full_dataset))[: self.subset_size]
             self.full_dataset = Subset(self.full_dataset, indices)
 
         # Calculate lengths for train/val/test splits
