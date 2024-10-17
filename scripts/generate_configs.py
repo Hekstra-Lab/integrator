@@ -4,10 +4,11 @@ import torch
 
 # Default Config
 default_config = {
-    "epochs": 15,
+    "epochs": 10,
     "dmodel": 64,
     "batch_size": 50,
-    "val_split": 0.05,
+    "val_split": 0.01,
+    "data_dir": "/n/holylabs/LABS/hekstra_lab/Users/laldama/integratorv2/integrator/data/hewl_816/",
     "test_split": 0.1,
     "num_workers": 4,
     "p_p": {"distribution": "Dirichlet", "concentration_shape": [3, 21, 21]},
@@ -30,7 +31,8 @@ default_config = {
     "p_bg_scale": 0.001,
     "p_p_scale": 0.001,
     "p_I": {"distribution": "Exponential", "rate": 1.0},
-    "p_bg": {"distribution": "Normal", "loc": 0.0, "scale": 0.5},
+    "p_bg": {"distribution": "Exponential", "rate": 1.0},
+    #"p_bg": {"distribution": "Normal", "loc": 0.0, "scale": 0.5},
     "q_I": {"distribution": "Gamma"},
     "q_bg": {"distribution": "Gamma"},
     "accelerator": "gpu",
@@ -39,11 +41,12 @@ default_config = {
     "total_steps": None,
     "shoebox_dir": "hewl_816/",
     "shoebox_data": "hewl_816/",
+    "refl_file":"reflections_.refl",
     "data_path": "/n/holylabs/LABS/hekstra_lab/Users/laldama/integratorv2/integrator/data",
     "dataset_path": "hewl_816/reflections_.refl",
     "metadata": "hewl_816/metadata.pt",
     "dead_pixel_mask": "hewl_816/masks.pt",
-    "cutoff": 300,
+    "cutoff": 500,
     "dirichlet": True,
     "gradient_steps": 50000,
 }

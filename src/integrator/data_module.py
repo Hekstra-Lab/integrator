@@ -3,7 +3,6 @@ import os
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader, random_split, Subset, TensorDataset
 
-
 class ShoeboxDataModule(pl.LightningDataModule):
     def __init__(
         self,
@@ -27,6 +26,7 @@ class ShoeboxDataModule(pl.LightningDataModule):
         self.single_sample_index = single_sample_index
         self.num_workers = num_workers
         self.cutoff = cutoff
+        self.full_dataset = None  # Will store the full dataset
 
     def setup(self, stage=None):
         # Load the tensors
@@ -45,19 +45,19 @@ class ShoeboxDataModule(pl.LightningDataModule):
         self.Z = torch.unique(shoeboxes[..., 2], dim=1).size(-1)
 
         # Create the full dataset
-        full_dataset = TensorDataset(shoeboxes, metadata, dead_pixel_mask)
+        self.full_dataset = TensorDataset(shoeboxes, metadata, dead_pixel_mask)
 
         # If single_sample_index is specified, use only that sample
         if self.single_sample_index is not None:
-            full_dataset = Subset(full_dataset, [self.single_sample_index])
+            self.full_dataset = Subset(self.full_dataset, [self.single_sample_index])
 
         # Optionally, create a subset of the dataset
-        if self.subset_size is not None and self.subset_size < len(full_dataset):
-            indices = torch.randperm(len(full_dataset))[: self.subset_size]
-            full_dataset = Subset(full_dataset, indices)
+        if self.subset_size is not None and self.subset_size < len(self.full_dataset):
+            indices = torch.randperm(len(self.full_dataset))[:self.subset_size]
+            self.full_dataset = Subset(self.full_dataset, indices)
 
         # Calculate lengths for train/val/test splits
-        total_size = len(full_dataset)
+        total_size = len(self.full_dataset)
         val_size = int(total_size * self.val_split)
         if self.include_test:
             test_size = int(total_size * self.test_split)
@@ -69,11 +69,11 @@ class ShoeboxDataModule(pl.LightningDataModule):
         # Split the dataset
         if self.include_test:
             self.train_dataset, self.val_dataset, self.test_dataset = random_split(
-                full_dataset, [train_size, val_size, test_size]
+                self.full_dataset, [train_size, val_size, test_size]
             )
         else:
             self.train_dataset, self.val_dataset = random_split(
-                full_dataset, [train_size, val_size]
+                self.full_dataset, [train_size, val_size]
             )
             self.test_dataset = None
 
@@ -100,8 +100,19 @@ class ShoeboxDataModule(pl.LightningDataModule):
             return DataLoader(
                 self.test_dataset,
                 batch_size=self.batch_size,
+                shuffle=False,
                 num_workers=self.num_workers,
                 pin_memory=True,
             )
         else:
             return None
+
+    def predict_dataloader(self):
+        # Use the full dataset for prediction
+        return DataLoader(
+            self.full_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            pin_memory=True,
+        )

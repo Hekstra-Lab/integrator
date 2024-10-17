@@ -2,8 +2,7 @@ import torch
 import os
 import matplotlib.pyplot as plt
 import pytorch_lightning
-
-# in integrator.py
+import numpy as np
 
 
 class Integrator(pytorch_lightning.LightningModule):
@@ -198,131 +197,68 @@ class Integrator(pytorch_lightning.LightningModule):
         self.log("kl_term", kl_term, prog_bar=True)
         self.log("mean_bg", bg.mean.mean(), prog_bar=True)
 
-        # if self.current_epoch == self.trainer.max_epochs - 1:
-        # self.validation_preds["q_I_mean"].extend(
-        # q_I.mean.detach().cpu().ravel().tolist()
-        # )
-        # self.validation_preds["q_I_stddev"].extend(
-        # q_I.stddev.detach().cpu().ravel().tolist()
-        # )
-        # self.validation_preds["q_bg_mean"].extend(bg.mean.detach().cpu().numpy())
-        # self.validation_preds["DIALS_I_prf_val"].extend(
-        # metadata[:, 2].detach().cpu()
-        # )
-        # self.validation_preds["DIALS_I_prf_var"].extend(
-        # metadata[:, 3].detach().cpu()
-        # )
-        # self.validation_preds["DIALS_I_sum_val"].extend(
-        # metadata[:, 0].detach().cpu()
-        # )
-        # self.validation_preds["DIALS_I_sum_var"].extend(
-        # metadata[:, 1].detach().cpu()
-        # )
-        # self.validation_preds["refl_id"].extend(
-        # metadata[:, 4].detach().cpu().numpy()
-        # )
-        # self.validation_preds["counts"].extend(counts.detach().cpu().numpy())
-        # self.validation_preds["profile"].extend(profile.detach().cpu().numpy())
-
         return loss
 
-    def evaluate_full_dataset(self, dataloader, threshold=0.01):
-        self.eval()  # Set the model to evaluation mode
-        self.threshold = threshold
-        all_predictions = {
-            "q_I_mean": [],
-            "q_I_stddev": [],
-            "q_bg_mean": [],
-            "q_bg_stddev": [],
-            "counts": [],
-            "profile": [],
-            "refl_id": [],
-            "DIALS_I_sum_val": [],
-            "DIALS_I_sum_var": [],
-            "DIALS_I_prf_val": [],
-            "DIALS_I_prf_var": [],
-            "profile_intensity": [],
-            "profile_intensity_2": [],
-            "profile_intensity_3": [],
-            "alphas": [],
-            # Add other fields as needed
-        }
+    def predict_step(self, batch, batch_idx, dataloader_idx=0):
+            samples, metadata, dead_pixel_mask = batch
+            samples = samples.to(self.device)
+            dead_pixel_mask = dead_pixel_mask.to(self.device)
 
-        with torch.no_grad():  # Disable gradient computation for inference
-            for batch in dataloader:
-                samples, metadata, dead_pixel_mask = batch
-                samples = samples.to(self.device)
-                dead_pixel_mask = dead_pixel_mask.to(self.device)
+            if self.dirichlet:
+                nll,kl_term, rate, q_I, profile, qp, bg, counts = self(samples, dead_pixel_mask)
+                prof_intensity = torch.sum((counts - bg.mean.unsqueeze(-1)) * qp.mean, dim=-1)
+                
+                # Compute weighted_sum
+                bg_samples = bg.sample([100])
+                bg_expanded = bg_samples.unsqueeze(-1).expand(-1, -1, profile.size(-1))
+                result_tensor = counts.unsqueeze(0) - bg_expanded
+                weights = qp.sample([100])
+                weighted_sum = (result_tensor * weights).sum(-1).mean(0)
+                
+                # Compute masked_sum
+                prof_mask = qp.mean > self.hparams.get("threshold", 0.01)
+                masked_sum = torch.sum((counts - bg.mean.unsqueeze(-1)) * prof_mask, dim=-1)
+                
+                return {
+                    "q_I_mean": q_I.mean,
+                    "q_I_stddev": q_I.stddev,
+                    "q_bg_mean": bg.mean,
+                    "q_bg_stddev": bg.stddev,
+                    "counts": counts,
+                    "profile": qp.mean,
+                    "refl_id": metadata[:, 4],
+                    "DIALS_I_sum_val": metadata[:, 0],
+                    "DIALS_I_sum_var": metadata[:, 1],
+                    "DIALS_I_prf_val": metadata[:, 2],
+                    "DIALS_I_prf_var": metadata[:, 3],
+                    "profile_intensity": prof_intensity,
+                    "weighted_sum": weighted_sum,
+                    "masked_sum": masked_sum,
+                    "alphas": qp.concentration
+                }
+            else:
+                rate, q_I, profile, bg, counts = self(samples, dead_pixel_mask)
+                prof_mask = profile > self.hparams.get("threshold", 0.01)
+                prof_intensity = torch.sum((counts - bg.mean.unsqueeze(-1)) * prof_mask, dim=-1)
+                
+                return {
+                    "q_I_mean": q_I.mean,
+                    "q_I_stddev": q_I.stddev,
+                    "q_bg_mean": bg.mean,
+                    "q_bg_stddev": bg.stddev,
+                    "counts": counts,
+                    "profile": profile,
+                    "refl_id": metadata[:, 4],
+                    "DIALS_I_sum_val": metadata[:, 0],
+                    "DIALS_I_sum_var": metadata[:, 1],
+                    "DIALS_I_prf_val": metadata[:, 2],
+                    "DIALS_I_prf_var": metadata[:, 3],
+                    "profile_intensity": prof_intensity
+                }
 
-                if self.dirichlet:
-                    nll, kl_term, rate, q_I, profile, qp, bg, counts = self(
-                        samples, dead_pixel_mask
-                    )
-                    all_predictions["profile"].extend(qp.mean.detach().cpu().numpy())
-                    prof_intensity = torch.sum(
-                        (counts - bg.mean.unsqueeze(-1)) * qp.mean, dim=-1
-                    )
-
-                    all_predictions["profile_intensity"].extend(
-                        prof_intensity.detach().cpu().ravel().tolist()
-                    )
-                    bg_samples = bg.sample([100])
-                    bg_expanded = bg_samples.unsqueeze(-1).expand(
-                        -1, -1, self.num_pixels
-                    )
-
-                    result_tensor = counts.unsqueeze(0) - bg_expanded
-                    weights = qp.sample([100])
-                    result_tensor = (result_tensor * weights).sum(-1).mean(0)
-                    all_predictions["profile_intensity_2"].extend(
-                        result_tensor.detach().cpu().ravel().tolist()
-                    )
-
-                    prof_mask = qp.mean > self.threshold
-
-                    prof_intensity = torch.sum(
-                        (counts - bg.mean.unsqueeze(-1)) * prof_mask, dim=-1
-                    )
-                    all_predictions["profile_intensity_3"].extend(
-                        prof_intensity.detach().cpu().ravel().tolist()
-                    )
-                    all_predictions["alphas"].extend(
-                        qp.concentration.detach().cpu().numpy()
-                    )
-
-                else:
-                    nll, kl_term, rate, q_I, profile, bg, counts = self(
-                        samples, dead_pixel_mask
-                    )
-
-                    prof_mask = profile > self.threshold
-
-                    prof_intensity = torch.sum(
-                        (counts - bg.mean.unsqueeze(-1)) * prof_mask, dim=-1
-                    )
-
-                    all_predictions["profile_intensity"].extend(
-                        prof_intensity.detach().cpu().ravel().tolist()
-                    )
-                    all_predictions["profile"].extend(profile.detach().cpu().numpy())
-
-                all_predictions["q_I_mean"].extend(
-                    q_I.mean.detach().cpu().ravel().tolist()
-                )
-                all_predictions["q_I_stddev"].extend(
-                    q_I.stddev.detach().cpu().ravel().tolist()
-                )
-                all_predictions["q_bg_mean"].extend(bg.mean.detach().cpu().numpy())
-                all_predictions["counts"].extend(counts.detach().cpu().numpy())
-                all_predictions["refl_id"].extend(metadata[:, 4].detach().cpu().numpy())
-                all_predictions["DIALS_I_sum_val"].extend(metadata[:, 0].detach().cpu())
-                all_predictions["DIALS_I_sum_var"].extend(metadata[:, 1].detach().cpu())
-                all_predictions["DIALS_I_prf_val"].extend(metadata[:, 2].detach().cpu())
-                all_predictions["DIALS_I_prf_var"].extend(metadata[:, 3].detach().cpu())
-                # Add other necessary fields from `metadata` and `q_bg`
-
-        return all_predictions
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         return optimizer
+
+
