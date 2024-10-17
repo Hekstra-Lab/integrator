@@ -2,10 +2,14 @@ import torch
 import glob
 import json
 import datetime
-from integrator import (
+from integrator.model import (
     MVNProfile,
     DirichletProfile,
     SoftmaxProfile,
+    CNNResNet,
+    MVNProfile,
+    SoftmaxProfile,
+    DirichletProfile,
 )
 import os
 
