@@ -155,10 +155,11 @@ class DirichletProfile(torch.nn.Module):
         self.num_components = num_components
         self.alpha_layer = Linear(self.dmodel, self.num_components)
         self.rank = rank
+        self.eps = 1e-6
 
     def forward(self, representation):
         alphas = self.alpha_layer(representation)
-        alphas = F.softplus(alphas)
+        alphas = F.softplus(alphas) + self.eps
         q_p = torch.distributions.Dirichlet(alphas)
 
         profile = q_p.rsample([self.mc_samples])

@@ -7,8 +7,8 @@ from torch.utils.data import DataLoader, random_split, Subset, TensorDataset
 class ShoeboxDataModule(pl.LightningDataModule):
     """
     Attributes:
-        data_dir:
-        batch_size:
+        data_dir: Path to the directory containing the data
+        batch_size: Batch size for the data loaders
         val_split:
         test_split:
         include_test:
