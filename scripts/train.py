@@ -39,7 +39,7 @@ from integrator.utils import (
 import integrator.utils as utils
 
 
-torch.set_float32_matmul_precision("high")
+#torch.set_float32_matmul_precision("high")
 
 
 if __name__ == "__main__":
