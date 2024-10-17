@@ -7,7 +7,7 @@ default_config = {
     "epochs": 10,
     "dmodel": 64,
     "batch_size": 50,
-    "val_split": 0.01,
+    "val_split": 0.99,
     "data_dir": "/n/holylabs/LABS/hekstra_lab/Users/laldama/integratorv2/integrator/data/hewl_816/",
     "test_split": 0.1,
     "num_workers": 4,

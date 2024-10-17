@@ -118,6 +118,25 @@ class Integrator(pytorch_lightning.LightningModule):
         self.q_I = q_I
         self.current_step = 0
 
+
+
+    def on_save_checkpoint(self, checkpoint):
+        checkpoint['encoder_state_dict'] = self.encoder.state_dict()
+        checkpoint['profile_state_dict'] = self.profile.state_dict()
+        checkpoint['q_bg_state_dict'] = self.q_bg.state_dict()
+        checkpoint['q_I_state_dict'] = self.q_I.state_dict()
+        checkpoint['decoder_state_dict'] = self.decoder.state_dict()
+        checkpoint['loss_state_dict'] = self.loss.state_dict()
+        checkpoint['standardize_state_dict'] = self.standardize.state_dict()
+
+
+    @classmethod
+    def load_from_checkpoint(cls, checkpoint_path, *args, **kwargs):
+        checkpoint = torch.load(checkpoint_path, map_location=lambda storage, loc: storage)
+        model = cls(*args, **kwargs)
+        model.load_state_dict(checkpoint['state_dict'])
+        return model
+
     def forward(
         self,
         samples,

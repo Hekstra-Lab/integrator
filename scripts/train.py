@@ -74,24 +74,14 @@ def generate_experiment_dir(config, base_dir="logs/outputs"):
 
 
 def load_config(config_path):
-    """
-
-    Args:
-        config_path ():
-
-    Returns:
-
-    """
     with open(config_path, "r") as file:
-        config = yaml.safe_load(file)
+        return yaml.safe_load(file)
 
-    base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data"))
-    config["data_dir"] = os.path.join(
-        base_path, os.path.dirname(config["shoebox_data"])
-    )
-
-    return config
-
+def get_most_recent_checkpoint(checkpoint_dir):
+    checkpoint_files = glob.glob(os.path.join(checkpoint_dir, "*.ckpt"))
+    if not checkpoint_files:
+        return None
+    return max(checkpoint_files, key=os.path.getmtime)
 
 def get_encoder(config):
     """
@@ -403,33 +393,75 @@ if __name__ == "__main__":
         default="logs/outputs",
         help="Directory where logs will be saved.",
     )
-    parser.add_argument(
-        "--evaluate", action="store_true", help="Run evaluation on trained model"
-    )
     args = parser.parse_args()
 
     config = load_config(args.config)
-
     log_dir = args.log_dir
     os.makedirs(log_dir, exist_ok=True)
 
-    if not args.evaluate:
-        model, experiment_dir = train(
-            config, resume_from_checkpoint=args.resume, log_dir=args.log_dir
-        )
-    else:
-        if args.resume:
-            weights_path = args.resume
-            experiment_dir = os.path.dirname(os.path.dirname(weights_path))
-        else:
-            raise ValueError(
-                "Please provide a checkpoint file using --resume when using --evaluate"
-            )
+    # Always run training (or resume from checkpoint)
+    model, experiment_dir = train(
+        config, resume_from_checkpoint=args.resume, log_dir=args.log_dir
+    )
 
-        if not os.path.exists(weights_path):
-            raise FileNotFoundError(f"Checkpoint file not found: {weights_path}")
+    # Find the most recent checkpoint file
+    checkpoint_dir = os.path.join(experiment_dir, "checkpoints")
+    final_weights_path = get_most_recent_checkpoint(checkpoint_dir)
+    
+    if final_weights_path is None:
+        raise FileNotFoundError(f"No checkpoint files found in: {checkpoint_dir}")
+    
+    print(f"Using checkpoint: {final_weights_path}")
+    
+    # Recreate the model components
+    encoder = get_encoder(config)
+    profile = get_profile(config)
+    q_bg = BackgroundDistribution(
+        config["dmodel"],
+        q_bg=getattr(torch.distributions, config["q_bg"]["distribution"]),
+    )
+    q_I = IntensityDistribution(
+        config["dmodel"],
+        q_I=getattr(torch.distributions, config["q_I"]["distribution"]),
+    )
+    decoder = Decoder(dirichlet=config.get("dirichlet", False))
+    loss = Loss(
+        p_I_scale=config["p_I_scale"],
+        p_bg_scale=config["p_bg_scale"],
+        p_p_scale=config["p_p_scale"],
+        p_I=get_prior_distribution(config["p_I"]),
+        p_bg=get_prior_distribution(config["p_bg"]),
+        p_p=torch.distributions.dirichlet.Dirichlet(torch.ones(3 * 21 * 21) * 0.5),
+        device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    )
+    standardize = Standardize()
 
-        model = Integrator.load_from_checkpoint(weights_path)
+    # Load the model from checkpoint
+    model = Integrator.load_from_checkpoint(
+        final_weights_path,
+        encoder,
+        profile,
+        q_bg,
+        q_I,
+        decoder,
+        loss,
+        standardize,
+        encoder_type=config["encoder_type"],
+        profile_type=config["profile_type"],
+        total_steps=config["total_steps"],
+        max_epochs=config["epochs"],
+        dmodel=config["dmodel"],
+        batch_size=config["batch_size"],
+        rank=config["rank"],
+        C=config["C"],
+        Z=config["Z"],
+        H=config["H"],
+        W=config["W"],
+        lr=config["learning_rate"],
+        images_dir=os.path.join(experiment_dir, "out", "images"),
+        dirichlet=config.get("dirichlet", False),
+    )
+    model.eval()
 
     data_module = ShoeboxDataModule(
         data_dir=config["data_dir"],
@@ -444,16 +476,17 @@ if __name__ == "__main__":
     )
     data_module.setup()
 
+    # Run evaluation
     sel = evaluate(model, data_module, experiment_dir, config)
 
+    # Save config and model summary
     config_copy_path = os.path.join(experiment_dir, "config.yaml")
     with open(config_copy_path, "w") as f:
         yaml.dump(config, f)
 
-    if not args.evaluate:
-        model_summary = str(model)
-        summary_path = os.path.join(experiment_dir, "model_summary.txt")
-        with open(summary_path, "w") as f:
-            f.write(model_summary)
+    model_summary = str(model)
+    summary_path = os.path.join(experiment_dir, "model_summary.txt")
+    with open(summary_path, "w") as f:
+        f.write(model_summary)
 
-    print("Evaluation and output generation complete.")
+    print("Training, evaluation, and output generation complete.")
