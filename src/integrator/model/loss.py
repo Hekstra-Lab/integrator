@@ -5,14 +5,14 @@ class Loss(torch.nn.Module):
     """
     Attributes:
         device:
-        eps:
+        eps: A small value to prevent numerical instability
         beta:
-        p_I_scale:
-        p_bg_scale:
-        p_p_scale:
-        p_I:
-        p_bg:
-        p_p:
+        p_I_scale: Scale for KL(q_I || p_I)
+        p_bg_scale: Scale for KL(q_bg || p_bg)
+        p_p_scale: Scale for KL(q_p || p_p)
+        p_I: Prior distribution for I
+        p_bg: Prior distribution for background
+        p_p: Prior distribution for p
     """
 
     def __init__(
