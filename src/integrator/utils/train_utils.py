@@ -34,11 +34,6 @@ def get_profile(config):
     """
     profile_type = config.get("profile_type")
 
-    if config.get("dirichlet", False):
-        dirichlet = False
-    else:
-        dirichlet = config.get("dirichlet", False)
-
     if profile_type == "MVNProfile":
         dirichlet = False
         return (
@@ -235,9 +230,6 @@ def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
         q_I=getattr(torch.distributions, config["q_I"]["distribution"]),
     )
 
-    images_dir = os.path.join(experiment_dir, "out", "images")
-    os.makedirs(images_dir, exist_ok=True)
-
     integrator_model = Integrator(
         encoder,
         profile,
@@ -258,7 +250,6 @@ def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
         H=config["H"],
         W=config["W"],
         lr=config["learning_rate"],
-        images_dir=images_dir,
         dirichlet=dirichlet,
     )
 

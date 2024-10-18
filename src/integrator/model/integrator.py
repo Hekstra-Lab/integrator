@@ -27,7 +27,6 @@ class Integrator(pytorch_lightning.LightningModule):
         W:
         num_pixels:
         lr:
-        images_dir:
         training_preds:
         validation_preds:
         q_bg:
@@ -56,7 +55,6 @@ class Integrator(pytorch_lightning.LightningModule):
         H=21,
         W=21,
         lr=0.001,
-        images_dir=None,  # Add the images_dir parameter
         dirichlet=False,
     ):
         super().__init__()
@@ -81,7 +79,6 @@ class Integrator(pytorch_lightning.LightningModule):
         self.num_pixels = H * W * Z
 
         self.lr = lr
-        self.images_dir = images_dir  # Save the images_dir for later use
         self.training_preds = {
             "q_I_mean": [],
             "q_I_stddev": [],
