@@ -59,11 +59,17 @@ class OutWriter:
         # load DIALS reflection file
         tbl = flex.reflection_table.from_file(self.reflection_file)
 
+        # Create a boolean array to select reflections used during training
         sel = np.asarray([False] * len(tbl))
         reflection_ids = df["refl_id"].cast(pl.Int32).to_list()
+
+        # q_I.mean and q_I.stddev
         intensity_preds = df["q_I_mean"].to_list()
         intensity_variance = df["q_I_variance"].to_list()
+
+        #
         intensity_prf_preds = df["I_masked_sum"].to_list()
+
         intensity_wsum_preds = df["I_weighted_sum"].to_list()
 
         for id in reflection_ids:

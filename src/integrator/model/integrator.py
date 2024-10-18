@@ -249,16 +249,14 @@ class Integrator(pytorch_lightning.LightningModule):
             nll, kl_term, rate, q_I, profile, qp, bg, counts = self(
                 samples, dead_pixel_mask
             )
-            prof_intensity = torch.sum(
-                (counts - bg.mean.unsqueeze(-1)) * qp.mean, dim=-1
-            )
+            weighted_sum = torch.sum((counts - bg.mean.unsqueeze(-1)) * qp.mean, dim=-1)
 
-            # Compute weighted_sum
-            bg_samples = bg.sample([self.mc_samples])
-            bg_expanded = bg_samples.unsqueeze(-1).expand(-1, -1, profile.size(-1))
-            result_tensor = counts.unsqueeze(0) - bg_expanded
-            weights = qp.sample([100])
-            weighted_sum = (result_tensor * weights).sum(-1).mean(0)
+            # # Compute weighted_sum
+            # bg_samples = bg.sample([self.mc_samples])
+            # bg_expanded = bg_samples.unsqueeze(-1).expand(-1, -1, profile.size(-1))
+            # result_tensor = counts.unsqueeze(0) - bg_expanded
+            # weights = qp.sample([100])
+            # weighted_sum_mc = (result_tensor * weights).sum(-1).mean(0)
 
             # Compute masked_sum
             prof_mask = qp.mean > self.hparams.get("threshold", 0.01)
@@ -276,8 +274,8 @@ class Integrator(pytorch_lightning.LightningModule):
                 "DIALS_I_sum_var": metadata[:, 1],
                 "DIALS_I_prf_val": metadata[:, 2],
                 "DIALS_I_prf_var": metadata[:, 3],
-                "profile_intensity": prof_intensity,
                 "weighted_sum": weighted_sum,
+                # "weighted_sum_mc": weighted_sum,
                 "masked_sum": masked_sum,
                 "alphas": qp.concentration,
             }
@@ -286,8 +284,13 @@ class Integrator(pytorch_lightning.LightningModule):
                 samples, dead_pixel_mask
             )
             prof_mask = profile > self.hparams.get("threshold", 0.01)
-            prof_intensity = torch.sum(
+
+            masked_sum = torch.sum(
                 (counts - q_bg.mean.unsqueeze(-1)) * prof_mask, dim=-1
+            )
+
+            weighted_sum = torch.sum(
+                (counts - q_bg.mean.unsqueeze(-1)) * profile, dim=-1
             )
 
             return {
@@ -302,7 +305,8 @@ class Integrator(pytorch_lightning.LightningModule):
                 "DIALS_I_sum_var": metadata[:, 1],
                 "DIALS_I_prf_val": metadata[:, 2],
                 "DIALS_I_prf_var": metadata[:, 3],
-                "profile_intensity": prof_intensity,
+                "weighted_sum": weighted_sum,
+                "masked_sum": masked_sum,
             }
 
     def configure_callbacks(self):
