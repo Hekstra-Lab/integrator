@@ -34,32 +34,28 @@ def get_profile(config):
     """
     profile_type = config.get("profile_type")
 
-    if config.get("dirichlet", False):
-        dirichlet = False
-    else:
-        dirichlet = config.get("dirichlet", False)
-
-
     if profile_type == "MVNProfile":
-        return MVNProfile(dmodel=config.get("dmodel", 64), rank=config.get("rank", 3))
+        dirichlet = False
+        return MVNProfile(dmodel=config.get("dmodel", 64), rank=config.get("rank", 3)),dirichlet
 
     elif profile_type == "DirichletProfile":
+        dirichlet=True
         return DirichletProfile(
             dmodel=config.get("dmodel", 64),
             num_components=config.get("num_components", 3 * 21 * 21),
-        )
+        ),dirichlet
 
     elif profile_type == "SoftmaxProfile":
+        dirichlet=False
         return SoftmaxProfile(
             input_dim=config.get("input_dim", 64),
             rank=config.get("rank", 3),
             channels=config.get("channels", 3),
             height=config.get("height", 21),
             width=config.get("width", 21),
-        )
+        ),dirichlet
     else:
         raise ValueError(f"Unknown profile type: {profile_type}")
-
 
 def get_prior_distribution(config):
     """Create a torch distribution for priors based on the config."""
@@ -73,7 +69,6 @@ def get_prior_distribution(config):
     params = {k: v for k, v in config.items() if k != "distribution"}
 
     return getattr(torch.distributions, dist_name)(**params)
-
 
 def get_experiment_counter(model_type, profile_type, base_dir="logs/outputs"):
     """Get the next experiment number for the given date, model type, and profile type."""
@@ -198,7 +193,7 @@ def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     encoder = get_encoder(config)
-    profile = get_profile(config)
+    profile,dirichlet = get_profile(config)
     standardize = Standardize()
     decoder = Decoder(dirichlet=dirichlet)
 
