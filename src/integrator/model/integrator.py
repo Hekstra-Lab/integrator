@@ -170,7 +170,7 @@ class Integrator(pytorch_lightning.LightningModule):
             profile = self.profile(representation, dxyz).view(
                 representation.size(0), self.num_pixels
             )
-
+            qp = None
             rate = self.decoder(q_I, q_bg, profile, mc_samples=100)
 
             nll, kl_term = self.loss(
@@ -178,6 +178,7 @@ class Integrator(pytorch_lightning.LightningModule):
                 counts,
                 q_I,
                 q_bg,
+                qp,
                 dead_pixel_mask,
                 eps=1e-5,
             )
