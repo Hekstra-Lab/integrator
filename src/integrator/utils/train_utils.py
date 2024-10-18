@@ -39,7 +39,6 @@ def get_profile(config):
     else:
         dirichlet = config.get("dirichlet", False)
 
-
     if profile_type == "MVNProfile":
         return MVNProfile(dmodel=config.get("dmodel", 64), rank=config.get("rank", 3))
 
