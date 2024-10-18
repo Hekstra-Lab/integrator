@@ -390,7 +390,7 @@ def evaluate(model, data_module, experiment_dir, config):
         profile_type=config.get("profile_type", "UnknownProfile"),
         batch_size=config.get("batch_size", "UnknownBatchSize"),
         out_png_filename="q_I_mean_vs_DIALS.png",
-        intensity_column="q_I_mean",
+        intensity_column="intensity.prf.value",
         save=True,
         display=False,
     )
