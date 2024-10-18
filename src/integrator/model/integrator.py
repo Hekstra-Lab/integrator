@@ -254,7 +254,7 @@ class Integrator(pytorch_lightning.LightningModule):
             )
 
             # Compute weighted_sum
-            bg_samples = bg.sample([])
+            bg_samples = bg.sample([self.mc_samples])
             bg_expanded = bg_samples.unsqueeze(-1).expand(-1, -1, profile.size(-1))
             result_tensor = counts.unsqueeze(0) - bg_expanded
             weights = qp.sample([100])

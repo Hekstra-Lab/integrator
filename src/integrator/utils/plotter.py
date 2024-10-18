@@ -3,10 +3,8 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 from dials.array_family import flex
-import pickle
 
 
-# Class to perform analysis on the model output
 class Plotter:
     def __init__(self, refl_file, output_dir, encoder_type, profile_type, batch_size):
         self.refl_tbl = flex.reflection_table().from_file(refl_file)
@@ -14,52 +12,6 @@ class Plotter:
         self.encoder_type = encoder_type
         self.profile_type = profile_type
         self.batch_size = batch_size
-
-    def _get_output_path(self, filename):
-        return os.path.join(self.output_dir, filename)
-
-    def plot_intensities(
-        self,
-        ylabel="DIALS intensity",
-        xlabel="Network intensity",
-        title=None,
-        save=False,
-        out_png_filename="intensity_comparison.png",
-        display=True,
-    ):
-        q_I_mean = self.refl_tbl["intensity.sum.value"].as_numpy_array()
-        dials_I = self.refl_tbl["intensity.prf.value"].as_numpy_array()
-        # equality line
-
-        plt.clf()
-        plt.plot([0, 1e6], [0, 1e6], "r", alpha=0.3)
-        plt.scatter(q_I_mean, dials_I, alpha=0.1, color="black")
-        plt.yscale("log")
-        plt.xscale("log")
-        plt.ylim(1, 1e6)
-        plt.xlim(1, 1e6)
-
-        plt.gca().set_aspect("equal", adjustable="box")  # Set aspect ratio to be equal
-        plt.ylabel(ylabel)
-        plt.xlabel(xlabel)
-        plt.grid(alpha=0.3)
-
-        # Create title if not provided
-        if title is None:
-            title = (
-                f"Predicted vs. DIALS intensity\n"
-                f"Encoder: {self.encoder_type}, Profile: {self.profile_type}, "
-                f"Batch Size: {self.batch_size}"
-            )
-        plt.title(title)
-
-        if save:
-            full_path = self._get_output_path(out_png_filename)
-            plt.savefig(full_path, dpi=600)
-
-        if display:
-            plt.show()
-        plt.clf()
 
 
 def visualize_shoebox(shoebox, color_weight=2, cmap="gray"):
@@ -169,7 +121,7 @@ def plot_uncertainty(
 def plot_intensities(
     ylabel="DIALS intensity",
     xlabel="Network intensity",
-    title=None,
+    title="",
     save=False,
     nn_refl=None,
     dials_refl=None,

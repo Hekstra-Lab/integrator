@@ -19,7 +19,7 @@ class OutWriter:
 
     def __init__(
         self,
-        predictions,
+        predictions,  # network predicted intensities
         reflection_file,  # dials reflections file
         out_file_name,
         out_file_name2="nn_only.refl",
@@ -39,7 +39,7 @@ class OutWriter:
         return tensor
 
     def write_output(self):
-        res_df = pl.DataFrame(
+        df = pl.DataFrame(
             {
                 "refl_id": self.tensor_to_numpy(self.predictions["refl_id"]),
                 "q_I_mean": self.tensor_to_numpy(self.predictions["q_I_mean"]),
@@ -52,16 +52,19 @@ class OutWriter:
         )
 
         # adding variance column
-        res_df = res_df.with_columns((pl.col("q_I_stddev") ** 2).alias("q_I_variance"))
+        df = df.with_columns((pl.col("q_I_stddev") ** 2).alias("q_I_variance"))
 
-        res_df = res_df.sort(pl.col("refl_id"))
+        df = df.sort(pl.col("refl_id"))
+
+        # load DIALS reflection file
         tbl = flex.reflection_table.from_file(self.reflection_file)
+
         sel = np.asarray([False] * len(tbl))
-        reflection_ids = res_df["refl_id"].cast(pl.Int32).to_list()
-        intensity_preds = res_df["q_I_mean"].to_list()
-        intensity_variance = res_df["q_I_variance"].to_list()
-        intensity_prf_preds = res_df["I_masked_sum"].to_list()
-        intensity_wsum_preds = res_df["I_weighted_sum"].to_list()
+        reflection_ids = df["refl_id"].cast(pl.Int32).to_list()
+        intensity_preds = df["q_I_mean"].to_list()
+        intensity_variance = df["q_I_variance"].to_list()
+        intensity_prf_preds = df["I_masked_sum"].to_list()
+        intensity_wsum_preds = df["I_weighted_sum"].to_list()
 
         for id in reflection_ids:
             sel[id] = True
