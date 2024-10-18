@@ -40,21 +40,33 @@ def get_profile(config):
         dirichlet = config.get("dirichlet", False)
 
     if profile_type == "MVNProfile":
-        return MVNProfile(dmodel=config.get("dmodel", 64), rank=config.get("rank", 3))
+        dirichlet = False
+        return (
+            MVNProfile(dmodel=config.get("dmodel", 64), rank=config.get("rank", 3)),
+            dirichlet,
+        )
 
     elif profile_type == "DirichletProfile":
-        return DirichletProfile(
-            dmodel=config.get("dmodel", 64),
-            num_components=config.get("num_components", 3 * 21 * 21),
+        dirichlet = True
+        return (
+            DirichletProfile(
+                dmodel=config.get("dmodel", 64),
+                num_components=config.get("num_components", 3 * 21 * 21),
+            ),
+            dirichlet,
         )
 
     elif profile_type == "SoftmaxProfile":
-        return SoftmaxProfile(
-            input_dim=config.get("input_dim", 64),
-            rank=config.get("rank", 3),
-            channels=config.get("channels", 3),
-            height=config.get("height", 21),
-            width=config.get("width", 21),
+        dirichlet = False
+        return (
+            SoftmaxProfile(
+                input_dim=config.get("input_dim", 64),
+                rank=config.get("rank", 3),
+                channels=config.get("channels", 3),
+                height=config.get("height", 21),
+                width=config.get("width", 21),
+            ),
+            dirichlet,
         )
     else:
         raise ValueError(f"Unknown profile type: {profile_type}")
@@ -197,7 +209,7 @@ def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     encoder = get_encoder(config)
-    profile = get_profile(config)
+    profile, dirichlet = get_profile(config)
     standardize = Standardize()
     decoder = Decoder(dirichlet=dirichlet)
 

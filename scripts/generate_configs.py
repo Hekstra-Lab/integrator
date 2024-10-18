@@ -4,12 +4,12 @@ import torch
 
 # Default Config
 default_config = {
-    "epochs": 10,
+    "epochs": 12,
     "dmodel": 64,
     "batch_size": 50,
     "val_split": 0.05,
     "data_dir": "/n/holylabs/LABS/hekstra_lab/Users/laldama/integratorv2/integrator/data/hewl_816/",
-    "test_split": 0.1,
+    "test_split": 0.99,
     "num_workers": 4,
     "p_p": {"distribution": "Dirichlet", "concentration_shape": [3, 21, 21]},
     "include_test": False,
