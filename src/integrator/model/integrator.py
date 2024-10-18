@@ -183,7 +183,7 @@ class Integrator(pytorch_lightning.LightningModule):
                 eps=1e-5,
             )
 
-            return nll, kl_term, rate, q_I, profile, q_bg, counts
+            return nll, kl_term, rate, q_I, profile, qp, q_bg, counts
 
     def training_step(self, batch):
         device = self.device
@@ -282,17 +282,19 @@ class Integrator(pytorch_lightning.LightningModule):
                 "alphas": qp.concentration,
             }
         else:
-            rate, q_I, profile, bg, counts = self(samples, dead_pixel_mask)
+            nll, kl_term, rate, q_I, profile, qp, q_bg, counts = self(
+                samples, dead_pixel_mask
+            )
             prof_mask = profile > self.hparams.get("threshold", 0.01)
             prof_intensity = torch.sum(
-                (counts - bg.mean.unsqueeze(-1)) * prof_mask, dim=-1
+                (counts - q_bg.mean.unsqueeze(-1)) * prof_mask, dim=-1
             )
 
             return {
                 "q_I_mean": q_I.mean,
                 "q_I_stddev": q_I.stddev,
-                "q_bg_mean": bg.mean,
-                "q_bg_stddev": bg.stddev,
+                "q_bg_mean": q_bg.mean,
+                "q_bg_stddev": q_bg.stddev,
                 "counts": counts,
                 "profile": profile,
                 "refl_id": metadata[:, 4],
