@@ -67,7 +67,7 @@ if __name__ == "__main__":
     # Recreate the model components
     encoder = get_encoder(config)
 
-    profile = get_profile(config)
+    profile, dirichlet = get_profile(config)
 
     q_bg = BackgroundDistribution(
         config["dmodel"],
@@ -78,11 +78,6 @@ if __name__ == "__main__":
         config["dmodel"],
         q_I=getattr(torch.distributions, config["q_I"]["distribution"]),
     )
-
-    if config.get("dirichlet", False):
-        dirichlet = False
-    else:
-        dirichlet = config.get("dirichlet", False)
 
     decoder = Decoder(dirichlet=dirichlet)
 
