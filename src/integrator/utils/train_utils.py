@@ -34,6 +34,12 @@ def get_profile(config):
     """
     profile_type = config.get("profile_type")
 
+    if config.get("dirichlet", False):
+        dirichlet = False
+    else:
+        dirichlet = config.get("dirichlet", False)
+
+
     if profile_type == "MVNProfile":
         return MVNProfile(dmodel=config.get("dmodel", 64), rank=config.get("rank", 3))
 
@@ -194,7 +200,7 @@ def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
     encoder = get_encoder(config)
     profile = get_profile(config)
     standardize = Standardize()
-    decoder = Decoder(dirichlet=config.get("dirichlet", False))
+    decoder = Decoder(dirichlet=dirichlet)
 
     alpha = torch.ones(3 * 21 * 21) * 0.5
     alpha = alpha.to(device)
@@ -242,7 +248,7 @@ def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
         W=config["W"],
         lr=config["learning_rate"],
         images_dir=images_dir,
-        dirichlet=config.get("dirichlet", False),
+        dirichlet=dirichlet,
     )
 
     if resume_from_checkpoint:
