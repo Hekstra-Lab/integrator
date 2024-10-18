@@ -6,6 +6,8 @@ from dials.array_family import flex
 
 class OutWriter:
     """
+    Writes the output of the neural network to a dials reflection file.
+
     Attributes:
         predictions:
         refl_file_name:
