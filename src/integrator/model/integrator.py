@@ -199,7 +199,7 @@ class Integrator(pytorch_lightning.LightningModule):
             )
 
         else:
-            nll, kl_term, rate, q_I, profile, bg, counts = self(
+            nll, kl_term, rate, q_I, profile, qp, bg, counts = self(
                 samples, dead_pixel_mask
             )
 
