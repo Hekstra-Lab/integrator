@@ -22,7 +22,7 @@ from integrator.utils import (
 )
 
 
-#torch.set_float32_matmul_precision("high")
+# torch.set_float32_matmul_precision("high")
 
 
 if __name__ == "__main__":
@@ -66,16 +66,26 @@ if __name__ == "__main__":
 
     # Recreate the model components
     encoder = get_encoder(config)
+
     profile = get_profile(config)
+
     q_bg = BackgroundDistribution(
         config["dmodel"],
         q_bg=getattr(torch.distributions, config["q_bg"]["distribution"]),
     )
+
     q_I = IntensityDistribution(
         config["dmodel"],
         q_I=getattr(torch.distributions, config["q_I"]["distribution"]),
     )
-    decoder = Decoder(dirichlet=config.get("dirichlet", False))
+
+    if config.get("dirichlet", False):
+        dirichlet = False
+    else:
+        dirichlet = config.get("dirichlet", False)
+
+    decoder = Decoder(dirichlet=dirichlet)
+
     loss = Loss(
         p_I_scale=config["p_I_scale"],
         p_bg_scale=config["p_bg_scale"],
@@ -110,7 +120,7 @@ if __name__ == "__main__":
         W=config["W"],
         lr=config["learning_rate"],
         images_dir=os.path.join(experiment_dir, "out", "images"),
-        dirichlet=config.get("dirichlet", False),
+        dirichlet=dirichlet,
     )
     model.eval()
 
