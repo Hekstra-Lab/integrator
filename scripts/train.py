@@ -114,7 +114,6 @@ if __name__ == "__main__":
         H=config["H"],
         W=config["W"],
         lr=config["learning_rate"],
-        images_dir=os.path.join(experiment_dir, "out", "images"),
         dirichlet=dirichlet,
     )
     model.eval()

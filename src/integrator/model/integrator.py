@@ -32,6 +32,7 @@ class Integrator(pytorch_lightning.LightningModule):
         q_bg:
         q_I:
         current_step:
+        mc_samples:
     """
 
     def __init__(
@@ -56,6 +57,7 @@ class Integrator(pytorch_lightning.LightningModule):
         W=21,
         lr=0.001,
         dirichlet=False,
+        mc_samples=100,
     ):
         super().__init__()
 
@@ -75,6 +77,7 @@ class Integrator(pytorch_lightning.LightningModule):
         self.Z = Z
         self.H = H
         self.W = W
+        self.mc_samples = mc_samples
 
         self.num_pixels = H * W * Z
 
@@ -149,7 +152,7 @@ class Integrator(pytorch_lightning.LightningModule):
         if self.dirichlet is True:
             profile, qp = self.profile(representation)
 
-            rate = self.decoder(q_I, q_bg, profile, mc_samples=100)
+            rate = self.decoder(q_I, q_bg, profile, mc_samples=self.mc_samples)
 
             nll, kl_term = self.loss(
                 rate,
@@ -168,7 +171,7 @@ class Integrator(pytorch_lightning.LightningModule):
                 representation.size(0), self.num_pixels
             )
             qp = None
-            rate = self.decoder(q_I, q_bg, profile, mc_samples=100)
+            rate = self.decoder(q_I, q_bg, profile, mc_samples=self.mc_samples)
 
             nll, kl_term = self.loss(
                 rate,
@@ -182,11 +185,8 @@ class Integrator(pytorch_lightning.LightningModule):
 
             return nll, kl_term, rate, q_I, profile, q_bg, counts
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch):
         device = self.device
-        num_samples_to_save = (
-            5  # Default value; you can also make this a hyperparameter
-        )
 
         samples, metadata, dead_pixel_mask = batch
 
@@ -216,9 +216,6 @@ class Integrator(pytorch_lightning.LightningModule):
 
     def validation_step(self, batch):
         device = self.device
-        num_samples_to_save = (
-            5  # Default value; you can also make this a hyperparameter
-        )
 
         samples, metadata, dead_pixel_mask = batch
         samples = samples.to(device)
@@ -243,7 +240,7 @@ class Integrator(pytorch_lightning.LightningModule):
 
         return loss
 
-    def predict_step(self, batch, batch_idx, dataloader_idx=0):
+    def predict_step(self, batch):
         samples, metadata, dead_pixel_mask = batch
         samples = samples.to(self.device)
         dead_pixel_mask = dead_pixel_mask.to(self.device)
@@ -257,7 +254,7 @@ class Integrator(pytorch_lightning.LightningModule):
             )
 
             # Compute weighted_sum
-            bg_samples = bg.sample([100])
+            bg_samples = bg.sample([])
             bg_expanded = bg_samples.unsqueeze(-1).expand(-1, -1, profile.size(-1))
             result_tensor = counts.unsqueeze(0) - bg_expanded
             weights = qp.sample([100])

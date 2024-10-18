@@ -10,7 +10,7 @@ class OutWriter:
 
     Attributes:
         predictions:
-        refl_file_name:
+        reflection_file:
         out_file_name:
         out_file_name2:
         out_file_name3:
@@ -20,14 +20,14 @@ class OutWriter:
     def __init__(
         self,
         predictions,
-        refl_file_name,  # dials reflections file
+        reflection_file,  # dials reflections file
         out_file_name,
         out_file_name2="nn_only.refl",
         out_file_name3="dials_sum_nn_weak.refl",
         dirichlet=False,
     ):
         self.predictions = predictions
-        self.refl_file_name = refl_file_name
+        self.reflection_file = reflection_file
         self.out_file_name = out_file_name
         self.out_file_name2 = out_file_name2
         self.out_file_name3 = out_file_name3
@@ -55,7 +55,7 @@ class OutWriter:
         res_df = res_df.with_columns((pl.col("q_I_stddev") ** 2).alias("q_I_variance"))
 
         res_df = res_df.sort(pl.col("refl_id"))
-        tbl = flex.reflection_table.from_file(self.refl_file_name)
+        tbl = flex.reflection_table.from_file(self.reflection_file)
         sel = np.asarray([False] * len(tbl))
         reflection_ids = res_df["refl_id"].cast(pl.Int32).to_list()
         intensity_preds = res_df["q_I_mean"].to_list()
