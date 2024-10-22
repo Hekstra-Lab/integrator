@@ -206,6 +206,12 @@ def train(config, resume_from_checkpoint=None, log_dir="logs/outputs"):
     encoder = get_encoder(config)
     profile, dirichlet = get_profile(config)
     standardize = Standardize()
+
+    # Calculate total number of pixels
+    total_samples = len(data_module.train_dataloader().dataset)
+    pixels_per_sample = config["Z"] * config["H"] * config["W"]
+    standardize.set_max_pixels(total_samples, pixels_per_sample)
+
     decoder = Decoder(dirichlet=dirichlet)
 
     alpha = torch.ones(3 * 21 * 21) * 0.5

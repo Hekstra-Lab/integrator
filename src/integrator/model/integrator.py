@@ -275,7 +275,7 @@ class Integrator(pytorch_lightning.LightningModule):
                 "DIALS_I_prf_val": metadata[:, 2],
                 "DIALS_I_prf_var": metadata[:, 3],
                 "weighted_sum": weighted_sum,
-                # "weighted_sum_mc": weighted_sum,
+                "weighted_sum_mc": weighted_sum,
                 "masked_sum": masked_sum,
                 "alphas": qp.concentration,
             }
