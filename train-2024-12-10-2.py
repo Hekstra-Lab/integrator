@@ -16,7 +16,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 import torch
-from integrator.layers import Constraint
+from integrator.layers import Constraint, MLP, Residual
+from integrator import ShoeboxDataModule
+
 
 import pytorch_lightning as pl
 from pathlib import Path
@@ -26,171 +28,10 @@ import numpy as np
 from dials.array_family import flex
 from integrator.model import DirichletProfile
 
-torch.set_float32_matmul_precision('medium')
-torch.backends.cudnn.benchmark = True 
+torch.set_float32_matmul_precision("medium")
+
 
 # %%
-class ShoeboxDataModule(pl.LightningDataModule):
-    """
-    Attributes:
-        data_dir: Path to the directory containing the data
-        batch_size: Batch size for the data loaders
-        val_split:
-        test_split:
-        include_test:
-        subset_size:
-        single_sample_index:
-        num_workers:
-        cutoff:
-        full_dataset:
-        H:
-        W:
-        Z:
-        full_dataset:
-    """
-
-    def __init__(
-        self,
-        data_dir,
-        batch_size=100,
-        val_split=0.2,
-        test_split=0.1,
-        num_workers=4,
-        include_test=False,
-        subset_size=None,
-        single_sample_index=None,
-        cutoff=None,
-        shoebox_features=None,
-    ):
-        super().__init__()
-        self.data_dir = data_dir
-        self.batch_size = batch_size
-        self.val_split = val_split
-        self.test_split = test_split
-        self.include_test = include_test
-        self.subset_size = subset_size
-        self.single_sample_index = single_sample_index
-        self.num_workers = num_workers
-        self.cutoff = cutoff
-        self.full_dataset = None  # Will store the full dataset
-        self.shoebox_features = shoebox_features
-
-    def setup(self, stage=None):
-        # Load the tensors
-        #       samples = torch.load(os.path.join(self.data_dir, "samples.pt"))
-        shoeboxes = torch.load(os.path.join(self.data_dir, "standardized_shoeboxes_subset.pt"))
-        counts = torch.load(os.path.join(self.data_dir, "raw_counts_subset.pt"))
-        metadata = torch.load(os.path.join(self.data_dir, "metadata_subset.pt"))
-        dead_pixel_mask = torch.load(os.path.join(self.data_dir, "masks_subset.pt"))
-
-        if self.shoebox_features is not None:
-            shoebox_features = torch.load(
-                os.path.join(self.data_dir, "shoebox_features_subset.pt")
-            )
-            shoebox_features = shoebox_features.float()
-        else:
-            shoebox_features = None
-
-        if self.cutoff is not None:
-            selection = metadata[:, 0] < self.cutoff
-            shoeboxes = shoeboxes[selection]
-            #           samples = samples[selection]
-            counts = counts[selection]
-            metadata = metadata[selection]
-            dead_pixel_mask = dead_pixel_mask[selection]
-            if self.shoebox_features is not None:
-                shoebox_features = shoebox_features[selection]
-
-        self.H = torch.unique(shoeboxes[..., 0], dim=1).size(-1)
-        self.W = torch.unique(shoeboxes[..., 1], dim=1).size(-1)
-        self.Z = torch.unique(shoeboxes[..., 2], dim=1).size(-1)
-
-        # Create the full dataset based on whether shoebox_features is present
-        if shoebox_features is not None:
-            self.full_dataset = TensorDataset(
-                #                shoeboxes, metadata, dead_pixel_mask, shoebox_features,counts,samples
-                shoeboxes,
-                metadata,
-                dead_pixel_mask,
-                shoebox_features,
-                counts,
-            )
-        else:
-            self.full_dataset = TensorDataset(
-                shoeboxes, metadata, dead_pixel_mask, counts
-            )
-
-        # If single_sample_index is specified, use only that sample
-        if self.single_sample_index is not None:
-            self.full_dataset = Subset(self.full_dataset, [self.single_sample_index])
-
-        # Optionally, create a subset of the dataset
-        if self.subset_size is not None and self.subset_size < len(self.full_dataset):
-            indices = torch.randperm(len(self.full_dataset))[: self.subset_size]
-            self.full_dataset = Subset(self.full_dataset, indices)
-
-        # Calculate lengths for train/val/test splits
-        total_size = len(self.full_dataset)
-        val_size = int(total_size * self.val_split)
-        if self.include_test:
-            test_size = int(total_size * self.test_split)
-            train_size = total_size - val_size - test_size
-        else:
-            test_size = 0
-            train_size = total_size - val_size
-
-        # Split the dataset
-        if self.include_test:
-            self.train_dataset, self.val_dataset, self.test_dataset = random_split(
-                self.full_dataset, [train_size, val_size, test_size]
-            )
-        else:
-            self.train_dataset, self.val_dataset = random_split(
-                self.full_dataset, [train_size, val_size]
-            )
-            self.test_dataset = None
-
-    def train_dataloader(self):
-        return DataLoader(
-            self.train_dataset,
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=self.num_workers,
-            pin_memory=True,
-        )
-
-    def val_dataloader(self):
-        return DataLoader(
-            self.val_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-            pin_memory=True,
-        )
-
-    def test_dataloader(self):
-        if self.include_test:
-            return DataLoader(
-                self.test_dataset,
-                batch_size=self.batch_size,
-                shuffle=False,
-                num_workers=self.num_workers,
-                pin_memory=True,
-            )
-        else:
-            return None
-
-    def predict_dataloader(self):
-        # Use the full dataset for prediction
-        return DataLoader(
-            self.full_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-            pin_memory=True,
-        )
-
-
 class CrystalNorm(nn.Module):
     def __init__(self, num_channels):
         super().__init__()
@@ -273,7 +114,6 @@ class DIALSCallback(pl.Callback):
         except Exception as e:
             print(f"An unexpected error occurred: {e}")
             raise
-
 
     def process_with_dials(self, epoch_dir):
         """Process reflection files with DIALS scaling."""
@@ -455,37 +295,6 @@ class DIALSCallback(pl.Callback):
 
 
 # %%
-class MLP(torch.nn.Module):
-    def __init__(self, width, depth, dropout=None, output_dims=None, user_bn=True):
-        super().__init__()
-        layers = [
-            # ResidualLayer(width, dropout=dropout, use_bn=user_bn) for _ in range(depth)
-            ResidualLayer(width, dropout=dropout)
-            for _ in range(depth)
-        ]
-        if output_dims is not None:
-            layers.append(Linear(width, output_dims))
-        self.main = torch.nn.Sequential(*layers)
-
-    def forward(self, data):
-        # Check if the input has 2 or 3 dimensions
-        if len(data.shape) == 3:
-            batch_size, num_pixels, features = data.shape
-            data = data.view(
-                -1, features
-            )  # Flatten to [batch_size * num_pixels, features]
-        elif len(data.shape) == 2:
-            batch_size, features = data.shape
-            num_pixels = None  # No pixels in this case
-
-        # data = data.view(-1, features)
-        out = self.main(data)
-
-        # If there were pixels, reshape back to [batch_size, num_pixels, output_dims]
-        if num_pixels is not None:
-            out = out.view(batch_size, num_pixels, -1)  # Reshape back if needed
-
-        return out
 
 
 class ResidualLayer(nn.Module):
@@ -518,44 +327,6 @@ class ResidualLayer(nn.Module):
         out += residual
         out = self.relu(out)
         return out
-
-
-class Residual(nn.Module):
-    def __init__(self, in_channels, out_channels, strides=1, use_norm=True):
-        super().__init__()
-        self.use_norm = use_norm
-        self.conv1 = nn.Conv2d(
-            in_channels, out_channels, kernel_size=3, padding=1, stride=strides
-        )
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
-
-        if in_channels != out_channels or strides != 1:
-            self.conv3 = nn.Conv2d(
-                in_channels, out_channels, kernel_size=1, stride=strides
-            )
-        else:
-            self.conv3 = None
-
-        if self.use_norm:
-            # Match number of channels exactly
-            self.norm1 = CrystalNorm(out_channels)
-            self.norm2 = CrystalNorm(out_channels)
-
-    def forward(self, X):
-        Y = self.conv1(X)
-        if self.use_norm:
-            Y = self.norm1(Y)
-        Y = F.relu(Y)
-
-        Y = self.conv2(Y)
-        if self.use_norm:
-            Y = self.norm2(Y)
-
-        if self.conv3:
-            X = self.conv3(X)
-
-        Y += X
-        return F.relu(Y)
 
 
 def init_weights(m):
@@ -1525,7 +1296,7 @@ def main():
     trainer = pl.Trainer(
         max_epochs=num_epochs,
         accelerator="gpu" if torch.cuda.is_available() else "cpu",
-#       accelerator="cpu",
+        #       accelerator="cpu",
         devices=1,
         logger=True,
         precision="16-mixed",

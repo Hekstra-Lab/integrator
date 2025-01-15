@@ -22,16 +22,14 @@ class Linear(torch.nn.Linear):
 
 
 class Residual(nn.Module):
-
-    """The Residual block of ResNet models."""
-
-    def __init__(self, in_channels, out_channels, strides=1, use_bn=True):
+    def __init__(self, in_channels, out_channels, strides=1, use_norm=True):
         super().__init__()
-        self.use_bn = use_bn
+        self.use_norm = use_norm
         self.conv1 = nn.Conv2d(
             in_channels, out_channels, kernel_size=3, padding=1, stride=strides
         )
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+
         if in_channels != out_channels or strides != 1:
             self.conv3 = nn.Conv2d(
                 in_channels, out_channels, kernel_size=1, stride=strides
@@ -39,26 +37,24 @@ class Residual(nn.Module):
         else:
             self.conv3 = None
 
-        if self.use_bn:
-            self.bn1 = nn.BatchNorm2d(out_channels)
-            self.bn2 = nn.BatchNorm2d(out_channels)
-
-    #            if self.conv3:
-    #                self.bn3 = nn.BatchNorm2d(out_channels)
+        if self.use_norm:
+            # Match number of channels exactly
+            self.norm1 = CrystalNorm(out_channels)
+            self.norm2 = CrystalNorm(out_channels)
 
     def forward(self, X):
         Y = self.conv1(X)
-        if self.use_bn:
-            Y = self.bn1(Y)
+        if self.use_norm:
+            Y = self.norm1(Y)
         Y = F.relu(Y)
+
         Y = self.conv2(Y)
-        if self.use_bn:
-            Y = self.bn2(Y)
+        if self.use_norm:
+            Y = self.norm2(Y)
 
         if self.conv3:
             X = self.conv3(X)
-            # if self.use_bn:
-            #    X = self.bn3(X)
+
         Y += X
         return F.relu(Y)
 
@@ -100,14 +96,30 @@ class MLP(torch.nn.Module):
     def __init__(self, width, depth, dropout=None, output_dims=None, user_bn=True):
         super().__init__()
         layers = [
-            ResidualLayer(width, dropout=dropout, use_bn=user_bn) for _ in range(depth)
+            # ResidualLayer(width, dropout=dropout, use_bn=user_bn) for _ in range(depth)
+            ResidualLayer(width, dropout=dropout)
+            for _ in range(depth)
         ]
         if output_dims is not None:
             layers.append(Linear(width, output_dims))
         self.main = torch.nn.Sequential(*layers)
 
     def forward(self, data):
-        batch_size, num_pixels, features = data.shape
-        data = data.view(-1, features)
+        # Check if the input has 2 or 3 dimensions
+        if len(data.shape) == 3:
+            batch_size, num_pixels, features = data.shape
+            data = data.view(
+                -1, features
+            )  # Flatten to [batch_size * num_pixels, features]
+        elif len(data.shape) == 2:
+            batch_size, features = data.shape
+            num_pixels = None  # No pixels in this case
+
+        # data = data.view(-1, features)
         out = self.main(data)
-        return out.view(batch_size, num_pixels, -1)
+
+        # If there were pixels, reshape back to [batch_size, num_pixels, output_dims]
+        if num_pixels is not None:
+            out = out.view(batch_size, num_pixels, -1)  # Reshape back if needed
+
+        return out
