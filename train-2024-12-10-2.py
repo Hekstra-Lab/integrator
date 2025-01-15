@@ -26,6 +26,8 @@ import numpy as np
 from dials.array_family import flex
 from integrator.model import DirichletProfile
 
+torch.set_float32_matmul_precision('medium')
+torch.backends.cudnn.benchmark = True 
 
 # %%
 class ShoeboxDataModule(pl.LightningDataModule):
@@ -76,14 +78,14 @@ class ShoeboxDataModule(pl.LightningDataModule):
     def setup(self, stage=None):
         # Load the tensors
         #       samples = torch.load(os.path.join(self.data_dir, "samples.pt"))
-        shoeboxes = torch.load(os.path.join(self.data_dir, "standardized_shoeboxes.pt"))
-        counts = torch.load(os.path.join(self.data_dir, "raw_counts.pt"))
-        metadata = torch.load(os.path.join(self.data_dir, "metadata.pt"))
-        dead_pixel_mask = torch.load(os.path.join(self.data_dir, "masks.pt"))
+        shoeboxes = torch.load(os.path.join(self.data_dir, "standardized_shoeboxes_subset.pt"))
+        counts = torch.load(os.path.join(self.data_dir, "raw_counts_subset.pt"))
+        metadata = torch.load(os.path.join(self.data_dir, "metadata_subset.pt"))
+        dead_pixel_mask = torch.load(os.path.join(self.data_dir, "masks_subset.pt"))
 
         if self.shoebox_features is not None:
             shoebox_features = torch.load(
-                os.path.join(self.data_dir, "shoebox_features.pt")
+                os.path.join(self.data_dir, "shoebox_features_subset.pt")
             )
             shoebox_features = shoebox_features.float()
         else:
@@ -236,7 +238,7 @@ class DIALSCallback(pl.Callback):
         posterior_refls="posterior.refl",
         weighted_sum_refls="weighted_sum.refl",
         thresholded_refls="thresholded.refl",
-        integrated_expt="/n/holylabs/LABS/hekstra_lab/Users/laldama/integratorv3/integrator/logs/DIALS_/CNNResNetSoftmax_08_045/integrated.expt",
+        integrated_expt="/n/holylabs/LABS/hekstra_lab/Users/laldama/integratorv2/integrator/logs/DIALS_/CNNResNetSoftmax_08_045/integrated.expt",
         dials_env_path="/n/hekstra_lab/people/aldama/software/dials-v3-16-1/dials_env.sh",
     ):
         super().__init__()
@@ -258,22 +260,20 @@ class DIALSCallback(pl.Callback):
         print(f"Executing command: {full_command}")
 
         try:
-            result = subprocess.run(
+            process = subprocess.Popen(
                 full_command,
                 shell=True,
                 executable="/bin/bash",
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                check=True,
             )
-            if result.stdout:
-                print(f"Command stdout:\n{result.stdout}")
-            return result
-        except subprocess.CalledProcessError as e:
-            print(f"Command failed with exit code: {e.returncode}")
-            print(f"Error output:\n{e.stderr}")
-            print(f"Standard output:\n{e.stdout}")
+            return process
+
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
             raise
+
 
     def process_with_dials(self, epoch_dir):
         """Process reflection files with DIALS scaling."""
@@ -408,7 +408,8 @@ class DIALSCallback(pl.Callback):
         }
 
         # Load reflection table
-        refl_file = "./data/pass1/reflections_.refl"
+
+        refl_file = "/n/holylabs/LABS/hekstra_lab/Users/laldama/integratorv2/integrator/data/pass1/reflections_.refl"
         tbl = flex.reflection_table.from_file(str(refl_file))
 
         # Create and apply selection mask
@@ -1466,17 +1467,17 @@ class Standardize(torch.nn.Module):
 
 def main():
     # Data setup
-    batch_size = 10
+    batch_size = 25
 
     data_module = ShoeboxDataModule(
         # data_dir="/Users/luis/integratorv3/integrator/data/hewl_816/",
-        data_dir="/n/holylabs/LABS/hekstra_lab/Users/laldama/integratorv2/integrator/data/pass1/",
+        data_dir="/n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/data/pass1_sub/",
         batch_size=batch_size,
         val_split=0.3,
         test_split=0.0,
         num_workers=4,
         include_test=False,
-        subset_size=100,
+        subset_size=1000,
         cutoff=None,
         shoebox_features=True,
     )
@@ -1523,8 +1524,8 @@ def main():
     # Set up trainer
     trainer = pl.Trainer(
         max_epochs=num_epochs,
-        # accelerator="gpu" if torch.cuda.is_available() else "cpu",
-        accelerator="cpu",
+        accelerator="gpu" if torch.cuda.is_available() else "cpu",
+#       accelerator="cpu",
         devices=1,
         logger=True,
         precision="16-mixed",
