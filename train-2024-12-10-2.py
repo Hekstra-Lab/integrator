@@ -95,8 +95,8 @@ class DIALSCallback(pl.Callback):
         self.integrated_expt = integrated_expt
         self.dials_env_path = dials_env_path
 
-    def run_dials_command(self, command):
-        """Run a DIALS command with proper environment sourcing."""
+    def run_dials_command(self, command, wait=False):
+        """Run a DIALS command asynchronously or synchronously with proper environment sourcing."""
         full_command = f"source {self.dials_env_path} && {command}"
         print(f"Executing command: {full_command}")
 
@@ -109,18 +109,31 @@ class DIALSCallback(pl.Callback):
                 stderr=subprocess.PIPE,
                 text=True,
             )
+
+            # If wait is True, block until the process completes
+            if wait:
+                stdout, stderr = process.communicate()
+                if process.returncode != 0:
+                    raise subprocess.CalledProcessError(
+                        returncode=process.returncode,
+                        cmd=full_command,
+                        output=stdout,
+                        stderr=stderr,
+                    )
+                return stdout, stderr
+
+            # Return the process to allow asynchronous execution
             return process
 
         except Exception as e:
             print(f"An unexpected error occurred: {e}")
+
             raise
 
     def process_with_dials(self, epoch_dir):
-        """Process reflection files with DIALS scaling."""
+        """Process reflection files with DIALS scaling and merge asynchronously."""
         if not Path(self.integrated_expt).exists():
-            raise FileNotFoundError(
-                f"Experiment file not found: {self.integrated_expt}"
-            )
+            raise FileNotFoundError(f"Experiment file not found: {self.integrated_expt}")
 
         methods = {
             "posterior": self.posterior_refls,
@@ -133,6 +146,8 @@ class DIALSCallback(pl.Callback):
             method_dir.mkdir(exist_ok=True)
 
             input_refl = epoch_dir / refl_file
+            scaled_refl = method_dir / "scaled.refl"
+            scaled_expt = method_dir / "scaled.expt"
 
             if not input_refl.exists():
                 print(f"Warning: Reflection file {input_refl} not found")
@@ -143,24 +158,48 @@ class DIALSCallback(pl.Callback):
                 print(f"Input reflection file: {input_refl}")
                 print(f"Experiment file: {self.integrated_expt}")
 
-                self.run_dials_command(
+                # Run dials.scale asynchronously
+                scale_command = (
                     f"dials.scale {input_refl} {self.integrated_expt} "
-                    f"output.reflections={method_dir}/scaled.refl "
+                    f"output.reflections={scaled_refl} "
+                    f"output.experiments={scaled_expt} "
                     f"output.html={method_dir}/scaling.html "
-                    f"output.log={method_dir}/scaling.log "
+                    f"output.log={method_dir}/scaling.log"
                 )
+                scale_process = self.run_dials_command(scale_command)
 
-                print(f"Successfully scaled {method_name} reflections")
+                # Define dials.merge command to run after scaling completes
+                def run_merge():
+                    merge_command = (
+                        f"dials.merge {scaled_refl} {scaled_expt}"
+                        f"output.log={method_dir}/merged.log"
+                        f"output.html={method_dir}/merged.html"
+                        f"output.mtz={method_dir}/merged.mtz"
+                    )
+                    try:
+                        self.run_dials_command(merge_command, wait=True)
+                        print(f"Successfully merged {method_name} reflections")
+                    except Exception as e:
+                        print(f"Error merging {method_name} reflections: {str(e)}")
+
+                # Use a background thread to monitor scaling and trigger merging
+                import threading
+
+                def monitor_scale():
+                    scale_process.wait()
+                    if scale_process.returncode == 0:
+                        print(f"Successfully scaled {method_name} reflections")
+                        run_merge()
+                    else:
+                        print(
+                            f"Scaling failed for {method_name} with return code {scale_process.returncode}"
+                        )
+
+                threading.Thread(target=monitor_scale, daemon=True).start()
 
             except Exception as e:
-                print(f"Error scaling {method_name} reflections: {str(e)}")
-                print(f"Input files:")
-                print(
-                    f"  Reflection file: {input_refl} (exists: {input_refl.exists()})"
-                )
-                print(
-                    f"  Experiment file: {self.integrated_expt} (exists: {Path(self.integrated_expt).exists()})"
-                )
+                print(f"Error processing {method_name} reflections: {str(e)}")
+
 
     def on_validation_epoch_end(self, trainer, pl_module):
         if (trainer.current_epoch + 1) % self.every_n_epochs != 0:
