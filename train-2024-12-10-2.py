@@ -161,8 +161,13 @@ class DIALSCallback(pl.Callback):
                 # Run dials.scale asynchronously
                 scale_command = (
                     f"dials.scale {input_refl} {self.integrated_expt} "
+<<<<<<< HEAD
                     f"output.reflections={scaled_refl} "
                     f"output.experiments={scaled_expt} "
+=======
+                    f"output.reflections={method_dir}/scaled.refl "
+                    f"output.experiments={method_dir}/scaled.expt "
+>>>>>>> 34e8d3f (2025-01-15)
                     f"output.html={method_dir}/scaling.html "
                     f"output.log={method_dir}/scaling.log"
                 )
