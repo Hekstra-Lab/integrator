@@ -14,22 +14,70 @@ def weight_initializer(weight):
     return weight
 
 
+# class Linear(torch.nn.Linear):
+# def reset_parameters(self) -> None:
+# self.weight = weight_initializer(self.weight)
+# if self.bias is not None:
+# torch.nn.init.zeros_(self.bias)
+
+
 class Linear(torch.nn.Linear):
+    def __init__(self, in_features: int, out_features: int):
+        super().__init__(in_features, out_features, bias=False)  # Set bias=False
+
     def reset_parameters(self) -> None:
         self.weight = weight_initializer(self.weight)
-        if self.bias is not None:
-            torch.nn.init.zeros_(self.bias)
+
+
+# class Residual(nn.Module):
+# def __init__(self, in_channels, out_channels, strides=1, use_norm=True):
+# super().__init__()
+# self.use_norm = use_norm
+# self.conv1 = nn.Conv2d(
+# in_channels, out_channels, kernel_size=3, padding=1, stride=strides
+# )
+# self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+
+# if in_channels != out_channels or strides != 1:
+# self.conv3 = nn.Conv2d(
+# in_channels, out_channels, kernel_size=1, stride=strides
+# )
+# else:
+# self.conv3 = None
+
+# if self.use_norm:
+# # Match number of channels exactly
+# self.norm1 = CrystalNorm(out_channels)
+# self.norm2 = CrystalNorm(out_channels)
+
+# def forward(self, X):
+# Y = self.conv1(X)
+# if self.use_norm:
+# Y = self.norm1(Y)
+# Y = F.relu(Y)
+
+# Y = self.conv2(Y)
+# if self.use_norm:
+# Y = self.norm2(Y)
+
+# if self.conv3:
+# X = self.conv3(X)
+
+# Y += X
+# return F.relu(Y)
 
 
 class Residual(nn.Module):
-    def __init__(self, in_channels, out_channels, strides=1, use_norm=True):
+
+    """The Residual block of ResNet models."""
+
+    def __init__(self, in_channels, out_channels, strides=1, use_bn=True):
         super().__init__()
-        self.use_norm = use_norm
+        self.use_bn = use_bn
         self.conv1 = nn.Conv2d(
             in_channels, out_channels, kernel_size=3, padding=1, stride=strides
         )
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
-
         if in_channels != out_channels or strides != 1:
             self.conv3 = nn.Conv2d(
                 in_channels, out_channels, kernel_size=1, stride=strides
@@ -37,24 +85,26 @@ class Residual(nn.Module):
         else:
             self.conv3 = None
 
-        if self.use_norm:
-            # Match number of channels exactly
-            self.norm1 = CrystalNorm(out_channels)
-            self.norm2 = CrystalNorm(out_channels)
+        if self.use_bn:
+            self.bn1 = nn.BatchNorm2d(out_channels)
+            self.bn2 = nn.BatchNorm2d(out_channels)
+
+    #            if self.conv3:
+    #                self.bn3 = nn.BatchNorm2d(out_channels)
 
     def forward(self, X):
         Y = self.conv1(X)
-        if self.use_norm:
-            Y = self.norm1(Y)
+        if self.use_bn:
+            Y = self.bn1(Y)
         Y = F.relu(Y)
-
         Y = self.conv2(Y)
-        if self.use_norm:
-            Y = self.norm2(Y)
+        if self.use_bn:
+            Y = self.bn2(Y)
 
         if self.conv3:
             X = self.conv3(X)
-
+            # if self.use_bn:
+            #    X = self.bn3(X)
         Y += X
         return F.relu(Y)
 

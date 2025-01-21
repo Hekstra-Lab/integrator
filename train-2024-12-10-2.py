@@ -1,5 +1,4 @@
 import pytorch_lightning as pl
-import pytorch_lightning as pl
 from pathlib import Path
 import subprocess
 import torch
@@ -133,7 +132,9 @@ class DIALSCallback(pl.Callback):
     def process_with_dials(self, epoch_dir):
         """Process reflection files with DIALS scaling and merge asynchronously."""
         if not Path(self.integrated_expt).exists():
-            raise FileNotFoundError(f"Experiment file not found: {self.integrated_expt}")
+            raise FileNotFoundError(
+                f"Experiment file not found: {self.integrated_expt}"
+            )
 
         methods = {
             "posterior": self.posterior_refls,
@@ -199,7 +200,6 @@ class DIALSCallback(pl.Callback):
 
             except Exception as e:
                 print(f"Error processing {method_name} reflections: {str(e)}")
-
 
     def on_validation_epoch_end(self, trainer, pl_module):
         if (trainer.current_epoch + 1) % self.every_n_epochs != 0:

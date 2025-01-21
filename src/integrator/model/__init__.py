@@ -1,7 +1,5 @@
 # src/integrator/model/__init__.py
 from .integrator import Integrator
 from .encoder import CNNResNet, FcResNet
-from .profile import MVNProfile, SoftmaxProfile,DirichletProfile
-from .decoder import Decoder
+from .profile import MVNProfile, SoftmaxProfile, DirichletProfile
 from .loss import Loss
-from .distribution import BackgroundDistribution, IntensityDistribution
