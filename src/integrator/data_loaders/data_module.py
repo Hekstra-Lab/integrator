@@ -2,9 +2,10 @@ import torch
 import os
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader, random_split, Subset, TensorDataset
+from integrator.data_loaders import BaseDataModule
 
 
-class ShoeboxDataModule(pl.LightningDataModule):
+class ShoeboxDataModule(BaseDataModule):
     """
     Attributes:
         data_dir: Path to the directory containing the data
@@ -35,6 +36,13 @@ class ShoeboxDataModule(pl.LightningDataModule):
         single_sample_index=None,
         cutoff=None,
         shoebox_features=None,
+        shoebox_file_names={
+            "shoeboxes": "weak_standardized_shoeboxes.pt",
+            "counts": "weak_raw_counts.pt",
+            "metadata": "metadata_subset.pt",
+            "masks": "masks_subset.pt",
+            "shoebox_features": "shoebox_features_subset.pt",
+        },
     ):
         super().__init__()
         self.data_dir = data_dir
@@ -48,20 +56,27 @@ class ShoeboxDataModule(pl.LightningDataModule):
         self.cutoff = cutoff
         self.full_dataset = None  # Will store the full dataset
         self.shoebox_features = shoebox_features
+        self.shoebox_file_names = shoebox_file_names
 
     def setup(self, stage=None):
         # Load the tensors
         #       samples = torch.load(os.path.join(self.data_dir, "samples.pt"))
         shoeboxes = torch.load(
-            os.path.join(self.data_dir, "standardized_shoeboxes_subset.pt")
+            os.path.join(self.data_dir, self.shoebox_file_names["shoeboxes"])
         )
-        counts = torch.load(os.path.join(self.data_dir, "raw_counts_subset.pt"))
-        metadata = torch.load(os.path.join(self.data_dir, "metadata_subset.pt"))
-        dead_pixel_mask = torch.load(os.path.join(self.data_dir, "masks_subset.pt"))
+        counts = torch.load(
+            os.path.join(self.data_dir, self.shoebox_file_names["counts"])
+        )
+        metadata = torch.load(
+            os.path.join(self.data_dir, self.shoebox_file_names["metadata"])
+        )
+        dead_pixel_mask = torch.load(
+            os.path.join(self.data_dir, self.shoebox_file_names["masks"])
+        )
 
         if self.shoebox_features is not None:
             shoebox_features = torch.load(
-                os.path.join(self.data_dir, "shoebox_features_subset.pt")
+                os.path.join(self.data_dir, self.shoebox_file_names["shoebox_features"])
             )
             shoebox_features = shoebox_features.float()
         else:
