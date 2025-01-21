@@ -4,5 +4,6 @@ from .factory_utils import (
     load_config,
     create_integrator,
     create_data_loader,
-    create_trainer
+    create_trainer,
+    parse_args,
 )

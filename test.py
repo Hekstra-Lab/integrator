@@ -1,27 +1,37 @@
+import argparse
 from integrator.utils import (
     load_config,
     create_integrator,
     create_data_loader,
     create_trainer,
+    parse_args,
 )
 
-# Load configuration file
-config = load_config(
-    "/Users/luis/integratorv3/integrator/src/integrator/configs/config.yaml"
-)
 
-# Create data loader
-data = create_data_loader(config)
+if __name__ == "__main__":
+    args = parse_args()
 
-# Create integrator model
-integrator = create_integrator(config)
+    # Load configuration file
+    config = load_config(args.config)
 
-# Create trainer
-trainer = create_trainer(config, data)
+    # Override config options from command line
+    if args.batch_size:
+        config["data_loader"]["params"]["batch_size"] = args.batch_size
+    if args.epochs:
+        config["trainer"]["params"]["max_epochs"] = args.epochs
 
-# Fit the model
-trainer.fit(
-    integrator,
-    train_dataloaders=data.train_dataloader(),
-    val_dataloaders=data.val_dataloader(),
-)
+    # Create data loader
+    data = create_data_loader(config)
+
+    # Create integrator model
+    integrator = create_integrator(config)
+
+    # Create trainer
+    trainer = create_trainer(config, data)
+
+    # Fit the model
+    trainer.fit(
+        integrator,
+        train_dataloaders=data.train_dataloader(),
+        val_dataloaders=data.val_dataloader(),
+    )

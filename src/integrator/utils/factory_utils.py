@@ -1,4 +1,5 @@
 from integrator.registry import REGISTRY, ARGUMENT_RESOLVER
+import argparse
 import pytorch_lightning as pl
 import yaml
 
@@ -125,6 +126,29 @@ def create_trainer(config, data_module):
     )
     trainer.datamodule = data_module
     return trainer
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Configuration for Integration Model")
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="./src/integrator/configs/config.yaml",
+        help="Path to the config.yaml file",
+    )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=5,
+        help="Number of epochs to train the model",
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=32,
+        help="Batch size for training",
+    )
+    return parser.parse_args()
 
 
 # %%
