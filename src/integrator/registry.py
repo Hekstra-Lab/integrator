@@ -34,6 +34,12 @@ REGISTRY = {
     "data_loader": {
         "default": ShoeboxDataModule,
     },
+    "p_bg": {
+        "gamma": torch.distributions.gamma.Gamma,
+    },
+    "p_I": {
+        "gamma": torch.distributions.gamma.Gamma,
+    },
 }
 
 ARGUMENT_RESOLVER = {

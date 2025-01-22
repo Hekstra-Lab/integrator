@@ -37,6 +37,10 @@ components:
     name: gamma
     params:
       dmodel: 64
+  loss:
+    name: elbo
+    params:
+      p_bg:
 
 data_loader:
   name: default

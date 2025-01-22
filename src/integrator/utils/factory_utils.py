@@ -77,6 +77,7 @@ def create_integrator(config):
             q_I=intensity_distribution,
             profile_model=profile,
             dmodel=64,
+            loss=config["integrator"]["params"]["loss"],
             mc_samples=100,
             learning_rate=0.0001,
             profile_threshold=0.005,

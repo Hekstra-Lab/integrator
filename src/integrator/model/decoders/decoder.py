@@ -7,8 +7,8 @@ class Decoder(BaseDecoder):
         self,
         mc_samples=100,
     ):
-        self.mc_samples = mc_samples
         super().__init__()
+        self.mc_samples = mc_samples
 
     def forward(
         self,

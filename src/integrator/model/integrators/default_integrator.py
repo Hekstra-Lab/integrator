@@ -15,6 +15,7 @@ class DefaultIntegrator(BaseIntegrator):
         q_I,
         profile_model,
         dmodel,
+        loss,
         mc_samples=100,
         learning_rate=1e-3,
         profile_threshold=0.001,
@@ -32,7 +33,7 @@ class DefaultIntegrator(BaseIntegrator):
         self.decoder = Decoder()
 
         # Loss function
-        self.loss_fn = Loss()
+        self.loss_fn = loss
         self.background_distribution = q_bg
         self.intensity_distribution = q_I
         self.norm = nn.LayerNorm(dmodel)
