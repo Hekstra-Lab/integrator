@@ -41,6 +41,15 @@ components:
     name: elbo
     params:
       p_bg:
+        name: gamma
+        params:
+          concentration: 0.0001
+          rate: 0.0001
+      p_I:
+        name: gamma
+        params:
+          concentration: 0.0001
+          rate: 0.0001
 
 data_loader:
   name: default

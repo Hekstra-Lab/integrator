@@ -1,4 +1,5 @@
 from integrator.registry import REGISTRY, ARGUMENT_RESOLVER
+import torch
 import argparse
 import pytorch_lightning as pl
 import yaml
@@ -23,6 +24,38 @@ def create_argument(module_type, argument_name, argument_value):
         raise ValueError(
             f"Unknown {module_type}: {argument_name}. Available options: {list(ARGUMENT_RESOLVER[module_type].keys())}"
         ) from e
+
+
+def create_prior(dist_name, dist_params):
+    if dist_name == "gamma":
+        concentration = torch.tensor(dist_params["concentration"])
+        rate = torch.tensor(dist_params["rate"])
+        return torch.distributions.gamma.Gamma(concentration, rate)
+    else:
+        raise ValueError(f"Unknown distribution name: {dist_name}")
+
+
+def create_loss(config):
+    p_bg_name = config["components"]["loss"]["params"]["p_bg"]["name"]
+    p_bg_params = config["components"]["loss"]["params"]["p_bg"]["params"]
+
+    p_bg = create_prior(p_bg_name, p_bg_params)
+
+    # same for p_I
+    p_I_name = config["components"]["loss"]["params"]["p_I"]["name"]
+    p_I_params = config["components"]["loss"]["params"]["p_I"]["params"]
+
+    p_I = create_prior(p_I_name, p_I_params)
+
+    # override p_bg key in config
+    config["components"]["loss"]["params"]["p_bg"] = p_bg
+    config["components"]["loss"]["params"]["p_I"] = p_I
+
+    return create_module(
+        "loss",
+        config["components"]["loss"]["name"],
+        **config["components"]["loss"]["params"],
+    )
 
 
 def load_config(config_path):
@@ -64,6 +97,8 @@ def create_integrator(config):
         **config["components"]["q_I"]["params"],
     )
 
+    loss = create_loss(config)
+
     if integrator_name == "integrator1":
         fc_encoder = create_module(
             "encoder",
@@ -77,7 +112,7 @@ def create_integrator(config):
             q_I=intensity_distribution,
             profile_model=profile,
             dmodel=64,
-            loss=config["integrator"]["params"]["loss"],
+            loss=loss,
             mc_samples=100,
             learning_rate=0.0001,
             profile_threshold=0.005,

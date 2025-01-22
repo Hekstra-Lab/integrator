@@ -20,7 +20,7 @@ REGISTRY = {
         "dirichlet": DirichletProfile,
     },
     "loss": {
-        "loss1": Loss,
+        "elbo": Loss,
     },
     "integrator": {
         "integrator1": DefaultIntegrator,
@@ -34,12 +34,6 @@ REGISTRY = {
     "data_loader": {
         "default": ShoeboxDataModule,
     },
-    "p_bg": {
-        "gamma": torch.distributions.gamma.Gamma,
-    },
-    "p_I": {
-        "gamma": torch.distributions.gamma.Gamma,
-    },
 }
 
 ARGUMENT_RESOLVER = {
@@ -48,6 +42,14 @@ ARGUMENT_RESOLVER = {
             "auto": lambda: "gpu" if torch.cuda.is_available() else "cpu",
             "gpu": "gpu",
             "cpu": "cpu",
-        }
-    }
+        },
+    },
+    "loss": {
+        "p_bg": {
+            "gamma": torch.distributions.gamma.Gamma,
+        },
+        "p_I": {
+            "gamma": torch.distributions.gamma.Gamma,
+        },
+    },
 }
