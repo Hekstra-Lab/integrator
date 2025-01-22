@@ -1,4 +1,5 @@
 import torch
+from integrator.model.loss import BaseLoss
 
 
 class Loss(torch.nn.Module):
@@ -11,7 +12,6 @@ class Loss(torch.nn.Module):
         p_p_scale=0.0001,
         p_bg_scale=0.0001,
         p_I_scale=0.0001,
-        mc_samples=100,
         recon_scale=0.00,
     ):
         super().__init__()
@@ -34,6 +34,7 @@ class Loss(torch.nn.Module):
         # Dirichlet prior parameters will be moved to correct device in forward
         self.register_buffer("dirichlet_concentration", torch.ones(3 * 21 * 21))
 
+    # TODO: Make to() dynamic based on distribution type
     def to(self, device):
         # Override to() to ensure all components are moved to the correct device
         super().to(device)
@@ -43,7 +44,7 @@ class Loss(torch.nn.Module):
         self.p_I.scale = self.p_I.scale.to(device)
         return self
 
-    def forward(self, rate, counts, q_p, q_I, q_bg, dead_pixel_mask, eps=1e-5):
+    def forward(self, rate, counts, q_p, q_I, q_bg, dead_pixel_mask):
         # Ensure all inputs are on the same device
         device = rate.device
 

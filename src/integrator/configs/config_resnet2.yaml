@@ -13,13 +13,17 @@ integrator:
 
 components:
   encoder:
-    name: encoder1
+    name: encoder2
     params:
-      dmodel: 64
-      dropout: 0.1
-      Z: 3
-      H: 21
-      W: 21
+        conv1_out_channel: 64
+        conv1_kernel_size: 7
+        conv1_stride: 2
+        conv1_padding: 3
+        layer1_num_blocks: 3
+        Z: 3
+        H: 21
+        W: 21
+        dmodel: 32
   profile:
     name: dirichlet
     params:

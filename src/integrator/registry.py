@@ -1,4 +1,4 @@
-from .model.encoders import CNNResNet, FcEncoder
+from .model.encoders import CNNResNet, FcEncoder, CNNResNet2
 from .model.decoders import Decoder
 from .model.profiles import DirichletProfile
 from .model.loss import Loss
@@ -12,6 +12,7 @@ REGISTRY = {
     "encoder": {
         "encoder1": CNNResNet,
         "fc_encoder": FcEncoder,
+        "encoder2": CNNResNet2,
     },
     "decoder": {
         "decoder1": Decoder,
