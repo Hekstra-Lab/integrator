@@ -1,4 +1,5 @@
 import argparse
+from integrator.callbacks import PredWriter
 from integrator.utils import (
     load_config,
     create_integrator,
@@ -26,12 +27,28 @@ if __name__ == "__main__":
     # Create integrator model
     integrator = create_integrator(config)
 
+    # Create callbacks
+    pred_writer = PredWriter(
+        output_dir=config["trainer"]["params"]["callbacks"]["pred_writer"][
+            "output_dir"
+        ],
+        write_interval=config["trainer"]["params"]["callbacks"]["pred_writer"][
+            "write_interval"
+        ],
+    )
+
     # Create trainer
-    trainer = create_trainer(config, data)
+    trainer = create_trainer(config, data, callbacks=[pred_writer])
 
     # Fit the model
     trainer.fit(
         integrator,
         train_dataloaders=data.train_dataloader(),
         val_dataloaders=data.val_dataloader(),
+    )
+
+    trainer.predict(
+        integrator,
+        return_predictions=False,
+        dataloaders=data.predict_dataloader(),
     )

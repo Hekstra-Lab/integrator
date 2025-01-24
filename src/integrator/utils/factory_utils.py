@@ -145,7 +145,11 @@ def create_data_loader(config):
         raise ValueError(f"Unknown data loader name: {data_loader_name}")
 
 
-def create_trainer(config, data_module):
+def create_trainer(
+    config,
+    data_module,
+    callbacks=None,
+):
     trainer = pl.Trainer(
         max_epochs=config["trainer"]["params"]["max_epochs"],
         accelerator=create_argument(
@@ -157,7 +161,8 @@ def create_trainer(config, data_module):
         check_val_every_n_epoch=config["trainer"]["params"]["check_val_every_n_epoch"],
         log_every_n_steps=config["trainer"]["params"]["log_every_n_steps"],
         deterministic=config["trainer"]["params"]["deterministic"],
-        callbacks=config["trainer"]["params"]["callbacks"],
+        # callbacks=config["trainer"]["params"]["callbacks"],
+        callbacks=callbacks,
         enable_checkpointing=config["trainer"]["params"]["enable_checkpointing"],
     )
     trainer.datamodule = data_module
