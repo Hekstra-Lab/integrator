@@ -21,6 +21,10 @@ class DefaultIntegrator(BaseIntegrator):
         profile_threshold=0.001,
     ):
         super().__init__()
+        # Save all constructor arguments except module instances
+        self.save_hyperparameters(
+            ignore=["cnn_encoder", "fc_encoder", "q_bg", "q_I", "profile_model", "loss"]
+        )
         self.learning_rate = learning_rate
 
         # Model components

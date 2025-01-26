@@ -1,4 +1,5 @@
 from integrator.registry import REGISTRY, ARGUMENT_RESOLVER
+from copy import deepcopy
 import torch
 import argparse
 import pytorch_lightning as pl
@@ -36,26 +37,20 @@ def create_prior(dist_name, dist_params):
 
 
 def create_loss(config):
-    p_bg_name = config["components"]["loss"]["params"]["p_bg"]["name"]
-    p_bg_params = config["components"]["loss"]["params"]["p_bg"]["params"]
+    # Create a DEEP COPY of the loss parameters
+    param_dict = deepcopy(config["components"]["loss"]["params"])
 
-    p_bg = create_prior(p_bg_name, p_bg_params)
+    # Build p_bg from the copied params
+    p_bg = create_prior(param_dict["p_bg"]["name"], param_dict["p_bg"]["params"])
 
-    # same for p_I
-    p_I_name = config["components"]["loss"]["params"]["p_I"]["name"]
-    p_I_params = config["components"]["loss"]["params"]["p_I"]["params"]
+    # Build p_I from the copied params
+    p_I = create_prior(param_dict["p_I"]["name"], param_dict["p_I"]["params"])
 
-    p_I = create_prior(p_I_name, p_I_params)
+    # Modify the COPY, not the original config
+    param_dict["p_bg"] = p_bg
+    param_dict["p_I"] = p_I
 
-    # override p_bg key in config
-    config["components"]["loss"]["params"]["p_bg"] = p_bg
-    config["components"]["loss"]["params"]["p_I"] = p_I
-
-    return create_module(
-        "loss",
-        config["components"]["loss"]["name"],
-        **config["components"]["loss"]["params"],
-    )
+    return create_module("loss", config["components"]["loss"]["name"], **param_dict)
 
 
 def load_config(config_path):
@@ -64,10 +59,7 @@ def load_config(config_path):
         return yaml.safe_load(f)
 
 
-def create_integrator(config):
-    integrator_name = config["integrator"]["name"]
-    integrator_class = REGISTRY["integrator"][integrator_name]
-
+def create_components(config):
     # Base modules
     encoder = create_module(
         "encoder",
@@ -98,6 +90,27 @@ def create_integrator(config):
     )
 
     loss = create_loss(config)
+    return (
+        encoder,
+        profile,
+        decoder,
+        background_distribution,
+        intensity_distribution,
+        loss,
+    )
+
+
+def create_integrator(config):
+    integrator_name = config["integrator"]["name"]
+    integrator_class = REGISTRY["integrator"][integrator_name]
+    (
+        encoder,
+        profile,
+        decoder,
+        background_distribution,
+        intensity_distribution,
+        loss,
+    ) = create_components(config)
 
     if integrator_name == "integrator1":
         fc_encoder = create_module(
@@ -106,6 +119,42 @@ def create_integrator(config):
             **config["integrator"]["encoder"]["params"],
         )
         integrator = integrator_class(
+            cnn_encoder=encoder,
+            fc_encoder=fc_encoder,
+            q_bg=background_distribution,
+            q_I=intensity_distribution,
+            profile_model=profile,
+            dmodel=64,
+            loss=loss,
+            mc_samples=100,
+            learning_rate=0.0001,
+            profile_threshold=0.005,
+        )
+        return integrator
+    else:
+        raise ValueError(f"Unknown integrator name: {integrator_name}")
+
+
+def create_integrator_from_checkpoint(config, checkpoint_path):
+    integrator_name = config["integrator"]["name"]
+    integrator_class = REGISTRY["integrator"][integrator_name]
+    (
+        encoder,
+        profile,
+        decoder,
+        background_distribution,
+        intensity_distribution,
+        loss,
+    ) = create_components(config)
+
+    if integrator_name == "integrator1":
+        fc_encoder = create_module(
+            "encoder",
+            config["integrator"]["encoder"]["name"],
+            **config["integrator"]["encoder"]["params"],
+        )
+        integrator = integrator_class.load_from_checkpoint(
+            checkpoint_path,
             cnn_encoder=encoder,
             fc_encoder=fc_encoder,
             q_bg=background_distribution,
