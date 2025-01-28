@@ -7,4 +7,5 @@ from .factory_utils import (
     create_integrator_from_checkpoint,
     create_trainer,
     parse_args,
+    override_config,
 )

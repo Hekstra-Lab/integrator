@@ -241,4 +241,9 @@ def parse_args():
     return parser.parse_args()
 
 
-# %%
+def override_config(args, config):
+    # Override config options from command line
+    if args.batch_size:
+        config["data_loader"]["params"]["batch_size"] = args.batch_size
+    if args.epochs:
+        config["trainer"]["params"]["max_epochs"] = args.epochs
