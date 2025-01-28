@@ -45,7 +45,14 @@ if __name__ == "__main__":
     )
 
     # Create trainer
-    trainer = create_trainer(config, data, callbacks=[pred_writer, checkpoint_callback])
+    trainer = create_trainer(
+        config,
+        data,
+        callbacks=[
+            pred_writer,
+            checkpoint_callback,
+        ],
+    )
 
     # Fit the model
     trainer.fit(
