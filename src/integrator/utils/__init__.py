@@ -8,4 +8,6 @@ from .factory_utils import (
     create_trainer,
     parse_args,
     override_config,
+    clean_from_memory,
+    predict_from_checkpoints,
 )

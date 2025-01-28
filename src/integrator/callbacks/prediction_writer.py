@@ -21,7 +21,8 @@ class PredWriter(BasePredictionWriter):
     ):
         if self.output_dir is None:
             # get logger directory
-            self.output_dir = trainer.logger.log_dir + "/predictions/"
+            # defaults to storing the last epoch predictions
+            self.output_dir = trainer.logger.log_dir + "/predictions/" + "/last/"
             # create directory to store predictions
             Path(self.output_dir).mkdir(parents=True, exist_ok=True)
         # save predictions

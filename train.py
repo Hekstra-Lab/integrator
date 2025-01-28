@@ -7,6 +7,8 @@ from integrator.utils import (
     create_trainer,
     parse_args,
     override_config,
+    clean_from_memory,
+    predict_from_checkpoints,
 )
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pathlib import Path
@@ -73,3 +75,15 @@ if __name__ == "__main__":
         return_predictions=False,
         dataloaders=data.predict_dataloader(),
     )
+
+    version_dir = trainer.logger.log_dir
+    path = version_dir + "/checkpoints/epoch*.ckpt"
+
+    # override to stop new version dirs from being created
+    config["trainer"]["params"]["logger"] = False
+
+    # clean from memory
+    clean_from_memory(trainer, pred_writer, pred_writer, checkpoint_callback)
+
+    # predict from checkpoints
+    predict_from_checkpoints(config, data, version_dir, path)

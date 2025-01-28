@@ -36,6 +36,7 @@ class ShoeboxDataModule(BaseDataModule):
         single_sample_index=None,
         cutoff=None,
         shoebox_features=None,
+        persistent_workers=True,
         shoebox_file_names={
             "shoeboxes": "weak_standardized_shoeboxes.pt",
             "counts": "weak_raw_counts.pt",

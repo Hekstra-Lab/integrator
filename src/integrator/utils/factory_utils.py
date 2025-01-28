@@ -1,9 +1,14 @@
 from integrator.registry import REGISTRY, ARGUMENT_RESOLVER
 from copy import deepcopy
 import torch
+import gc
 import argparse
 import pytorch_lightning as pl
 import yaml
+import glob
+import re
+from integrator.callbacks import PredWriter
+from pathlib import Path
 
 
 def create_module(module_type, module_name, **kwargs):
@@ -247,3 +252,48 @@ def override_config(args, config):
         config["data_loader"]["params"]["batch_size"] = args.batch_size
     if args.epochs:
         config["trainer"]["params"]["max_epochs"] = args.epochs
+
+
+def clean_from_memory(trainer, pred_writer, pred_integrator, checkpoint_callback=None):
+    del trainer
+    del pred_writer
+    del pred_integrator
+    if checkpoint_callback is not None:
+        del checkpoint_callback
+    torch.cuda.empty_cache()
+    gc.collect()
+
+
+def predict_from_checkpoints(config, data, version_dir, path):
+    for ckpt in glob.glob(path):
+        epoch = re.search(r"epoch=(\d+)", ckpt).group(0)
+        ckpt_dir = version_dir + "/predictions/" + epoch
+        Path(ckpt_dir).mkdir(parents=True, exist_ok=True)
+
+        # prediction writer for current checkpoint
+        pred_writer = PredWriter(
+            output_dir=ckpt_dir,
+            write_interval=config["trainer"]["params"]["callbacks"]["pred_writer"][
+                "write_interval"
+            ],
+        )
+
+        trainer = create_trainer(
+            config,
+            data,
+            callbacks=[
+                pred_writer,
+            ],
+        )
+
+        pred_integrator = create_integrator_from_checkpoint(
+            config,
+            ckpt,
+        )
+        trainer.predict(
+            pred_integrator,
+            return_predictions=False,
+            dataloaders=data.predict_dataloader(),
+        )
+
+        clean_from_memory(trainer, pred_writer, pred_writer)
