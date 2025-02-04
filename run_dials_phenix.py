@@ -1,11 +1,13 @@
 import subprocess
+import glob
 from pathlib import Path
 
-glob.glob(prediction_path + "epoch*/reflections/*.refl")
 
 # TODO: these should be passed as an argument
 dials_environment = "/Applications/dials-v3-16-1/dials_env.sh"
 expt_file = "/Users/luis/dials_out/816_sbgrid_HEWL/pass1/integrated.expt"
+phenix_env = "/Applications/phenix-1.21.1-5286/phenix_env.sh"
+pdb = "/Users/luis/Downloads/7l84.pdb"
 
 
 def run_dials(dials_environment, command):
@@ -38,7 +40,7 @@ def run_phenix(phenix_env, mtz_file, pdb_file):
     phenix_dir = str(Path(mtz_file).parent) + "/phenix_out"
     Path(phenix_dir).mkdir(parents=True, exist_ok=True)
 
-    # command = ' '.join(command)
+    command = " ".join(command)
     command += (
         f";rs.find_peaks *[0-9].mtz *[0-9].pdb -f ANOM -p PANOM -z 5.0 -o peaks.csv"
     )
@@ -61,48 +63,45 @@ def run_phenix(phenix_env, mtz_file, pdb_file):
         raise
 
 
-# refl_files = glob.glob(prediction_path + "epoch*/reflections/*.refl")
-refl_files = glob.glob(
-    "/Users/luis/integratorv3/integrator/lightning_logs/version_68/predictions/epoch*/reflections/*.refl"
-)
-refl_file = refl_files[0]
+# scales and merges reflections, and then runs phenix and finds anomalous
+def analysis(prediction_path, dials_env, phenix_env, pdb):
+    # refl_files = glob.glob(prediction_path + "epoch*/reflections/*.refl")
+    refl_files = glob.glob(prediction_path + "epoch*/reflections/*.refl")
+    refl_file = refl_files[0]
+
+    for refl_file in refl_files:
+        parent_dir = Path(refl_file).parent.parent.__str__()
+        scaled_refl_out = parent_dir + "/dials_out/scaled.refl"
+        scaled_expt_out = parent_dir + "/dials_out/scaled.expt"
+        # make output dir
+        Path(parent_dir + "/dials_out").mkdir(parents=True, exist_ok=True)
+
+        scale_command = (
+            f"dials.scale {refl_file} {expt_file} "
+            f"output.reflections='{scaled_refl_out}' "
+            f"output.experiments='{scaled_expt_out}' "
+            f"output.html='{parent_dir}/dials_out/scaling.html' "
+            f"output.log='{parent_dir}/dials_out/scaling.log'"
+        )
+
+        run_dials(dials_env, scale_command)
+
+        merge_command = (
+            f"dials.merge {scaled_refl_out} {scaled_expt_out} "
+            f"output.log='{parent_dir}/dials_out/merged.log' "
+            f"output.html='{parent_dir}/dials_out/merged.html' "
+            f"output.mtz='{parent_dir}/dials_out/merged.mtz'"
+        )
+
+        run_dials(dials_environment, merge_command)
+
+        mtz_file = parent_dir + "/dials_out/merged.mtz"
+
+        run_phenix(phenix_env, mtz_file, pdb)
 
 
-for refl_file in refl_files:
-    parent_dir = Path(refl_file).parent.parent.__str__()
-    scaled_refl_out = parent_dir + "/dials_out/scaled.refl"
-    scaled_expt_out = parent_dir + "/dials_out/scaled.expt"
-    # make output dir
-    Path(parent_dir + "/dials_out").mkdir(parents=True, exist_ok=True)
-
-    scale_command = (
-        f"dials.scale {refl_file} {expt_file} "
-        f"output.reflections='{scaled_refl_out}' "
-        f"output.experiments='{scaled_expt_out}' "
-        f"output.html='{parent_dir}/dials_out/scaling.html' "
-        f"output.log='{parent_dir}/dials_out/scaling.log'"
-    )
-
-    run_dials(dials_environment, scale_command)
-
-    merge_command = (
-        f"dials.merge {scaled_refl_out} {scaled_expt_out} "
-        f"output.log='{parent_dir}/dials_out/merged.log' "
-        f"output.html='{parent_dir}/dials_out/merged.html' "
-        f"output.mtz='{parent_dir}/dials_out/merged.mtz'"
-    )
-
-    run_dials(dials_environment, merge_command)
-
-    mtz_file = parent_dir + "/dials_out/merged.mtz"
-    pdb = "/Users/luis/Downloads/7l84.pdb"
-
-    phenix_env = "/Applications/phenix-1.21.1-5286/phenix_env.sh"
-    run_phenix(phenix_env, mtz_file, pdb)
-
-
-subprocess.run(
-    "rs.find_peaks *[0-9].mtz *[0-9].pdb -f ANOM -p PANOM -z 5.0 -o peaks.csv",
-    shell=True,
-    cwd="./lightning_logs/version_68/predictions/epoch_1/dials_out/phenix_out/",
-)
+# subprocess.run(
+# "rs.find_peaks *[0-9].mtz *[0-9].pdb -f ANOM -p PANOM -z 5.0 -o peaks.csv",
+# shell=True,
+# cwd="./lightning_logs/version_68/predictions/epoch_1/dials_out/phenix_out/",
+# )

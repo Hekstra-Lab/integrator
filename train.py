@@ -1,4 +1,5 @@
 from integrator.callbacks import PredWriter
+import os
 import glob
 from integrator.utils import (
     load_config,
@@ -32,9 +33,7 @@ if __name__ == "__main__":
 
     # Create callbacks
     pred_writer = PredWriter(
-        output_dir=config["trainer"]["params"]["callbacks"]["pred_writer"][
-            "output_dir"
-        ],
+        output_dir=None,
         write_interval=config["trainer"]["params"]["callbacks"]["pred_writer"][
             "write_interval"
         ],
@@ -79,7 +78,7 @@ if __name__ == "__main__":
     )
 
     version_dir = trainer.logger.log_dir
-    path = version_dir + "/checkpoints/epoch*.ckpt"
+    path = os.path.join(version_dir, "checkpoints", "epoch*.ckpt")
 
     # override to stop new version dirs from being created
     config["trainer"]["params"]["logger"] = False
