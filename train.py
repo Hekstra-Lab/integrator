@@ -1,4 +1,5 @@
 from integrator.callbacks import PredWriter
+import glob
 from integrator.utils import (
     load_config,
     create_integrator,
@@ -9,6 +10,7 @@ from integrator.utils import (
     override_config,
     clean_from_memory,
     predict_from_checkpoints,
+    reflection_file_writer,
 )
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pathlib import Path
@@ -87,3 +89,9 @@ if __name__ == "__main__":
 
     # predict from checkpoints
     predict_from_checkpoints(config, data, version_dir, path)
+
+    prediction_path = version_dir + "/predictions/"
+    prediction_directories = glob.glob(prediction_path + "epoch*")
+    prediction_files = glob.glob(prediction_path + "epoch*/*.pt")
+
+    reflection_file_writer(prediction_directories, prediction_files)
