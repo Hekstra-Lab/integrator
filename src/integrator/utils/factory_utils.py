@@ -170,7 +170,7 @@ def create_integrator_from_checkpoint(config, checkpoint_path):
             mc_samples=100,
             learning_rate=0.0001,
             profile_threshold=0.005,
-            map_location="cpu"
+            map_location="cpu",
         )
         return integrator
     else:
@@ -265,7 +265,7 @@ def clean_from_memory(trainer, pred_writer, pred_integrator, checkpoint_callback
     gc.collect()
 
 
-def predict_from_checkpoints(config, data, version_dir, path):
+def predict_from_checkpoints(config, trainer, pred_integrator, data, version_dir, path):
     for ckpt in glob.glob(path):
         epoch = re.search(r"epoch=(\d+)", ckpt).group(0)
         epoch = epoch.replace("=", "_")
@@ -280,21 +280,16 @@ def predict_from_checkpoints(config, data, version_dir, path):
             ],
         )
 
-        trainer = create_trainer(
-            config,
-            data,
-            callbacks=[
-                pred_writer,
-            ],
-        )
-        print('created_new_trainer')
-        print(f'checkpoint:{ckpt}')
+        trainer.callbacks = [pred_writer]
+        print(f"checkpoint:{ckpt}")
 
-        pred_integrator = create_integrator_from_checkpoint(
-            config,
-            ckpt,
-        )
-        print('created integrator from checkpoint')
+        checkpoint = torch.load(ckpt, map_location="cpu")
+        pred_integrator.load_state_dict(checkpoint["state_dict"])
+        pred_integrator.to(torch.device("cuda"))
+        pred_integrator.eval()
+
+        print("created integrator from checkpoint")
+        print("running trainer.predict")
 
         trainer.predict(
             pred_integrator,
@@ -302,4 +297,6 @@ def predict_from_checkpoints(config, data, version_dir, path):
             dataloaders=data.predict_dataloader(),
         )
 
-        clean_from_memory(trainer, pred_writer, pred_writer)
+        del pred_writer
+        torch.cuda.empty_cache()
+        gc.collect()

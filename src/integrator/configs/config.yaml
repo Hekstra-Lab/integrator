@@ -91,3 +91,6 @@ trainer:
         output_dir: null
         write_interval: batch
     enable_checkpointing: true
+
+output:
+  refl_file: "./data/hewl_816/reflections_.refl"

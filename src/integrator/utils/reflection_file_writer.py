@@ -6,11 +6,12 @@ import glob
 import os
 
 
-def reflection_file_writer(prediction_directories, prediction_files):
+def reflection_file_writer(prediction_directories, prediction_files, refl_file):
     # contains subdirectories of prediction.pt files
 
     # load reference reflection table
-    refl_tbl = flex.reflection_table.from_file("./data/hewl_816/reflections_.refl")
+    # refl_tbl = flex.reflection_table.from_file("./data/hewl_816/reflections_.refl")
+    refl_tbl = flex.reflection_table.from_file(refl_file)
 
     # empty dataframe to store predictions
     empty_df = plr.DataFrame()
