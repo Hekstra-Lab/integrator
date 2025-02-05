@@ -170,6 +170,7 @@ def create_integrator_from_checkpoint(config, checkpoint_path):
             mc_samples=100,
             learning_rate=0.0001,
             profile_threshold=0.005,
+            map_location="cpu"
         )
         return integrator
     else:
@@ -286,11 +287,15 @@ def predict_from_checkpoints(config, data, version_dir, path):
                 pred_writer,
             ],
         )
+        print('created_new_trainer')
+        print(f'checkpoint:{ckpt}')
 
         pred_integrator = create_integrator_from_checkpoint(
             config,
             ckpt,
         )
+        print('created integrator from checkpoint')
+
         trainer.predict(
             pred_integrator,
             return_predictions=False,

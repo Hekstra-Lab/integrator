@@ -1,5 +1,7 @@
 from integrator.callbacks import PredWriter
+import tracemalloc
 import os
+import re
 import glob
 from integrator.utils import (
     load_config,
@@ -15,9 +17,65 @@ from integrator.utils import (
 )
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pathlib import Path
+import psutil
+import torch
 
 if __name__ == "__main__":
+
+    def log_memory():
+        cpu_mem = psutil.virtual_memory().used / 1e9  # GB
+        gpu_mem = torch.cuda.memory_allocated() / 1e9
+        print(f"CPU Memory: {cpu_mem:.2f} GB | GPU Memory: {gpu_mem:.2f} GB")
+
+    def predict_from_checkpoints(config, data, version_dir, path):
+        for ckpt in glob.glob(path):
+            epoch = re.search(r"epoch=(\d+)", ckpt).group(0)
+            epoch = epoch.replace("=", "_")
+            ckpt_dir = version_dir + "/predictions/" + epoch
+            Path(ckpt_dir).mkdir(parents=True, exist_ok=True)
+
+            # prediction writer for current checkpoint
+            pred_writer = PredWriter(
+                output_dir=ckpt_dir,
+                write_interval=config["trainer"]["params"]["callbacks"]["pred_writer"][
+                    "write_interval"
+                ],
+            )
+            print('after predwriter')
+            log_memory()
+
+            trainer = create_trainer(
+                config,
+                data,
+                callbacks=[
+                    pred_writer,
+                ],
+            )
+            print('created_new_trainer')
+            print(f'checkpoint:{ckpt}')
+            log_memory()
+
+            pred_integrator = create_integrator_from_checkpoint(
+                config,
+                ckpt,
+            )
+            print('created integrator from checkpoint')
+            log_memory()
+
+            print('running trainer.predict')
+            trainer.predict(
+                pred_integrator,
+                return_predictions=False,
+                dataloaders=data.predict_dataloader(),
+            )
+
+            clean_from_memory(trainer, pred_writer, pred_writer)
+
     args = parse_args()
+
+    tracemalloc.start()
+    print('before anything')
+    log_memory()
 
     # Load configuration file
     config = load_config(args.config)
@@ -30,6 +88,9 @@ if __name__ == "__main__":
 
     # Create integrator model
     integrator = create_integrator(config)
+
+    print('after integrator creation')
+    log_memory()
 
     # Create callbacks
     pred_writer = PredWriter(
@@ -63,6 +124,15 @@ if __name__ == "__main__":
         train_dataloaders=data.train_dataloader(),
         val_dataloaders=data.val_dataloader(),
     )
+    
+    snapshot = tracemalloc.take_snapshot()
+    top_stats = snapshot.statistics("lineno")
+    print("[Top 10 memory consumers]")
+    for stat in top_stats[:10]:
+        print(stat)
+
+    print('after trainer.fit')
+    log_memory()
 
     # create prediction integrator from last checkpoint
     pred_integrator = create_integrator_from_checkpoint(
@@ -70,12 +140,17 @@ if __name__ == "__main__":
         trainer.logger.log_dir + "/checkpoints/last.ckpt",
     )
 
+    print('before first trainer.fit')
+    log_memory()
+
     # Predict
     trainer.predict(
         pred_integrator,
         return_predictions=False,
         dataloaders=data.predict_dataloader(),
     )
+    print('after_first pred')
+    log_memory()
 
     version_dir = trainer.logger.log_dir
     path = os.path.join(version_dir, "checkpoints", "epoch*.ckpt")
@@ -84,13 +159,65 @@ if __name__ == "__main__":
     config["trainer"]["params"]["logger"] = False
 
     # clean from memory
-    clean_from_memory(trainer, pred_writer, pred_writer, checkpoint_callback)
+    clean_from_memory(pred_writer, pred_writer, pred_writer, checkpoint_callback)
+    print('cleared memory')
+    log_memory()
+
+
+    for ckpt in glob.glob(path):
+        epoch = re.search(r"epoch=(\d+)", ckpt).group(0)
+        epoch = epoch.replace("=", "_")
+        ckpt_dir = version_dir + "/predictions/" + epoch
+        Path(ckpt_dir).mkdir(parents=True, exist_ok=True)
+
+        # prediction writer for current checkpoint
+        pred_writer = PredWriter(
+            output_dir=ckpt_dir,
+            write_interval=config["trainer"]["params"]["callbacks"]["pred_writer"][
+                "write_interval"
+            ],
+        )
+        print('after predwriter')
+        log_memory()
+        trainer.callbacks = [pred_writer]
+
+#        trainer = create_trainer(
+#            config,
+#            data,
+#            callbacks=[
+#                pred_writer,
+#            ],
+#        )
+#        print('created_new_trainer')
+#        print(f'checkpoint:{ckpt}')
+#        log_memory()
+
+
+        checkpoint = torch.load(ckpt,map_location='cpu')
+        pred_integrator.load_state_dict(checkpoint['state_dict'])
+        pred_integrator.to(torch.device('cuda'))
+        pred_integrator.eval()
+
+        print('created integrator from checkpoint')
+        log_memory()
+
+        print('running trainer.predict')
+        trainer.predict(
+            pred_integrator,
+            return_predictions=False,
+            dataloaders=data.predict_dataloader(),
+        )
+
+        clean_from_memory(pred_writer, pred_writer, pred_writer)
+
+
+
 
     # predict from checkpoints
-    predict_from_checkpoints(config, data, version_dir, path)
+    #predict_from_checkpoints(config, data, version_dir, path)
 
-    prediction_path = version_dir + "/predictions/"
-    prediction_directories = glob.glob(prediction_path + "epoch*")
-    prediction_files = glob.glob(prediction_path + "epoch*/*.pt")
+    #prediction_path = version_dir + "/predictions/"
+    #prediction_directories = glob.glob(prediction_path + "epoch*")
+    #prediction_files = glob.glob(prediction_path + "epoch*/*.pt")
 
-    reflection_file_writer(prediction_directories, prediction_files)
+    #reflection_file_writer(prediction_directories, prediction_files)

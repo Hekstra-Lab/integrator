@@ -30,7 +30,7 @@ class ShoeboxDataModule(BaseDataModule):
         batch_size=100,
         val_split=0.2,
         test_split=0.1,
-        num_workers=4,
+        num_workers=3,
         include_test=False,
         subset_size=None,
         single_sample_index=None,
@@ -149,6 +149,7 @@ class ShoeboxDataModule(BaseDataModule):
             shuffle=True,
             num_workers=self.num_workers,
             pin_memory=True,
+            prefetch_factor=2
         )
 
     def val_dataloader(self):
@@ -158,6 +159,7 @@ class ShoeboxDataModule(BaseDataModule):
             shuffle=False,
             num_workers=self.num_workers,
             pin_memory=True,
+            prefetch_factor=2
         )
 
     def test_dataloader(self):
@@ -168,6 +170,7 @@ class ShoeboxDataModule(BaseDataModule):
                 shuffle=False,
                 num_workers=self.num_workers,
                 pin_memory=True,
+                prefetch_factor=2
             )
         else:
             return None
