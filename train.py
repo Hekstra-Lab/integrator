@@ -19,8 +19,122 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from pathlib import Path
 import psutil
 import torch
+import subprocess
 
 if __name__ == "__main__":
+
+    dials_env = "/n/hekstra_lab/people/aldama/software/dials-v3-16-1/dials_env.sh "
+    phenix_env = "/n/hekstra_lab/garden_backup/phenix-1.21/phenix-1.21.1-5286/phenix_env.sh"
+    expt_file = "../../integratorv2/integrator/logs/DIALS_/CNNResNetSoftmax_08_045/integrated.expt"
+    pdb = "../../integratorv2/integrator/logs/DIALS_/CNNResNetSoftmax_08_045/1dpx.pdb"
+
+    def run_dials(dials_env, command):
+        full_command = f"source {dials_env} && {command}"
+
+        try:
+            result = subprocess.run(
+                full_command,
+                shell=True,
+                executable="/bin/bash",
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            return result
+        except subprocess.CalledProcessError as e:
+            # Print more detailed error messages
+            print(f"Command failed with error code: {e.returncode}")
+            print("Standard Output (stdout):")
+            print(e.stdout if e.stdout else "No stdout output")
+            print("Standard Error (stderr):")
+            print(e.stderr if e.stderr else "No stderr output")
+
+            # Optionally re-raise the exception if you want it to propagate
+            raise
+
+    def run_phenix(phenix_env, mtz_file, pdb_file):
+        # Create the phenix directory first
+        phenix_dir = str(Path(mtz_file).parent) + "/phenix_out"
+        Path(phenix_dir).mkdir(parents=True, exist_ok=True)
+        
+        # Construct the phenix.refine command with proper escaping
+        # Note the use of single quotes around the entire F(+),F(-) argument
+        refine_command = (
+            f"phenix.refine {pdb_file} {mtz_file} "
+            f"'miller_array.labels.name=F(+),F(-)' "  # Single quotes protect special characters
+            f"overwrite=true"
+        )
+        
+        # Construct the find_peaks command
+        peaks_command = (
+            f"rs.find_peaks *[0-9].mtz *[0-9].pdb "
+            f"-f ANOM -p PANOM -z 5.0 -o peaks.csv"
+        )
+        
+        # Combine commands with proper sourcing
+        full_command = f"source {phenix_env} && cd {phenix_dir} && {refine_command} && {peaks_command}"
+        
+        try:
+            # Use subprocess.run instead of Popen for better error handling
+            result = subprocess.run(
+                full_command,
+                shell=True,
+                executable="/bin/bash",
+                capture_output=True,  # Capture both stdout and stderr
+                text=True,           # Convert output to string
+                check=True,          # Raise CalledProcessError on non-zero exit
+            )
+            print("Phenix command completed successfully")
+            return result
+        except subprocess.CalledProcessError as e:
+            print(f"Command failed with error code: {e.returncode}")
+            print("Command that failed:", full_command)  # Print the actual command for debugging
+            print("Working directory:", phenix_dir)
+            print("Standard Output:")
+            print(e.stdout)
+            print("Error Output:")
+            print(e.stderr)
+            raise
+        
+
+    def analysis(prediction_path, dials_env, phenix_env, pdb, expt_file):
+        refl_files = glob.glob(prediction_path + "epoch*/reflections/*.refl")
+        
+        for refl_file in refl_files:
+            # Convert paths to absolute paths to avoid any directory navigation issues
+            parent_dir = Path(refl_file).parent.parent.absolute().__str__()
+            scaled_refl_out = parent_dir + "/dials_out/scaled.refl"
+            scaled_expt_out = parent_dir + "/dials_out/scaled.expt"
+            
+            # Ensure output directory exists
+            Path(parent_dir + "/dials_out").mkdir(parents=True, exist_ok=True)
+            
+            # Construct commands with proper quoting
+            scale_command = (
+                f"dials.scale '{refl_file}' '{expt_file}' "
+                f"output.reflections='{scaled_refl_out}' "
+                f"output.experiments='{scaled_expt_out}' "
+                f"output.html='{parent_dir}/dials_out/scaling.html' "
+                f"output.log='{parent_dir}/dials_out/scaling.log'"
+            )
+            
+            print("Executing scale command:", scale_command)  # Debug print
+            run_dials(dials_env, scale_command)
+            
+            merge_command = (
+                f"dials.merge '{scaled_refl_out}' '{scaled_expt_out}' "
+                f"output.log='{parent_dir}/dials_out/merged.log' "
+                f"output.html='{parent_dir}/dials_out/merged.html' "
+                f"output.mtz='{parent_dir}/dials_out/merged.mtz'"
+            )
+            
+            print("Executing merge command:", merge_command)  # Debug print
+            run_dials(dials_env, merge_command)
+            
+            mtz_file = parent_dir + "/dials_out/merged.mtz"
+            run_phenix(phenix_env, mtz_file, pdb)
+
+
     # def predict_from_checkpoints(config, data, version_dir, path):
     # for ckpt in glob.glob(path):
     # epoch = re.search(r"epoch=(\d+)", ckpt).group(0)
@@ -147,6 +261,8 @@ if __name__ == "__main__":
         prediction_files,
         config["output"]["refl_file"],
     )
+        
+    analysis(prediction_path, dials_env, phenix_env,pdb,expt_file)
 
     # reflection_file_writer(prediction_directories, prediction_files)
     # for ckpt in glob.glob(path):

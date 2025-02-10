@@ -31,23 +31,23 @@ class PredWriter(BasePredictionWriter):
             k: v.cpu().numpy() for k, v in prediction.items()
         }  # Ensure CPU transfer
         torch.save(
-            prediction,
+            prediction_cpu,
             os.path.join(self.output_dir, f"batch_{batch_idx}.pt"),
         )
         del prediction
 
-#    def write_on_epoch_end(self, trainer, pl_module, predictions, batch_indices):
-#        if self.output_dir is None:
-#            # Default to logger directory
-#            self.output_dir = trainer.logger.log_dir
-#            Path(self.output_dir).mkdir(parents=True, exist_ok=True)
-#
-#        # Move all predictions to CPU and save
-#        #predictions_cpu = [
-#        #    {k: v.cpu().numpy() for k, v in batch_prediction.items()}
-#        #    for batch_prediction in predictions
-#        #]
-#        torch.save(predictions, os.path.join(self.output_dir, "preds.pt"))
+    def write_on_epoch_end(self, trainer, pl_module, predictions, batch_indices):
+        if self.output_dir is None:
+            # Default to logger directory
+            self.output_dir = trainer.logger.log_dir
+            Path(self.output_dir).mkdir(parents=True, exist_ok=True)
+
+        # Move all predictions to CPU and save
+        predictions_cpu = [
+            {k: v.cpu().numpy() for k, v in batch_prediction.items()}
+            for batch_prediction in predictions
+        ]
+        torch.save(predictions, os.path.join(self.output_dir, "preds.pt"))
 
 
 # class PredWriter(BasePredictionWriter):
