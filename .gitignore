@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 .DS_Store
 
+lightning_logs/
+analysis/
+
 **/.DS_Store
 
 # C extensions

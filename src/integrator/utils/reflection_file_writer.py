@@ -5,6 +5,7 @@ import numpy as np
 import glob
 import os
 
+
 def reflection_file_writer(prediction_directories, prediction_files, refl_file):
     # load reference reflection table
     refl_tbl = flex.reflection_table.from_file(refl_file)
@@ -55,3 +56,6 @@ def reflection_file_writer(prediction_directories, prediction_files, refl_file):
 
             temp["intensity.sum.value"] = flex.double(weighted_sum_mean)
             temp["intensity.sum.variance"] = flex.double(weighted_sum_var)
+            temp["intensity.prf.value"] = flex.double(weighted_sum_mean)
+            temp["intensity.prf.variance"] = flex.double(weighted_sum_var)
+            temp.as_file(pred_dir + "/reflections/weighted_.refl")
