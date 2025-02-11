@@ -5,25 +5,24 @@ import numpy as np
 import glob
 import os
 
-
 def reflection_file_writer(prediction_directories, prediction_files, refl_file):
-    # contains subdirectories of prediction.pt files
-
     # load reference reflection table
-    # refl_tbl = flex.reflection_table.from_file("./data/hewl_816/reflections_.refl")
     refl_tbl = flex.reflection_table.from_file(refl_file)
-
-    # empty dataframe to store predictions
-    empty_df = plr.DataFrame()
 
     # check if prediction files exist
     if (len(prediction_files) == 0) or (len(prediction_directories) == 0):
         raise FileNotFoundError("No prediction files found")
     else:
         for pred_dir in prediction_directories:
+            # Reinitialize empty_df for each prediction directory
+            empty_df = plr.DataFrame()
+
             # store all predictions in a dataframe
             for pred in glob.glob(pred_dir + "/*.pt"):
                 empty_df = empty_df.vstack(plr.DataFrame(torch.load(pred)))
+
+            if empty_df.is_empty():
+                continue  # Skip this iteration if no predictions were loaded
 
             # create a boolean array to select reflections used during training
             sel = np.asarray([False] * len(refl_tbl))
@@ -56,6 +55,3 @@ def reflection_file_writer(prediction_directories, prediction_files, refl_file):
 
             temp["intensity.sum.value"] = flex.double(weighted_sum_mean)
             temp["intensity.sum.variance"] = flex.double(weighted_sum_var)
-            temp["intensity.prf.value"] = flex.double(weighted_sum_mean)
-            temp["intensity.prf.variance"] = flex.double(weighted_sum_var)
-            temp.as_file(pred_dir + "/reflections/weighted_sum_.refl")

@@ -21,13 +21,14 @@ import psutil
 import torch
 import subprocess
 
+torch.set_float32_matmul_precision('high')
+
 if __name__ == "__main__":
 
     dials_env = "/n/hekstra_lab/people/aldama/software/dials-v3-16-1/dials_env.sh "
     phenix_env = "/n/hekstra_lab/garden_backup/phenix-1.21/phenix-1.21.1-5286/phenix_env.sh"
-    expt_file = "../../integratorv2/integrator/logs/DIALS_/CNNResNetSoftmax_08_045/integrated.expt"
-    pdb = "../../integratorv2/integrator/logs/DIALS_/CNNResNetSoftmax_08_045/1dpx.pdb"
-
+    expt_file = "/n/holylabs/LABS/hekstra_lab/Users/laldama/integratorv2/integrator/logs/DIALS_/CNNResNetSoftmax_08_045/integrated.expt"
+    pdb = "/n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/1dpx.pdb"
     def run_dials(dials_env, command):
         full_command = f"source {dials_env} && {command}"
 
