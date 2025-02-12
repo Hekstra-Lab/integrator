@@ -110,9 +110,9 @@ if __name__ == "__main__":
         for refl_file in p:
             # Convert paths to absolute paths to avoid any directory navigation issues
             parent_dir = Path(refl_file).parent.parent.absolute().__str__()
-            integration_type = (file.name).replace("_.refl", "")
-            scaled_refl_out = parent_dir + "/dials_out_{integration_type}/scaled.refl"
-            scaled_expt_out = parent_dir + "/dials_out_{integration_type}/scaled.expt"
+            integration_type = (refl_file.name).replace("_.refl", "")
+            scaled_refl_out = parent_dir + f"/dials_out_{integration_type}/scaled.refl"
+            scaled_expt_out = parent_dir + f"/dials_out_{integration_type}/scaled.expt"
 
             # Ensure output directory exists
             Path(parent_dir + f"/dials_out_{integration_type}").mkdir(
