@@ -1,4 +1,7 @@
 from integrator.callbacks import PredWriter
+import yaml
+import json
+from pytorch_lightning.callbacks import Callback
 import tracemalloc
 import os
 import re
@@ -20,8 +23,13 @@ from pathlib import Path
 import psutil
 import torch
 import subprocess
+#from lightning.pytorch.loggers import TensorBoardLogger
+from pytorch_lightning.loggers import WandbLogger
+import wandb
 
 torch.set_float32_matmul_precision("high")
+
+
 
 if __name__ == "__main__":
     dials_env = "/n/hekstra_lab/people/aldama/software/dials-v3-16-1/dials_env.sh "
@@ -32,6 +40,47 @@ if __name__ == "__main__":
     pdb = (
         "/n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/1dpx.pdb"
     )
+
+
+    def get_git_info():
+        try:
+            commit_hash = (
+                subprocess.check_output(
+                    ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL
+                )
+                .decode("ascii")
+                .strip()
+            )
+            branch = (
+                subprocess.check_output(
+                    ["git", "branch", "--show-current"], stderr=subprocess.DEVNULL
+                )
+                .decode("ascii")
+                .strip()
+            )
+            dirty = (
+                subprocess.check_output(
+                    ["git", "status", "--porcelain"], stderr=subprocess.DEVNULL
+                )
+                .decode("ascii")
+                .strip()
+                != ""
+            )
+            return {"commit_hash": commit_hash, "branch": branch, "dirty": dirty}
+        except Exception:
+            return {"commit_hash": "unknown", "branch": "unknown", "dirty": False}
+
+
+    class GitInfoCallback(Callback):
+        def on_train_start(self, trainer, pl_module):
+            log_dir = trainer.logger.log_dir
+            git_info = get_git_info()
+            with open(os.path.join(log_dir, "git_info.txt"), "w") as f:
+                f.write(f"Commit hash: {git_info['commit_hash']}\n")
+                f.write(f"Branch: {git_info['branch']}\n")
+                f.write(f"Dirty: {git_info['dirty']}\n")
+
+
 
     def run_dials(dials_env, command):
         full_command = f"source {dials_env} && {command}"
@@ -63,10 +112,9 @@ if __name__ == "__main__":
         Path(phenix_dir).mkdir(parents=True, exist_ok=True)
 
         # Construct the phenix.refine command with proper escaping
-        # Note the use of single quotes around the entire F(+),F(-) argument
         refine_command = (
             f"phenix.refine {pdb_file} {mtz_file} "
-            f"'miller_array.labels.name=F(+),F(-)' "  # Single quotes protect special characters
+            f"'miller_array.labels.name=F(+),F(-)' "  
             f"overwrite=true"
         )
 
@@ -152,11 +200,15 @@ if __name__ == "__main__":
     # override config options from command line
     override_config(args, config)
 
+
     # Create data loader
     data = create_data_loader(config)
 
     # Create integrator model
     integrator = create_integrator(config)
+
+    # Get gitinfo
+
 
     # Create callbacks
     pred_writer = PredWriter(
@@ -169,11 +221,20 @@ if __name__ == "__main__":
     ## create checkpoint callback
     checkpoint_callback = ModelCheckpoint(
         filename="{epoch}-{val_loss:.2f}",
-        every_n_epochs=2,
+        every_n_epochs=config['trainer']['params']['check_val_every_n_epoch'],
         save_top_k=-1,
         save_last="link",
     )
 
+    # Create a logger
+#    logger = TensorBoardLogger(save_dir='lightning_logs',name='integrator')
+    logger = WandbLogger(
+            project='integrator',
+            name='test-run',
+            save_dir='lightning_logs',
+            )
+
+    
     # Create trainer
     trainer = create_trainer(
         config,
@@ -182,7 +243,32 @@ if __name__ == "__main__":
             pred_writer,
             checkpoint_callback,
         ],
+        logger = logger
     )
+
+#    os.makedirs(trainer.logger.log_dir,exist_ok=True)
+#    log_dirr = trainer.logger.log_dir
+    os.makedirs(trainer.logger.experiment.dir,exist_ok=True)
+    log_dirr = trainer.logger.experiment.dir
+
+    save_config = os.path.join(log_dirr, "config_copy.yaml")
+
+    with open(save_config,"w") as file: 
+        yaml.dump(config,file,default_flow_style=False)
+    
+    git_info = get_git_info()
+
+    save_git_info = os.path.join(log_dirr,"git_info.txt")
+    logger.log_hyperparams(git_info)
+
+    with open(save_git_info,'w') as file: 
+        json.dump(git_info,file)
+
+
+    if git_info["dirty"]:
+        diff = subprocess.check_output(["git", "diff"]).decode("utf-8")
+        with open(os.path.join(log_dirr, "uncommitted.diff"), "w") as f:
+            f.write(diff)
 
     # Fit the model
     trainer.fit(
@@ -194,7 +280,7 @@ if __name__ == "__main__":
     # create prediction integrator from last checkpoint
     pred_integrator = create_integrator_from_checkpoint(
         config,
-        trainer.logger.log_dir + "/checkpoints/last.ckpt",
+        log_dirr + "/checkpoints/last.ckpt",
     )
 
     # Predict
@@ -204,7 +290,7 @@ if __name__ == "__main__":
         dataloaders=data.predict_dataloader(),
     )
 
-    version_dir = trainer.logger.log_dir
+    version_dir = log_dirr
     path = os.path.join(version_dir, "checkpoints", "epoch*.ckpt")
 
     # override to stop new version dirs from being created

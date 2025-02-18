@@ -204,6 +204,7 @@ def create_trainer(
     config,
     data_module,
     callbacks=None,
+    logger = None,
 ):
     trainer = pl.Trainer(
         max_epochs=config["trainer"]["params"]["max_epochs"],
@@ -211,7 +212,7 @@ def create_trainer(
             "trainer", "accelerator", config["trainer"]["params"]["accelerator"]
         )(),
         devices=config["trainer"]["params"]["devices"],
-        logger=config["trainer"]["params"]["logger"],
+        logger=logger,
         precision=config["trainer"]["params"]["precision"],
         check_val_every_n_epoch=config["trainer"]["params"]["check_val_every_n_epoch"],
         log_every_n_steps=config["trainer"]["params"]["log_every_n_steps"],
