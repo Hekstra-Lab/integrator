@@ -219,8 +219,15 @@ if __name__ == "__main__":
         ],
     )
 
+    logger = WandbLogger(
+        project="integrator",
+        name="test-run",
+        save_dir="lightning_logs",
+    )
+
     ## create checkpoint callback
     checkpoint_callback = ModelCheckpoint(
+        dirpath=logger.experiment.dir + "/checkpoints",  # when using wandb logger
         filename="{epoch}-{val_loss:.2f}",
         every_n_epochs=config["trainer"]["params"]["check_val_every_n_epoch"],
         save_top_k=-1,
@@ -229,11 +236,6 @@ if __name__ == "__main__":
 
     # Create a logger
     #    logger = TensorBoardLogger(save_dir='lightning_logs',name='integrator')
-    logger = WandbLogger(
-        project="integrator",
-        name="test-run",
-        save_dir="lightning_logs",
-    )
 
     # Create trainer
     trainer = create_trainer(
@@ -249,6 +251,7 @@ if __name__ == "__main__":
     #    os.makedirs(trainer.logger.log_dir,exist_ok=True)
     #    log_dirr = trainer.logger.log_dir
     os.makedirs(trainer.logger.experiment.dir, exist_ok=True)
+
     log_dirr = trainer.logger.experiment.dir
 
     save_config = os.path.join(log_dirr, "config_copy.yaml")

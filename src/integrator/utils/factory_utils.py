@@ -129,7 +129,7 @@ def create_integrator(config):
             q_bg=background_distribution,
             q_I=intensity_distribution,
             profile_model=profile,
-            dmodel=64,
+            dmodel=config["global"]["dmodel"],
             loss=loss,
             mc_samples=config["integrator"]["mc_samples"],
             learning_rate=config["integrator"]["learning_rate"],

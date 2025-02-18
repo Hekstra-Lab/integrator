@@ -11,16 +11,22 @@ from integrator.utils import (
     reflection_file_writer,
 )
 from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.loggers import WandbLogger
 
 config = "./src/integrator/configs/config.yaml"
 config = load_config(config)
+
+logger = WandbLogger(
+    project="integrator",
+    name="test-run",
+    save_dir="lightning_logs",
+)
 
 data = create_data_loader(config)
 
 integrator = create_integrator(config)
 
 # Create callbacks
-
 ## create prediction callback
 pred_writer = PredWriter(
     output_dir=None,
@@ -31,6 +37,7 @@ pred_writer = PredWriter(
 
 ## create checkpoint callback
 checkpoint_callback = ModelCheckpoint(
+    dirpath=logger.experiment.dir + "/checkpoints",  # when using wandb logger
     filename="{epoch}-{val_loss:.2f}",
     every_n_epochs=2,
     save_top_k=-1,
@@ -45,7 +52,9 @@ trainer = create_trainer(
         pred_writer,
         checkpoint_callback,
     ],
+    logger=logger,
 )
+
 
 # Fit the model
 trainer.fit(

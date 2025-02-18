@@ -1,3 +1,6 @@
+global:
+  dmodel: 64
+
 integrator:
   name: integrator1
   learning_rate: 0.001
