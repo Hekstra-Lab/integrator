@@ -131,9 +131,9 @@ def create_integrator(config):
             profile_model=profile,
             dmodel=64,
             loss=loss,
-            mc_samples=100,
-            learning_rate=0.0001,
-            profile_threshold=0.005,
+            mc_samples=config["integrator"]["mc_samples"],
+            learning_rate=config["integrator"]["learning_rate"],
+            profile_threshold=config["integrator"]["profile_threshold"],
         )
         return integrator
     else:
@@ -204,7 +204,7 @@ def create_trainer(
     config,
     data_module,
     callbacks=None,
-    logger = None,
+    logger=None,
 ):
     trainer = pl.Trainer(
         max_epochs=config["trainer"]["params"]["max_epochs"],
