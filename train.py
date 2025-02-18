@@ -2,9 +2,7 @@ from integrator.callbacks import PredWriter
 import yaml
 import json
 from pytorch_lightning.callbacks import Callback
-import tracemalloc
 import os
-import re
 import glob
 from integrator.utils import (
     load_config,
@@ -20,15 +18,13 @@ from integrator.utils import (
 )
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pathlib import Path
-import psutil
 import torch
 import subprocess
-#from lightning.pytorch.loggers import TensorBoardLogger
+
+# from lightning.pytorch.loggers import TensorBoardLogger
 from pytorch_lightning.loggers import WandbLogger
-import wandb
 
 torch.set_float32_matmul_precision("high")
-
 
 
 if __name__ == "__main__":
@@ -41,6 +37,16 @@ if __name__ == "__main__":
         "/n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/1dpx.pdb"
     )
 
+    def flatten_config(config, parent_key="", sep="."):
+        """Flatten nested config dict for cleaner W&B logging"""
+        items = []
+        for k, v in config.items():
+            new_key = f"{parent_key}{sep}{k}" if parent_key else k
+            if isinstance(v, dict):
+                items.extend(flatten_config(v, new_key, sep=sep).items())
+            else:
+                items.append((new_key, v))
+        return dict(items)
 
     def get_git_info():
         try:
@@ -70,7 +76,6 @@ if __name__ == "__main__":
         except Exception:
             return {"commit_hash": "unknown", "branch": "unknown", "dirty": False}
 
-
     class GitInfoCallback(Callback):
         def on_train_start(self, trainer, pl_module):
             log_dir = trainer.logger.log_dir
@@ -79,8 +84,6 @@ if __name__ == "__main__":
                 f.write(f"Commit hash: {git_info['commit_hash']}\n")
                 f.write(f"Branch: {git_info['branch']}\n")
                 f.write(f"Dirty: {git_info['dirty']}\n")
-
-
 
     def run_dials(dials_env, command):
         full_command = f"source {dials_env} && {command}"
@@ -114,7 +117,7 @@ if __name__ == "__main__":
         # Construct the phenix.refine command with proper escaping
         refine_command = (
             f"phenix.refine {pdb_file} {mtz_file} "
-            f"'miller_array.labels.name=F(+),F(-)' "  
+            f"'miller_array.labels.name=F(+),F(-)' "
             f"overwrite=true"
         )
 
@@ -200,7 +203,6 @@ if __name__ == "__main__":
     # override config options from command line
     override_config(args, config)
 
-
     # Create data loader
     data = create_data_loader(config)
 
@@ -208,7 +210,6 @@ if __name__ == "__main__":
     integrator = create_integrator(config)
 
     # Get gitinfo
-
 
     # Create callbacks
     pred_writer = PredWriter(
@@ -221,20 +222,19 @@ if __name__ == "__main__":
     ## create checkpoint callback
     checkpoint_callback = ModelCheckpoint(
         filename="{epoch}-{val_loss:.2f}",
-        every_n_epochs=config['trainer']['params']['check_val_every_n_epoch'],
+        every_n_epochs=config["trainer"]["params"]["check_val_every_n_epoch"],
         save_top_k=-1,
         save_last="link",
     )
 
     # Create a logger
-#    logger = TensorBoardLogger(save_dir='lightning_logs',name='integrator')
+    #    logger = TensorBoardLogger(save_dir='lightning_logs',name='integrator')
     logger = WandbLogger(
-            project='integrator',
-            name='test-run',
-            save_dir='lightning_logs',
-            )
+        project="integrator",
+        name="test-run",
+        save_dir="lightning_logs",
+    )
 
-    
     # Create trainer
     trainer = create_trainer(
         config,
@@ -243,27 +243,28 @@ if __name__ == "__main__":
             pred_writer,
             checkpoint_callback,
         ],
-        logger = logger
+        logger=logger,
     )
 
-#    os.makedirs(trainer.logger.log_dir,exist_ok=True)
-#    log_dirr = trainer.logger.log_dir
-    os.makedirs(trainer.logger.experiment.dir,exist_ok=True)
+    #    os.makedirs(trainer.logger.log_dir,exist_ok=True)
+    #    log_dirr = trainer.logger.log_dir
+    os.makedirs(trainer.logger.experiment.dir, exist_ok=True)
     log_dirr = trainer.logger.experiment.dir
 
     save_config = os.path.join(log_dirr, "config_copy.yaml")
 
-    with open(save_config,"w") as file: 
-        yaml.dump(config,file,default_flow_style=False)
-    
+    with open(save_config, "w") as file:
+        yaml.dump(config, file, default_flow_style=False)
+
     git_info = get_git_info()
 
-    save_git_info = os.path.join(log_dirr,"git_info.txt")
+    save_git_info = os.path.join(log_dirr, "git_info.txt")
     logger.log_hyperparams(git_info)
 
-    with open(save_git_info,'w') as file: 
-        json.dump(git_info,file)
+    logger.log_hyperparams(config)
 
+    with open(save_git_info, "w") as file:
+        json.dump(git_info, file)
 
     if git_info["dirty"]:
         diff = subprocess.check_output(["git", "diff"]).decode("utf-8")
