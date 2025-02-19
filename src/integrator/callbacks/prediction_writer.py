@@ -22,7 +22,10 @@ class PredWriter(BasePredictionWriter):
         if self.output_dir is None:
             # Default to logger directory
             self.output_dir = os.path.join(
-                trainer.logger.log_dir, "predictions", "last"
+                # trainer.logger.log_dir, "predictions", "last"
+                trainer.logger.experiment.dir,
+                "predictions",
+                "last",
             )
             Path(self.output_dir).mkdir(parents=True, exist_ok=True)
 
@@ -36,11 +39,11 @@ class PredWriter(BasePredictionWriter):
         )
         del prediction
 
-
     def write_on_epoch_end(self, trainer, pl_module, predictions, batch_indices):
         if self.output_dir is None:
             # Default to logger directory
-            self.output_dir = trainer.logger.log_dir
+            # self.output_dir = trainer.logger.log_dir
+            self.output_dir = trainer.logger.experiment.dir
             Path(self.output_dir).mkdir(parents=True, exist_ok=True)
 
         # Initialize a merged dictionary where each key accumulates all values in a list
@@ -108,4 +111,3 @@ class PredWriter(BasePredictionWriter):
 # Path(self.output_dir).mkdir(parents=True, exist_ok=True)
 # # save predictions
 # torch.save(predictions, os.path.join(self.output_dir, "preds.pt"))
-

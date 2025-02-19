@@ -286,7 +286,8 @@ def predict_from_checkpoints(config, trainer, pred_integrator, data, version_dir
 
         checkpoint = torch.load(ckpt, map_location="cpu")
         pred_integrator.load_state_dict(checkpoint["state_dict"])
-        pred_integrator.to(torch.device("cuda"))
+        if torch.cuda.is_available():
+            pred_integrator.to(torch.device("cuda"))
         pred_integrator.eval()
 
         print("created integrator from checkpoint")

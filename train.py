@@ -292,6 +292,7 @@ if __name__ == "__main__":
         pred_integrator,
         return_predictions=False,
         dataloaders=data.predict_dataloader(),
+        ckpt_path=log_dirr + "/checkpoints/last.ckpt",
     )
 
     version_dir = log_dirr

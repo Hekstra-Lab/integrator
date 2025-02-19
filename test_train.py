@@ -18,9 +18,12 @@ config = load_config(config)
 
 logger = WandbLogger(
     project="integrator",
-    name="test-run",
+    name="test-run-local",
     save_dir="lightning_logs",
 )
+
+logdir = logger.experiment.dir
+
 
 data = create_data_loader(config)
 
@@ -55,7 +58,6 @@ trainer = create_trainer(
     logger=logger,
 )
 
-
 # Fit the model
 trainer.fit(
     integrator,
@@ -66,7 +68,7 @@ trainer.fit(
 # Create trainer from checkpoints
 pred_integrator = create_integrator_from_checkpoint(
     config,
-    trainer.logger.log_dir + "/checkpoints/last.ckpt",
+    logdir + "/checkpoints/last.ckpt",
 )
 
 # Predict using the latest weights
@@ -74,9 +76,12 @@ trainer.predict(
     pred_integrator,
     return_predictions=False,
     dataloaders=data.predict_dataloader(),
+    ckpt_path=logdir + "/checkpoints/last.ckpt",
 )
 
-version_dir = trainer.logger.log_dir
+
+# %%
+version_dir = logdir
 path = version_dir + "/checkpoints/epoch*.ckpt"
 
 # override to stop new version dirs from being created
@@ -86,15 +91,20 @@ config["trainer"]["params"]["logger"] = False
 clean_from_memory(trainer, pred_writer, pred_writer, checkpoint_callback)
 
 # predict from checkpoints
-predict_from_checkpoints(config, data, version_dir, path)
+predict_from_checkpoints(config, trainer, pred_integrator, data, version_dir, path)
 
 prediction_path = version_dir + "/predictions/"
 prediction_directories = glob.glob(prediction_path + "epoch*")
 prediction_files = glob.glob(prediction_path + "epoch*/*.pt")
 
 # write reflections
-reflection_file_writer(prediction_directories, prediction_files)
+reflection_file_writer(
+    prediction_directories,
+    prediction_files,
+    config["output"]["refl_file"],
+)
 
+# %%
 # save config as yaml to version_dir
 import yaml
 

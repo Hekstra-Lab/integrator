@@ -27,14 +27,14 @@ def reflection_file_writer(prediction_directories, prediction_files, refl_file):
 
             # create a boolean array to select reflections used during training
             sel = np.asarray([False] * len(refl_tbl))
-            reflection_ids = empty_df["refl_ids"].cast(plr.Int32).to_list()
+            reflection_ids = empty_df["refl_ids"].explode().cast(plr.Int32).to_list()
 
-            qI_mean_list = empty_df["qI_mean"].to_list()
-            qI_variance_list = empty_df["qI_variance"].to_list()
-            weighted_sum_mean = empty_df["weighted_sum_mean"].to_list()
-            weighted_sum_var = empty_df["weighted_sum_var"].to_list()
-            thresholded_mean = empty_df["thresholded_mean"].to_list()
-            thresholded_var = empty_df["thresholded_var"].to_list()
+            qI_mean_list = empty_df["qI_mean"].explode().to_list()
+            qI_variance_list = empty_df["qI_variance"].explode().to_list()
+            weighted_sum_mean = empty_df["weighted_sum_mean"].explode().to_list()
+            weighted_sum_var = empty_df["weighted_sum_var"].explode().to_list()
+            thresholded_mean = empty_df["thresholded_mean"].explode().to_list()
+            thresholded_var = empty_df["thresholded_var"].explode().to_list()
 
             for id in reflection_ids:
                 sel[id] = True
