@@ -1,4 +1,7 @@
 from integrator.callbacks import PredWriter
+from dials.array_family import flex
+import numpy as np
+import torch
 import glob
 from integrator.utils import (
     load_config,
@@ -10,22 +13,46 @@ from integrator.utils import (
     predict_from_checkpoints,
     reflection_file_writer,
 )
+from integrator.callbacks import IntensityPlotter
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
+import wandb
+import matplotlib.pyplot as plt
+from pytorch_lightning.callbacks import Callback
+from pytorch_lightning.callbacks import RichProgressBar
+import torchvision.transforms.functional as F
 
+# %%
 config = "./src/integrator/configs/config.yaml"
 config = load_config(config)
+data = create_data_loader(config)
 
+# %%
+# TODO: Incorporate this code block into the logging function.
+# This code block gets the resolution vector for each reflection id
+# Use this to plot data as a function of resolution
+
+# getting refl ids
+refl_tbl = flex.reflection_table.from_file(config["output"]["refl_file"])
+
+refl_ids = []
+for batch in data.train_dataloader():
+    refl_ids.extend(batch[1][:, 4].int().tolist())
+
+sel = np.asarray([False] * len(refl_tbl))
+for id in refl_ids:
+    sel[id] = True
+
+refl_tbl_subset = refl_tbl.select(flex.bool(sel))
+
+# %%
 logger = WandbLogger(
     project="integrator",
-    name="test-run-local",
+    name="test-run-local-3",
     save_dir="lightning_logs",
 )
 
 logdir = logger.experiment.dir
-
-
-data = create_data_loader(config)
 
 integrator = create_integrator(config)
 
@@ -38,11 +65,13 @@ pred_writer = PredWriter(
     ],
 )
 
+plotter = IntensityPlotter()
+
 ## create checkpoint callback
 checkpoint_callback = ModelCheckpoint(
     dirpath=logger.experiment.dir + "/checkpoints",  # when using wandb logger
     filename="{epoch}-{val_loss:.2f}",
-    every_n_epochs=2,
+    every_n_epochs=1,
     save_top_k=-1,
     save_last="link",
 )
@@ -54,6 +83,8 @@ trainer = create_trainer(
     callbacks=[
         pred_writer,
         checkpoint_callback,
+        plotter,
+        RichProgressBar(),
     ],
     logger=logger,
 )
@@ -79,8 +110,6 @@ trainer.predict(
     ckpt_path=logdir + "/checkpoints/last.ckpt",
 )
 
-
-# %%
 version_dir = logdir
 path = version_dir + "/checkpoints/epoch*.ckpt"
 

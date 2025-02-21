@@ -23,6 +23,7 @@ import subprocess
 
 # from lightning.pytorch.loggers import TensorBoardLogger
 from pytorch_lightning.loggers import WandbLogger
+from integrator.callbacks import IntensityPlotter
 
 torch.set_float32_matmul_precision("high")
 
@@ -156,6 +157,7 @@ if __name__ == "__main__":
 
     def analysis(prediction_path, dials_env, phenix_env, pdb, expt_file):
         # refl_files = glob.glob(prediction_path + "epoch*/reflections/*.refl")
+
         p = Path(prediction_path).glob("epoch*/reflections/*.refl")
 
         for refl_file in p:
@@ -225,6 +227,8 @@ if __name__ == "__main__":
         save_dir="lightning_logs",
     )
 
+    plotter = IntensityPlotter()
+
     ## create checkpoint callback
     checkpoint_callback = ModelCheckpoint(
         dirpath=logger.experiment.dir + "/checkpoints",  # when using wandb logger
@@ -244,6 +248,7 @@ if __name__ == "__main__":
         callbacks=[
             pred_writer,
             checkpoint_callback,
+            plotter,
         ],
         logger=logger,
     )

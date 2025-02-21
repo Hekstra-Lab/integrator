@@ -44,6 +44,7 @@ class ShoeboxDataModule(BaseDataModule):
             "masks": "masks_subset.pt",
             "shoebox_features": "shoebox_features_subset.pt",
         },
+        refl_file=None,
     ):
         super().__init__()
         self.data_dir = data_dir
@@ -149,7 +150,7 @@ class ShoeboxDataModule(BaseDataModule):
             shuffle=True,
             num_workers=self.num_workers,
             pin_memory=True,
-            prefetch_factor=2
+            prefetch_factor=2,
         )
 
     def val_dataloader(self):
@@ -159,7 +160,7 @@ class ShoeboxDataModule(BaseDataModule):
             shuffle=False,
             num_workers=self.num_workers,
             pin_memory=True,
-            prefetch_factor=2
+            prefetch_factor=2,
         )
 
     def test_dataloader(self):
@@ -170,7 +171,7 @@ class ShoeboxDataModule(BaseDataModule):
                 shuffle=False,
                 num_workers=self.num_workers,
                 pin_memory=True,
-                prefetch_factor=2
+                prefetch_factor=2,
             )
         else:
             return None

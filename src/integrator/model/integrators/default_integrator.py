@@ -170,7 +170,6 @@ class DefaultIntegrator(BaseIntegrator):
             "rates": rate,
             "counts": counts,
             "masks": masks,
-            #            "dispersion":dispersion,
             "qI": qI,
             "qbg": qbg,
             "qp": qp,

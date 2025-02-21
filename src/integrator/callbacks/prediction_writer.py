@@ -2,6 +2,20 @@ import torch
 import os
 from pytorch_lightning.callbacks import BasePredictionWriter
 from pathlib import Path
+from pytorch_lightning.callbacks import Callback
+
+
+class IntensityPlotter(Callback):
+    # def on_validation_epoch_end(self,trainer, pl_module):
+    def __init__(self):
+        super().__init__()
+        self.batch_predictions = []
+        self.val_predictions = []
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        with torch.no_grad():
+            predictions = pl_module(batch)
+            self.batch_predictions.append(predictions)
 
 
 class PredWriter(BasePredictionWriter):

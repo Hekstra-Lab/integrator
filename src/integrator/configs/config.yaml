@@ -81,7 +81,7 @@ data_loader:
 
 trainer:
   params:
-    max_epochs: 5
+    max_epochs: 50
     accelerator: auto
     devices: 1
     logger: true
