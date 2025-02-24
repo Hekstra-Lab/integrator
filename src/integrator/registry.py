@@ -1,4 +1,11 @@
-from .model.encoders import CNNResNet, FcEncoder, CNNResNet2, DevEncoder
+from .model.encoders import (
+    CNNResNet,
+    FcEncoder,
+    CNNResNet2,
+    DevEncoder,
+    CNN_3d,
+    FcResNet,
+)
 from .model.decoders import Decoder
 from .model.profiles import DirichletProfile
 from .model.loss import Loss
@@ -7,13 +14,14 @@ from .model.distribution import GammaDistribution
 from .data_loaders import ShoeboxDataModule
 import torch
 
-
 REGISTRY = {
     "encoder": {
         "encoder1": CNNResNet,
         "fc_encoder": FcEncoder,
         "encoder2": CNNResNet2,
         "dev_encoder": DevEncoder,
+        "fc_resnet": FcResNet,
+        "3d_cnn": CNN_3d,
     },
     "decoder": {
         "decoder1": Decoder,

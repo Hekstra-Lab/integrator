@@ -23,7 +23,7 @@ from pytorch_lightning.callbacks import RichProgressBar
 import torchvision.transforms.functional as F
 
 # %%
-config = "./src/integrator/configs/dev_config.yaml"
+config = "./src/integrator/configs/config_3d_cnn.yaml"
 config = load_config(config)
 data = create_data_loader(config)
 
@@ -48,7 +48,7 @@ refl_tbl_subset = refl_tbl.select(flex.bool(sel))
 # %%
 logger = WandbLogger(
     project="integrator",
-    name="test-fc_encoder-local-3",
+    name="test-3d_encoder-local-3",
     save_dir="lightning_logs",
 )
 
@@ -65,7 +65,7 @@ pred_writer = PredWriter(
     ],
 )
 
-plotter = IntensityPlotter()
+plotter = IntensityPlotter(num_profiles=10)
 
 ## create checkpoint callback
 checkpoint_callback = ModelCheckpoint(
