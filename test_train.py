@@ -23,7 +23,7 @@ from pytorch_lightning.callbacks import RichProgressBar
 import torchvision.transforms.functional as F
 
 # %%
-config = "./src/integrator/configs/config.yaml"
+config = "./src/integrator/configs/dev_config.yaml"
 config = load_config(config)
 data = create_data_loader(config)
 
@@ -48,7 +48,7 @@ refl_tbl_subset = refl_tbl.select(flex.bool(sel))
 # %%
 logger = WandbLogger(
     project="integrator",
-    name="test-run-local-3",
+    name="test-fc_encoder-local-3",
     save_dir="lightning_logs",
 )
 
@@ -96,6 +96,7 @@ trainer.fit(
     val_dataloaders=data.val_dataloader(),
 )
 
+# %%
 # Create trainer from checkpoints
 pred_integrator = create_integrator_from_checkpoint(
     config,
@@ -119,6 +120,7 @@ config["trainer"]["params"]["logger"] = False
 # clean from memory
 clean_from_memory(trainer, pred_writer, pred_writer, checkpoint_callback)
 
+# %%
 # predict from checkpoints
 predict_from_checkpoints(config, trainer, pred_integrator, data, version_dir, path)
 

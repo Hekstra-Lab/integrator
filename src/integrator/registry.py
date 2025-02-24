@@ -1,8 +1,8 @@
-from .model.encoders import CNNResNet, FcEncoder, CNNResNet2
+from .model.encoders import CNNResNet, FcEncoder, CNNResNet2, DevEncoder
 from .model.decoders import Decoder
 from .model.profiles import DirichletProfile
 from .model.loss import Loss
-from .model.integrators import DefaultIntegrator
+from .model.integrators import DefaultIntegrator, DevIntegrator
 from .model.distribution import GammaDistribution
 from .data_loaders import ShoeboxDataModule
 import torch
@@ -13,6 +13,7 @@ REGISTRY = {
         "encoder1": CNNResNet,
         "fc_encoder": FcEncoder,
         "encoder2": CNNResNet2,
+        "dev_encoder": DevEncoder,
     },
     "decoder": {
         "decoder1": Decoder,
@@ -25,6 +26,7 @@ REGISTRY = {
     },
     "integrator": {
         "integrator1": DefaultIntegrator,
+        "test_integrator": DevIntegrator,
     },
     "q_I": {
         "gamma": GammaDistribution,

@@ -1,0 +1,97 @@
+global:
+  dmodel: 64
+
+integrator:
+  name: integrator1
+  learning_rate: 0.001
+  mc_samples: 100
+  profile_threshold: 0.01
+  load_checkpoint: null
+  encoder:
+    name: fc_encoder
+    params:
+      depth: 10
+      dmodel: 64
+      feature_dim: 7
+      dropout: null
+
+components:
+  encoder:
+    name: dev_encoder
+    params:
+      depth: 10
+      dmodel: 64
+      feature_dim: 7
+  profile:
+    name: dirichlet
+    params:
+      dmodel: 64
+  decoder:
+    name: decoder1
+    params:
+      mc_samples: 100
+  q_bg:
+    name: gamma
+    params:
+      dmodel: 64
+    q:
+  q_I:
+    name: gamma
+    params:
+      dmodel: 64
+  loss:
+    name: elbo
+    params:
+      p_bg:
+        name: gamma
+        params:
+          concentration: 1.0
+          rate: 1.0
+      p_I:
+        name: gamma
+        params:
+          concentration: 1.0
+          rate: 1.0
+      p_p_scale: 0.0001
+      p_bg_scale: 0.0001
+      p_I_scale: 0.0001
+      recon_scale: 0.0
+
+
+data_loader:
+  name: default
+  params:
+    data_dir: "/Users/luis/integratorv3/integrator/data/hewl_816/"
+    batch_size: 10
+    val_split: 0.3
+    test_split: 0.0
+    num_workers: 1
+    include_test: false
+    subset_size: 100
+    cutoff: null
+    shoebox_features: true
+    shoebox_file_names:
+      shoeboxes: "weak_standardized_shoeboxes.pt"
+      counts: "weak_raw_counts.pt"
+      metadata: "weak_metadata.pt"
+      masks: "weak_masks.pt"
+      shoebox_features: "weak_shoebox_features.pt"
+
+trainer:
+  params:
+    max_epochs: 50
+    accelerator: auto
+    devices: 1
+    logger: true
+    precision: "32"
+    check_val_every_n_epoch: 2
+    log_every_n_steps: 1
+    deterministic: false
+    callbacks:
+      pred_writer:
+        output_dir: null
+        write_interval: epoch
+    enable_checkpointing: true
+
+output:
+  refl_file: "/Users/luis/integratorv3/integrator/data/hewl_816/reflections_.refl"
