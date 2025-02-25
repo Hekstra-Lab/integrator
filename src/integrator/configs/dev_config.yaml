@@ -17,11 +17,18 @@ integrator:
 
 components:
   encoder:
-    name: dev_encoder
+    name: 3d_cnn
     params:
-      depth: 10
-      dmodel: 64
-      feature_dim: 7
+      Z: 3
+      H: 21
+      W: 21
+      conv_channels: 64
+      use_norm: true
+    #name: dev_encoder
+    #params:
+      #depth: 10
+      #dmodel: 64
+      #feature_dim: 7
   profile:
     name: dirichlet
     params:

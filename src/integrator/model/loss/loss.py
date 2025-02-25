@@ -299,4 +299,7 @@ class Loss(torch.nn.Module):
             neg_ll_batch.mean(),
             kl_terms.mean(),
             recon_loss_batch.mean(),
+            kl_bg.mean(),
+            kl_I.mean(),
+            kl_p.mean() if self.p_pairing == "dirichlet_dirichlet" else 0.0,
         )

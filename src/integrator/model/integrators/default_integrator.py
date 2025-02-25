@@ -232,7 +232,7 @@ class DefaultIntegrator(BaseIntegrator):
         outputs = self(shoebox, dials, masks, metadata, counts)
 
         # neg_ll, kl = self.loss_fn(
-        loss, neg_ll, kl, recon_loss = self.loss_fn(
+        loss, neg_ll, kl, recon_loss, kl_bg, kl_I, kl_p = self.loss_fn(
             outputs["rates"],
             outputs["counts"],
             outputs["qp"],
@@ -246,6 +246,9 @@ class DefaultIntegrator(BaseIntegrator):
         self.log("train_nll", neg_ll.mean())
         self.log("train_kl", kl.mean())
         self.log("train_recon", recon_loss)
+        self.log("kl_bg", kl_bg)
+        self.log("kl_I", kl_I)
+        self.log("kl_p", kl_p)
 
         return loss.mean()
 
@@ -275,7 +278,7 @@ class DefaultIntegrator(BaseIntegrator):
         outputs = self(shoebox, dials, masks, metadata, counts)
 
         # Calculate validation metrics
-        loss, neg_ll, kl, recon_loss = self.loss_fn(
+        loss, neg_ll, kl, recon_loss, kl_bg, kl_I, kl_p = self.loss_fn(
             outputs["rates"],
             outputs["counts"],
             outputs["qp"],
@@ -289,6 +292,9 @@ class DefaultIntegrator(BaseIntegrator):
         self.log("val_nll", neg_ll.mean())
         self.log("val_kl", kl.mean())
         self.log("val_recon", recon_loss)
+        self.log("val_kl_bg", kl_bg)
+        self.log("val_kl_I", kl_I)
+        self.log("val_kl_p", kl_p)
 
         # Return the complete outputs dictionary
         return outputs

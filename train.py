@@ -221,13 +221,25 @@ if __name__ == "__main__":
         ],
     )
 
+    encoder_name = config["components"]["encoder"]["name"]
+    I_pairing_name = config["components"]["loss"]["params"]["I_pairing"]
+    bg_pairing_name = config["components"]["loss"]["params"]["bg_pairing"]
+    p_pairing_name = config["components"]["loss"]["params"]["p_pairing"]
+
     logger = WandbLogger(
         project="integrator",
-        name="test-run",
+        name="Encoder_"
+        + encoder_name
+        + "_I_"
+        + I_pairing_name
+        + "_Bg_"
+        + bg_pairing_name
+        + "_P_"
+        + p_pairing_name,
         save_dir="lightning_logs",
     )
 
-    plotter = IntensityPlotter()
+    plotter = IntensityPlotter(num_profiles=10)
 
     ## create checkpoint callback
     checkpoint_callback = ModelCheckpoint(

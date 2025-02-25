@@ -161,7 +161,7 @@ class IntensityPlotter(Callback):
                     "thresholded_mean",
                     "dials_I_prf_value",
                 ),
-                "corrcoef": torch.corrcoef(
+                "corrcoef qI": torch.corrcoef(
                     torch.vstack(
                         [
                             self.train_predictions["qI"].mean.flatten(),
@@ -186,6 +186,13 @@ class IntensityPlotter(Callback):
                     )
                 )[0, 1],
                 "max_qI": torch.max(self.train_predictions["qI"].mean.flatten()),
+                "max_bg": torch.max(
+                    self.train_predictions["dials_I_prf_value"].flatten()
+                ),
+                "mean_qI": torch.mean(self.train_predictions["qI"].mean.flatten()),
+                "mean_bg": torch.mean(
+                    self.train_predictions["dials_I_prf_value"].flatten()
+                ),
             }
 
             # Only create and log comparison grid on specified epochs

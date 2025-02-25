@@ -19,12 +19,11 @@ import torch
 
 REGISTRY = {
     "encoder": {
-        "encoder1": CNNResNet,
-        "fc_encoder": FcEncoder,
-        "encoder2": CNNResNet2,
+        "encoder1": CNNResNet,  # done
+        "fc_encoder": FcEncoder,  # for metadata
         "dev_encoder": DevEncoder,
-        "fc_resnet": FcResNet,
-        "3d_cnn": CNN_3d,
+        "fc_resnet": FcResNet,  # done
+        "3d_cnn": CNN_3d,  # done
     },
     "decoder": {
         "decoder1": Decoder,

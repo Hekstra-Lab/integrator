@@ -46,9 +46,23 @@ for id in refl_ids:
 refl_tbl_subset = refl_tbl.select(flex.bool(sel))
 
 # %%
+
+encoder_name = config["components"]["encoder"]["name"]
+I_pairing_name = config["components"]["loss"]["params"]["I_pairing"]
+bg_pairing_name = config["components"]["loss"]["params"]["bg_pairing"]
+p_pairing_name = config["components"]["loss"]["params"]["p_pairing"]
+
+
 logger = WandbLogger(
     project="integrator",
-    name="test-simpson-reg-local-3",
+    name="Encoder_"
+    + encoder_name
+    + "_I_"
+    + I_pairing_name
+    + "_Bg_"
+    + bg_pairing_name
+    + "_P_"
+    + p_pairing_name,
     save_dir="lightning_logs",
 )
 
