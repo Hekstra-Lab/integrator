@@ -215,10 +215,15 @@ class Loss(torch.nn.Module):
         batch_size = rate.shape[0]
 
         # Initialize Dirichlet prior if needed
-        if self.p_pairing == "dirichlet_dirichlet" and self.p_p is None:
-            self.p_p = torch.distributions.dirichlet.Dirichlet(
-                self.dirichlet_concentration.to(device)
-            )
+        if self.p_pairing == "dirichlet_dirichlet":
+            if self.p_p is None:
+                self.p_p = torch.distributions.dirichlet.Dirichlet(
+                    self.dirichlet_concentration.to(device)
+                )
+            else:
+                # even if it was already initialized
+                if self.p_p.concentration.device != device:
+                    self.p_p.concentration = self.p_p.concentration.to(device)
 
         # Ensure other components are on the correct device
         counts = counts.to(device)
