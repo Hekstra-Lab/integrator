@@ -37,6 +37,36 @@ def create_prior(dist_name, dist_params):
         concentration = torch.tensor(dist_params["concentration"])
         rate = torch.tensor(dist_params["rate"])
         return torch.distributions.gamma.Gamma(concentration, rate)
+
+    if dist_name == "log_normal":
+        loc = torch.tensor(dist_params["loc"])
+        scale = torch.tensor(dist_params["scale"])
+        return torch.distributions.log_normal.LogNormal(loc, scale)
+
+    if dist_name == "beta":
+        concentration1 = torch.tensor(dist_params["concentration1"])
+        concentration0 = torch.tensor(dist_params["concentration0"])
+        return torch.distributions.beta.Beta(concentration1, concentration0)
+
+    if dist_name == "laplace":
+        loc = torch.tensor(dist_params["loc"])
+        scale = torch.tensor(dist_params["scale"])
+        return torch.distributions.laplace.Laplace(loc, scale)
+
+    elif dist_name == "dirichlet":
+        # For a simple case where all dimensions use the same concentration
+        if "concentration" in dist_params:
+            concentration = torch.ones(3 * 21 * 21) * dist_params["concentration"]
+        # For the case where a specific concentration vector is provided
+        elif "concentration_vector" in dist_params:
+            concentration = torch.tensor(dist_params["concentration_vector"])
+        else:
+            raise ValueError(
+                f"Missing concentration parameters for Dirichlet distribution"
+            )
+
+        return torch.distributions.dirichlet.Dirichlet(concentration)
+
     else:
         raise ValueError(f"Unknown distribution name: {dist_name}")
 
@@ -45,15 +75,33 @@ def create_loss(config):
     # Create a DEEP COPY of the loss parameters
     param_dict = deepcopy(config["components"]["loss"]["params"])
 
+    bg_pairing = param_dict.pop("bg_pairing", "gamma_gamma")
+    I_pairing = param_dict.pop("I_pairing", "gamma_gamma")
+    p_pairing = param_dict.pop("p_pairing", "dirichlet_dirichlet")
+
     # Build p_bg from the copied params
     p_bg = create_prior(param_dict["p_bg"]["name"], param_dict["p_bg"]["params"])
 
     # Build p_I from the copied params
     p_I = create_prior(param_dict["p_I"]["name"], param_dict["p_I"]["params"])
 
-    # Modify the COPY, not the original config
+    # Build p_p prior distribution if needed
+    if (
+        "p_p" in param_dict
+        and param_dict["p_p"] is not None
+        and param_dict["p_p"]["name"] is not None
+    ):
+        p_p = create_prior(param_dict["p_p"]["name"], param_dict["p_p"]["params"])
+        param_dict["p_p"] = p_p
+    else:
+        param_dict["p_p"] = None  # Modify the COPY, not the original config
+
     param_dict["p_bg"] = p_bg
     param_dict["p_I"] = p_I
+
+    param_dict["bg_pairing"] = bg_pairing
+    param_dict["I_pairing"] = I_pairing
+    param_dict["p_pairing"] = p_pairing
 
     return create_module("loss", config["components"]["loss"]["name"], **param_dict)
 

@@ -41,22 +41,39 @@ components:
     name: gamma
     params:
       dmodel: 64
+
+  # loss term components
   loss:
     name: elbo
     params:
+
+      bg_pairing: "gamma_gamma"
+      I_pairing: "gamma_gamma"
+      p_pairing: "dirichlet_dirichlet"
+
       p_bg:
         name: gamma
         params:
           concentration: 1.0
           rate: 1.0
+
       p_I:
         name: gamma
         params:
           concentration: 1.0
           rate: 1.0
+
+      p_p:
+        name: dirichlet
+        params:
+          concentration: 0.1
+
       p_p_scale: 0.0001
+
       p_bg_scale: 0.0001
+
       p_I_scale: 0.0001
+
       recon_scale: 0.0
 
 

@@ -26,6 +26,8 @@ components:
     name: dirichlet
     params:
       dmodel: 64
+      num_components: 1323
+
   decoder:
     name: decoder1
     params:
@@ -36,27 +38,57 @@ components:
       dmodel: 64
     q:
   q_I:
-    name: gamma
+    name: log_normal
     params:
       dmodel: 64
   loss:
+
     name: elbo
+
     params:
+
+      bg_pairing: "gamma_gamma"
+      #I_pairing: "gamma_gamma"
+      I_pairing: "lognormal_gamma"
+      #p_pairing: "beta_beta"
+      p_pairing: "dirichlet_dirichlet"
+
       p_bg:
         name: gamma
         params:
           concentration: 1.0
           rate: 1.0
+
       p_I:
         name: gamma
         params:
           concentration: 1.0
           rate: 1.0
-      p_p_scale: 0.0001
-      p_bg_scale: 0.0001
-      p_I_scale: 0.0001
-      recon_scale: 0.0
 
+      #p_p:
+        #name: beta
+        #params:
+          #concentration1: 0.5
+          #concentration0: 0.5
+
+      #p_p:
+        #name: laplace
+        #params:
+          #loc: 0.0
+          #scale: 1.0
+
+      p_p:
+        name: dirichlet
+        params:
+          concentration: 0.1
+
+      p_p_scale: 0.0001
+
+      p_bg_scale: 0.0001
+
+      p_I_scale: 0.0001
+
+      recon_scale: 0.0
 
 data_loader:
   name: default
@@ -79,7 +111,7 @@ data_loader:
 
 trainer:
   params:
-    max_epochs: 50
+    max_epochs: 100
     accelerator: auto
     devices: 1
     logger: true

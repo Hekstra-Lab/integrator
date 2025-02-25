@@ -7,10 +7,13 @@ from .model.encoders import (
     FcResNet,
 )
 from .model.decoders import Decoder
-from .model.profiles import DirichletProfile
-from .model.loss import Loss
+from .model.profiles import (
+    DirichletProfile,
+    BetaProfile,
+)
+from .model.loss import Loss, BetaLoss, LaplaceLoss
 from .model.integrators import DefaultIntegrator, DevIntegrator
-from .model.distribution import GammaDistribution
+from .model.distribution import GammaDistribution, LogNormalDistribution
 from .data_loaders import ShoeboxDataModule
 import torch
 
@@ -28,9 +31,12 @@ REGISTRY = {
     },
     "profile": {
         "dirichlet": DirichletProfile,
+        "beta": BetaProfile,
     },
     "loss": {
         "elbo": Loss,
+        "beta": BetaLoss,
+        "laplace_loss": LaplaceLoss,
     },
     "integrator": {
         "integrator1": DefaultIntegrator,
@@ -38,6 +44,7 @@ REGISTRY = {
     },
     "q_I": {
         "gamma": GammaDistribution,
+        "log_normal": LogNormalDistribution,
     },
     "q_bg": {
         "gamma": GammaDistribution,
@@ -61,6 +68,10 @@ ARGUMENT_RESOLVER = {
         },
         "p_I": {
             "gamma": torch.distributions.gamma.Gamma,
+        },
+        "p_p": {
+            "beta": torch.distributions.beta.Beta,
+            "laplace": torch.distributions.laplace.Laplace,
         },
     },
 }
