@@ -11,7 +11,7 @@ from .model.profiles import (
     DirichletProfile,
     BetaProfile,
 )
-from .model.loss import Loss, BetaLoss, LaplaceLoss
+from .model.loss import Loss
 from .model.integrators import DefaultIntegrator, DevIntegrator
 from .model.distribution import GammaDistribution, LogNormalDistribution
 from .data_loaders import ShoeboxDataModule
@@ -35,8 +35,6 @@ REGISTRY = {
     },
     "loss": {
         "elbo": Loss,
-        "beta": BetaLoss,
-        "laplace_loss": LaplaceLoss,
     },
     "integrator": {
         "integrator1": DefaultIntegrator,
