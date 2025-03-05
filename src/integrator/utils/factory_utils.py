@@ -71,13 +71,10 @@ def create_prior(dist_name, dist_params):
         raise ValueError(f"Unknown distribution name: {dist_name}")
 
 
+# %%
 def create_loss(config):
     # Create a DEEP COPY of the loss parameters
     param_dict = deepcopy(config["components"]["loss"]["params"])
-
-    bg_pairing = param_dict.pop("bg_pairing", "gamma_gamma")
-    I_pairing = param_dict.pop("I_pairing", "gamma_gamma")
-    p_pairing = param_dict.pop("p_pairing", "dirichlet_dirichlet")
 
     # Build p_bg from the copied params
     p_bg = create_prior(param_dict["p_bg"]["name"], param_dict["p_bg"]["params"])
@@ -86,38 +83,32 @@ def create_loss(config):
     p_I = create_prior(param_dict["p_I"]["name"], param_dict["p_I"]["params"])
 
     # Build p_p prior distribution if needed
-    if (
-        "p_p" in param_dict
-        and param_dict["p_p"] is not None
-        and param_dict["p_p"]["name"] is not None
-    ):
+    if "p_p" in param_dict:
         p_p = create_prior(param_dict["p_p"]["name"], param_dict["p_p"]["params"])
         param_dict["p_p"] = p_p
     else:
-        param_dict["p_p"] = None  # Modify the COPY, not the original config
+        pass
 
     param_dict["p_bg"] = p_bg
     param_dict["p_I"] = p_I
 
-    param_dict["bg_pairing"] = bg_pairing
-    param_dict["I_pairing"] = I_pairing
-    param_dict["p_pairing"] = p_pairing
-
     return create_module("loss", config["components"]["loss"]["name"], **param_dict)
 
 
+# %%
 def load_config(config_path):
     """utility function to load a yaml config file"""
     with open(config_path, "r") as f:
         return yaml.safe_load(f)
 
 
+# %%
 def create_components(config):
     # Base modules
-    encoder = create_module(
-        "encoder",
-        config["components"]["encoder"]["name"],
-        **config["components"]["encoder"]["params"],
+    image_encoder = create_module(
+        "image_encoder",
+        config["components"]["image_encoder"]["name"],
+        **config["components"]["image_encoder"]["params"],
     )
     profile = create_module(
         "profile",
@@ -142,14 +133,12 @@ def create_components(config):
         **config["components"]["q_I"]["params"],
     )
 
-    loss = create_loss(config)
     return (
-        encoder,
+        image_encoder,
         profile,
         decoder,
         background_distribution,
         intensity_distribution,
-        loss,
     )
 
 
@@ -157,25 +146,34 @@ def create_integrator(config):
     integrator_name = config["integrator"]["name"]
     integrator_class = REGISTRY["integrator"][integrator_name]
     (
-        encoder,
+        image_encoder,
         profile,
         decoder,
         background_distribution,
         intensity_distribution,
-        loss,
     ) = create_components(config)
 
-    if integrator_name == "integrator1":
-        fc_encoder = create_module(
-            "encoder",
-            config["integrator"]["encoder"]["name"],
-            **config["integrator"]["encoder"]["params"],
+    if integrator_name == "default_integrator":
+        loss = create_loss(config)
+
+        metadata_encoder = create_module(
+            "metadata_encoder",
+            config["components"]["metadata_encoder"]["name"],
+            **config["components"]["metadata_encoder"]["params"],
         )
+
+        image_encoder = create_module(
+            "image_encoder",
+            config["components"]["image_encoder"]["name"],
+            **config["components"]["image_encoder"]["params"],
+        )
+
         integrator = integrator_class(
-            cnn_encoder=encoder,
-            fc_encoder=fc_encoder,
+            image_encoder=image_encoder,
+            metadata_encoder=metadata_encoder,
             q_bg=background_distribution,
             q_I=intensity_distribution,
+            decoder=decoder,
             profile_model=profile,
             dmodel=config["global"]["dmodel"],
             loss=loss,
@@ -184,6 +182,100 @@ def create_integrator(config):
             profile_threshold=config["integrator"]["profile_threshold"],
         )
         return integrator
+
+    if integrator_name == "bernoulli_integrator":
+        loss = create_loss(config)
+        q_z = create_module(
+            "q_z",
+            config["components"]["q_z"]["name"],
+            **config["components"]["q_z"]["params"],
+        )
+        metadata_encoder = create_module(
+            "metadata_encoder",
+            config["components"]["metadata_encoder"]["name"],
+            **config["components"]["metadata_encoder"]["params"],
+        )
+
+        integrator = integrator_class(
+            image_encoder=image_encoder,
+            metadata_encoder=metadata_encoder,
+            q_bg=background_distribution,
+            q_I=intensity_distribution,
+            profile_model=profile,
+            q_z=q_z,
+            dmodel=config["global"]["dmodel"],
+            decoder=decoder,
+            loss=loss,
+            mc_samples=config["integrator"]["mc_samples"],
+            learning_rate=config["integrator"]["learning_rate"],
+            profile_threshold=config["integrator"]["profile_threshold"],
+        )
+        return integrator
+
+    elif integrator_name == "mvn_integrator":
+        loss = create_loss(config)
+        metadata_encoder = create_module(
+            "metadata_encoder",
+            config["components"]["metadata_encoder"]["name"],
+            **config["components"]["metadata_encoder"]["params"],
+        )
+
+        integrator = integrator_class(
+            image_encoder=image_encoder,
+            metadata_encoder=metadata_encoder,
+            q_bg=background_distribution,
+            q_I=intensity_distribution,
+            profile_model=profile,
+            dmodel=config["global"]["dmodel"],
+            loss=loss,
+            decoder=decoder,
+            mc_samples=config["integrator"]["mc_samples"],
+            learning_rate=config["integrator"]["learning_rate"],
+            profile_threshold=config["integrator"]["profile_threshold"],
+        )
+        return integrator
+
+    elif integrator_name == "unet_integrator":
+        loss = create_loss(config)
+
+        metadata_encoder = create_module(
+            "metadata_encoder",
+            config["components"]["metadata_encoder"]["name"],
+            **config["components"]["metadata_encoder"]["params"],
+        )
+
+        unet = create_module(
+            "image_encoder",
+            config["components"]["unet"]["name"],
+            **config["components"]["unet"]["params"],
+        )
+        if "q_z" in config["components"]:
+            q_z = create_module(
+                "q_z",
+                config["components"]["q_z"]["name"],
+                **config["components"]["q_z"]["params"],
+            )
+        else:
+            q_z = None
+
+        integrator = integrator_class(
+            image_encoder=image_encoder,
+            metadata_encoder=metadata_encoder,
+            q_bg=background_distribution,
+            q_I=intensity_distribution,
+            q_z=q_z,
+            # profile_model=profile,
+            decoder=decoder,
+            unet=unet,
+            loss=loss,
+            dmodel=config["global"]["dmodel"],
+            mc_samples=config["integrator"]["mc_samples"],
+            learning_rate=config["integrator"]["learning_rate"],
+            profile_threshold=config["integrator"]["profile_threshold"],
+            # signal_preprocessor=None,
+        )
+        return integrator
+
     else:
         raise ValueError(f"Unknown integrator name: {integrator_name}")
 
@@ -192,28 +284,31 @@ def create_integrator_from_checkpoint(config, checkpoint_path):
     integrator_name = config["integrator"]["name"]
     integrator_class = REGISTRY["integrator"][integrator_name]
     (
-        encoder,
+        image_encoder,
         profile,
         decoder,
         background_distribution,
         intensity_distribution,
-        loss,
+        # loss,
     ) = create_components(config)
 
-    if integrator_name == "integrator1":
-        fc_encoder = create_module(
-            "encoder",
-            config["integrator"]["encoder"]["name"],
-            **config["integrator"]["encoder"]["params"],
+    if integrator_name == "default_integrator":
+        loss = create_loss(config)
+
+        metadata_encoder = create_module(
+            "metadata_encoder",
+            config["components"]["metadata_encoder"]["name"],
+            **config["components"]["metadata_encoder"]["params"],
         )
+
         integrator = integrator_class.load_from_checkpoint(
             checkpoint_path,
-            cnn_encoder=encoder,
-            fc_encoder=fc_encoder,
+            image_encoder=image_encoder,
+            metadata_encoder=metadata_encoder,
             q_bg=background_distribution,
             q_I=intensity_distribution,
             profile_model=profile,
-            dmodel=64,
+            dmodel=config["global"]["dmodel"],
             loss=loss,
             mc_samples=100,
             learning_rate=0.0001,
@@ -221,6 +316,73 @@ def create_integrator_from_checkpoint(config, checkpoint_path):
             map_location="cpu",
         )
         return integrator
+
+    elif integrator_name == "mvn_integrator":
+        loss = create_loss(config)
+        metadata_encoder = create_module(
+            "metadata_encoder",
+            config["components"]["metadata_encoder"]["name"],
+            **config["components"]["metadata_encoder"]["params"],
+        )
+
+        integrator = integrator_class.load_from_checkpoint(
+            checkpoint_path,
+            image_encoder=image_encoder,
+            metadata_encoder=metadata_encoder,
+            q_bg=background_distribution,
+            q_I=intensity_distribution,
+            profile_model=profile,
+            dmodel=config["global"]["dmodel"],
+            loss=loss,
+            decoder=decoder,
+            mc_samples=config["integrator"]["mc_samples"],
+            learning_rate=config["integrator"]["learning_rate"],
+            profile_threshold=config["integrator"]["profile_threshold"],
+        )
+        return integrator
+
+    elif integrator_name == "unet_integrator":
+        loss = create_loss(config)
+
+        metadata_encoder = create_module(
+            "metadata_encoder",
+            config["components"]["metadata_encoder"]["name"],
+            **config["components"]["metadata_encoder"]["params"],
+        )
+
+        unet = create_module(
+            "image_encoder",
+            config["components"]["unet"]["name"],
+            **config["components"]["unet"]["params"],
+        )
+        if "q_z" in config["components"]:
+            q_z = create_module(
+                "q_z",
+                config["components"]["q_z"]["name"],
+                **config["components"]["q_z"]["params"],
+            )
+        else:
+            q_z = None
+
+        integrator = integrator_class.load_from_checkpoint(
+            checkpoint_path,
+            image_encoder=image_encoder,
+            metadata_encoder=metadata_encoder,
+            q_bg=background_distribution,
+            q_I=intensity_distribution,
+            q_z=q_z,
+            # profile_model=profile,
+            decoder=decoder,
+            unet=unet,
+            loss=loss,
+            dmodel=config["global"]["dmodel"],
+            mc_samples=config["integrator"]["mc_samples"],
+            learning_rate=config["integrator"]["learning_rate"],
+            profile_threshold=config["integrator"]["profile_threshold"],
+            # signal_preprocessor=None,
+        )
+        return integrator
+
     else:
         raise ValueError(f"Unknown integrator name: {integrator_name}")
 

@@ -1,4 +1,6 @@
 from integrator.model.distribution import BaseDistribution
+import torch.nn as nn
+import torch.nn.functional as F
 from integrator.layers import Linear, Constraint
 
 

@@ -1,43 +1,70 @@
 from .model.encoders import (
     CNNResNet,
-    FcEncoder,
+    MLPMetadataEncoder,
     CNNResNet2,
     DevEncoder,
     CNN_3d,
-    FcResNet,
+    MLPImageEncoder,
+    UNetDirichletConcentration,
 )
-from .model.decoders import Decoder
+from .model.decoders import Decoder, MVNDecoder, BernoulliDecoder
 from .model.profiles import (
+    SignalAwareProfile,
+    SignalAwareMVNProfile,
     DirichletProfile,
     BetaProfile,
+    MVNProfile,
 )
-from .model.loss import Loss
-from .model.integrators import DefaultIntegrator, DevIntegrator
-from .model.distribution import GammaDistribution, LogNormalDistribution
+from .model.loss import Loss, MVNLoss, BernoulliLoss
+from .model.integrators import (
+    DefaultIntegrator,
+    BernoulliIntegrator,
+    DevIntegrator,
+    MVNIntegrator,
+    UNetIntegrator,
+)
+from .model.distribution import (
+    GammaDistribution,
+    LogNormalDistribution,
+    RelaxedBernoulliDistribution,
+)
 from .data_loaders import ShoeboxDataModule
 import torch
 
 REGISTRY = {
-    "encoder": {
-        "encoder1": CNNResNet,  # done
-        "fc_encoder": FcEncoder,  # for metadata
+    "metadata_encoder": {
+        "mlp_metadata_encoder": MLPMetadataEncoder,  # for metadata
+    },
+    "image_encoder": {
+        # "cnn_3d": CNNResNet,  # done
+        "mlp_image_encoder": MLPImageEncoder,  # done
+        "3d_cnn": CNN_3d,  # shoebox encoder
+        "unet": UNetDirichletConcentration,
         "dev_encoder": DevEncoder,
-        "fc_resnet": FcResNet,  # done
-        "3d_cnn": CNN_3d,  # done
     },
     "decoder": {
-        "decoder1": Decoder,
+        "default_decoder": Decoder,
+        "mvn_decoder": MVNDecoder,
+        "bernoulli_decoder": BernoulliDecoder,
     },
     "profile": {
         "dirichlet": DirichletProfile,
         "beta": BetaProfile,
+        "mvn": MVNProfile,
+        "signal_aware_dirichlet": SignalAwareProfile,
+        "signal_aware_mvn": SignalAwareMVNProfile,
     },
     "loss": {
         "elbo": Loss,
+        "mvn_loss": MVNLoss,
+        "bernoulli_loss": BernoulliLoss,
     },
     "integrator": {
-        "integrator1": DefaultIntegrator,
+        "default_integrator": DefaultIntegrator,
+        "bernoulli_integrator": BernoulliIntegrator,
         "test_integrator": DevIntegrator,
+        "mvn_integrator": MVNIntegrator,
+        "unet_integrator": UNetIntegrator,
     },
     "q_I": {
         "gamma": GammaDistribution,
@@ -45,6 +72,9 @@ REGISTRY = {
     },
     "q_bg": {
         "gamma": GammaDistribution,
+    },
+    "q_z": {
+        "bernoulli": RelaxedBernoulliDistribution,
     },
     "data_loader": {
         "default": ShoeboxDataModule,

@@ -95,7 +95,7 @@ class CNNResNet(BaseEncoder):
         return x
 
 
-class FcResNet(torch.nn.Module):
+class MLPImageEncoder(torch.nn.Module):
     def __init__(self, depth=10, dmodel=64, feature_dim=7, dropout=None):
         super().__init__()
         self.linear = Linear(feature_dim, dmodel)

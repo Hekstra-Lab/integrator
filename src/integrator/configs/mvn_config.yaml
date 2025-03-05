@@ -1,26 +1,23 @@
 global:
   dmodel: &dmodel 64
-  mc_samples: &mc_samples 100
-
-output:
-  refl_file: "/Users/luis/integratorv3/integrator/data/hewl_816/reflections_.refl"
 
 integrator:
-  name: default_integrator
+  name: mvn_integrator
   learning_rate: 0.001
-  mc_samples: *mc_samples
+  mc_samples: 100
   profile_threshold: 0.01
-
+  load_checkpoint: null
 components:
-  metadata_encoder:
-    name: mlp_metadata_encoder
+
+  image_encoder:
+    name: mlp_image_encoder
     params:
       depth: 10
       dmodel: *dmodel
       feature_dim: 7
       dropout: null
 
-  image_encoder:
+  metadata_encoder:
     #name: 3d_cnn
     #params:
       #Z: 3
@@ -28,45 +25,41 @@ components:
       #W: 21
       #conv_channels: 64
       #use_norm: true
-
-    name: mlp_image_encoder
+    name: mlp_metadata_encoder
     params:
       depth: 10
-      dmodel: 64
+      dmodel: *dmodel
       feature_dim: 7
 
   profile:
-    #name: dirichlet # requires dirichlet prior
-    #params:
-      #dmodel: *dmodel
-      #num_components: 1323
-    name: beta # requires beta or laplace prior
+    name: mvn
     params:
-      dmodel: *dmodel
-      mc_samples: *mc_samples
+      dmodel: 64
+      image_shape: [3,21,21]
 
   decoder:
-    name: default_decoder
+    name: mvn_decoder
     params:
-      mc_samples: *mc_samples
+      mc_samples: 100
+
   q_bg:
     name: gamma
     params:
-      dmodel: *dmodel
+      dmodel: 64
 
+  q_I:
+    name: gamma
+    params:
+      dmodel: 64
   #q_I:
-    #name: gamma
+    #name: log_normal
     #params:
       #dmodel: 64
 
-  q_I:
-    name: log_normal
-    params:
-      dmodel: *dmodel
-
   loss:
-    name: elbo
+    name: mvn_loss
     params:
+
       # Background Priors
       p_bg:
         name: gamma
@@ -79,30 +72,6 @@ components:
           concentration: 0.5
           rate: 0.5
 
-      #p_I:
-        #name: gamma
-        #params:
-          #concentration: 1.0
-          #rate: 1.0
-          #
-      # Profile Priors
-      #p_p:
-        #name: beta
-        #params:
-          #concentration1: 0.5
-          #concentration0: 0.5
-      p_p:
-        name: laplace
-        params:
-          loc: 0.05
-          scale: 0.1
-
-      #p_p:
-        #name: dirichlet
-        #params:
-          #concentration: 0.1
-
-      p_p_scale: 0.0001
       p_bg_scale: 0.0001
       p_I_scale: 0.0001
 
@@ -128,7 +97,7 @@ data_loader:
 
 trainer:
   params:
-    max_epochs: 200
+    max_epochs: 20
     accelerator: auto
     devices: 1
     logger: true
@@ -141,3 +110,6 @@ trainer:
         output_dir: null
         write_interval: epoch
     enable_checkpointing: true
+
+output:
+  refl_file: "/Users/luis/integratorv3/integrator/data/hewl_816/reflections_.refl"

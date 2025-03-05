@@ -150,7 +150,7 @@ class ShoeboxDataModule(BaseDataModule):
             shuffle=True,
             num_workers=self.num_workers,
             pin_memory=True,
-            prefetch_factor=2,
+            # prefetch_factor=0,
         )
 
     def val_dataloader(self):
@@ -160,7 +160,7 @@ class ShoeboxDataModule(BaseDataModule):
             shuffle=False,
             num_workers=self.num_workers,
             pin_memory=True,
-            prefetch_factor=2,
+            # prefetch_factor=2,
         )
 
     def test_dataloader(self):
@@ -171,7 +171,7 @@ class ShoeboxDataModule(BaseDataModule):
                 shuffle=False,
                 num_workers=self.num_workers,
                 pin_memory=True,
-                prefetch_factor=2,
+                # prefetch_factor=2,
             )
         else:
             return None

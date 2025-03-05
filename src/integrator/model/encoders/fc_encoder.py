@@ -4,7 +4,7 @@ from integrator.layers import Residual, MLP, MeanPool
 from integrator.model.encoders import BaseEncoder
 
 
-class FcEncoder(BaseEncoder):
+class MLPMetadataEncoder(BaseEncoder):
     def __init__(self, depth=10, dmodel=64, feature_dim=7, dropout=None):
         super().__init__()
         self.linear = Linear(feature_dim, dmodel)

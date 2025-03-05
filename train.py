@@ -23,9 +23,14 @@ import subprocess
 
 # from lightning.pytorch.loggers import TensorBoardLogger
 from pytorch_lightning.loggers import WandbLogger
-from integrator.callbacks import IntensityPlotter
+from integrator.callbacks import (
+    IntensityPlotter,
+    MVNPlotter,
+    UNetPlotter,
+    IntegratedPlotter,
+)
 
-torch.set_float32_matmul_precision("high")
+# torch.set_float32_matmul_precision("high")
 
 
 if __name__ == "__main__":
@@ -221,25 +226,48 @@ if __name__ == "__main__":
         ],
     )
 
-    encoder_name = config["components"]["encoder"]["name"]
-    I_pairing_name = config["components"]["loss"]["params"]["I_pairing"]
-    bg_pairing_name = config["components"]["loss"]["params"]["bg_pairing"]
-    p_pairing_name = config["components"]["loss"]["params"]["p_pairing"]
+    integrator_name = config["integrator"]["name"]
+    encoder_name = config["components"]["image_encoder"]["name"]
+
+    qI_name = config["components"]["q_I"]["name"]
+    qbg_name = config["components"]["q_bg"]["name"]
+    profile_name = config["components"]["profile"]["name"]
+    pI_name = config["components"]["loss"]["params"]["p_I"]["name"]
+    pbg_name = config["components"]["loss"]["params"]["p_bg"]["name"]
+
+    if "p_p" in config["components"]["loss"]["params"]:
+        pp_name = config["components"]["loss"]["params"]["p_p"]["name"]
+    else:
+        pp_name = ""
 
     logger = WandbLogger(
         project="integrator",
-        name="Encoder_"
+        name="Integrator_"
+        + integrator_name
+        + "Encoder_"
         + encoder_name
         + "_I_"
-        + I_pairing_name
+        + qI_name
+        + "_"
+        + pI_name
         + "_Bg_"
-        + bg_pairing_name
+        + qbg_name
+        + "_"
+        + pbg_name
         + "_P_"
-        + p_pairing_name,
+        + profile_name
+        + "_"
+        + pp_name,
         save_dir="lightning_logs",
     )
 
-    plotter = IntensityPlotter(num_profiles=10)
+    if config["integrator"]["name"] == "unet_integrator":
+        plotter = UNetPlotter(num_profiles=10)
+    elif config["integrator"]["name"] == "mvn_integrator":
+        plotter = MVNPlotter(num_profiles=10)
+    else:
+        # plotter = IntensityPlotter(num_profiles=10)
+        plotter = IntegratedPlotter(num_profiles=10)
 
     ## create checkpoint callback
     checkpoint_callback = ModelCheckpoint(
