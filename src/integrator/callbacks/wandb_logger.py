@@ -2351,22 +2351,37 @@ class IntegratedPlotter(Callback):
             return self.create_unet_comparison_grid(cmap)
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
-        with torch.no_grad():
+        with torch.no_grad():  # Ensure no gradients are tracked
             # Process batch
             shoebox, dials, masks, metadata, counts = batch
             predictions = pl_module(shoebox, dials, masks, metadata, counts)
 
-            # Only update tracked predictions if we're going to plot this epoch
+            # Only update tracked predictions if we'll plot this epoch
             if self.current_epoch % self.plot_every_n_epochs == 0:
+                # Handle the mixture of distributions and tensors properly
                 self.update_tracked_predictions(predictions)
 
-            # Accumulate predictions for the epoch
-            for key in self.epoch_predictions.keys():
-                if key in predictions:
-                    self.epoch_predictions[key].append(predictions[key])
+            # Store minimal data for metrics at epoch end
+            if batch_idx == 0 or batch_idx % 50 == 0:  # Only keep occasional batches
+                # Create a lightweight copy with CPU tensors
+                minimal_metrics = {}
 
-            # Store last batch predictions for metrics
-            self.train_predictions = predictions
+                for key, value in predictions.items():
+                    # Handle different types of objects
+                    if hasattr(value, "sample"):
+                        # It's a distribution with a mean method
+                        minimal_metrics[key] = value.mean.detach().cpu()
+                    elif isinstance(value, torch.Tensor):
+                        # It's a tensor
+                        minimal_metrics[key] = value.detach().cpu()
+                    else:
+                        # Other types (integers, lists, etc.)
+                        minimal_metrics[key] = value
+
+                self.train_predictions = minimal_metrics
+
+            # Force clean up
+            torch.cuda.empty_cache()
 
     def _create_probabilistic_correlation_data(self):
         """Create correlation data for probabilistic profiles (UNet style)"""

@@ -1177,56 +1177,36 @@ class DefaultIntegrator(BaseIntegrator):
 
     def calculate_intensities(self, counts, qbg, qp, dead_pixel_mask):
         with torch.no_grad():
-            # Apply mask to counts - use in-place operation
             counts = counts * dead_pixel_mask
-            batch_counts = counts.unsqueeze(1)  # Keep this as in original
+            batch_counts = counts.unsqueeze(1)
 
-            # For rsample, we need to follow the original approach but avoid permute
-            # Original: batch_bg_samples = (qbg.rsample([self.mc_samples]).unsqueeze(-1)).permute(1, 0, 2)
             batch_bg_samples = qbg.rsample([self.mc_samples]).unsqueeze(-1)
-            batch_bg_samples = batch_bg_samples.transpose(
-                0, 1
-            )  # Use transpose instead of permute
+            batch_bg_samples = batch_bg_samples.transpose(0, 1)
 
-            # Similarly for profile samples
-            # Original: batch_profile_samples = qp.rsample([self.mc_samples]).permute(1, 0, 2)
             batch_profile_samples = qp.rsample([self.mc_samples])
             batch_profile_samples = batch_profile_samples.transpose(0, 1)
-
-            # Apply mask directly - avoid new tensor creation
             batch_profile_samples = batch_profile_samples * dead_pixel_mask.unsqueeze(1)
 
-            # Rest of your original code with minimal changes to reduce tensor creation
             weighted_sum_intensity = (
                 batch_counts - batch_bg_samples
             ) * batch_profile_samples
             weighted_sum_intensity_sum = weighted_sum_intensity.sum(-1)
 
-            # Calculate norm squared directly
             summed_squared_prf = torch.sum(batch_profile_samples**2, dim=-1)
 
             division = weighted_sum_intensity_sum / summed_squared_prf
             weighted_sum_intensity_mean = division.mean(-1)
-
             # Variance calculation
-            weighted_sum_intensity_var = division.var(-1)  # Keep original var call
-
-            # Create masks directly
+            weighted_sum_intensity_var = division.var(-1)
             profile_masks = batch_profile_samples > self.profile_threshold
-            N_used = profile_masks.sum(-1).float()  # Keep original float call
-
-            # Calculate thresholded values
+            N_used = profile_masks.sum(-1).float()
             masked_counts = batch_counts * profile_masks
             thresholded_intensity = (
                 masked_counts - batch_bg_samples * profile_masks
             ).sum(-1)
             thresholded_mean = thresholded_intensity.mean(-1)
-
-            # Calculate variance directly
             centered_thresh = thresholded_intensity - thresholded_mean.unsqueeze(-1)
             thresholded_var = (centered_thresh**2).sum(-1) / (N_used.mean(-1) + 1e-6)
-
-            # Create result dictionary
             intensities = {
                 "thresholded_mean": thresholded_mean,
                 "thresholded_var": thresholded_var,
@@ -1237,7 +1217,6 @@ class DefaultIntegrator(BaseIntegrator):
             return intensities
 
     def forward(self, shoebox, dials, masks, metadata, counts):
-        # Original forward pass
         counts = torch.clamp(counts, min=0)
 
         # Get representations and distributions
@@ -1273,7 +1252,6 @@ class DefaultIntegrator(BaseIntegrator):
         shoebox, dials, masks, metadata, counts = batch
         outputs = self(shoebox, dials, masks, metadata, counts)
 
-        # neg_ll, kl = self.loss_fn(
         (
             loss,
             neg_ll,
@@ -1307,7 +1285,6 @@ class DefaultIntegrator(BaseIntegrator):
         shoebox, dials, masks, metadata, counts = batch
         outputs = self(shoebox, dials, masks, metadata, counts)
 
-        # Calculate validation metrics
         (
             loss,
             neg_ll,
@@ -1335,7 +1312,6 @@ class DefaultIntegrator(BaseIntegrator):
         self.log("val_kl_I", kl_I)
         self.log("val_kl_p", kl_p)
 
-        # Return the complete outputs dictionary
         return outputs
 
     def predict_step(self, batch, batch_idx):
