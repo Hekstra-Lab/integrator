@@ -1665,7 +1665,321 @@ class IntensityPlotter(Callback):
             self.val_predictions = pl_module(shoebox, dials, masks, metadata, counts)
 
 
+# %%
 class MVNPlotter(Callback):
+    def __init__(self, num_profiles=5, plot_every_n_epochs=5, d_vectors=None):
+        super().__init__()
+        self.train_predictions = {}
+        self.val_predictions = {}
+        self.num_profiles = num_profiles
+        self.tracked_refl_ids = None
+        self.all_seen_ids = set()
+        self.tracked_predictions = {
+            "profile": {},  # Changed from "qp" to "profile"
+            "counts": {},
+            "qbg": {},
+            "rates": {},
+        }
+        self.epoch_predictions = None
+        self.plot_every_n_epochs = plot_every_n_epochs
+        self.current_epoch = 0
+        self.d_vectors = d_vectors
+
+    def on_train_epoch_start(self, trainer, pl_module):
+        self.epoch_predictions = {
+            "profile": [],  # Changed from "qp" to "profile"
+            "counts": [],
+            "refl_ids": [],
+            "qI": [],
+            "dials_I_prf_value": [],
+            "weighted_sum_mean": [],
+            "thresholded_mean": [],
+            "qbg": [],
+            "rates": [],
+        }
+        # Clear tracked predictions at start of epoch
+        self.tracked_predictions = {
+            "profile": {},  # Changed from "qp" to "profile"
+            "counts": {},
+            "qbg": {},
+            "rates": {},
+            "qI": {},
+            "dials_I_prf_value": {},
+        }
+
+    def update_tracked_predictions(
+        self, profile_preds, qbg_preds, rates, count_preds, refl_ids, dials_I, qI
+    ):
+        current_refl_ids = refl_ids.cpu().numpy()
+
+        # Update all seen IDs and set tracked IDs if not set
+        self.all_seen_ids.update(current_refl_ids)
+        if self.tracked_refl_ids is None:
+            self.tracked_refl_ids = sorted(list(self.all_seen_ids))[: self.num_profiles]
+            print(
+                f"Selected {self.num_profiles} reflection IDs to track: {self.tracked_refl_ids}"
+            )
+
+        # Get indices of tracked reflections in current batch
+        # The profile is already a tensor, no need to use .mean
+        profile_images = profile_preds.reshape(-1, 3, 21, 21)[..., 1, :, :]
+        count_images = count_preds.reshape(-1, 3, 21, 21)[..., 1, :, :]
+        rate_images = rates.mean(1).reshape(-1, 3, 21, 21)[..., 1, :, :]
+        bg_mean = qbg_preds.mean
+        qI_mean = qI.mean
+        dials_I_prf_value = dials_I
+
+        for ref_id in self.tracked_refl_ids:
+            matches = np.where(current_refl_ids == ref_id)[0]
+            if len(matches) > 0:
+                idx = matches[0]
+
+                self.tracked_predictions["profile"][ref_id] = profile_images[idx].cpu()
+                self.tracked_predictions["counts"][ref_id] = count_images[idx].cpu()
+                self.tracked_predictions["rates"][ref_id] = rate_images[idx].cpu()
+                self.tracked_predictions["qbg"][ref_id] = bg_mean[idx].cpu()
+                self.tracked_predictions["qI"][ref_id] = qI_mean[idx].cpu()
+                self.tracked_predictions["dials_I_prf_value"][
+                    ref_id
+                ] = dials_I_prf_value[idx]
+
+    def create_comparison_grid(
+        self,
+        cmap="cividis",
+    ):
+        if not self.tracked_refl_ids:
+            return None
+
+        # Import needed for colorbar positioning
+        from mpl_toolkits.axes_grid1 import make_axes_locatable
+        import numpy as np
+
+        # Create figure with proper subplot layout
+        fig, axes = plt.subplots(
+            3, self.num_profiles, figsize=(5 * self.num_profiles, 8)
+        )
+
+        # Handle case where only one column
+        if self.num_profiles == 1:
+            axes = axes.reshape(-1, 1)
+
+        # Plot each column
+        for i, refl_id in enumerate(self.tracked_refl_ids):
+            # Get data for this column
+            counts_data = self.tracked_predictions["counts"][refl_id]
+            profile_data = self.tracked_predictions["profile"][refl_id]
+            rates_data = self.tracked_predictions["rates"][refl_id]
+
+            # Calculate shared min/max for rows 1 and 3
+            vmin_13 = min(counts_data.min().item(), rates_data.min().item())
+            vmax_13 = max(counts_data.max().item(), rates_data.max().item())
+
+            # Row 1: Input counts
+            im0 = axes[0, i].imshow(counts_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13)
+            axes[0, i].set_title(
+                f"reflection ID: {refl_id}\n DIALS I: {self.tracked_predictions['dials_I_prf_value'][refl_id]:.2f}"
+            )
+            axes[0, i].set_ylabel("raw image", labelpad=5)
+
+            # Turn off axes but keep the labels
+            axes[0, i].tick_params(
+                left=False, bottom=False, labelleft=False, labelbottom=False
+            )
+
+            # Row 2: Profile prediction (with its own scale)
+            im1 = axes[1, i].imshow(profile_data, cmap=cmap)
+            axes[1, i].set_ylabel("profile", labelpad=5)
+            axes[1, i].tick_params(
+                left=False, bottom=False, labelleft=False, labelbottom=False
+            )
+
+            # Row 3: Rates (same scale as row 1)
+            im2 = axes[2, i].imshow(rates_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13)
+            axes[2, i].set_title(
+                f"Bg: {self.tracked_predictions['qbg'][refl_id]:.2f}\n qI: {self.tracked_predictions['qI'][refl_id]:.2f}"
+            )
+
+            axes[2, i].set_ylabel("rate = I*pij + Bg", labelpad=5)
+            axes[2, i].tick_params(
+                left=False, bottom=False, labelleft=False, labelbottom=False
+            )
+
+            # Add colorbars
+            # First row colorbar (same as third row)
+            divider0 = make_axes_locatable(axes[0, i])
+            cax0 = divider0.append_axes("right", size="5%", pad=0.05)
+            cbar0 = plt.colorbar(im0, cax=cax0)
+            cbar0.ax.tick_params(labelsize=8)
+
+            # Second row colorbar (independent)
+            divider1 = make_axes_locatable(axes[1, i])
+            cax1 = divider1.append_axes("right", size="5%", pad=0.05)
+            cbar1 = plt.colorbar(im1, cax=cax1)
+            cbar1.ax.tick_params(labelsize=8)
+
+            # Third row colorbar (same as first row)
+            divider2 = make_axes_locatable(axes[2, i])
+            cax2 = divider2.append_axes("right", size="5%", pad=0.05)
+            cbar2 = plt.colorbar(im2, cax=cax2)
+            cbar2.ax.tick_params(labelsize=8)
+
+        plt.tight_layout()
+
+        return fig
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        with torch.no_grad():
+            # 1) Forward pass (no intensities yet)
+            shoebox, dials, masks, metadata, counts = batch
+            base_output = pl_module(shoebox, dials, masks, metadata, counts)
+
+            # 2) Call calculate_intensities with the relevant fields
+            intensities = pl_module.calculate_intensities(
+                counts=base_output["counts"],
+                qbg=base_output["qbg"],
+                profile=base_output["profile"],
+                dead_pixel_mask=base_output["masks"],
+            )
+
+            # 3) Merge intensities into a new dictionary
+            #    so that "weighted_sum_mean", "thresholded_mean", etc. are available
+            predictions = {
+                **base_output,
+                "weighted_sum_mean": intensities["weighted_sum_mean"],
+                "weighted_sum_var": intensities["weighted_sum_var"],
+                "thresholded_mean": intensities["thresholded_mean"],
+                "thresholded_var": intensities["thresholded_var"],
+            }
+
+            # 4) (Optional) Only update tracked predictions if we’re going to plot this epoch
+            if self.current_epoch % self.plot_every_n_epochs == 0:
+                self.update_tracked_predictions(
+                    predictions["profile"],
+                    predictions["qbg"],
+                    predictions["rates"],
+                    predictions["counts"],
+                    predictions["refl_ids"],
+                    predictions["dials_I_prf_value"],
+                    predictions["qI"],
+                )
+
+            # 5) Accumulate predictions for epoch-level plotting
+            for key in self.epoch_predictions.keys():
+                if key in predictions:
+                    self.epoch_predictions[key].append(predictions[key])
+
+            # 6) Keep last batch predictions for scatter plots, correlation, etc.
+            self.train_predictions = predictions
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        if self.train_predictions:
+            # Original scatter plot data
+            data = [
+                [qi, prf, weighted_sum, thresholded_mean, simpson_idx]
+                for qi, prf, weighted_sum, thresholded_mean, simpson_idx in zip(
+                    torch.log(self.train_predictions["qI"].mean.flatten()),
+                    torch.log(self.train_predictions["dials_I_prf_value"].flatten()),
+                    torch.log(self.train_predictions["weighted_sum_mean"].flatten()),
+                    torch.log(self.train_predictions["thresholded_mean"].flatten()),
+                    # For Simpson index, calculate directly from profile
+                    torch.sum(self.train_predictions["profile"] ** 2, dim=-1),
+                )
+            ]
+            table = wandb.Table(
+                data=data,
+                columns=[
+                    "qI",
+                    "dials_I_prf_value",
+                    "weighted_sum_mean",
+                    "thresholded_mean",
+                    "simpson_idx",
+                ],
+            )
+
+            # Create log dictionary with metrics that we want to log every epoch
+            log_dict = {
+                "train_qI_vs_prf": wandb.plot.scatter(
+                    table,
+                    "qI",
+                    "dials_I_prf_value",
+                ),
+                "train_weighted_sum_vs_prf": wandb.plot.scatter(
+                    table,
+                    "weighted_sum_mean",
+                    "dials_I_prf_value",
+                ),
+                "train_thresholded_vs_prf": wandb.plot.scatter(
+                    table,
+                    "thresholded_mean",
+                    "dials_I_prf_value",
+                ),
+                "corrcoef qI": torch.corrcoef(
+                    torch.vstack(
+                        [
+                            self.train_predictions["qI"].mean.flatten(),
+                            self.train_predictions["dials_I_prf_value"].flatten(),
+                        ]
+                    )
+                )[0, 1],
+                "corrcoef_weighted": torch.corrcoef(
+                    torch.vstack(
+                        [
+                            self.train_predictions["weighted_sum_mean"].flatten(),
+                            self.train_predictions["dials_I_prf_value"].flatten(),
+                        ]
+                    )
+                )[0, 1],
+                "corrcoef_masked": torch.corrcoef(
+                    torch.vstack(
+                        [
+                            self.train_predictions["thresholded_mean"].flatten(),
+                            self.train_predictions["dials_I_prf_value"].flatten(),
+                        ]
+                    )
+                )[0, 1],
+                "max_qI": torch.max(self.train_predictions["qI"].mean.flatten()),
+                "mean_qI": torch.mean(self.train_predictions["qI"].mean.flatten()),
+                "mean_bg": torch.mean(self.train_predictions["qbg"].mean),
+            }
+
+            # Only create and log comparison grid on specified epochs
+            if self.current_epoch % self.plot_every_n_epochs == 0:
+                comparison_fig = self.create_comparison_grid()
+                if comparison_fig is not None:
+                    log_dict["profile_comparisons"] = wandb.Image(comparison_fig)
+                    plt.close(comparison_fig)
+
+            wandb.log(log_dict)
+
+        # Increment epoch counter
+        self.current_epoch += 1
+
+    def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        with torch.no_grad():
+            shoebox, dials, masks, metadata, counts = batch
+            base_output = pl_module(shoebox, dials, masks, metadata, counts)
+
+            intensities = pl_module.calculate_intensities(
+                counts=base_output["counts"],
+                qbg=base_output["qbg"],
+                profile=base_output["profile"],
+                dead_pixel_mask=base_output["masks"],
+            )
+
+            predictions = {
+                **base_output,
+                "weighted_sum_mean": intensities["weighted_sum_mean"],
+                "weighted_sum_var": intensities["weighted_sum_var"],
+                "thresholded_mean": intensities["thresholded_mean"],
+                "thresholded_var": intensities["thresholded_var"],
+            }
+
+            # Store them (or do any validation-specific logic)
+            self.val_predictions = predictions
+
+
+# %%
+class tempMVNPlotter(Callback):
     def __init__(self, num_profiles=5, plot_every_n_epochs=5, d_vectors=None):
         super().__init__()
         self.train_predictions = {}
@@ -2352,35 +2666,57 @@ class IntegratedPlotter(Callback):
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         with torch.no_grad():  # Ensure no gradients are tracked
-            # Process batch
+            # Process batch but store minimal data
             shoebox, dials, masks, metadata, counts = batch
             predictions = pl_module(shoebox, dials, masks, metadata, counts)
 
             # Only update tracked predictions if we'll plot this epoch
             if self.current_epoch % self.plot_every_n_epochs == 0:
-                # Handle the mixture of distributions and tensors properly
-                self.update_tracked_predictions(predictions)
+                # Only keep the required data and move to CPU
+                cpu_predictions = {}
+                for key in [
+                    "qp",
+                    "qbg",
+                    "rates",
+                    "counts",
+                    "refl_ids",
+                    "dials_I_prf_value",
+                    "qI",
+                ]:
+                    if key in predictions:
+                        # Handle distribution objects
+                        if hasattr(predictions[key], "mean"):
+                            cpu_predictions[key] = predictions[key].mean.detach().cpu()
+                        # Handle tensor objects
+                        elif isinstance(predictions[key], torch.Tensor):
+                            cpu_predictions[key] = predictions[key].detach().cpu()
+                        # Handle other objects
+                        else:
+                            cpu_predictions[key] = predictions[key]
 
-            # Store minimal data for metrics at epoch end
+                # Update tracked predictions with CPU data
+                self.update_tracked_predictions(cpu_predictions)
+
+            # For metrics in epoch end, store minimal data
+            # Only keep the essential metrics needed for logging, as CPU tensors
             if batch_idx == 0 or batch_idx % 50 == 0:  # Only keep occasional batches
-                # Create a lightweight copy with CPU tensors
                 minimal_metrics = {}
-
-                for key, value in predictions.items():
-                    # Handle different types of objects
-                    if hasattr(value, "sample"):
-                        # It's a distribution with a mean method
-                        minimal_metrics[key] = value.mean.detach().cpu()
-                    elif isinstance(value, torch.Tensor):
-                        # It's a tensor
-                        minimal_metrics[key] = value.detach().cpu()
-                    else:
-                        # Other types (integers, lists, etc.)
-                        minimal_metrics[key] = value
+                for key in [
+                    "qI",
+                    "dials_I_prf_value",
+                    "weighted_sum_mean",
+                    "thresholded_mean",
+                ]:
+                    if key in predictions:
+                        if hasattr(predictions[key], "mean"):
+                            minimal_metrics[key] = predictions[key].mean.detach().cpu()
+                        elif isinstance(predictions[key], torch.Tensor):
+                            minimal_metrics[key] = predictions[key].detach().cpu()
 
                 self.train_predictions = minimal_metrics
 
             # Force clean up
+            del predictions
             torch.cuda.empty_cache()
 
     def _create_probabilistic_correlation_data(self):

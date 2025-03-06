@@ -164,7 +164,7 @@ class MVNIntegrator(BaseIntegrator):
 
         # Calculate intensities
         rate = self.decoder(qI, qbg, profile)
-        intensities = self.calculate_intensities(counts, qbg, profile, masks)
+        # intensities = self.calculate_intensities(counts, qbg, profile, masks)
 
         return {
             "rates": rate,
@@ -178,51 +178,7 @@ class MVNIntegrator(BaseIntegrator):
             "dials_I_prf_var": dials[:, 3],
             "refl_ids": dials[:, 4],
             "profile": profile,
-            "weighted_sum_mean": intensities["weighted_sum_mean"],
-            "weighted_sum_var": intensities["weighted_sum_var"],
-            "thresholded_mean": intensities["thresholded_mean"],
-            "thresholded_var": intensities["thresholded_var"],
         }
-
-    # def training_step(self, batch, batch_idx):
-    # shoebox, dials, masks, metadata = batch
-    # outputs = self(shoebox, metadata, masks, dials)
-
-    # loss, neg_ll, kl, recon_loss = self.loss_fn(
-    # outputs["rate"],
-    # outputs["counts"],
-    # outputs["qp"],
-    # outputs["masks"]
-    # )
-
-    # # Log all components
-    # self.log("train_loss", loss.mean())
-    # self.log("train_nll", neg_ll.mean())
-    # self.log("train_kl", kl.mean())
-    # self.log("train_recon", recon_loss)
-
-    # return loss.mean()
-
-    # def training_step(self, batch, batch_idx):
-    # shoebox, dials, masks, metadata = batch
-    # outputs = self(shoebox, dials, masks, metadata)
-
-    # neg_ll, kl = self.loss_fn(
-    # outputs["rate"],
-    # outputs["counts"],
-    # outputs["qp"],
-    # outputs["qI"],
-    # outputs["qbg"],
-    # outputs["masks"],
-    # )
-    # loss = (neg_ll + kl).mean()
-
-    # # Log metrics
-    # self.log("train_loss", loss)
-    # self.log("train_nll", neg_ll.mean())
-    # self.log("train_kl", kl.mean())
-
-    # return loss
 
     def training_step(self, batch, batch_idx):
         # shoebox, dials, masks, metadata,counts,samples = batch
@@ -255,27 +211,6 @@ class MVNIntegrator(BaseIntegrator):
 
         return loss.mean()
 
-    # def validation_step(self, batch, batch_idx):
-    # shoebox, dials, masks, metadata = batch
-    # outputs = self(shoebox, dials, masks, metadata)
-
-    # loss,neg_ll, kl,recon_loss = self.loss_fn(
-    # outputs["rate"],
-    # outputs["counts"],
-    # outputs["qp"],
-    # outputs["qI"],
-    # outputs["qbg"],
-    # outputs["masks"]
-    # )
-    # loss = (neg_ll + kl).mean()
-
-    # self.log("val_loss", loss)
-    # self.log("val_nll", neg_ll.mean())
-    # self.log("val_kl", kl.mean())
-    # self.log("val_recon", recon_loss)
-
-    # return loss.mean()
-
     def validation_step(self, batch, batch_idx):
         shoebox, dials, masks, metadata, counts = batch
         outputs = self(shoebox, dials, masks, metadata, counts)
@@ -303,13 +238,16 @@ class MVNIntegrator(BaseIntegrator):
     def predict_step(self, batch, batch_idx):
         shoebox, dials, masks, metadata, counts = batch
         outputs = self(shoebox, dials, masks, metadata, counts)
+        intensities = self.calculate_intensities(
+            outputs["counts"], outputs["qbg"], outputs["profile"], outputs["masks"]
+        )
         return {
             "qI_mean": outputs["qI"].mean,
             "qI_variance": outputs["qI"].variance,
-            "weighted_sum_mean": outputs["weighted_sum_mean"],
-            "weighted_sum_var": outputs["weighted_sum_var"],
-            "thresholded_mean": outputs["thresholded_mean"],
-            "thresholded_var": outputs["thresholded_var"],
+            "weighted_sum_mean": intensities["weighted_sum_intensity_mean"],
+            "weighted_sum_var": intensities["weighted_sum_intensity_var"],
+            "thresholded_mean": intensities["thresholded_mean"],
+            "thresholded_var": intensities["thresholded_var"],
             "refl_ids": outputs["refl_ids"],
         }
 
