@@ -108,8 +108,8 @@ class MVNIntegrator(BaseIntegrator):
             division = weighted_sum_intensity_sum / (summed_squared_prf + 1e-10)
 
             # Mean and variance across MC samples
-            weighted_sum_intensity_mean = division.mean(-1)
-            weighted_sum_intensity_var = division.var(-1)
+            weighted_sum_mean = division.mean(-1)
+            weighted_sum_var = division.var(-1)
 
             # Create profile masks for thresholded intensity
             profile_masks = batch_profile > self.profile_threshold
@@ -134,8 +134,8 @@ class MVNIntegrator(BaseIntegrator):
             intensities = {
                 "thresholded_mean": thresholded_mean,
                 "thresholded_var": thresholded_var,
-                "weighted_sum_mean": weighted_sum_intensity_mean,
-                "weighted_sum_var": weighted_sum_intensity_var,
+                "weighted_sum_mean": weighted_sum_mean,
+                "weighted_sum_var": weighted_sum_var,
             }
 
             return intensities
@@ -244,8 +244,8 @@ class MVNIntegrator(BaseIntegrator):
         return {
             "qI_mean": outputs["qI"].mean,
             "qI_variance": outputs["qI"].variance,
-            "weighted_sum_mean": intensities["weighted_sum_intensity_mean"],
-            "weighted_sum_var": intensities["weighted_sum_intensity_var"],
+            "weighted_sum_mean": intensities["weighted_sum_mean"],
+            "weighted_sum_var": intensities["weighted_sum_var"],
             "thresholded_mean": intensities["thresholded_mean"],
             "thresholded_var": intensities["thresholded_var"],
             "refl_ids": outputs["refl_ids"],

@@ -2158,8 +2158,8 @@ class tempMVNPlotter(Callback):
             #    so that "weighted_sum_mean", "thresholded_mean", etc. are available
             predictions = {
                 **base_output,
-                "weighted_sum_mean": intensities["weighted_sum_intensity_mean"],
-                "weighted_sum_var": intensities["weighted_sum_intensity_var"],
+                "weighted_sum_mean": intensities["weighted_sum_mean"],
+                "weighted_sum_var": intensities["weighted_sum_var"],
                 "thresholded_mean": intensities["thresholded_mean"],
                 "thresholded_var": intensities["thresholded_var"],
             }
@@ -2281,8 +2281,8 @@ class tempMVNPlotter(Callback):
 
             predictions = {
                 **base_output,
-                "weighted_sum_mean": intensities["weighted_sum_intensity_mean"],
-                "weighted_sum_var": intensities["weighted_sum_intensity_var"],
+                "weighted_sum_mean": intensities["weighted_sum_mean"],
+                "weighted_sum_var": intensities["weighted_sum_var"],
                 "thresholded_mean": intensities["thresholded_mean"],
                 "thresholded_var": intensities["thresholded_var"],
             }
@@ -2405,8 +2405,8 @@ class IntegratedPlotter(Callback):
         weighted_sum_mean = None
         if "weighted_sum_mean" in predictions:
             weighted_sum_mean = predictions["weighted_sum_mean"]
-        elif "weighted_sum_intensity_mean" in predictions:
-            weighted_sum_mean = predictions["weighted_sum_intensity_mean"]
+        elif "weighted_sum_mean" in predictions:
+            weighted_sum_mean = predictions["weighted_sum_mean"]
 
         thresholded_mean = predictions.get("thresholded_mean")
         signal_prob = predictions.get("signal_prob")

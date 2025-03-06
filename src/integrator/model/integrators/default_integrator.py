@@ -179,14 +179,14 @@ class tempBernoulliIntegrator(BaseIntegrator):
 
                 division = weighted_sum_intensity_sum / summed_squared_prf
 
-                weighted_sum_intensity_mean = division.mean(-1)
+                weighted_sum_mean = division.mean(-1)
 
                 centered_w_ = (
                     weighted_sum_intensity_sum
-                    - weighted_sum_intensity_mean.unsqueeze(-1)
+                    - weighted_sum_mean.unsqueeze(-1)
                 )
 
-                weighted_sum_intensity_var = division.var(-1)
+                weighted_sum_var = division.var(-1)
 
                 profile_masks = batch_profile_samples > self.profile_threshold
 
@@ -209,8 +209,8 @@ class tempBernoulliIntegrator(BaseIntegrator):
                 intensities = {
                     "thresholded_mean": thresholded_mean,
                     "thresholded_var": thresholded_var,
-                    "weighted_sum_intensity_mean": weighted_sum_intensity_mean,
-                    "weighted_sum_intensity_var": weighted_sum_intensity_var,
+                    "weighted_sum_mean": weighted_sum_mean,
+                    "weighted_sum_var": weighted_sum_var,
                 }
 
                 return intensities
@@ -236,8 +236,8 @@ class tempBernoulliIntegrator(BaseIntegrator):
                 division = weighted_sum_intensity_sum / (summed_squared_prf + 1e-10)
 
                 # Mean and variance across MC samples
-                weighted_sum_intensity_mean = division.mean(-1)
-                weighted_sum_intensity_var = division.var(-1)
+                weighted_sum_mean = division.mean(-1)
+                weighted_sum_var = division.var(-1)
 
                 # Create profile masks for thresholded intensity
                 profile_masks = batch_profile > self.profile_threshold
@@ -264,8 +264,8 @@ class tempBernoulliIntegrator(BaseIntegrator):
                 intensities = {
                     "thresholded_mean": thresholded_mean,
                     "thresholded_var": thresholded_var,
-                    "weighted_sum_mean": weighted_sum_intensity_mean,
-                    "weighted_sum_var": weighted_sum_intensity_var,
+                    "weighted_sum_mean": weighted_sum_mean,
+                    "weighted_sum_var": weighted_sum_var,
                 }
 
                 return intensities
@@ -315,10 +315,10 @@ class tempBernoulliIntegrator(BaseIntegrator):
                 "refl_ids": dials[:, 4],
                 "weighted_sum_mean": intensities["weighted_sum_mean"]
                 if "weighted_sum_mean" in intensities
-                else intensities["weighted_sum_intensity_mean"],
+                else intensities["weighted_sum_mean"],
                 "weighted_sum_var": intensities["weighted_sum_var"]
                 if "weighted_sum_var" in intensities
-                else intensities["weighted_sum_intensity_var"],
+                else intensities["weighted_sum_var"],
                 "thresholded_mean": intensities["thresholded_mean"],
                 "thresholded_var": intensities["thresholded_var"],
                 "intensity_mean": qI.mean,  # For UNetPlotter compatibility
@@ -348,11 +348,11 @@ class tempBernoulliIntegrator(BaseIntegrator):
                 "dials_I_prf_value": dials[:, 2],
                 "dials_I_prf_var": dials[:, 3],
                 "refl_ids": dials[:, 4],
-                "weighted_sum_mean": intensities["weighted_sum_intensity_mean"]
-                if "weighted_sum_intensity_mean" in intensities
+                "weighted_sum_mean": intensities["weighted_sum_mean"]
+                if "weighted_sum_mean" in intensities
                 else intensities["weighted_sum_mean"],
-                "weighted_sum_var": intensities["weighted_sum_intensity_var"]
-                if "weighted_sum_intensity_var" in intensities
+                "weighted_sum_var": intensities["weighted_sum_var"]
+                if "weighted_sum_var" in intensities
                 else intensities["weighted_sum_var"],
                 "thresholded_mean": intensities["thresholded_mean"],
                 "thresholded_var": intensities["thresholded_var"],
@@ -520,14 +520,14 @@ class BernoulliIntegrator(BaseIntegrator):
 
                 division = weighted_sum_intensity_sum / summed_squared_prf
 
-                weighted_sum_intensity_mean = division.mean(-1)
+                weighted_sum_mean = division.mean(-1)
 
                 centered_w_ = (
                     weighted_sum_intensity_sum
-                    - weighted_sum_intensity_mean.unsqueeze(-1)
+                    - weighted_sum_mean.unsqueeze(-1)
                 )
 
-                weighted_sum_intensity_var = division.var(-1)
+                weighted_sum_var = division.var(-1)
 
                 profile_masks = batch_profile_samples > self.profile_threshold
 
@@ -554,8 +554,8 @@ class BernoulliIntegrator(BaseIntegrator):
                 intensities = {
                     "thresholded_mean": thresholded_mean,
                     "thresholded_var": thresholded_var,
-                    "weighted_sum_intensity_mean": weighted_sum_intensity_mean,
-                    "weighted_sum_intensity_var": weighted_sum_intensity_var,
+                    "weighted_sum_mean": weighted_sum_mean,
+                    "weighted_sum_var": weighted_sum_var,
                 }
 
                 return intensities
@@ -581,8 +581,8 @@ class BernoulliIntegrator(BaseIntegrator):
                 division = weighted_sum_intensity_sum / (summed_squared_prf + 1e-10)
 
                 # Mean and variance across MC samples
-                weighted_sum_intensity_mean = division.mean(-1)
-                weighted_sum_intensity_var = division.var(-1)
+                weighted_sum_mean = division.mean(-1)
+                weighted_sum_var = division.var(-1)
 
                 # Create profile masks for thresholded intensity
                 profile_masks = batch_profile > self.profile_threshold
@@ -609,8 +609,8 @@ class BernoulliIntegrator(BaseIntegrator):
                 intensities = {
                     "thresholded_mean": thresholded_mean,
                     "thresholded_var": thresholded_var,
-                    "weighted_sum_mean": weighted_sum_intensity_mean,
-                    "weighted_sum_var": weighted_sum_intensity_var,
+                    "weighted_sum_mean": weighted_sum_mean,
+                    "weighted_sum_var": weighted_sum_var,
                 }
 
                 return intensities
@@ -679,8 +679,8 @@ class BernoulliIntegrator(BaseIntegrator):
                 "dials_I_prf_value": dials[:, 2],
                 "dials_I_prf_var": dials[:, 3],
                 "refl_ids": dials[:, 4],
-                "weighted_sum_mean": intensities["weighted_sum_intensity_mean"],
-                "weighted_sum_var": intensities["weighted_sum_intensity_var"],
+                "weighted_sum_mean": intensities["weighted_sum_mean"],
+                "weighted_sum_var": intensities["weighted_sum_var"],
                 "thresholded_mean": intensities["thresholded_mean"],
                 "thresholded_var": intensities[
                     "thresholded_var"
@@ -911,10 +911,10 @@ class tempDefaultIntegrator(BaseIntegrator):
             summed_squared_prf = torch.sum(batch_profile_samples**2, dim=-1)
 
             division = weighted_sum_intensity_sum / summed_squared_prf
-            weighted_sum_intensity_mean = division.mean(-1)
+            weighted_sum_mean = division.mean(-1)
 
             # Variance calculation
-            weighted_sum_intensity_var = division.var(-1)  # Keep original var call
+            weighted_sum_var = division.var(-1)  # Keep original var call
 
             # Create masks directly
             profile_masks = batch_profile_samples > self.profile_threshold
@@ -935,8 +935,8 @@ class tempDefaultIntegrator(BaseIntegrator):
             intensities = {
                 "thresholded_mean": thresholded_mean,
                 "thresholded_var": thresholded_var,
-                "weighted_sum_intensity_mean": weighted_sum_intensity_mean,
-                "weighted_sum_intensity_var": weighted_sum_intensity_var,
+                "weighted_sum_mean": weighted_sum_mean,
+                "weighted_sum_var": weighted_sum_var,
             }
 
             return intensities
@@ -978,8 +978,8 @@ class tempDefaultIntegrator(BaseIntegrator):
             "dials_I_prf_value": dials[:, 2],
             "dials_I_prf_var": dials[:, 3],
             "refl_ids": dials[:, 4],
-            "weighted_sum_mean": intensities["weighted_sum_intensity_mean"],
-            "weighted_sum_var": intensities["weighted_sum_intensity_var"],
+            "weighted_sum_mean": intensities["weighted_sum_mean"],
+            "weighted_sum_var": intensities["weighted_sum_var"],
             "thresholded_mean": intensities["thresholded_mean"],
             "thresholded_var": intensities[
                 "thresholded_var"
@@ -1195,9 +1195,9 @@ class DefaultIntegrator(BaseIntegrator):
             summed_squared_prf = torch.sum(batch_profile_samples**2, dim=-1)
 
             division = weighted_sum_intensity_sum / summed_squared_prf
-            weighted_sum_intensity_mean = division.mean(-1)
+            weighted_sum_mean = division.mean(-1)
             # Variance calculation
-            weighted_sum_intensity_var = division.var(-1)
+            weighted_sum_var = division.var(-1)
             profile_masks = batch_profile_samples > self.profile_threshold
             N_used = profile_masks.sum(-1).float()
             masked_counts = batch_counts * profile_masks
@@ -1210,8 +1210,8 @@ class DefaultIntegrator(BaseIntegrator):
             intensities = {
                 "thresholded_mean": thresholded_mean,
                 "thresholded_var": thresholded_var,
-                "weighted_sum_intensity_mean": weighted_sum_intensity_mean,
-                "weighted_sum_intensity_var": weighted_sum_intensity_var,
+                "weighted_sum_mean": weighted_sum_mean,
+                "weighted_sum_var": weighted_sum_var,
             }
 
             return intensities
@@ -1323,8 +1323,8 @@ class DefaultIntegrator(BaseIntegrator):
         return {
             "qI_mean": outputs["qI"].mean,
             "qI_variance": outputs["qI"].variance,
-            "weighted_sum_mean": intensities["weighted_sum_intensity_mean"],
-            "weighted_sum_var": intensities["weighted_sum_intensity_var"],
+            "weighted_sum_mean": intensities["weighted_sum_mean"],
+            "weighted_sum_var": intensities["weighted_sum_var"],
             "thresholded_mean": intensities["thresholded_mean"],
             "thresholded_var": intensities["thresholded_var"],
             "refl_ids": outputs["refl_ids"],
