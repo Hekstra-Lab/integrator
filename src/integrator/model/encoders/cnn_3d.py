@@ -60,3 +60,14 @@ class CNN_3d(torch.nn.Module):
         x = torch.flatten(x, 1)
 
         return x
+
+
+if __name__ == "__main__":
+    # Test the model
+    model = CNN_3d()
+    x = torch.randn(2, 3 * 21 * 21, 7)
+    x = torch.clamp(x, 0, 1)
+
+    out = model(x)
+
+    print(out.shape)

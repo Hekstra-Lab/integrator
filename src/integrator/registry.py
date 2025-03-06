@@ -36,7 +36,7 @@ REGISTRY = {
         "mlp_metadata_encoder": MLPMetadataEncoder,  # for metadata
     },
     "image_encoder": {
-        # "cnn_3d": CNNResNet,  # done
+        "cnn_3d": CNNResNet2,  # done
         "mlp_image_encoder": MLPImageEncoder,  # done
         "3d_cnn": CNN_3d,  # shoebox encoder
         "unet": UNetDirichletConcentration,

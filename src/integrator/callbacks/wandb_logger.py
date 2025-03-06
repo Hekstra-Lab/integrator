@@ -667,7 +667,7 @@ class tempIntensityPlotter(Callback):
                     value = output_dict[key]
 
                     # Handle distribution objects
-                    if hasattr(value, "mean") and callable(value.mean):
+                    if hasattr(value, "sample"):
                         value = value.mean()
                     elif hasattr(value, "probs") and callable(getattr(value, "probs")):
                         value = value.probs
@@ -2347,7 +2347,321 @@ class tempMVNPlotter(Callback):
 
 
 # %%
+
+
 class IntegratedPlotter(Callback):
+    def __init__(self, num_profiles=5, plot_every_n_epochs=5):
+        super().__init__()
+        self.train_predictions = {}
+        self.val_predictions = {}
+        self.num_profiles = num_profiles
+        self.tracked_refl_ids = None
+        self.all_seen_ids = set()
+        self.tracked_predictions = {
+            "qp": {},
+            "counts": {},
+            "qbg": {},
+            "rates": {},
+            "qI": {},
+            "dials_I_prf_value": {},
+        }
+        self.plot_every_n_epochs = plot_every_n_epochs
+        self.current_epoch = 0
+
+    def on_train_epoch_start(self, trainer, pl_module):
+        # Clear tracked predictions at start of epoch
+        self.tracked_predictions = {
+            "qp": {},
+            "counts": {},
+            "qbg": {},
+            "rates": {},
+            "qI": {},
+            "dials_I_prf_value": {},
+            "weighted_sum_mean": {},
+            "thresholded_mean": {},
+            "signal_prob": {},
+        }
+
+    def update_tracked_predictions(self, predictions):
+        """Update tracked predictions with model outputs"""
+        try:
+            # Extract required data
+            refl_ids = predictions["refl_ids"]
+            counts_data = predictions["counts"]
+            dials_I_prf = predictions["dials_I_prf_value"]
+            rates_data = predictions["rates"]
+            qbg_data = predictions["qbg"]
+            qI_data = predictions["qI"]
+            profile_data = predictions["qp"]
+
+            # Get optional data if available
+            weighted_sum_mean = predictions.get("weighted_sum_mean")
+            thresholded_mean = predictions.get("thresholded_mean")
+            signal_prob = predictions.get("signal_prob")
+
+            # Convert reflection IDs to numpy
+            current_refl_ids = refl_ids.cpu().numpy()
+
+            # Update all seen IDs and select IDs to track if not already done
+            self.all_seen_ids.update(current_refl_ids)
+            if self.tracked_refl_ids is None:
+                self.tracked_refl_ids = sorted(list(self.all_seen_ids))[
+                    : self.num_profiles
+                ]
+                print(
+                    f"Selected {len(self.tracked_refl_ids)} reflection IDs to track: {self.tracked_refl_ids}"
+                )
+
+            # Process images
+            profile_images = profile_data.mean.reshape(-1, 3, 21, 21)[:, 1, :, :]
+            count_images = counts_data.reshape(-1, 3, 21, 21)[:, 1, :, :]
+
+            # Handle rates based on dimensions
+            if rates_data.dim() > 3:  # Has Monte Carlo dimension
+                rate_images = rates_data.mean(1).reshape(-1, 3, 21, 21)[:, 1, :, :]
+            else:
+                rate_images = rates_data.reshape(-1, 3, 21, 21)[:, 1, :, :]
+
+            # Get means
+            bg_mean = qbg_data.mean if hasattr(qbg_data, "mean") else qbg_data
+            qI_mean = qI_data.mean if hasattr(qI_data, "mean") else qI_data
+
+            # Store data for each tracked reflection ID
+            for refl_id in self.tracked_refl_ids:
+                matches = np.where(current_refl_ids == refl_id)[0]
+                if len(matches) > 0:
+                    idx = matches[0]
+
+                    # Store core data
+                    self.tracked_predictions["qp"][refl_id] = profile_images[idx].cpu()
+                    self.tracked_predictions["counts"][refl_id] = count_images[
+                        idx
+                    ].cpu()
+                    self.tracked_predictions["rates"][refl_id] = rate_images[idx].cpu()
+                    self.tracked_predictions["qbg"][refl_id] = bg_mean[idx].cpu()
+                    self.tracked_predictions["qI"][refl_id] = qI_mean[idx].cpu()
+                    self.tracked_predictions["dials_I_prf_value"][
+                        refl_id
+                    ] = dials_I_prf[idx].cpu()
+
+                    # Store optional data if available
+                    if weighted_sum_mean is not None:
+                        self.tracked_predictions["weighted_sum_mean"][
+                            refl_id
+                        ] = weighted_sum_mean[idx].cpu()
+
+                    if thresholded_mean is not None:
+                        self.tracked_predictions["thresholded_mean"][
+                            refl_id
+                        ] = thresholded_mean[idx].cpu()
+
+                    if signal_prob is not None:
+                        self.tracked_predictions["signal_prob"][refl_id] = signal_prob[
+                            idx
+                        ].cpu()
+
+        except Exception as e:
+            print(f"Error in update_tracked_predictions: {e}")
+            import traceback
+
+            traceback.print_exc()
+
+    def create_comparison_grid(self, cmap="cividis"):
+        """Create visualization grid for profiles"""
+        if not self.tracked_refl_ids:
+            return None
+
+        from mpl_toolkits.axes_grid1 import make_axes_locatable
+        import matplotlib.pyplot as plt
+
+        fig, axes = plt.subplots(
+            3, self.num_profiles, figsize=(5 * self.num_profiles, 8)
+        )
+        if self.num_profiles == 1:
+            axes = axes.reshape(-1, 1)
+
+        for i, refl_id in enumerate(self.tracked_refl_ids):
+            try:
+                # Get data for this column
+                counts_data = self.tracked_predictions["counts"][refl_id]
+                profile_data = self.tracked_predictions["qp"][refl_id]
+                rates_data = self.tracked_predictions["rates"][refl_id]
+                bg_value = float(self.tracked_predictions["qbg"][refl_id])
+                intensity_val = float(self.tracked_predictions["qI"][refl_id])
+                dials_val = float(
+                    self.tracked_predictions["dials_I_prf_value"][refl_id]
+                )
+
+                # Signal probability (if available)
+                sig_prob = 0.0
+                if refl_id in self.tracked_predictions.get("signal_prob", {}):
+                    sig_prob = float(self.tracked_predictions["signal_prob"][refl_id])
+
+                # Calculate shared min/max for rows 1 and 3
+                vmin_13 = min(counts_data.min().item(), rates_data.min().item())
+                vmax_13 = max(counts_data.max().item(), rates_data.max().item())
+
+                # Row 1: Input counts
+                im0 = axes[0, i].imshow(
+                    counts_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13
+                )
+                axes[0, i].set_title(f"ID: {refl_id}\nDIALS: {dials_val:.2f}")
+                axes[0, i].set_ylabel("raw image", labelpad=5)
+                axes[0, i].tick_params(
+                    left=False, bottom=False, labelleft=False, labelbottom=False
+                )
+
+                # Row 2: Profile prediction
+                im1 = axes[1, i].imshow(profile_data, cmap=cmap)
+                axes[1, i].set_ylabel("profile", labelpad=5)
+                axes[1, i].tick_params(
+                    left=False, bottom=False, labelleft=False, labelbottom=False
+                )
+
+                # Row 3: Rates
+                im2 = axes[2, i].imshow(
+                    rates_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13
+                )
+                axes[2, i].set_title(f"Bg: {bg_value:.2f} | I: {intensity_val:.2f}")
+                axes[2, i].set_ylabel("rate = I*p + Bg", labelpad=5)
+                axes[2, i].tick_params(
+                    left=False, bottom=False, labelleft=False, labelbottom=False
+                )
+
+                # Add colorbars
+                for ax, im in zip(axes[:, i], [im0, im1, im2]):
+                    divider = make_axes_locatable(ax)
+                    cax = divider.append_axes("right", size="5%", pad=0.05)
+                    plt.colorbar(im, cax=cax)
+
+            except Exception as e:
+                print(f"Error plotting reflection {refl_id}: {e}")
+                for row in range(3):
+                    axes[row, i].text(
+                        0.5,
+                        0.5,
+                        f"Error plotting\nreflection {refl_id}",
+                        ha="center",
+                        va="center",
+                        transform=axes[row, i].transAxes,
+                    )
+
+        plt.tight_layout()
+        return fig
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        """Process batch data and update tracking"""
+        with torch.no_grad():
+            try:
+                # Get predictions from model
+                shoebox, dials, masks, metadata, counts = batch
+                predictions = pl_module(shoebox, dials, masks, metadata, counts)
+
+                # Print available keys for debugging
+                # if batch_idx == 0:
+                # print(f"Available keys in predictions: {list(predictions.keys())}")
+
+                # Only update tracked predictions if we're going to plot this epoch
+                if self.current_epoch % self.plot_every_n_epochs == 0:
+                    # Create CPU copy of predictions
+                    cpu_predictions = {}
+                    for key in predictions.keys():
+                        if isinstance(predictions[key], torch.Tensor):
+                            cpu_predictions[key] = predictions[key].detach().cpu()
+                        elif hasattr(predictions[key], "mean"):
+                            cpu_predictions[key] = predictions[
+                                key
+                            ]  # Keep distribution object
+                        else:
+                            cpu_predictions[key] = predictions[key]
+
+                    # Update tracked predictions
+                    self.update_tracked_predictions(cpu_predictions)
+
+                # Store last batch predictions for correlation plots
+                if batch_idx % 10 == 0:  # Only keep occasional batches to save memory
+                    self.train_predictions = predictions
+
+            except Exception as e:
+                print(f"Error in on_train_batch_end: {e}")
+                import traceback
+
+                traceback.print_exc()
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        """Create visualizations and log metrics at the end of each epoch"""
+        import wandb
+
+        if not self.train_predictions:
+            print("No train predictions available for plotting")
+            return
+
+        try:
+            # Create basic correlation data
+            data = []
+
+            # Extract data for scatter plot
+            if hasattr(self.train_predictions["qI"], "mean"):
+                intensity_data = self.train_predictions["qI"].mean
+            else:
+                intensity_data = self.train_predictions["qI"]
+
+            dials_data = self.train_predictions["dials_I_prf_value"]
+
+            # Safety check for NaN/Inf values
+            intensity_data = torch.nan_to_num(
+                intensity_data, nan=0.0, posinf=1e6, neginf=0.0
+            )
+            dials_data = torch.nan_to_num(dials_data, nan=0.0, posinf=1e6, neginf=0.0)
+
+            # Calculate correlation
+            stacked = torch.vstack(
+                [
+                    intensity_data.flatten().detach().cpu(),
+                    dials_data.flatten().detach().cpu(),
+                ]
+            )
+            corr = torch.corrcoef(stacked)[0, 1].item()
+
+            # Log simple metrics
+            log_dict = {
+                "corrcoef_intensity": corr,
+                "epoch": self.current_epoch,
+            }
+
+            # Create and log comparison grid on specified epochs
+            if self.current_epoch % self.plot_every_n_epochs == 0:
+                try:
+                    comparison_fig = self.create_comparison_grid()
+                    if comparison_fig is not None:
+                        log_dict["profile_comparisons"] = wandb.Image(comparison_fig)
+                        import matplotlib.pyplot as plt
+
+                        plt.close(comparison_fig)
+                except Exception as e:
+                    print(f"Error creating comparison grid: {e}")
+
+            # Log to wandb
+            wandb.log(log_dict)
+
+        except Exception as e:
+            print(f"Error in on_train_epoch_end: {e}")
+            import traceback
+
+            traceback.print_exc()
+
+        # Increment epoch counter
+        self.current_epoch += 1
+
+    def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        """Store validation predictions"""
+        with torch.no_grad():
+            shoebox, dials, masks, metadata, counts = batch
+            self.val_predictions = pl_module(shoebox, dials, masks, metadata, counts)
+
+
+# %%
+class tempIntegratedPlotter(Callback):
     def __init__(self, num_profiles=5, plot_every_n_epochs=5, d_vectors=None):
         """
         Integrated plotter that supports both UNetPlotter and MVNPlotter functionality
@@ -2378,9 +2692,7 @@ class IntegratedPlotter(Callback):
 
     def _detect_profile_type(self, predictions):
         """Use hasattr to detect if profile is probabilistic (has rsample) or deterministic"""
-        if "profile" in predictions:
-            return "deterministic"
-        elif "qp" in predictions and hasattr(predictions["qp"], "rsample"):
+        if "qp" in predictions and hasattr(predictions["qp"], "rsample"):
             return "probabilistic"
         elif "qp" in predictions:
             return "deterministic"
@@ -2470,12 +2782,12 @@ class IntegratedPlotter(Callback):
         else:
             rate_images = rates_data.reshape(-1, 3, 21, 21)[..., 1, :, :]
 
-        if hasattr(qbg_data, "mean"):
+        if hasattr(qbg_data, "sample"):
             bg_mean = qbg_data.mean
         else:
             bg_mean = qbg_data
 
-        if hasattr(qI_data, "mean"):
+        if hasattr(qI_data, "sample"):
             qI_mean = qI_data.mean
         else:
             qI_mean = qI_data
@@ -2583,7 +2895,7 @@ class IntegratedPlotter(Callback):
                     cax = divider.append_axes("right", size="5%", pad=0.05)
                     plt.colorbar(im, cax=cax)
             except Exception:
-                pass  # Silently handle errors
+                print(f"Error plotting reflection ID {refl_id}")
 
         plt.tight_layout()
         return fig
@@ -2686,6 +2998,7 @@ class IntegratedPlotter(Callback):
 
     def create_comparison_grid(self, cmap="cividis"):
         """Create comparison grid based on detected profile type"""
+        print(f"Creating comparison grid for profile type: {self.profile_type}")
         if self.profile_type == "deterministic":
             return self.create_mvn_comparison_grid(cmap)
         else:
@@ -2743,7 +3056,6 @@ class IntegratedPlotter(Callback):
                 self.train_predictions = minimal_metrics
 
             # Force clean up
-            del predictions
             torch.cuda.empty_cache()
 
     def _create_probabilistic_correlation_data(self):
@@ -2948,9 +3260,8 @@ class IntegratedPlotter(Callback):
 
     def on_train_epoch_end(self, trainer, pl_module):
         if not self.train_predictions:
+            print("No train predictions found")
             return
-
-        import wandb
 
         try:
             # Create correlation data based on profile type
