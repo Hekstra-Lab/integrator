@@ -1743,6 +1743,8 @@ class MVNPlotter(Callback):
                     ref_id
                 ] = dials_I_prf_value[idx]
 
+        torch.cuda.empty_cache()
+
     def create_comparison_grid(
         self,
         cmap="cividis",
@@ -1863,98 +1865,147 @@ class MVNPlotter(Callback):
                     predictions["qI"],
                 )
 
-            # 5) Accumulate predictions for epoch-level plotting
-            for key in self.epoch_predictions.keys():
+            # Store only a minimal version of the last batch predictions
+            # Create CPU tensor versions to avoid keeping GPU memory
+            self.train_predictions = {}
+            for key in [
+                "qI",
+                "dials_I_prf_value",
+                "weighted_sum_mean",
+                "thresholded_mean",
+                "profile",
+                "qbg",
+            ]:
                 if key in predictions:
-                    self.epoch_predictions[key].append(predictions[key])
+                    if key == "profile":
+                        self.train_predictions[key] = predictions[key].detach().cpu()
+                    elif hasattr(predictions[key], "sample"):
+                        self.train_predictions[key] = (
+                            predictions[key].mean.detach().cpu()
+                        )
+                    else:
+                        self.train_predictions[key] = predictions[key].detach().cpu()
 
-            # 6) Keep last batch predictions for scatter plots, correlation, etc.
-            self.train_predictions = predictions
+            # Clean up
+            del base_output, intensities, predictions
+            torch.cuda.empty_cache()
 
     def on_train_epoch_end(self, trainer, pl_module):
         if self.train_predictions:
-            # Original scatter plot data
-            data = [
-                [qi, prf, weighted_sum, thresholded_mean, simpson_idx]
-                for qi, prf, weighted_sum, thresholded_mean, simpson_idx in zip(
-                    torch.log(self.train_predictions["qI"].mean.flatten()),
-                    torch.log(self.train_predictions["dials_I_prf_value"].flatten()),
-                    torch.log(self.train_predictions["weighted_sum_mean"].flatten()),
-                    torch.log(self.train_predictions["thresholded_mean"].flatten()),
-                    # For Simpson index, calculate directly from profile
-                    torch.sum(self.train_predictions["profile"] ** 2, dim=-1),
+            try:
+                # Create data for scatter plots
+                data = []
+
+                qI_flat = (
+                    self.train_predictions["qI"].flatten() + 1e-8
+                )  # Add epsilon before log
+                dials_flat = (
+                    self.train_predictions["dials_I_prf_value"].flatten() + 1e-8
                 )
-            ]
-            table = wandb.Table(
-                data=data,
-                columns=[
-                    "qI",
-                    "dials_I_prf_value",
-                    "weighted_sum_mean",
-                    "thresholded_mean",
-                    "simpson_idx",
-                ],
-            )
+                weighted_sum_flat = (
+                    self.train_predictions["weighted_sum_mean"].flatten() + 1e-8
+                )
+                thresholded_flat = (
+                    self.train_predictions["thresholded_mean"].flatten() + 1e-8
+                )
 
-            # Create log dictionary with metrics that we want to log every epoch
-            log_dict = {
-                "train_qI_vs_prf": wandb.plot.scatter(
-                    table,
-                    "qI",
-                    "dials_I_prf_value",
-                ),
-                "train_weighted_sum_vs_prf": wandb.plot.scatter(
-                    table,
-                    "weighted_sum_mean",
-                    "dials_I_prf_value",
-                ),
-                "train_thresholded_vs_prf": wandb.plot.scatter(
-                    table,
-                    "thresholded_mean",
-                    "dials_I_prf_value",
-                ),
-                "corrcoef qI": torch.corrcoef(
-                    torch.vstack(
-                        [
-                            self.train_predictions["qI"].mean.flatten(),
-                            self.train_predictions["dials_I_prf_value"].flatten(),
-                        ]
-                    )
-                )[0, 1],
-                "corrcoef_weighted": torch.corrcoef(
-                    torch.vstack(
-                        [
-                            self.train_predictions["weighted_sum_mean"].flatten(),
-                            self.train_predictions["dials_I_prf_value"].flatten(),
-                        ]
-                    )
-                )[0, 1],
-                "corrcoef_masked": torch.corrcoef(
-                    torch.vstack(
-                        [
-                            self.train_predictions["thresholded_mean"].flatten(),
-                            self.train_predictions["dials_I_prf_value"].flatten(),
-                        ]
-                    )
-                )[0, 1],
-                "max_qI": torch.max(self.train_predictions["qI"].mean.flatten()),
-                "mean_qI": torch.mean(self.train_predictions["qI"].mean.flatten()),
-                "mean_bg": torch.mean(self.train_predictions["qbg"].mean),
-            }
+                # Calculate simpson index from profile
+                if "profile" in self.train_predictions:
+                    profile_flat = self.train_predictions["profile"]
+                    simpson_flat = torch.sum(profile_flat**2, dim=-1).flatten()
+                else:
+                    simpson_flat = torch.ones_like(qI_flat)
 
-            # Only create and log comparison grid on specified epochs
-            if self.current_epoch % self.plot_every_n_epochs == 0:
-                comparison_fig = self.create_comparison_grid()
-                if comparison_fig is not None:
-                    log_dict["profile_comparisons"] = wandb.Image(comparison_fig)
-                    plt.close(comparison_fig)
+                # Create data points with safe log transform
+                for i in range(len(qI_flat)):
+                    try:
+                        data.append(
+                            [
+                                float(torch.log(qI_flat[i])),
+                                float(torch.log(dials_flat[i])),
+                                float(torch.log(weighted_sum_flat[i])),
+                                float(torch.log(thresholded_flat[i])),
+                                float(simpson_flat[i]),
+                            ]
+                        )
+                    except Exception as e:
+                        # Skip any problematic data points
+                        pass
 
-            wandb.log(log_dict)
+                # Create table
+                table = wandb.Table(
+                    data=data,
+                    columns=[
+                        "qI",
+                        "dials_I_prf_value",
+                        "weighted_sum_mean",
+                        "thresholded_mean",
+                        "simpson_idx",
+                    ],
+                )
+
+                # Calculate correlation coefficients safely
+                corr_qI = (
+                    torch.corrcoef(torch.vstack([qI_flat, dials_flat]))[0, 1]
+                    if len(qI_flat) > 1
+                    else 0
+                )
+                corr_weighted = (
+                    torch.corrcoef(torch.vstack([weighted_sum_flat, dials_flat]))[0, 1]
+                    if len(weighted_sum_flat) > 1
+                    else 0
+                )
+                corr_masked = (
+                    torch.corrcoef(torch.vstack([thresholded_flat, dials_flat]))[0, 1]
+                    if len(thresholded_flat) > 1
+                    else 0
+                )
+
+                # Create log dictionary
+                log_dict = {
+                    "train_qI_vs_prf": wandb.plot.scatter(
+                        table, "qI", "dials_I_prf_value"
+                    ),
+                    "train_weighted_sum_vs_prf": wandb.plot.scatter(
+                        table, "weighted_sum_mean", "dials_I_prf_value"
+                    ),
+                    "train_thresholded_vs_prf": wandb.plot.scatter(
+                        table, "thresholded_mean", "dials_I_prf_value"
+                    ),
+                    "corrcoef_qI": corr_qI,
+                    "corrcoef_weighted": corr_weighted,
+                    "corrcoef_masked": corr_masked,
+                    "max_qI": torch.max(qI_flat),
+                    "mean_qI": torch.mean(qI_flat),
+                }
+
+                # Add mean background if available
+                if "qbg" in self.train_predictions:
+                    log_dict["mean_bg"] = torch.mean(self.train_predictions["qbg"])
+
+                # Only create and log comparison grid on specified epochs
+                if self.current_epoch % self.plot_every_n_epochs == 0:
+                    comparison_fig = self.create_comparison_grid()
+                    if comparison_fig is not None:
+                        log_dict["profile_comparisons"] = wandb.Image(comparison_fig)
+                        plt.close(comparison_fig)
+
+                # Log metrics
+                wandb.log(log_dict)
+
+            except Exception as e:
+                print(f"Error in on_train_epoch_end: {e}")
+
+            # Clear memory
+            self.train_predictions = {}
+            torch.cuda.empty_cache()
 
         # Increment epoch counter
         self.current_epoch += 1
 
     def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        # Only track the last validation batch to save memory
+
         with torch.no_grad():
             shoebox, dials, masks, metadata, counts = batch
             base_output = pl_module(shoebox, dials, masks, metadata, counts)
@@ -1966,16 +2017,25 @@ class MVNPlotter(Callback):
                 dead_pixel_mask=base_output["masks"],
             )
 
-            predictions = {
-                **base_output,
-                "weighted_sum_mean": intensities["weighted_sum_mean"],
-                "weighted_sum_var": intensities["weighted_sum_var"],
-                "thresholded_mean": intensities["thresholded_mean"],
-                "thresholded_var": intensities["thresholded_var"],
-            }
+            # Store only minimal data needed for metrics
+            self.val_predictions = {}
+            for key in [
+                "qI",
+                "dials_I_prf_value",
+                "weighted_sum_mean",
+                "thresholded_mean",
+            ]:
+                if key in base_output:
+                    if hasattr(base_output[key], "sample"):
+                        self.val_predictions[key] = base_output[key].mean.detach().cpu()
+                    else:
+                        self.val_predictions[key] = base_output[key].detach().cpu()
+                elif key in intensities:
+                    self.val_predictions[key] = intensities[key].detach().cpu()
 
-            # Store them (or do any validation-specific logic)
-            self.val_predictions = predictions
+            # Clean up
+            del base_output, intensities
+            torch.cuda.empty_cache()
 
 
 # %%
