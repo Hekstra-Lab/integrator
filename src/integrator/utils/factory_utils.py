@@ -309,6 +309,7 @@ def create_integrator_from_checkpoint(config, checkpoint_path):
             q_I=intensity_distribution,
             profile_model=profile,
             dmodel=config["global"]["dmodel"],
+            decoder=decoder,
             loss=loss,
             mc_samples=100,
             learning_rate=0.0001,

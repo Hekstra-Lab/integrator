@@ -833,7 +833,7 @@ class BernoulliIntegrator(BaseIntegrator):
         return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
 
 
-class DefaultIntegrator(BaseIntegrator):
+class tempDefaultIntegrator(BaseIntegrator):
     def __init__(
         self,
         image_encoder,
@@ -879,103 +879,6 @@ class DefaultIntegrator(BaseIntegrator):
         self.mc_samples = mc_samples
         self.profile_threshold = profile_threshold
         self.automatic_optimization = True
-
-    #    def calculate_intensities(self, counts, qbg, qp):
-    #        with torch.no_grad():
-    #            batch_counts = counts.unsqueeze(1)
-    #
-    #            batch_bg_samples = (qbg.rsample([self.mc_samples]).unsqueeze(-1)).permute(1,0,2)
-    #
-    #            batch_profile_samples = qp.rsample([self.mc_samples]).permute(1,0,2)
-    #
-    #            weighted_sum_intensity = (
-    #                    batch_counts - batch_bg_samples
-    #                    ) * batch_profile_samples
-    #            weighted_sum_intensity_mean = weighted_sum_intensity.sum(-1).mean(-1)
-    #            weighted_sum_intensity_var = weighted_sum_intensity.sum(-1).var(-1)
-    #
-    #            profile_masks = (
-    #                    batch_profile_samples > self.profile_threshold
-    #                    )
-    #            masked_counts = batch_counts * profile_masks
-    #            thresholded_intensity = (
-    #                    masked_counts - batch_bg_samples * profile_masks
-    #                    ).sum(-1)
-    #            thresholded_mean = thresholded_intensity.mean(-1)
-    #            thresholded_var = thresholded_intensity.var(-1)
-    #
-    #            intensities = {
-    #                    "thresholded_mean": thresholded_mean,
-    #                    "thresholded_var": thresholded_var,
-    #                    "weighted_sum_intensity_mean":weighted_sum_intensity_mean,
-    #                    "weighted_sum_intensity_var":weighted_sum_intensity_var,
-    #                    }
-    #
-    #
-    #            return intensities,batch_profile_samples
-
-    # def calculate_intensities(self, counts, qbg, qp, dead_pixel_mask):
-    # with torch.no_grad():
-    # counts = counts * dead_pixel_mask
-    # batch_counts = counts.unsqueeze(1)  # [batch_size x 1 x pixels]
-
-    # batch_bg_samples = (qbg.rsample([self.mc_samples]).unsqueeze(-1)).permute(
-    # 1, 0, 2
-    # )
-    # batch_profile_samples = qp.rsample([self.mc_samples]).permute(
-    # 1, 0, 2
-    # )  # [batch_size x mc_samples x pixels]
-
-    # batch_profile_samples = batch_profile_samples * dead_pixel_mask.unsqueeze(1)
-
-    # weighted_sum_intensity = (
-    # batch_counts - batch_bg_samples
-    # ) * batch_profile_samples
-
-    # weighted_sum_intensity_sum = weighted_sum_intensity.sum(-1)
-
-    # summed_squared_prf = torch.norm(batch_profile_samples, p=2, dim=-1).pow(2)
-
-    # division = weighted_sum_intensity_sum / summed_squared_prf
-
-    # weighted_sum_intensity_mean = division.mean(-1)
-
-    # centered_w_ = (
-    # weighted_sum_intensity_sum - weighted_sum_intensity_mean.unsqueeze(-1)
-    # )
-
-    # weighted_sum_intensity_var = division.var(-1)
-
-    # profile_masks = batch_profile_samples > self.profile_threshold
-
-    # N_used = profile_masks.sum(-1).float()  # [batch_size × mc_samples]
-
-    # masked_counts = batch_counts * profile_masks
-
-    # thresholded_intensity = (
-    # masked_counts - batch_bg_samples * profile_masks
-    # ).sum(-1)
-
-    # thresholded_mean = thresholded_intensity.mean(-1)
-
-    # # thresholded_var = thresholded_intensity.var(-1)
-
-    # centered_thresh = thresholded_intensity - thresholded_mean.unsqueeze(-1)
-
-    # # thresholded_var = (centered_thresh ** 2).mean(-1)
-
-    # thresholded_var = (centered_thresh**2).sum(-1) / (N_used.mean(-1) + 1e-6)
-
-    # intensities = {
-    # "thresholded_mean": thresholded_mean,
-    # "thresholded_var": thresholded_var,
-    # "weighted_sum_intensity_mean": weighted_sum_intensity_mean,
-    # "weighted_sum_intensity_var": weighted_sum_intensity_var,
-    # }
-
-    # return intensities
-
-    # def forward(self, shoebox, dials, masks, metadata,counts,samples):
 
     def calculate_intensities(self, counts, qbg, qp, dead_pixel_mask):
         with torch.no_grad():
@@ -1224,6 +1127,230 @@ class DefaultIntegrator(BaseIntegrator):
             "weighted_sum_var": outputs["weighted_sum_var"],
             "thresholded_mean": outputs["thresholded_mean"],
             "thresholded_var": outputs["thresholded_var"],
+            "refl_ids": outputs["refl_ids"],
+        }
+
+    def configure_optimizers(self):
+        return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+
+
+# %%
+
+
+class DefaultIntegrator(BaseIntegrator):
+    def __init__(
+        self,
+        image_encoder,
+        metadata_encoder,
+        q_bg,
+        q_I,
+        decoder,
+        profile_model,
+        dmodel,
+        loss,
+        mc_samples=100,
+        learning_rate=1e-3,
+        profile_threshold=0.001,
+    ):
+        super().__init__()
+        # Save all constructor arguments except module instances
+        self.save_hyperparameters()
+        self.learning_rate = learning_rate
+
+        # Model components
+        self.image_encoder = image_encoder
+        self.metadata_encoder = metadata_encoder
+        self.profile_model = profile_model
+
+        # Additional layers
+        self.fc_representation = Linear(dmodel * 2, dmodel)
+        self.decoder = decoder
+
+        # Loss function
+        self.loss_fn = loss
+        self.background_distribution = q_bg
+        self.intensity_distribution = q_I
+        self.norm = nn.LayerNorm(dmodel)
+        self.mc_samples = mc_samples
+        self.profile_threshold = profile_threshold
+        self.automatic_optimization = True
+
+    def calculate_intensities(self, counts, qbg, qp, dead_pixel_mask):
+        with torch.no_grad():
+            # Apply mask to counts - use in-place operation
+            counts = counts * dead_pixel_mask
+            batch_counts = counts.unsqueeze(1)  # Keep this as in original
+
+            # For rsample, we need to follow the original approach but avoid permute
+            # Original: batch_bg_samples = (qbg.rsample([self.mc_samples]).unsqueeze(-1)).permute(1, 0, 2)
+            batch_bg_samples = qbg.rsample([self.mc_samples]).unsqueeze(-1)
+            batch_bg_samples = batch_bg_samples.transpose(
+                0, 1
+            )  # Use transpose instead of permute
+
+            # Similarly for profile samples
+            # Original: batch_profile_samples = qp.rsample([self.mc_samples]).permute(1, 0, 2)
+            batch_profile_samples = qp.rsample([self.mc_samples])
+            batch_profile_samples = batch_profile_samples.transpose(0, 1)
+
+            # Apply mask directly - avoid new tensor creation
+            batch_profile_samples = batch_profile_samples * dead_pixel_mask.unsqueeze(1)
+
+            # Rest of your original code with minimal changes to reduce tensor creation
+            weighted_sum_intensity = (
+                batch_counts - batch_bg_samples
+            ) * batch_profile_samples
+            weighted_sum_intensity_sum = weighted_sum_intensity.sum(-1)
+
+            # Calculate norm squared directly
+            summed_squared_prf = torch.sum(batch_profile_samples**2, dim=-1)
+
+            division = weighted_sum_intensity_sum / summed_squared_prf
+            weighted_sum_intensity_mean = division.mean(-1)
+
+            # Variance calculation
+            weighted_sum_intensity_var = division.var(-1)  # Keep original var call
+
+            # Create masks directly
+            profile_masks = batch_profile_samples > self.profile_threshold
+            N_used = profile_masks.sum(-1).float()  # Keep original float call
+
+            # Calculate thresholded values
+            masked_counts = batch_counts * profile_masks
+            thresholded_intensity = (
+                masked_counts - batch_bg_samples * profile_masks
+            ).sum(-1)
+            thresholded_mean = thresholded_intensity.mean(-1)
+
+            # Calculate variance directly
+            centered_thresh = thresholded_intensity - thresholded_mean.unsqueeze(-1)
+            thresholded_var = (centered_thresh**2).sum(-1) / (N_used.mean(-1) + 1e-6)
+
+            # Create result dictionary
+            intensities = {
+                "thresholded_mean": thresholded_mean,
+                "thresholded_var": thresholded_var,
+                "weighted_sum_intensity_mean": weighted_sum_intensity_mean,
+                "weighted_sum_intensity_var": weighted_sum_intensity_var,
+            }
+
+            return intensities
+
+    def forward(self, shoebox, dials, masks, metadata, counts):
+        # Original forward pass
+        counts = torch.clamp(counts, min=0)
+
+        # Get representations and distributions
+        shoebox_representation = self.image_encoder(shoebox, masks)
+        meta_representation = self.metadata_encoder(metadata)
+
+        representation = torch.cat([shoebox_representation, meta_representation], dim=1)
+        representation = self.fc_representation(representation)
+        representation = self.norm(representation)
+
+        qbg = self.background_distribution(representation)
+        qI = self.intensity_distribution(representation)
+        qp = self.profile_model(representation)
+
+        rate = self.decoder(qI, qbg, qp)
+
+        return {
+            "rates": rate,
+            "counts": counts,
+            "masks": masks,
+            "qI": qI,
+            "qbg": qbg,
+            "qp": qp,
+            "dials_I_sum_value": dials[:, 0],
+            "dials_I_sum_var": dials[:, 1],
+            "dials_I_prf_value": dials[:, 2],
+            "dials_I_prf_var": dials[:, 3],
+            "refl_ids": dials[:, 4],
+        }
+
+    def training_step(self, batch, batch_idx):
+        # shoebox, dials, masks, metadata,counts,samples = batch
+        shoebox, dials, masks, metadata, counts = batch
+        outputs = self(shoebox, dials, masks, metadata, counts)
+
+        # neg_ll, kl = self.loss_fn(
+        (
+            loss,
+            neg_ll,
+            kl,
+            kl_bg,
+            kl_I,
+            kl_p,
+            tv_loss,
+            simpson_loss,
+            entropy_loss,
+        ) = self.loss_fn(
+            outputs["rates"],
+            outputs["counts"],
+            outputs["qp"],
+            outputs["qI"],
+            outputs["qbg"],
+            outputs["masks"],
+        )
+
+        # Log metrics
+        self.log("train_loss", loss.mean())
+        self.log("train_nll", neg_ll.mean())
+        self.log("train_kl", kl.mean())
+        self.log("kl_bg", kl_bg)
+        self.log("kl_I", kl_I)
+        self.log("kl_p", kl_p)
+
+        return loss.mean()
+
+    def validation_step(self, batch, batch_idx):
+        shoebox, dials, masks, metadata, counts = batch
+        outputs = self(shoebox, dials, masks, metadata, counts)
+
+        # Calculate validation metrics
+        (
+            loss,
+            neg_ll,
+            kl,
+            kl_bg,
+            kl_I,
+            kl_p,
+            tv_loss,
+            profile_simpson_batch,
+            entropy_loss,
+        ) = self.loss_fn(
+            outputs["rates"],
+            outputs["counts"],
+            outputs["qp"],
+            outputs["qI"],
+            outputs["qbg"],
+            outputs["masks"],
+        )
+
+        # Log metrics
+        self.log("val_loss", loss.mean())
+        self.log("val_nll", neg_ll.mean())
+        self.log("val_kl", kl.mean())
+        self.log("val_kl_bg", kl_bg)
+        self.log("val_kl_I", kl_I)
+        self.log("val_kl_p", kl_p)
+
+        # Return the complete outputs dictionary
+        return outputs
+
+    def predict_step(self, batch, batch_idx):
+        shoebox, dials, masks, metadata, counts = batch
+        outputs = self(shoebox, dials, masks, metadata, counts)
+        intensities = self.calculate_intensities(
+            outputs["counts"], outputs["qbg"], outputs["qp"], outputs["masks"]
+        )
+        return {
+            "qI_mean": outputs["qI"].mean,
+            "qI_variance": outputs["qI"].variance,
+            "weighted_sum_mean": intensities["weighted_sum_intensity_mean"],
+            "weighted_sum_var": intensities["weighted_sum_intensity_var"],
+            "thresholded_mean": intensities["thresholded_mean"],
+            "thresholded_var": intensities["thresholded_var"],
             "refl_ids": outputs["refl_ids"],
         }
 

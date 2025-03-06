@@ -1828,13 +1828,32 @@ class MVNPlotter(Callback):
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         with torch.no_grad():
+            # 1) Forward pass (no intensities yet)
             shoebox, dials, masks, metadata, counts = batch
-            predictions = pl_module(shoebox, dials, masks, metadata, counts)
+            base_output = pl_module(shoebox, dials, masks, metadata, counts)
 
-            # Only update tracked predictions if we're going to plot this epoch
+            # 2) Call calculate_intensities with the relevant fields
+            intensities = pl_module.calculate_intensities(
+                counts=base_output["counts"],
+                qbg=base_output["qbg"],
+                qp=base_output["qp"],
+                dead_pixel_mask=base_output["masks"],
+            )
+
+            # 3) Merge intensities into a new dictionary
+            #    so that "weighted_sum_mean", "thresholded_mean", etc. are available
+            predictions = {
+                **base_output,
+                "weighted_sum_mean": intensities["weighted_sum_intensity_mean"],
+                "weighted_sum_var": intensities["weighted_sum_intensity_var"],
+                "thresholded_mean": intensities["thresholded_mean"],
+                "thresholded_var": intensities["thresholded_var"],
+            }
+
+            # 4) (Optional) Only update tracked predictions if we’re going to plot this epoch
             if self.current_epoch % self.plot_every_n_epochs == 0:
                 self.update_tracked_predictions(
-                    predictions["profile"],  # Changed from "qp" to "profile"
+                    predictions["qp"],
                     predictions["qbg"],
                     predictions["rates"],
                     predictions["counts"],
@@ -1843,12 +1862,13 @@ class MVNPlotter(Callback):
                     predictions["qI"],
                 )
 
-            # Accumulate predictions
+            # 5) Accumulate predictions for epoch-level plotting
             for key in self.epoch_predictions.keys():
                 if key in predictions:
                     self.epoch_predictions[key].append(predictions[key])
 
-            self.train_predictions = predictions  # Keep last batch for other metrics
+            # 6) Keep last batch predictions for scatter plots, correlation, etc.
+            self.train_predictions = predictions
 
     def on_train_epoch_end(self, trainer, pl_module):
         if self.train_predictions:
@@ -1936,7 +1956,25 @@ class MVNPlotter(Callback):
     def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         with torch.no_grad():
             shoebox, dials, masks, metadata, counts = batch
-            self.val_predictions = pl_module(shoebox, dials, masks, metadata, counts)
+            base_output = pl_module(shoebox, dials, masks, metadata, counts)
+
+            intensities = pl_module.calculate_intensities(
+                counts=base_output["counts"],
+                qbg=base_output["qbg"],
+                qp=base_output["qp"],
+                dead_pixel_mask=base_output["masks"],
+            )
+
+            predictions = {
+                **base_output,
+                "weighted_sum_mean": intensities["weighted_sum_intensity_mean"],
+                "weighted_sum_var": intensities["weighted_sum_intensity_var"],
+                "thresholded_mean": intensities["thresholded_mean"],
+                "thresholded_var": intensities["thresholded_var"],
+            }
+
+            # Store them (or do any validation-specific logic)
+            self.val_predictions = predictions
 
 
 # %%
