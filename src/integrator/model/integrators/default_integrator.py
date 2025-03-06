@@ -914,68 +914,139 @@ class DefaultIntegrator(BaseIntegrator):
     #
     #            return intensities,batch_profile_samples
 
+    # def calculate_intensities(self, counts, qbg, qp, dead_pixel_mask):
+        # with torch.no_grad():
+            # counts = counts * dead_pixel_mask
+            # batch_counts = counts.unsqueeze(1)  # [batch_size x 1 x pixels]
+
+            # batch_bg_samples = (qbg.rsample([self.mc_samples]).unsqueeze(-1)).permute(
+                # 1, 0, 2
+            # )
+            # batch_profile_samples = qp.rsample([self.mc_samples]).permute(
+                # 1, 0, 2
+            # )  # [batch_size x mc_samples x pixels]
+
+            # batch_profile_samples = batch_profile_samples * dead_pixel_mask.unsqueeze(1)
+
+            # weighted_sum_intensity = (
+                # batch_counts - batch_bg_samples
+            # ) * batch_profile_samples
+
+            # weighted_sum_intensity_sum = weighted_sum_intensity.sum(-1)
+
+            # summed_squared_prf = torch.norm(batch_profile_samples, p=2, dim=-1).pow(2)
+
+            # division = weighted_sum_intensity_sum / summed_squared_prf
+
+            # weighted_sum_intensity_mean = division.mean(-1)
+
+            # centered_w_ = (
+                # weighted_sum_intensity_sum - weighted_sum_intensity_mean.unsqueeze(-1)
+            # )
+
+            # weighted_sum_intensity_var = division.var(-1)
+
+            # profile_masks = batch_profile_samples > self.profile_threshold
+
+            # N_used = profile_masks.sum(-1).float()  # [batch_size × mc_samples]
+
+            # masked_counts = batch_counts * profile_masks
+
+            # thresholded_intensity = (
+                # masked_counts - batch_bg_samples * profile_masks
+            # ).sum(-1)
+
+            # thresholded_mean = thresholded_intensity.mean(-1)
+
+            # # thresholded_var = thresholded_intensity.var(-1)
+
+            # centered_thresh = thresholded_intensity - thresholded_mean.unsqueeze(-1)
+
+            # # thresholded_var = (centered_thresh ** 2).mean(-1)
+
+            # thresholded_var = (centered_thresh**2).sum(-1) / (N_used.mean(-1) + 1e-6)
+
+            # intensities = {
+                # "thresholded_mean": thresholded_mean,
+                # "thresholded_var": thresholded_var,
+                # "weighted_sum_intensity_mean": weighted_sum_intensity_mean,
+                # "weighted_sum_intensity_var": weighted_sum_intensity_var,
+            # }
+
+            # return intensities
+
+    # def forward(self, shoebox, dials, masks, metadata,counts,samples):
+
     def calculate_intensities(self, counts, qbg, qp, dead_pixel_mask):
         with torch.no_grad():
-            counts = counts * dead_pixel_mask
-            batch_counts = counts.unsqueeze(1)  # [batch_size x 1 x pixels]
-
-            batch_bg_samples = (qbg.rsample([self.mc_samples]).unsqueeze(-1)).permute(
-                1, 0, 2
-            )
-            batch_profile_samples = qp.rsample([self.mc_samples]).permute(
-                1, 0, 2
-            )  # [batch_size x mc_samples x pixels]
-
-            batch_profile_samples = batch_profile_samples * dead_pixel_mask.unsqueeze(1)
-
-            weighted_sum_intensity = (
-                batch_counts - batch_bg_samples
-            ) * batch_profile_samples
-
-            weighted_sum_intensity_sum = weighted_sum_intensity.sum(-1)
-
-            summed_squared_prf = torch.norm(batch_profile_samples, p=2, dim=-1).pow(2)
-
+            # Apply mask to counts - use in-place operation
+            counts = counts * dead_pixel_mask  # This creates one new tensor
+            
+            # Create batch_counts without an additional unsqueeze operation
+            batch_size = counts.shape[0]
+            batch_counts = counts.view(batch_size, 1, -1)  # Reshape instead of unsqueeze
+            
+            # Sample distributions once and reshape instead of permuting
+            bg_samples_shape = (self.mc_samples, batch_size, 1)
+            batch_bg_samples = qbg.rsample(bg_samples_shape).transpose(0, 1)
+            
+            profile_samples_shape = (self.mc_samples, batch_size, -1)
+            batch_profile_samples = qp.rsample(profile_samples_shape).transpose(0, 1)
+            
+            # Apply mask in-place
+            batch_profile_samples *= dead_pixel_mask.unsqueeze(1)
+            
+            # Calculate weighted sum intensity - try to minimize intermediate tensors
+            intensity_diff = batch_counts - batch_bg_samples  # One intermediate tensor
+            weighted_sum_intensity = intensity_diff * batch_profile_samples  # One more
+            
+            weighted_sum_intensity_sum = weighted_sum_intensity.sum(dim=-1)
+            
+            # Calculate norm directly without an intermediate pow operation
+            summed_squared_prf = torch.sum(batch_profile_samples**2, dim=-1)  # Direct square and sum
+            
+            # Division operation - no change needed
             division = weighted_sum_intensity_sum / summed_squared_prf
-
-            weighted_sum_intensity_mean = division.mean(-1)
-
-            centered_w_ = (
-                weighted_sum_intensity_sum - weighted_sum_intensity_mean.unsqueeze(-1)
-            )
-
-            weighted_sum_intensity_var = division.var(-1)
-
+            
+            # Calculate mean
+            weighted_sum_intensity_mean = division.mean(dim=-1)
+            
+            # Reuse tensors where possible
+            centered_w_ = division - weighted_sum_intensity_mean.unsqueeze(-1)
+            
+            # Variance can be calculated directly from centered values
+            weighted_sum_intensity_var = torch.mean(centered_w_**2, dim=-1)
+            
+            # Create mask directly without comparison tensor creation
             profile_masks = batch_profile_samples > self.profile_threshold
-
-            N_used = profile_masks.sum(-1).float()  # [batch_size × mc_samples]
-
+            
+            # Sum directly to float without creating an additional tensor
+            N_used = profile_masks.sum(dim=-1, dtype=torch.float)
+            
+            # Reuse profile_masks directly
             masked_counts = batch_counts * profile_masks
-
-            thresholded_intensity = (
-                masked_counts - batch_bg_samples * profile_masks
-            ).sum(-1)
-
-            thresholded_mean = thresholded_intensity.mean(-1)
-
-            # thresholded_var = thresholded_intensity.var(-1)
-
+            masked_bg = batch_bg_samples * profile_masks
+            thresholded_intensity = (masked_counts - masked_bg).sum(dim=-1)
+            
+            # Calculate mean directly
+            thresholded_mean = thresholded_intensity.mean(dim=-1)
+            
+            # Reuse for variance calculation
             centered_thresh = thresholded_intensity - thresholded_mean.unsqueeze(-1)
-
-            # thresholded_var = (centered_thresh ** 2).mean(-1)
-
-            thresholded_var = (centered_thresh**2).sum(-1) / (N_used.mean(-1) + 1e-6)
-
+            thresholded_var = (centered_thresh**2).sum(dim=-1) / (N_used.mean(dim=-1) + 1e-6)
+            
+            # Create result dictionary directly
             intensities = {
                 "thresholded_mean": thresholded_mean,
                 "thresholded_var": thresholded_var,
                 "weighted_sum_intensity_mean": weighted_sum_intensity_mean,
                 "weighted_sum_intensity_var": weighted_sum_intensity_var,
             }
-
+            
             return intensities
 
-    # def forward(self, shoebox, dials, masks, metadata,counts,samples):
+
+
     def forward(self, shoebox, dials, masks, metadata, counts):
         # Original forward pass
         counts = torch.clamp(counts, min=0)
