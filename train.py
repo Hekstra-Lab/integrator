@@ -30,7 +30,7 @@ from integrator.callbacks import (
     IntegratedPlotter,
 )
 
-# torch.set_float32_matmul_precision("high")
+torch.set_float32_matmul_precision("high")
 
 
 if __name__ == "__main__":
@@ -213,7 +213,7 @@ if __name__ == "__main__":
     # Create data loader
     data = create_data_loader(config)
 
-    # Create integrator model
+    # Create integrator modentel
     integrator = create_integrator(config)
 
     # Get gitinfo
@@ -244,7 +244,7 @@ if __name__ == "__main__":
         project="integrator",
         name="Integrator_"
         + integrator_name
-        + "Encoder_"
+        + "_Encoder_"
         + encoder_name
         + "_I_"
         + qI_name
@@ -262,12 +262,21 @@ if __name__ == "__main__":
     )
 
     if config["integrator"]["name"] == "unet_integrator":
-        plotter = UNetPlotter(num_profiles=10)
+        plotter = UNetPlotter(
+            num_profiles=10,
+            plot_every_n_epochs=1,
+        )
     elif config["integrator"]["name"] == "mvn_integrator":
-        plotter = MVNPlotter(num_profiles=10)
+        plotter = MVNPlotter(
+            num_profiles=10,
+            plot_every_n_epochs=1,
+        )
     else:
         # plotter = IntensityPlotter(num_profiles=10)
-        plotter = IntegratedPlotter(num_profiles=10)
+        plotter = IntegratedPlotter(
+            num_profiles=10,
+            plot_every_n_epochs=1,
+        )
 
     ## create checkpoint callback
     checkpoint_callback = ModelCheckpoint(

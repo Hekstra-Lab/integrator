@@ -5,6 +5,8 @@ from pytorch_lightning.callbacks import Callback
 import torch
 import numpy as np
 
+# Import needed for colorbar positioning
+
 
 class UNetPlotter(Callback):
     def __init__(self, num_profiles=5, plot_every_n_epochs=5, d_vectors=None):
@@ -1675,7 +1677,7 @@ class MVNPlotter(Callback):
         self.tracked_refl_ids = None
         self.all_seen_ids = set()
         self.tracked_predictions = {
-            "profile": {},  # Changed from "qp" to "profile"
+            "profile": {},
             "counts": {},
             "qbg": {},
             "rates": {},
@@ -1687,7 +1689,7 @@ class MVNPlotter(Callback):
 
     def on_train_epoch_start(self, trainer, pl_module):
         self.epoch_predictions = {
-            "profile": [],  # Changed from "qp" to "profile"
+            "profile": [],
             "counts": [],
             "refl_ids": [],
             "qI": [],
@@ -1697,9 +1699,9 @@ class MVNPlotter(Callback):
             "qbg": [],
             "rates": [],
         }
-        # Clear tracked predictions at start of epoch
+
         self.tracked_predictions = {
-            "profile": {},  # Changed from "qp" to "profile"
+            "profile": {},
             "counts": {},
             "qbg": {},
             "rates": {},
@@ -1720,8 +1722,6 @@ class MVNPlotter(Callback):
                 f"Selected {self.num_profiles} reflection IDs to track: {self.tracked_refl_ids}"
             )
 
-        # Get indices of tracked reflections in current batch
-        # The profile is already a tensor, no need to use .mean
         profile_images = profile_preds.reshape(-1, 3, 21, 21)[..., 1, :, :]
         count_images = count_preds.reshape(-1, 3, 21, 21)[..., 1, :, :]
         rate_images = rates.mean(1).reshape(-1, 3, 21, 21)[..., 1, :, :]
@@ -1752,10 +1752,6 @@ class MVNPlotter(Callback):
         if not self.tracked_refl_ids:
             return None
 
-        # Import needed for colorbar positioning
-        from mpl_toolkits.axes_grid1 import make_axes_locatable
-        import numpy as np
-
         # Create figure with proper subplot layout
         fig, axes = plt.subplots(
             3, self.num_profiles, figsize=(5 * self.num_profiles, 8)
@@ -1772,7 +1768,6 @@ class MVNPlotter(Callback):
             profile_data = self.tracked_predictions["profile"][refl_id]
             rates_data = self.tracked_predictions["rates"][refl_id]
 
-            # Calculate shared min/max for rows 1 and 3
             vmin_13 = min(counts_data.min().item(), rates_data.min().item())
             vmax_13 = max(counts_data.max().item(), rates_data.max().item())
 
@@ -2352,11 +2347,6 @@ class tempMVNPlotter(Callback):
 
 
 # %%
-
-# plotter.train_predictions["q_I"].mean
-# plotter.train_predictions["dials_I_prf_value"]
-
-
 class IntegratedPlotter(Callback):
     def __init__(self, num_profiles=5, plot_every_n_epochs=5, d_vectors=None):
         """
@@ -2369,17 +2359,16 @@ class IntegratedPlotter(Callback):
         self.num_profiles = num_profiles
         self.tracked_refl_ids = None
         self.all_seen_ids = set()
-        self.profile_type = None  # Will be set during first batch
+        self.profile_type = None
 
-        # Initialize tracked predictions with keys for both plotters
         self.tracked_predictions = {
-            "qp": {},  # For probabilistic profile
-            "profile": {},  # For deterministic profile
-            "counts": {},  # Both use this
-            "qbg": {},  # Both use this
-            "rates": {},  # Both use this
-            "qI": {},  # Both use this
-            "dials_I_prf_value": {},  # Both use this
+            "qp": {},
+            "profile": {},
+            "counts": {},
+            "qbg": {},
+            "rates": {},
+            "qI": {},
+            "dials_I_prf_value": {},
         }
 
         self.epoch_predictions = None
@@ -2390,16 +2379,12 @@ class IntegratedPlotter(Callback):
     def _detect_profile_type(self, predictions):
         """Use hasattr to detect if profile is probabilistic (has rsample) or deterministic"""
         if "profile" in predictions:
-            # Already has a deterministic profile key
             return "deterministic"
         elif "qp" in predictions and hasattr(predictions["qp"], "rsample"):
-            # Has a probabilistic profile with rsample method
             return "probabilistic"
         elif "qp" in predictions:
-            # Has qp key but not rsample method
             return "deterministic"
         else:
-            # Default - assume probabilistic
             return "probabilistic"
 
     def on_train_epoch_start(self, trainer, pl_module):
@@ -2450,18 +2435,14 @@ class IntegratedPlotter(Callback):
         qbg_data = predictions["qbg"]
         qI_data = predictions["qI"]
 
-        # Handle profile data based on profile type
         if self.profile_type == "deterministic":
-            # Use profile key if available, otherwise use qp
             if "profile" in predictions:
                 profile_data = predictions["profile"]
             else:
-                profile_data = predictions["qp"]  # Deterministic qp
+                profile_data = predictions["qp"]
         else:
-            # Probabilistic profile (UNet)
             profile_data = predictions["qp"]
 
-        # Get weighted sum and thresholded means if available
         weighted_sum_mean = None
         if "weighted_sum_mean" in predictions:
             weighted_sum_mean = predictions["weighted_sum_mean"]
@@ -2471,38 +2452,29 @@ class IntegratedPlotter(Callback):
         thresholded_mean = predictions.get("thresholded_mean")
         signal_prob = predictions.get("signal_prob")
 
-        # Convert reflection IDs to numpy array for indexing
         current_refl_ids = refl_ids.cpu().numpy()
 
-        # Update all seen IDs and set tracked IDs if not set
         self.all_seen_ids.update(current_refl_ids)
         if self.tracked_refl_ids is None:
             self.tracked_refl_ids = sorted(list(self.all_seen_ids))[: self.num_profiles]
 
-        # Process profile data based on profile type
         if self.profile_type == "deterministic":
-            # Direct reshape for deterministic profiles
             profile_images = profile_data.reshape(-1, 3, 21, 21)[..., 1, :, :]
         else:
-            # Use mean attribute for probabilistic profiles
             profile_images = profile_data.mean.reshape(-1, 3, 21, 21)[..., 1, :, :]
 
-        # Process other data
         count_images = counts_data.reshape(-1, 3, 21, 21)[..., 1, :, :]
 
-        # Handle rates based on dimensions
         if rates_data.dim() > 3:
             rate_images = rates_data.mean(1).reshape(-1, 3, 21, 21)[..., 1, :, :]
         else:
             rate_images = rates_data.reshape(-1, 3, 21, 21)[..., 1, :, :]
 
-        # Extract background mean
         if hasattr(qbg_data, "mean"):
             bg_mean = qbg_data.mean
         else:
             bg_mean = qbg_data
 
-        # Extract intensity mean
         if hasattr(qI_data, "mean"):
             qI_mean = qI_data.mean
         else:
@@ -2572,16 +2544,13 @@ class IntegratedPlotter(Callback):
                     self.tracked_predictions["dials_I_prf_value"][refl_id]
                 )
 
-                # Signal probability (if available)
                 sig_prob = 0.0
                 if refl_id in self.tracked_predictions.get("signal_prob", {}):
                     sig_prob = float(self.tracked_predictions["signal_prob"][refl_id])
 
-                # Shared min/max for counts and rates
                 vmin_13 = counts_data.min().item()
                 vmax_13 = counts_data.max().item()
 
-                # Row 1: Raw counts image
                 im0 = axes[0, i].imshow(
                     counts_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13
                 )
@@ -2591,14 +2560,12 @@ class IntegratedPlotter(Callback):
                     left=False, bottom=False, labelleft=False, labelbottom=False
                 )
 
-                # Row 2: Profile prediction image
                 im1 = axes[1, i].imshow(profile_data, cmap=cmap)
                 axes[1, i].set_ylabel("profile", labelpad=5)
                 axes[1, i].tick_params(
                     left=False, bottom=False, labelleft=False, labelbottom=False
                 )
 
-                # Row 3: Rates image
                 im2 = axes[2, i].imshow(
                     rates_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13
                 )
