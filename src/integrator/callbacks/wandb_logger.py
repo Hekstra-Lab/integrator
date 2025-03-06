@@ -2685,7 +2685,7 @@ class IntegratedPlotter(Callback):
                 ]:
                     if key in predictions:
                         # Handle distribution objects
-                        if hasattr(predictions[key], "mean"):
+                        if hasattr(predictions[key], "sample"):
                             cpu_predictions[key] = predictions[key].mean.detach().cpu()
                         # Handle tensor objects
                         elif isinstance(predictions[key], torch.Tensor):
@@ -2708,7 +2708,7 @@ class IntegratedPlotter(Callback):
                     "thresholded_mean",
                 ]:
                     if key in predictions:
-                        if hasattr(predictions[key], "mean"):
+                        if hasattr(predictions[key], "sample"):
                             minimal_metrics[key] = predictions[key].mean.detach().cpu()
                         elif isinstance(predictions[key], torch.Tensor):
                             minimal_metrics[key] = predictions[key].detach().cpu()
