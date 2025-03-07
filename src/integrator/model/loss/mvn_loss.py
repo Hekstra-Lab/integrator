@@ -80,6 +80,10 @@ class MVNLoss(torch.nn.Module):
         device = rate.device
         batch_size = rate.shape[0]
 
+        # Ensure other components are on the correct device
+        counts = counts.to(device)
+        dead_pixel_mask = dead_pixel_mask.to(device)
+
         # Calculate log likelihood
         ll = torch.distributions.Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
 
