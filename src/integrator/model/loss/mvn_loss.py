@@ -1,14 +1,16 @@
 import torch
 
 
-class tempMVNLoss(torch.nn.Module):
+class MVNLoss(torch.nn.Module):
     def __init__(
         self,
         beta=1.0,
         eps=1e-5,
-        p_I=torch.distributions.exponential.Exponential(1.0),
-        p_bg=torch.distributions.exponential.Exponential(1.0),
+        p_I_name="gamma",
+        p_I_params={"concentration": 1.0, "rate": 1.0},
         p_I_scale=0.0001,
+        p_bg_name="gamma",
+        p_bg_params={"concentration": 1.0, "rate": 1.0},
         p_bg_scale=0.0001,
         # Optional regularization for the profile
         tv_loss_scale=None,
@@ -18,15 +20,29 @@ class tempMVNLoss(torch.nn.Module):
         super().__init__()
         self.register_buffer("eps", torch.tensor(eps))
         self.register_buffer("beta", torch.tensor(beta))
-        self.p_I = p_I
-        self.p_bg = p_bg
         self.register_buffer("p_I_scale", torch.tensor(p_I_scale))
         self.register_buffer("p_bg_scale", torch.tensor(p_bg_scale))
+        self.p_I = self.get_prior(p_I_name, p_I_params)
+        self.p_bg = self.get_prior(p_bg_name, p_bg_params)
 
         # Optional regularization parameters
         self.tv_loss_scale = tv_loss_scale
         self.simpson_scale = simpson_scale
         self.smoothness_scale = smoothness_scale
+
+    def get_prior(self, name, params):
+        if name == "gamma":
+            self.register_buffer("concentration", torch.tensor(params["concentration"]))
+            self.register_buffer("rate", torch.tensor(params["rate"]))
+            return torch.distributions.gamma.Gamma(
+                concentration=self.concentration, rate=self.rate
+            )
+        elif name == "log_normal":
+            self.register_buffer("loc", torch.tensor(params["loc"]))
+            self.register_buffer("scale", torch.tensor(params["scale"]))
+            return torch.distributions.log_normal.LogNormal(
+                loc=self.loc, scale=self.scale
+            )
 
     def inverse_simpson_regularization(self, p, eps=1e-6):
         batch_size = p.shape[0]
@@ -140,7 +156,7 @@ class tempMVNLoss(torch.nn.Module):
         )
 
 
-class MVNLoss(torch.nn.Module):
+class tempMVNLoss(torch.nn.Module):
     def __init__(
         self,
         beta=1.0,
@@ -173,8 +189,8 @@ class MVNLoss(torch.nn.Module):
         self.p_bg_lambda = 1.0
 
         # Save user-provided distributions if given
-        self.p_I_user = p_I
-        self.p_bg_user = p_bg
+        self.p_I = p_I
+        self.p_bg = p_bg
 
         # Optional regularization parameters
         self.tv_loss_scale = tv_loss_scale
@@ -182,112 +198,49 @@ class MVNLoss(torch.nn.Module):
         self.smoothness_scale = smoothness_scale
 
     def to(self, device):
-        # Override to() to ensure module data is properly moved
+        """
+        Override to() to ensure all distribution parameters are moved to the correct device.
+        """
         result = super().to(device)
         self.device = device
+
+        # Move prior distributions to device
+        if self.p_I is not None:
+            self._move_distribution_to_device(self.p_I, device)
+
+        if self.p_bg is not None:
+            self._move_distribution_to_device(self.p_bg, device)
+
         return result
 
-    def _get_prior_distributions(self):
-        # Return user-provided distributions if available, otherwise create new ones
-        if self.p_I_user is not None:
-            # If user provided a distribution, ensure parameters are on correct device
-            p_I = self._ensure_distribution_on_device(self.p_I_user, self.device)
-        else:
-            # Create default distribution on the correct device
-            p_I = torch.distributions.exponential.Exponential(
-                torch.tensor(self.p_I_lambda, device=self.device)
-            )
+    def _move_distribution_to_device(self, dist, device):
+        """Helper method to move distribution parameters to the specified device"""
+        # Check which type of distribution and move accordingly
+        if isinstance(dist, torch.distributions.gamma.Gamma):
+            dist.concentration = dist.concentration.to(device)
+            dist.rate = dist.rate.to(device)
+        elif isinstance(dist, torch.distributions.normal.Normal):
+            dist.loc = dist.loc.to(device)
+            dist.scale = dist.scale.to(device)
+        elif isinstance(dist, torch.distributions.exponential.Exponential):
+            dist.rate = dist.rate.to(device)
+        elif isinstance(dist, torch.distributions.dirichlet.Dirichlet):
+            dist.concentration = dist.concentration.to(device)
+        elif isinstance(dist, torch.distributions.laplace.Laplace):
+            dist.loc = dist.loc.to(device)
+            dist.scale = dist.scale.to(device)
 
-        if self.p_bg_user is not None:
-            # If user provided a distribution, ensure parameters are on correct device
-            p_bg = self._ensure_distribution_on_device(self.p_bg_user, self.device)
-        else:
-            # Create default distribution on the correct device
-            p_bg = torch.distributions.exponential.Exponential(
-                torch.tensor(self.p_bg_lambda, device=self.device)
-            )
+    def _get_default_prior_distributions(self):
+        """Create default prior distributions if not provided by user"""
+        p_I = torch.distributions.exponential.Exponential(
+            torch.tensor(self.p_I_lambda, device=self.device)
+        )
+
+        p_bg = torch.distributions.exponential.Exponential(
+            torch.tensor(self.p_bg_lambda, device=self.device)
+        )
 
         return p_I, p_bg
-
-    def _ensure_distribution_on_device(self, dist, device):
-        """Helper to ensure a distribution's parameters are on the correct device."""
-        # Handle LogNormal distribution specifically
-        if isinstance(dist, torch.distributions.log_normal.LogNormal):
-            # Check if parameters need to be moved
-            if (
-                hasattr(dist, "loc")
-                and isinstance(dist.loc, torch.Tensor)
-                and dist.loc.device != device
-            ) or (
-                hasattr(dist, "scale")
-                and isinstance(dist.scale, torch.Tensor)
-                and dist.scale.device != device
-            ):
-                # Create a new LogNormal with tensors on the correct device
-                return torch.distributions.log_normal.LogNormal(
-                    loc=dist.loc.to(device)
-                    if isinstance(dist.loc, torch.Tensor)
-                    else dist.loc,
-                    scale=dist.scale.to(device)
-                    if isinstance(dist.scale, torch.Tensor)
-                    else dist.scale,
-                )
-
-        # Handle Exponential distribution
-        elif isinstance(dist, torch.distributions.exponential.Exponential):
-            # For exponential, we need to move the rate parameter
-            if (
-                hasattr(dist, "rate")
-                and isinstance(dist.rate, torch.Tensor)
-                and dist.rate.device != device
-            ):
-                return torch.distributions.exponential.Exponential(
-                    rate=dist.rate.to(device)
-                )
-
-        # Handle Normal distribution
-        elif isinstance(dist, torch.distributions.normal.Normal):
-            # For normal, we need to move loc and scale
-            if (
-                hasattr(dist, "loc")
-                and isinstance(dist.loc, torch.Tensor)
-                and dist.loc.device != device
-            ) or (
-                hasattr(dist, "scale")
-                and isinstance(dist.scale, torch.Tensor)
-                and dist.scale.device != device
-            ):
-                return torch.distributions.normal.Normal(
-                    loc=dist.loc.to(device)
-                    if isinstance(dist.loc, torch.Tensor)
-                    else dist.loc,
-                    scale=dist.scale.to(device)
-                    if isinstance(dist.scale, torch.Tensor)
-                    else dist.scale,
-                )
-
-        # Handle Gamma distribution
-        elif isinstance(dist, torch.distributions.gamma.Gamma):
-            if (
-                hasattr(dist, "concentration")
-                and isinstance(dist.concentration, torch.Tensor)
-                and dist.concentration.device != device
-            ) or (
-                hasattr(dist, "rate")
-                and isinstance(dist.rate, torch.Tensor)
-                and dist.rate.device != device
-            ):
-                return torch.distributions.gamma.Gamma(
-                    concentration=dist.concentration.to(device)
-                    if isinstance(dist.concentration, torch.Tensor)
-                    else dist.concentration,
-                    rate=dist.rate.to(device)
-                    if isinstance(dist.rate, torch.Tensor)
-                    else dist.rate,
-                )
-
-        # Return the original distribution if we don't know how to handle it or it's already on the right device
-        return dist
 
     def inverse_simpson_regularization(self, p, eps=1e-6):
         batch_size = p.shape[0]
@@ -331,10 +284,13 @@ class MVNLoss(torch.nn.Module):
         try:
             return torch.distributions.kl.kl_divergence(q_dist, p_dist)
         except NotImplementedError:
-            # Get current device from one of our parameters
+            # For sampling-based KL, make sure everything is on the right device
             device = next(self.parameters()).device
 
-            # Make sure samples are on the correct device
+            # Move the distributions to the device first
+            self._move_distribution_to_device(q_dist, device)
+            self._move_distribution_to_device(p_dist, device)
+
             samples = q_dist.rsample([100])
             log_q = q_dist.log_prob(samples)
             log_p = p_dist.log_prob(samples)
@@ -349,8 +305,30 @@ class MVNLoss(torch.nn.Module):
         counts = counts.to(device)
         dead_pixel_mask = dead_pixel_mask.to(device)
 
-        # Get prior distributions on the correct device
-        p_I, p_bg = self._get_prior_distributions()
+        # Move distribution parameters to the current device
+        self._move_distribution_to_device(q_I, device)
+        self._move_distribution_to_device(q_bg, device)
+
+        # Get prior distributions (either user-provided or default)
+        p_I = (
+            self.p_I
+            if self.p_I is not None
+            else torch.distributions.exponential.Exponential(
+                torch.tensor(self.p_I_lambda, device=device)
+            )
+        )
+
+        p_bg = (
+            self.p_bg
+            if self.p_bg is not None
+            else torch.distributions.exponential.Exponential(
+                torch.tensor(self.p_bg_lambda, device=device)
+            )
+        )
+
+        # Move prior distributions to device (again to be sure)
+        self._move_distribution_to_device(p_I, device)
+        self._move_distribution_to_device(p_bg, device)
 
         # Calculate log likelihood
         ll = torch.distributions.Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
@@ -358,14 +336,12 @@ class MVNLoss(torch.nn.Module):
         # Calculate KL terms
         kl_terms = torch.zeros(batch_size, device=device)
 
-        # Make sure q_I is on the correct device
-        q_I = self._ensure_distribution_on_device(q_I, device)
+        # KL for intensity
         kl_I = self.compute_kl(q_I, p_I)
         kl_I = kl_I.expand(batch_size) if kl_I.dim() == 0 else kl_I
         kl_terms += kl_I * self.p_I_scale
 
-        # Make sure q_bg is on the correct device
-        q_bg = self._ensure_distribution_on_device(q_bg, device)
+        # KL for background
         kl_bg = self.compute_kl(q_bg, p_bg)
         kl_bg = kl_bg.expand(batch_size) if kl_bg.dim() == 0 else kl_bg
         kl_terms += kl_bg * self.p_bg_scale
