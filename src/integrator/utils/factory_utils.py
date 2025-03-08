@@ -75,25 +75,28 @@ def create_prior(dist_name, dist_params):
 def create_loss(config):
     if config["integrator"]["name"] == "loss":
         # Create a DEEP COPY of the loss parameters
-        param_dict = deepcopy(config["components"]["loss"]["params"])
+        # param_dict = deepcopy(config["components"]["loss"]["params"])
 
         # Build p_bg from the copied params
-        p_bg = create_prior(param_dict["p_bg"]["name"], param_dict["p_bg"]["params"])
+        # p_bg = create_prior(param_dict["p_bg"]["name"], param_dict["p_bg"]["params"])
 
         # Build p_I from the copied params
-        p_I = create_prior(param_dict["p_I"]["name"], param_dict["p_I"]["params"])
+        # p_I = create_prior(param_dict["p_I"]["name"], param_dict["p_I"]["params"])
 
         # Build p_p prior distribution if needed
-        if "p_p" in param_dict:
-            p_p = create_prior(param_dict["p_p"]["name"], param_dict["p_p"]["params"])
-            param_dict["p_p"] = p_p
-        else:
-            pass
+        # if "p_p" in param_dict:
+        # p_p = create_prior(param_dict["p_p"]["name"], param_dict["p_p"]["params"])
+        # param_dict["p_p"] = p_p
+        # else:
+        # pass
 
-        param_dict["p_bg"] = p_bg
-        param_dict["p_I"] = p_I
-
-        return create_module("loss", config["components"]["loss"]["name"], **param_dict)
+        # param_dict["p_bg"] = p_bg
+        # param_dict["p_I"] = p_I
+        return create_module(
+            "loss",
+            config["components"]["loss"]["name"],
+            **config["components"]["loss"]["params"],
+        )
     else:
         return create_module(
             "loss",
