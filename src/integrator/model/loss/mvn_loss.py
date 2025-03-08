@@ -211,9 +211,30 @@ class MVNLoss(torch.nn.Module):
 
     def _ensure_distribution_on_device(self, dist, device):
         """Helper to ensure a distribution's parameters are on the correct device."""
-        # This is distribution-type specific - handle the common ones
+        # Handle LogNormal distribution specifically
+        if isinstance(dist, torch.distributions.log_normal.LogNormal):
+            # Check if parameters need to be moved
+            if (
+                hasattr(dist, "loc")
+                and isinstance(dist.loc, torch.Tensor)
+                and dist.loc.device != device
+            ) or (
+                hasattr(dist, "scale")
+                and isinstance(dist.scale, torch.Tensor)
+                and dist.scale.device != device
+            ):
+                # Create a new LogNormal with tensors on the correct device
+                return torch.distributions.log_normal.LogNormal(
+                    loc=dist.loc.to(device)
+                    if isinstance(dist.loc, torch.Tensor)
+                    else dist.loc,
+                    scale=dist.scale.to(device)
+                    if isinstance(dist.scale, torch.Tensor)
+                    else dist.scale,
+                )
 
-        if isinstance(dist, torch.distributions.exponential.Exponential):
+        # Handle Exponential distribution
+        elif isinstance(dist, torch.distributions.exponential.Exponential):
             # For exponential, we need to move the rate parameter
             if (
                 hasattr(dist, "rate")
@@ -224,6 +245,7 @@ class MVNLoss(torch.nn.Module):
                     rate=dist.rate.to(device)
                 )
 
+        # Handle Normal distribution
         elif isinstance(dist, torch.distributions.normal.Normal):
             # For normal, we need to move loc and scale
             if (
@@ -244,7 +266,27 @@ class MVNLoss(torch.nn.Module):
                     else dist.scale,
                 )
 
-        # If we don't know how to handle this distribution or it's already on the right device
+        # Handle Gamma distribution
+        elif isinstance(dist, torch.distributions.gamma.Gamma):
+            if (
+                hasattr(dist, "concentration")
+                and isinstance(dist.concentration, torch.Tensor)
+                and dist.concentration.device != device
+            ) or (
+                hasattr(dist, "rate")
+                and isinstance(dist.rate, torch.Tensor)
+                and dist.rate.device != device
+            ):
+                return torch.distributions.gamma.Gamma(
+                    concentration=dist.concentration.to(device)
+                    if isinstance(dist.concentration, torch.Tensor)
+                    else dist.concentration,
+                    rate=dist.rate.to(device)
+                    if isinstance(dist.rate, torch.Tensor)
+                    else dist.rate,
+                )
+
+        # Return the original distribution if we don't know how to handle it or it's already on the right device
         return dist
 
     def inverse_simpson_regularization(self, p, eps=1e-6):
