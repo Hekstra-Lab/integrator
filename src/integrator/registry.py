@@ -1,33 +1,9 @@
-from .model.encoders import (
-    CNNResNet,
-    MLPMetadataEncoder,
-    CNNResNet2,
-    DevEncoder,
-    CNN_3d,
-    MLPImageEncoder,
-    UNetDirichletConcentration,
-)
-from .model.decoders import Decoder, MVNDecoder, BernoulliDecoder
-from .model.profiles import (
-    SignalAwareProfile,
-    SignalAwareMVNProfile,
-    DirichletProfile,
-    BetaProfile,
-    MVNProfile,
-)
-from .model.loss import Loss, MVNLoss, BernoulliLoss
-from .model.integrators import (
-    DefaultIntegrator,
-    BernoulliIntegrator,
-    DevIntegrator,
-    MVNIntegrator,
-    UNetIntegrator,
-)
-from .model.distribution import (
-    GammaDistribution,
-    LogNormalDistribution,
-    RelaxedBernoulliDistribution,
-)
+from .model.encoders import *
+from .model.decoders import *
+from .model.profiles import *
+from .model.loss import *
+from .model.integrators import *
+from .model.distribution import *
 from .data_loaders import ShoeboxDataModule
 import torch
 
@@ -39,29 +15,23 @@ REGISTRY = {
         "cnn_3d": CNNResNet2,  # done
         "mlp_image_encoder": MLPImageEncoder,  # done
         "3d_cnn": CNN_3d,  # shoebox encoder
-        "unet": UNetDirichletConcentration,
         "dev_encoder": DevEncoder,
     },
     "decoder": {
         "default_decoder": Decoder,
         "mvn_decoder": MVNDecoder,
-        "bernoulli_decoder": BernoulliDecoder,
     },
     "profile": {
         "dirichlet": DirichletProfile,
         "beta": BetaProfile,
         "mvn": MVNProfile,
-        "signal_aware_dirichlet": SignalAwareProfile,
-        "signal_aware_mvn": SignalAwareMVNProfile,
     },
     "loss": {
         "elbo": Loss,
         "mvn_loss": MVNLoss,
-        "bernoulli_loss": BernoulliLoss,
     },
     "integrator": {
         "default_integrator": DefaultIntegrator,
-        "bernoulli_integrator": BernoulliIntegrator,
         "test_integrator": DevIntegrator,
         "mvn_integrator": MVNIntegrator,
         "unet_integrator": UNetIntegrator,
@@ -72,9 +42,6 @@ REGISTRY = {
     },
     "q_bg": {
         "gamma": GammaDistribution,
-    },
-    "q_z": {
-        "bernoulli": RelaxedBernoulliDistribution,
     },
     "data_loader": {
         "default": ShoeboxDataModule,
