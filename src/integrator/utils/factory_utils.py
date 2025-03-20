@@ -74,24 +74,6 @@ def create_prior(dist_name, dist_params):
 # %%
 def create_loss(config):
     if config["integrator"]["name"] == "loss":
-        # Create a DEEP COPY of the loss parameters
-        # param_dict = deepcopy(config["components"]["loss"]["params"])
-
-        # Build p_bg from the copied params
-        # p_bg = create_prior(param_dict["p_bg"]["name"], param_dict["p_bg"]["params"])
-
-        # Build p_I from the copied params
-        # p_I = create_prior(param_dict["p_I"]["name"], param_dict["p_I"]["params"])
-
-        # Build p_p prior distribution if needed
-        # if "p_p" in param_dict:
-        # p_p = create_prior(param_dict["p_p"]["name"], param_dict["p_p"]["params"])
-        # param_dict["p_p"] = p_p
-        # else:
-        # pass
-
-        # param_dict["p_bg"] = p_bg
-        # param_dict["p_I"] = p_I
         return create_module(
             "loss",
             config["components"]["loss"]["name"],
@@ -164,7 +146,11 @@ def create_integrator(config):
     ) = create_components(config)
 
     if integrator_name == "default_integrator":
-        loss = create_loss(config)
+        loss = create_module(
+            "loss",
+            config["components"]["loss"]["name"],
+            **config["components"]["loss"]["params"],
+        )
 
         metadata_encoder = create_module(
             "metadata_encoder",
@@ -246,7 +232,11 @@ def create_integrator(config):
         return integrator
 
     elif integrator_name == "unet_integrator":
-        loss = create_loss(config)
+        loss = create_module(
+            "loss",
+            config["components"]["loss"]["name"],
+            **config["components"]["loss"]["params"],
+        )
 
         metadata_encoder = create_module(
             "metadata_encoder",
@@ -254,35 +244,17 @@ def create_integrator(config):
             **config["components"]["metadata_encoder"]["params"],
         )
 
-        unet = create_module(
-            "image_encoder",
-            config["components"]["unet"]["name"],
-            **config["components"]["unet"]["params"],
-        )
-        if "q_z" in config["components"]:
-            q_z = create_module(
-                "q_z",
-                config["components"]["q_z"]["name"],
-                **config["components"]["q_z"]["params"],
-            )
-        else:
-            q_z = None
-
         integrator = integrator_class(
             image_encoder=image_encoder,
             metadata_encoder=metadata_encoder,
             q_bg=background_distribution,
             q_I=intensity_distribution,
-            q_z=q_z,
-            # profile_model=profile,
             decoder=decoder,
-            unet=unet,
             loss=loss,
             dmodel=config["global"]["dmodel"],
             mc_samples=config["integrator"]["mc_samples"],
             learning_rate=config["integrator"]["learning_rate"],
             profile_threshold=config["integrator"]["profile_threshold"],
-            # signal_preprocessor=None,
         )
         return integrator
 
@@ -361,36 +333,18 @@ def create_integrator_from_checkpoint(config, checkpoint_path):
             **config["components"]["metadata_encoder"]["params"],
         )
 
-        unet = create_module(
-            "image_encoder",
-            config["components"]["unet"]["name"],
-            **config["components"]["unet"]["params"],
-        )
-        if "q_z" in config["components"]:
-            q_z = create_module(
-                "q_z",
-                config["components"]["q_z"]["name"],
-                **config["components"]["q_z"]["params"],
-            )
-        else:
-            q_z = None
-
         integrator = integrator_class.load_from_checkpoint(
             checkpoint_path,
             image_encoder=image_encoder,
             metadata_encoder=metadata_encoder,
             q_bg=background_distribution,
             q_I=intensity_distribution,
-            q_z=q_z,
-            # profile_model=profile,
             decoder=decoder,
-            unet=unet,
             loss=loss,
             dmodel=config["global"]["dmodel"],
             mc_samples=config["integrator"]["mc_samples"],
             learning_rate=config["integrator"]["learning_rate"],
             profile_threshold=config["integrator"]["profile_threshold"],
-            # signal_preprocessor=None,
         )
         return integrator
 
@@ -453,6 +407,12 @@ def parse_args():
         type=str,
         default="./src/integrator/configs/config.yaml",
         help="Path to the config.yaml file",
+    )
+    parser.add_argument(
+        "--job_id",
+        type=str,
+        default=None,
+        help="Optional ID for the current run",
     )
     parser.add_argument(
         "--epochs",
