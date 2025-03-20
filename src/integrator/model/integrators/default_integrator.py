@@ -140,9 +140,11 @@ class DefaultIntegrator(BaseIntegrator):
 
             division = weighted_sum_intensity_sum / summed_squared_prf
             weighted_sum_mean = division.mean(-1)
+
             # Variance calculation
             weighted_sum_var = division.var(-1)
             profile_masks = batch_profile_samples > self.profile_threshold
+
             N_used = profile_masks.sum(-1).float()
             masked_counts = batch_counts * profile_masks
             thresholded_intensity = (
@@ -151,6 +153,7 @@ class DefaultIntegrator(BaseIntegrator):
             thresholded_mean = thresholded_intensity.mean(-1)
             centered_thresh = thresholded_intensity - thresholded_mean.unsqueeze(-1)
             thresholded_var = (centered_thresh**2).sum(-1) / (N_used.mean(-1) + 1e-6)
+
             intensities = {
                 "thresholded_mean": thresholded_mean,
                 "thresholded_var": thresholded_var,
@@ -272,15 +275,16 @@ class DefaultIntegrator(BaseIntegrator):
             "thresholded_mean": intensities["thresholded_mean"],
             "thresholded_var": intensities["thresholded_var"],
             "refl_ids": outputs["refl_ids"],
-            "qp_mean": outputs["qp"].mean,
-            "qp_variance": outputs["qp"].variance,
             "dials_I_sum_value": outputs["dials_I_sum_value"],
             "dials_I_sum_var": outputs["dials_I_sum_var"],
             "dials_I_prf_value": outputs["dials_I_prf_value"],
             "dials_I_prf_var": outputs["dials_I_prf_var"],
-            "qb_mean": outputs["qbg"].mean,
-            "qb_variance": outputs["qbg"].variance,
+            "qbg_mean": outputs["qbg"].mean,
+            "qbg_variance": outputs["qbg"].variance,
+            "qp_variance": outputs["qp"].variance,
+            "qp_mean": outputs["qp"].mean,
             "counts": outputs["counts"],
+            "masks": outputs["masks"],
         }
 
     def configure_optimizers(self):
