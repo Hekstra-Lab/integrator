@@ -278,6 +278,9 @@ class DefaultIntegrator(BaseIntegrator):
             "dials_I_sum_var": outputs["dials_I_sum_var"],
             "dials_I_prf_value": outputs["dials_I_prf_value"],
             "dials_I_prf_var": outputs["dials_I_prf_var"],
+            "qb_mean": outputs["qbg"].mean,
+            "qb_variance": outputs["qbg"].variance,
+            "counts": outputs["counts"],
         }
 
     def configure_optimizers(self):
