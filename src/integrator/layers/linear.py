@@ -22,8 +22,8 @@ def weight_initializer(weight):
 
 
 class Linear(torch.nn.Linear):
-    def __init__(self, in_features: int, out_features: int):
-        super().__init__(in_features, out_features, bias=False)  # Set bias=False
+    def __init__(self, in_features: int, out_features: int, bias=False):
+        super().__init__(in_features, out_features, bias=bias)  # Set bias=False
 
     def reset_parameters(self) -> None:
         self.weight = weight_initializer(self.weight)
