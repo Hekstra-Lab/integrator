@@ -1726,9 +1726,9 @@ class MVNPlotter(Callback):
         count_images = count_preds.reshape(-1, 3, 21, 21)[..., 1, :, :]
         rate_images = rates.mean(1).reshape(-1, 3, 21, 21)[..., 1, :, :]
         bg_mean = qbg_preds.mean
-        bg_var = qbg_preds.var
+        bg_var = qbg_preds.variance
         qI_mean = qI.mean
-        qI_var = qI.var
+        qI_var = qI.variance
         dials_I_prf_value = dials_I
 
         for ref_id in self.tracked_refl_ids:
