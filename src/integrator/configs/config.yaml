@@ -2,7 +2,7 @@ global:
   dmodel: 64
 
 integrator:
-  name: integrator1
+  name: default
   learning_rate: 0.001
   mc_samples: 100
   profile_threshold: 0.01
@@ -29,7 +29,7 @@ components:
     params:
       dmodel: 64
   decoder:
-    name: decoder1
+    name: default_decoder
     params:
       mc_samples: 100
   q_bg:
@@ -46,11 +46,6 @@ components:
   loss:
     name: elbo
     params:
-
-      bg_pairing: "gamma_gamma"
-      I_pairing: "gamma_gamma"
-      p_pairing: "dirichlet_dirichlet"
-
       p_bg:
         name: gamma
         params:
@@ -74,7 +69,6 @@ components:
 
       p_I_scale: 0.0001
 
-      recon_scale: 0.0
 
 
 data_loader:

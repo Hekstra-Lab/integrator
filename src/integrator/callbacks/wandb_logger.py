@@ -1726,7 +1726,9 @@ class MVNPlotter(Callback):
         count_images = count_preds.reshape(-1, 3, 21, 21)[..., 1, :, :]
         rate_images = rates.mean(1).reshape(-1, 3, 21, 21)[..., 1, :, :]
         bg_mean = qbg_preds.mean
+        bg_var = qbg_preds.var
         qI_mean = qI.mean
+        qI_var = qI.var
         dials_I_prf_value = dials_I
 
         for ref_id in self.tracked_refl_ids:
@@ -1739,6 +1741,8 @@ class MVNPlotter(Callback):
                 self.tracked_predictions["rates"][ref_id] = rate_images[idx].cpu()
                 self.tracked_predictions["qbg"][ref_id] = bg_mean[idx].cpu()
                 self.tracked_predictions["qI"][ref_id] = qI_mean[idx].cpu()
+                self.tracked_predictions["qI_var"][ref_id] = qI_var[idx].cpu()
+                self.tracked_predictions["qbg_var"][ref_id] = bg_var[idx].cpu()
                 self.tracked_predictions["dials_I_prf_value"][
                     ref_id
                 ] = dials_I_prf_value[idx]
@@ -1774,7 +1778,7 @@ class MVNPlotter(Callback):
             # Row 1: Input counts
             im0 = axes[0, i].imshow(counts_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13)
             axes[0, i].set_title(
-                f"reflection ID: {refl_id}\n DIALS I: {self.tracked_predictions['dials_I_prf_value'][refl_id]:.2f}"
+                f"reflection ID: {refl_id}\n DIALS I_prf: {self.tracked_predictions['dials_I_prf_value'][refl_id]:.2f}"
             )
             axes[0, i].set_ylabel("raw image", labelpad=5)
 
@@ -1894,6 +1898,9 @@ class MVNPlotter(Callback):
                 qI_flat = (
                     self.train_predictions["qI"].flatten() + 1e-8
                 )  # Add epsilon before log
+                qI_var_flat = (
+                    self.train_predictions["qI_var"].flatten() + 1e-8
+                )  # Add epsilon before log
                 dials_flat = (
                     self.train_predictions["dials_I_prf_value"].flatten() + 1e-8
                 )
@@ -1917,6 +1924,7 @@ class MVNPlotter(Callback):
                         data.append(
                             [
                                 float(torch.log(qI_flat[i])),
+                                float(torch.log(qI_var_flat[i])),
                                 float(torch.log(dials_flat[i])),
                                 float(torch.log(weighted_sum_flat[i])),
                                 float(torch.log(thresholded_flat[i])),
@@ -1932,6 +1940,7 @@ class MVNPlotter(Callback):
                     data=data,
                     columns=[
                         "qI",
+                        "qI_var",
                         "dials_I_prf_value",
                         "weighted_sum_mean",
                         "thresholded_mean",
@@ -1972,11 +1981,16 @@ class MVNPlotter(Callback):
                     "corrcoef_masked": corr_masked,
                     "max_qI": torch.max(qI_flat),
                     "mean_qI": torch.mean(qI_flat),
+                    "mean_qI_var": torch.mean(qI_var_flat),
+                    "min_qI_var": torch.min(qI_var_flat),
+                    "max_qI_var": torch.max(qI_var_flat),
                 }
 
                 # Add mean background if available
                 if "qbg" in self.train_predictions:
                     log_dict["mean_bg"] = torch.mean(self.train_predictions["qbg"])
+                    log_dict["min_bg"] = torch.min(self.train_predictions["qbg"])
+                    log_dict["max_bg"] = torch.max(self.train_predictions["qbg"])
 
                 # Only create and log comparison grid on specified epochs
                 if self.current_epoch % self.plot_every_n_epochs == 0:
@@ -2589,9 +2603,6 @@ class IntegratedPlotter(Callback):
                 traceback.print_exc()
 
     def on_train_epoch_end(self, trainer, pl_module):
-        """Create visualizations and log metrics at the end of each epoch"""
-        import wandb
-
         if not self.train_predictions:
             print("No train predictions available for plotting")
             return

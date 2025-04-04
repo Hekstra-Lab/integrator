@@ -5,33 +5,6 @@ from integrator.model.decoders import MVNDecoder
 from integrator.layers import Linear
 
 
-class SignalIndicatorNetwork(nn.Module):
-    """
-    Network that predicts whether a sample contains actual signal or is just noise.
-    Outputs a Bernoulli distribution representing P(signal | data).
-    """
-
-    def __init__(self, dmodel):
-        super().__init__()
-        # A more expressive network for better feature extraction
-        self.fc = nn.Sequential(
-            nn.Linear(dmodel, 64),
-            nn.ReLU(),
-            nn.Linear(64, 32),
-            nn.ReLU(),
-            nn.Linear(32, 1),
-        )
-
-    def forward(self, representation):
-        # Output logits (unbounded), which are transformed to probabilities
-        # internally by the Bernoulli distribution
-        logits = self.fc(representation)
-
-        # Return a Bernoulli distribution
-        # The sigmoid is applied internally when computing probabilities
-        return torch.distributions.Bernoulli(logits=logits)
-
-
 class MVNIntegrator(BaseIntegrator):
     def __init__(
         self,
@@ -89,7 +62,6 @@ class MVNIntegrator(BaseIntegrator):
                 1, 0, 2
             )  # [batch_size x mc_samples x pixels]
 
-            # No sampling for profile - use deterministic values directly
             # Expand profile to match MC samples dimension for background
             batch_size = profile.shape[0]
             batch_profile = profile.unsqueeze(1).expand(-1, self.mc_samples, -1)
@@ -103,8 +75,6 @@ class MVNIntegrator(BaseIntegrator):
 
             # Calculate squared profile sum (for normalization)
             summed_squared_prf = torch.norm(batch_profile, p=2, dim=-1).pow(2)
-
-            # Calculate intensity by division
             division = weighted_sum_intensity_sum / (summed_squared_prf + 1e-10)
 
             # Mean and variance across MC samples
@@ -201,6 +171,8 @@ class MVNIntegrator(BaseIntegrator):
             outputs["qbg"],
             outputs["masks"],
         )
+
+        torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
 
         # Log metrics
         self.log("train_loss", loss.mean())
