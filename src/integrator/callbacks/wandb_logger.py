@@ -1706,6 +1706,8 @@ class MVNPlotter(Callback):
             "qbg": {},
             "rates": {},
             "qI": {},
+            "qI_var": {},
+            "qbg_var": {},
             "dials_I_prf_value": {},
         }
 
