@@ -17,7 +17,7 @@ class MVNProfile(torch.nn.Module):
         self.L_transform = FillScaleTriL(diag_transform=SoftplusTransform())
 
         # Create scale and mean prediction layers
-        self.scale_layer = Linear(self.dmodel, 6)
+        self.scale_layer = Linear(self.dmodel, 6, bias=True)
 
         # Initialize scale_layer to output an isotropic Gaussian by default
         with torch.no_grad():
