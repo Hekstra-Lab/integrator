@@ -42,126 +42,205 @@ class ResidualBlock(nn.Module):
 
 
 # %%
-class UNetDirichletConcentration(nn.Module):
-    def __init__(
-        self, in_channels=1, Z=3, H=21, W=21, concentration_scale=1.0, dropout_rate=0.0
-    ):
+
+
+class BasicResBlock3D(nn.Module):
+    """
+    A simple 3D residual block.
+    By default, it keeps the same spatial resolution unless `stride>1`.
+    """
+
+    def __init__(self, in_channels, out_channels, stride=1):
         super().__init__()
-        self.Z = Z
-        self.H = H
-        self.W = W
-        self.concentration_scale = concentration_scale
 
-        # Encoder path with residual blocks - single pooling for small Z dimension
-        self.enc1 = ResidualBlock(in_channels, 32)
-        self.attn1 = AttentionBlock(32)
-        # Use careful pooling that won't reduce Z dimension too much
-        self.pool1 = nn.MaxPool3d(kernel_size=(1, 2, 2), stride=(1, 2, 2))
-        self.dropout1 = nn.Dropout3d(dropout_rate)
+        # Convert 'stride' to a tuple if it's just an integer
+        if isinstance(stride, int):
+            stride = (stride, stride, stride)
 
-        self.enc2 = ResidualBlock(32, 64)
-        self.attn2 = AttentionBlock(64)
-
-        # Bottleneck with spatial and channel attention
-        self.bottleneck = ResidualBlock(64, 64)
-        self.bottleneck_attn = AttentionBlock(64)
-
-        # Decoder path
-        self.upconv1 = nn.ConvTranspose3d(
-            64, 32, kernel_size=(1, 2, 2), stride=(1, 2, 2)
+        self.conv1 = nn.Conv3d(
+            in_channels,
+            out_channels,
+            kernel_size=3,
+            stride=stride,
+            padding=1,  # "same" padding for 3D
+            bias=False,
         )
-        self.dec1 = ResidualBlock(64, 32)  # 64 from concat
-        self.dec1_attn = AttentionBlock(32)
+        self.bn1 = nn.BatchNorm3d(out_channels)
 
-        # Final layer with refined localization
-        self.final = nn.Sequential(
-            nn.Conv3d(32, 16, kernel_size=3, padding=1),
-            nn.BatchNorm3d(16),
+        self.conv2 = nn.Conv3d(
+            out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False
+        )
+        self.bn2 = nn.BatchNorm3d(out_channels)
+
+        self.relu = nn.ReLU(inplace=True)
+
+        # If in/out channels or stride differ, we project the identity
+        # to match shape for the residual addition.
+        self.downsample = None
+        if stride != (1, 1, 1) or in_channels != out_channels:
+            self.downsample = nn.Sequential(
+                nn.Conv3d(
+                    in_channels, out_channels, kernel_size=1, stride=stride, bias=False
+                ),
+                nn.BatchNorm3d(out_channels),
+            )
+
+    def forward(self, x):
+        identity = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+
+        if self.downsample is not None:
+            identity = self.downsample(identity)
+
+        out += identity
+        out = self.relu(out)
+        return out
+
+
+class UNetDirichletConcentration(nn.Module):
+    """
+    A 3D ResNet-style encoder-decoder that:
+      - Keeps the depth dimension (Z=3) unchanged (stride=(1,2,2) in encoder).
+      - Uses interpolation to ensure exact output size matching.
+      - Ensures final shape == input shape (except for channel count).
+    """
+
+    def __init__(self, in_channels=1, out_channels=1, base_channels=16):
+        super().__init__()
+        self.base_channels = base_channels
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
+        # -----------------------
+        # Encoder
+        # -----------------------
+        # Stage 1: stride=1
+        self.enc1 = BasicResBlock3D(in_channels, base_channels, stride=(1, 1, 1))
+        # Downsample 1 in H,W only (stride=(1,2,2)):
+        self.enc2 = BasicResBlock3D(base_channels, base_channels * 2, stride=(1, 2, 2))
+
+        # Another block at this scale (stride=1)
+        self.enc3 = BasicResBlock3D(
+            base_channels * 2, base_channels * 2, stride=(1, 1, 1)
+        )
+        # Downsample 2 in H,W only:
+        self.enc4 = BasicResBlock3D(
+            base_channels * 2, base_channels * 4, stride=(1, 2, 2)
+        )
+
+        # Deeper features (stride=1)
+        self.enc5 = BasicResBlock3D(
+            base_channels * 4, base_channels * 4, stride=(1, 1, 1)
+        )
+
+        # -----------------------
+        # Decoder - Using interpolation instead of transposed convolutions
+        # -----------------------
+
+        # Upsampling block 1
+        self.up_conv1 = nn.Sequential(
+            nn.Upsample(scale_factor=(1, 2, 2), mode="nearest"),
+            nn.Conv3d(
+                base_channels * 4,
+                base_channels * 2,
+                kernel_size=3,
+                padding=1,
+                bias=False,
+            ),
+            nn.BatchNorm3d(base_channels * 2),
             nn.ReLU(inplace=True),
-            nn.Conv3d(16, 1, kernel_size=1),
+        )
+        self.dec1 = BasicResBlock3D(
+            base_channels * 2, base_channels * 2, stride=(1, 1, 1)
         )
 
-        self.softplus = nn.Softplus()
-
-        # Noise reduction branch - learns to identify and suppress noise
-        self.noise_filter = nn.Sequential(
-            nn.Conv3d(32, 16, kernel_size=1),
-            nn.BatchNorm3d(16),
+        # Upsampling block 2
+        self.up_conv2 = nn.Sequential(
+            nn.Upsample(scale_factor=(1, 2, 2), mode="nearest"),
+            nn.Conv3d(
+                base_channels * 2, base_channels, kernel_size=3, padding=1, bias=False
+            ),
+            nn.BatchNorm3d(base_channels),
             nn.ReLU(inplace=True),
-            nn.Conv3d(16, 1, kernel_size=1),
-            nn.Sigmoid(),  # Output is a noise suppression mask
         )
+        self.dec2 = BasicResBlock3D(base_channels, base_channels, stride=(1, 1, 1))
 
-    def reshape_input(self, x, mask=None):
-        # Handle the flattened input format
-        if x.dim() == 2:  # [batch_size, Z*H*W]
-            counts = x.view(-1, self.Z, self.H, self.W)
-        else:
-            counts = x.view(-1, self.Z, self.H, self.W)
-
-        counts = counts.unsqueeze(1)  # Add channel dim: [batch_size, 1, Z, H, W]
-
-        if mask is not None:
-            if mask.dim() == 2:
-                mask = mask.view(-1, self.Z, self.H, self.W)
-            mask = mask.unsqueeze(1)  # Add channel dim
-            counts = counts * mask
-
-        return counts
+        # Final projection to out_channels
+        self.final_conv = nn.Conv3d(
+            in_channels=base_channels,
+            out_channels=out_channels,
+            kernel_size=1,
+            stride=1,
+            padding=0,
+            bias=False,
+        )
 
     def forward(self, x, mask=None):
-        # Reshape input if needed
-        if x.dim() < 5:  # If not already [batch, channel, Z, H, W]
-            x = self.reshape_input(x, mask)
+        """
+        Input: [B, in_channels, Z=3, H=21, W=21]
+        Output: [B, out_channels, 3, 21, 21]
+        """
+        # Store original input size for final resize
+        x = x[:, :, -1].view(-1, 1, 3, 21, 21)
+        input_shape = x.shape
 
-        # Store original input dimensions
-        input_shape = x.shape[2:]
+        # 1) Encoder
+        x1 = self.enc1(x)  # [B, base_channels, 3, 21, 21]
+        x2 = self.enc2(x1)  # [B, base_channels*2, 3, 10/11, 10/11]
+        x3 = self.enc3(x2)  # same shape
+        x4 = self.enc4(x3)  # [B, base_channels*4, 3, 5/6, 5/6]
+        x5 = self.enc5(x4)  # same shape
 
-        # Encoder path with attention and residual connections
-        e1 = self.enc1(x)
-        e1_attn = self.attn1(e1)
-        e1_pool = self.pool1(e1_attn)  # Only pools H and W dimensions
-        e1_pool = self.dropout1(e1_pool)
+        # 2) Decoder with interpolation-based upsampling
+        # First upsampling
+        x = self.up_conv1(x5)
+        x = self.dec1(x)
 
-        e2 = self.enc2(e1_pool)
-        e2_attn = self.attn2(e2)
+        # Second upsampling
+        x = self.up_conv2(x)
+        x = self.dec2(x)
 
-        # Bottleneck with attention
-        b = self.bottleneck(e2_attn)
-        b_attn = self.bottleneck_attn(b)
+        # Final projection
+        x = self.final_conv(x)
 
-        # Decoder path with skip connections
-        d1 = self.upconv1(b_attn)
-
-        # Handle any dimension mismatch for the skip connection
-        if d1.shape[2:] != e1_attn.shape[2:]:
-            d1 = F.interpolate(
-                d1, size=e1_attn.shape[2:], mode="trilinear", align_corners=False
+        # Final resize to guarantee exact match with input dimensions
+        if x.shape[2:] != input_shape[2:]:
+            x = F.interpolate(
+                x, size=input_shape[2:], mode="trilinear", align_corners=False
             )
 
-        d1 = torch.cat([d1, e1_attn], dim=1)
-        d1 = self.dec1(d1)
-        d1_attn = self.dec1_attn(d1)
+        return x.view(-1, 3 * 21 * 21)
 
-        # Create noise suppression mask
-        noise_mask = self.noise_filter(d1_attn)
 
-        # Final layer to generate concentration parameters
-        alphas_raw = self.final(d1_attn)
+# Test the fixed model
+def test_model():
+    model = UNetDirichletConcentration(in_channels=1, out_channels=1, base_channels=8)
+    x = torch.randn(10, 1323, 7)
+    out = model(x)
+    return out.shape == x.shape
 
-        # Apply the noise suppression mask
-        alphas_raw = alphas_raw * noise_mask
 
-        # Ensure output matches input dimensions
-        if alphas_raw.shape[2:] != input_shape:
-            alphas_raw = F.interpolate(
-                alphas_raw, size=input_shape, mode="trilinear", align_corners=False
-            )
+# x = x.view(-1, 1, 3, 21, 21)
+# x1 = model.enc1(x)
+# x2 = model.enc2(x1)
+# x3 = model.enc3(x2)
+# x4 = model.enc4(x3)
+# x5 = model.enc5(x4)
 
-        # Ensure positive concentration parameters with higher minimum value
-        alphas = self.softplus(alphas_raw.view(x.shape[0], -1)) + 1e-4
+# x = model.up_conv1(x5)
+# x = model.dec1(x)
 
-        # Apply concentration scale (higher values = sharper distributions)
-        alphas = alphas * self.concentration_scale
+# x = model.up_conv2(x)
 
-        return alphas
+# x = model.dec2(x)
+
+# x = model.final_conv(x)
+
+
+# x.shape[2:]

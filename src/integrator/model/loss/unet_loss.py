@@ -260,14 +260,14 @@ class UnetLoss(torch.nn.Module):
         # Default case: something unexpected, return broadcasted tensor
         return tensor.expand(batch_size).to(device)
 
-    def forward(self, rate, counts, q_p, q_bg, dead_pixel_mask):
+    def forward(self, rate, counts, q_p, q_bg, masks):
         # Get device and batch size
         device = rate.device
         batch_size = rate.shape[0]
 
         # Ensure inputs are on the correct device
         counts = counts.to(device)
-        dead_pixel_mask = dead_pixel_mask.to(device)
+        masks = masks.to(device)
 
         # Create distributions on the correct device
         p_bg = self.get_prior(self.p_bg_name, "p_bg_", device)
@@ -295,8 +295,10 @@ class UnetLoss(torch.nn.Module):
             profile_shape = (-1,) + self.prior_shape
 
         ll_mean = (
-            torch.distributions.Poisson(rate)
-            .log_prob(counts.unsqueeze(1))
+            (
+                torch.distributions.Poisson(rate).log_prob(counts.unsqueeze(1))
+                * masks.unsqueeze(1)
+            )
             .mean(1)
             .mean(1)
         )
