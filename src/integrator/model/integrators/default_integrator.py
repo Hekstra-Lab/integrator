@@ -2,9 +2,8 @@ import torch
 import torch.nn as nn
 from integrator.model.integrators import BaseIntegrator
 from integrator.model.loss import Loss
-from integrator.model.decoders import Decoder, BernoulliDecoder
+from integrator.model.decoders import Decoder
 from integrator.layers import Linear
-from integrator.model.loss import BernoulliLoss
 from integrator.model.profiles import DirichletProfile
 import numpy as np
 
@@ -128,7 +127,9 @@ class DefaultIntegrator(BaseIntegrator):
             batch_bg_samples = batch_bg_samples.transpose(0, 1)
 
             batch_profile_samples = qp.rsample([self.mc_samples])
+
             batch_profile_samples = batch_profile_samples.transpose(0, 1)
+
             batch_profile_samples = batch_profile_samples * dead_pixel_mask.unsqueeze(1)
 
             weighted_sum_intensity = (
@@ -136,7 +137,7 @@ class DefaultIntegrator(BaseIntegrator):
             ) * batch_profile_samples
             weighted_sum_intensity_sum = weighted_sum_intensity.sum(-1)
 
-            summed_squared_prf = torch.sum(batch_profile_samples**2, dim=-1)
+            summed_squared_prf = torch.sum(batch_profile_samples.pow(2), dim=-1)
 
             division = weighted_sum_intensity_sum / summed_squared_prf
             weighted_sum_mean = division.mean(-1)
@@ -147,6 +148,8 @@ class DefaultIntegrator(BaseIntegrator):
 
             N_used = profile_masks.sum(-1).float()
             masked_counts = batch_counts * profile_masks
+
+            # %%
             thresholded_intensity = (
                 masked_counts - batch_bg_samples * profile_masks
             ).sum(-1)

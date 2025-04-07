@@ -1,6 +1,7 @@
 from integrator.model.distribution import BaseDistribution
 from integrator.layers import Linear, Constraint
 from torch.distributions import LogNormal
+import torch
 
 
 class LogNormalDistribution(BaseDistribution):
@@ -10,9 +11,7 @@ class LogNormalDistribution(BaseDistribution):
         constraint=Constraint(),
         out_features=2,
     ):
-        super().__init__(
-            q=LogNormal,
-        )
+        super().__init__(q=LogNormal)
         self.fc = Linear(
             in_features=dmodel,
             out_features=out_features,

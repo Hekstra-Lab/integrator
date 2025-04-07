@@ -76,13 +76,11 @@ class DevIntegrator(BaseIntegrator):
 
             division = weighted_sum_intensity_sum / summed_squared_prf
 
-            weighted_sum_intensity_mean = division.mean(-1)
+            weighted_sum_mean = division.mean(-1)
 
-            centered_w_ = (
-                weighted_sum_intensity_sum - weighted_sum_intensity_mean.unsqueeze(-1)
-            )
+            centered_w_ = weighted_sum_intensity_sum - weighted_sum_mean.unsqueeze(-1)
 
-            weighted_sum_intensity_var = division.var(-1)
+            weighted_sum_var = division.var(-1)
 
             profile_masks = batch_profile_samples > self.profile_threshold
 
@@ -107,8 +105,8 @@ class DevIntegrator(BaseIntegrator):
             intensities = {
                 "thresholded_mean": thresholded_mean,
                 "thresholded_var": thresholded_var,
-                "weighted_sum_intensity_mean": weighted_sum_intensity_mean,
-                "weighted_sum_intensity_var": weighted_sum_intensity_var,
+                "weighted_sum_mean": weighted_sum_mean,
+                "weighted_sum_var": weighted_sum_var,
             }
 
             return intensities
@@ -151,8 +149,8 @@ class DevIntegrator(BaseIntegrator):
             "dials_I_prf_value": dials[:, 2],
             "dials_I_prf_var": dials[:, 3],
             "refl_ids": dials[:, 4],
-            "weighted_sum_mean": intensities["weighted_sum_intensity_mean"],
-            "weighted_sum_var": intensities["weighted_sum_intensity_var"],
+            "weighted_sum_mean": intensities["weighted_sum_mean"],
+            "weighted_sum_var": intensities["weighted_sum_var"],
             "thresholded_mean": intensities["thresholded_mean"],
             "thresholded_var": intensities[
                 "thresholded_var"

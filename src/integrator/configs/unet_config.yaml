@@ -1,0 +1,97 @@
+global:
+  dmodel: &dmodel 64
+  mc_samples: &mc_samples 100
+
+
+integrator:
+  name: unet_integrator
+  learning_rate: 0.001
+  mc_samples: 200
+  profile_threshold: 0.01
+  load_checkpoint: null
+
+components:
+  image_encoder:
+    name: cnn_3d
+    params:
+      Z: 3
+      H: 21
+      W: 21
+      conv1_out_channel: 64
+
+  metadata_encoder:
+    name: mlp_metadata_encoder
+    params:
+      depth: 10
+      dmodel: *dmodel
+      feature_dim: 7
+      dropout: null
+
+  profile:
+    name: dirichlet
+    params:
+      dmodel: 64
+
+  decoder:
+    name: unet_decoder
+    params:
+      mc_samples: 100
+
+  q_bg:
+    name: gamma
+    params:
+      dmodel: 64
+
+
+  loss:
+    name: unet_loss
+    params:
+      p_bg_name: gamma
+      p_bg_params:
+        concentration: 1.0
+        rate: 1.0
+
+      p_p_name: dirichlet
+      p_p_params: null
+
+      p_p_scale: 0.0001
+      p_bg_scale: 0.0001
+
+
+data_loader:
+  name: default
+  params:
+    data_dir: "/Users/luis/integratorv3/integrator/data/hewl_816/"
+    batch_size: 10
+    val_split: 0.3
+    test_split: 0.0
+    num_workers: 0
+    include_test: false
+    subset_size: 100
+    cutoff: null
+    shoebox_features: true
+    shoebox_file_names:
+      shoeboxes: "weak_standardized_shoeboxes.pt"
+      counts: "weak_raw_counts.pt"
+      metadata: "weak_metadata.pt"
+      masks: "weak_masks.pt"
+      shoebox_features: "weak_shoebox_features.pt"
+
+trainer:
+  params:
+    max_epochs: 200
+    accelerator: auto
+    devices: 1
+    logger: true
+    precision: "32"
+    check_val_every_n_epoch: 2
+    log_every_n_steps: 1
+    deterministic: false
+    callbacks:
+      pred_writer:
+        output_dir: null
+        write_interval: epoch
+    enable_checkpointing: true
+
+output:
+  refl_file: "/Users/luis/integratorv3/integrator/data/hewl_816/reflections_.refl"

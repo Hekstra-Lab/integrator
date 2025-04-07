@@ -16,19 +16,23 @@ REGISTRY = {
         "mlp_image_encoder": MLPImageEncoder,  # done
         "3d_cnn": CNN_3d,  # shoebox encoder
         "dev_encoder": DevEncoder,
+        "unet_dirichlet_concentration": UNetDirichletConcentration,
     },
     "decoder": {
         "default_decoder": Decoder,
         "mvn_decoder": MVNDecoder,
+        "unet_decoder": UnetDecoder,
     },
     "profile": {
         "dirichlet": DirichletProfile,
         "beta": BetaProfile,
         "mvn": MVNProfile,
+        "unet_dirichlet": UnetDirichletProfile,
     },
     "loss": {
         "elbo": Loss,
         "mvn_loss": MVNLoss,
+        "unet_loss": UnetLoss,
     },
     "integrator": {
         "default_integrator": DefaultIntegrator,

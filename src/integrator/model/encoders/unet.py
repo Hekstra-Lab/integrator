@@ -135,6 +135,7 @@ class ResidualBlock(nn.Module):
         return self.relu(out)
 
 
+# %%
 class UNetDirichletConcentration(nn.Module):
     def __init__(
         self, in_channels=1, Z=3, H=21, W=21, concentration_scale=1.0, dropout_rate=0.5

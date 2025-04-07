@@ -93,6 +93,8 @@ class MVNProfile(torch.nn.Module):
 
 
 if __name__ == "__main__":
+    import matplotlib.pyplot as plt
+
     profile_model = MVNProfile(dmodel=64, image_shape=(3, 21, 21))
 
     # Create a batch of representations (assuming 10 sample with 64-dimensional representation)
@@ -102,3 +104,6 @@ if __name__ == "__main__":
     # The output should have shape [1, 3*21*21] = [1, 1323]
 
     expanded = profile.unsqueeze_(1).expand(-1, 100, -1)
+
+    plt.imshow(profile[0].detach().reshape(3, 21, 21)[1])
+    plt.show()
