@@ -8,8 +8,8 @@ def create_center_focused_dirichlet_prior(
     shape=(3, 21, 21),
     base_alpha=0.001,  # outer region
     center_alpha=50.0,  # high alpha at the center => center gets more mass
-    decay_factor=0.1,
-    peak_percentage=0.025,
+    decay_factor=1,
+    peak_percentage=0.01,
 ):
     channels, height, width = shape
     alpha_3d = np.ones(shape) * base_alpha
@@ -57,8 +57,8 @@ class UnetLoss(torch.nn.Module):
         prior_shape=(3, 21, 21),
         prior_base_alpha=0.001,
         prior_center_alpha=50.0,
-        prior_decay_factor=0.15,
-        prior_peak_percentage=0.025,
+        prior_decay_factor=1,
+        prior_peak_percentage=0.01,
     ):
         super().__init__()
 
