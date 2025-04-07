@@ -46,6 +46,7 @@ class UNetIntegrator(BaseIntegrator):
         mc_samples=100,
         learning_rate=1e-3,
         profile_threshold=0.001,
+        q_I=None,
     ):
         super().__init__()
         # Save hyperparameters
@@ -68,11 +69,16 @@ class UNetIntegrator(BaseIntegrator):
         self.profile_model = profile_model
 
         self.background_distribution = q_bg
+
+        if q_I is not None:
+            self.intensity_distribution = q_I
+        else:
+            self.intensity_distribution = None
+
         self.decoder = decoder
 
         self.loss_fn = loss  # Additional layers
         self.fc_representation = Linear(1323, dmodel)
-        # self.norm = nn.LayerNorm(dmodel)
 
         # Enable automatic optimization
         self.automatic_optimization = True
@@ -136,8 +142,14 @@ class UNetIntegrator(BaseIntegrator):
         # Get distributions from confidence model
         q_bg = self.background_distribution(representation)
 
+        if self.intensity_distribution is not None:
+            q_I = self.intensity_distribution(representation)
+            rate, intensity_mean, intensity_var = self.decoder(q_bg, qp, q_I, masks)
+        else:
+            q_I = None
+            rate, intensity_mean, intensity_var = self.decoder(q_bg, qp, counts, masks)
+
         # Calculate rate using the decoder
-        rate, intensity_mean, intensity_var = self.decoder(q_bg, qp, counts, masks)
 
         return {
             "rates": rate,
@@ -145,6 +157,7 @@ class UNetIntegrator(BaseIntegrator):
             "masks": masks,
             "qbg": q_bg,
             "qp": qp,
+            "qI": q_I,
             "intensity_mean": intensity_mean,
             "intensity_var": intensity_var,
             "dials_I_sum_value": dials[:, 0],
@@ -175,6 +188,7 @@ class UNetIntegrator(BaseIntegrator):
             outputs["qp"],
             outputs["qbg"],
             outputs["masks"],
+            q_I=outputs["qI"],
         )
 
         # Clip gradients for stability
@@ -208,6 +222,7 @@ class UNetIntegrator(BaseIntegrator):
             outputs["qp"],
             outputs["qbg"],
             outputs["masks"],
+            q_I=outputs["qI"],
         )
 
         # Log metrics

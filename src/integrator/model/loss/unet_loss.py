@@ -59,6 +59,9 @@ class UnetLoss(torch.nn.Module):
         prior_center_alpha=50.0,
         prior_decay_factor=1,
         prior_peak_percentage=0.01,
+        p_I_name=None,
+        p_I_params=None,
+        p_I_scale=0.0001,
     ):
         super().__init__()
 
@@ -66,6 +69,7 @@ class UnetLoss(torch.nn.Module):
         self.register_buffer("beta", torch.tensor(beta))
         self.register_buffer("p_bg_scale", torch.tensor(p_bg_scale))
         self.register_buffer("p_p_scale", torch.tensor(p_p_scale))
+        self.register_buffer("p_I_scale", torch.tensor(p_I_scale))
 
         # Store distribution names and params
         self.p_bg_name = p_bg_name
@@ -75,6 +79,12 @@ class UnetLoss(torch.nn.Module):
 
         # Register parameters for I and bg distributions
         self._register_distribution_params(p_bg_name, p_bg_params, prefix="p_bg_")
+
+        if p_I_name is not None:
+            self.p_I_name = p_I_name
+            self._register_distribution_params(p_I_name, p_I_params, prefix="p_I_")
+        else:
+            pass
 
         # Number of elements in the profile
         self.profile_size = prior_shape[0] * prior_shape[1] * prior_shape[2]
@@ -214,7 +224,7 @@ class UnetLoss(torch.nn.Module):
         # Default case: something unexpected, return broadcasted tensor
         return tensor.expand(batch_size).to(device)
 
-    def forward(self, rate, counts, q_p, q_bg, masks):
+    def forward(self, rate, counts, q_p, q_bg, masks, q_I=None):
         # Get device and batch size
         device = rate.device
         batch_size = rate.shape[0]
@@ -227,6 +237,11 @@ class UnetLoss(torch.nn.Module):
         p_bg = self.get_prior(self.p_bg_name, "p_bg_", device)
         p_p = self.get_prior(self.p_p_name, "p_p_", device)
 
+        if q_I is not None:
+            p_I = self.get_prior(self.p_I_name, "p_I_", device)
+        else:
+            p_I = None
+
         # Calculate KL terms
         kl_terms = torch.zeros(batch_size, device=device)
         kl_p = torch.tensor(0.0, device=device)  # Default value
@@ -236,6 +251,10 @@ class UnetLoss(torch.nn.Module):
             kl_p = self.compute_kl(q_p, p_p)
             # kl_p = self._ensure_batch_dim(kl_p, batch_size, device)
             kl_terms += kl_p * self.p_p_scale
+
+        if p_I is not None:
+            kl_I = self.compute_kl(q_I, p_I)
+            kl_terms += kl_I * self.p_I_scale
 
         # Calculate background and intensity KL divergence
         kl_bg = self.compute_kl(q_bg, p_bg)
@@ -271,6 +290,7 @@ class UnetLoss(torch.nn.Module):
             kl_terms.mean(),
             kl_bg.mean(),
             kl_p.mean() if p_p is not None else torch.tensor(0.0, device=device),
+            # kl_I.mean() if p_I is not None else torch.tensor(0.0, device=device),
         )
 
 

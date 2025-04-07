@@ -22,6 +22,7 @@ REGISTRY = {
         "default_decoder": Decoder,
         "mvn_decoder": MVNDecoder,
         "unet_decoder": UnetDecoder,
+        "unet_decoder2": UnetDecoder2,
     },
     "profile": {
         "dirichlet": DirichletProfile,

@@ -46,6 +46,41 @@ class UnetDecoder(BaseDecoder):
         return rate, intensity_mean, intensity_variance
 
 
+class UnetDecoder2(BaseDecoder):
+    def __init__(
+        self,
+        mc_samples=100,
+        eps=1e-6,
+        constraint=Constraint(),
+    ):
+        super().__init__()
+        self.mc_samples = mc_samples
+        self.relu = nn.ReLU(inplace=True)
+        self.constraint = constraint
+        self.eps = eps
+
+    def forward(self, q_bg, q_p, q_I, mask):
+        # Sample from variational distributions
+        # zbg = q_bg.rsample([100, 1323]).permute(2, 0, 1)
+        zbg = (
+            q_bg.rsample([self.mc_samples])
+            .unsqueeze(-1)
+            .expand(self.mc_samples, mask.shape[0], mask.shape[1])
+        ).permute(
+            1, 0, 2
+        )  # [batch_size, mc_samples, pixels]
+        zI = (
+            q_I.rsample([self.mc_samples])
+            .unsqueeze(-1)
+            .expand(self.mc_samples, mask.shape[0], mask.shape[1])
+        ).permute(1, 0, 2)
+        zp = q_p.rsample([self.mc_samples]).permute(1, 0, 2)
+
+        rate = (zI * zp + zbg) * mask.unsqueeze(1) + self.eps
+
+        return rate, q_I.mean, q_I.variance
+
+
 if __name__ == "__main__":
     # Example usage
     relu = torch.nn.ReLU(inplace=True)

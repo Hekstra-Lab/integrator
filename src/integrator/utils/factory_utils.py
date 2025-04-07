@@ -161,6 +161,7 @@ def create_integrator(config):
             decoder,
             background_distribution,
         ) = create_components(config)
+        intensity_distribution = None
 
     if integrator_name == "default_integrator":
         loss = create_module(
@@ -226,6 +227,7 @@ def create_integrator(config):
             mc_samples=config["integrator"]["mc_samples"],
             learning_rate=config["integrator"]["learning_rate"],
             profile_threshold=config["integrator"]["profile_threshold"],
+            q_I=intensity_distribution,
         )
         return integrator
 
@@ -333,6 +335,7 @@ def create_integrator_from_checkpoint(config, checkpoint_path):
             decoder,
             background_distribution,
         ) = create_components(config)
+        intensity_distribution = None
 
     if integrator_name == "default_integrator":
         loss = create_loss(config)
@@ -415,6 +418,7 @@ def create_integrator_from_checkpoint(config, checkpoint_path):
             mc_samples=config["integrator"]["mc_samples"],
             learning_rate=config["integrator"]["learning_rate"],
             profile_threshold=config["integrator"]["profile_threshold"],
+            q_I=intensity_distribution,
         )
         return integrator
 

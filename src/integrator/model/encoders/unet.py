@@ -109,7 +109,7 @@ class UNetDirichletConcentration(nn.Module):
       - Ensures final shape == input shape (except for channel count).
     """
 
-    def __init__(self, in_channels=1, out_channels=1, base_channels=16):
+    def __init__(self, in_channels=1, out_channels=1, base_channels=16, eps=1e-6):
         super().__init__()
         self.base_channels = base_channels
         self.in_channels = in_channels
@@ -178,6 +178,7 @@ class UNetDirichletConcentration(nn.Module):
             padding=0,
             bias=False,
         )
+        self.eps = eps
 
     def forward(self, x, mask=None):
         """
@@ -185,7 +186,11 @@ class UNetDirichletConcentration(nn.Module):
         Output: [B, out_channels, 3, 21, 21]
         """
         # Store original input size for final resize
-        x = x[:, :, -1].view(-1, 1, 3, 21, 21)
+
+        if mask is not None:
+            x = (x[:, :, -1] * mask).view(-1, 1, 3, 21, 21)
+        else:
+            x = x[:, :, -1].view(-1, 1, 3, 21, 21)
         input_shape = x.shape
 
         # 1) Encoder
@@ -213,7 +218,12 @@ class UNetDirichletConcentration(nn.Module):
                 x, size=input_shape[2:], mode="trilinear", align_corners=False
             )
 
-        return x.view(-1, 3 * 21 * 21)
+        if mask is not None:
+            x = x.view(-1, 3 * 21 * 21) * mask + self.eps
+        else:
+            x = x.view(-1, 3 * 21 * 21)
+
+        return x
 
 
 # Test the fixed model
