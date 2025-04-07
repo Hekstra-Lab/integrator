@@ -42,7 +42,8 @@ class UnetDirichletProfile(torch.nn.Module):
     # def forward(self, representation):
     def forward(self, alphas):
         # alphas = self.alpha_layer(representation)
-        alphas = F.softplus(alphas) + self.eps
+        # alphas = F.softplus(alphas) + self.eps
+        alphas = torch.exp(alphas) + self.eps
         q_p = torch.distributions.Dirichlet(alphas)
 
         return q_p

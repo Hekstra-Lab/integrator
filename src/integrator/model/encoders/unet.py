@@ -186,7 +186,6 @@ class UNetDirichletConcentration(nn.Module):
         Output: [B, out_channels, 3, 21, 21]
         """
         # Store original input size for final resize
-
         if mask is not None:
             x = (x[:, :, -1] * mask).view(-1, 1, 3, 21, 21)
         else:
@@ -200,13 +199,29 @@ class UNetDirichletConcentration(nn.Module):
         x4 = self.enc4(x3)  # [B, base_channels*4, 3, 5/6, 5/6]
         x5 = self.enc5(x4)  # same shape
 
-        # 2) Decoder with interpolation-based upsampling
-        # First upsampling
+        # 2) Decoder with interpolation-based upsampling and skip connections
+        # First upsampling + skip connection from encoder
         x = self.up_conv1(x5)
+        # Add skip connection from x3 (matching feature maps)
+        if x.shape[2:] != x3.shape[2:]:
+            x3_resized = F.interpolate(
+                x3, size=x.shape[2:], mode="trilinear", align_corners=False
+            )
+        else:
+            x3_resized = x3
+        x = x + x3_resized  # Skip connection
         x = self.dec1(x)
 
-        # Second upsampling
+        # Second upsampling + skip connection from encoder
         x = self.up_conv2(x)
+        # Add skip connection from x1 (matching feature maps)
+        if x.shape[2:] != x1.shape[2:]:
+            x1_resized = F.interpolate(
+                x1, size=x.shape[2:], mode="trilinear", align_corners=False
+            )
+        else:
+            x1_resized = x1
+        x = x + x1_resized  # Skip connection
         x = self.dec2(x)
 
         # Final projection

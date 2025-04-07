@@ -271,10 +271,8 @@ class UnetLoss(torch.nn.Module):
             (
                 torch.distributions.Poisson(rate).log_prob(counts.unsqueeze(1))
                 * masks.unsqueeze(1)
-            )
-            .mean(1)
-            .mean(1)
-        )
+            ).mean(1)
+        ).sum(1) / masks.sum(1)
 
         # Calculate negative log likelihood
         neg_ll_batch = (-ll_mean).sum()
