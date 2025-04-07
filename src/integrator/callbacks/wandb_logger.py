@@ -1172,7 +1172,7 @@ class UNetPlotter(Callback):
                     else:
                         self.val_predictions[key] = base_output[key].detach().cpu()
                 elif key in base_output:
-                    self.val_predictions[key] = intensities[key].detach().cpu()
+                    self.val_predictions[key] = base_output[key].detach().cpu()
 
             # Clean up
             del base_output

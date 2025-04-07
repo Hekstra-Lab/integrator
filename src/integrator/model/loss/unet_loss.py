@@ -89,9 +89,6 @@ class UnetLoss(torch.nn.Module):
         p_bg_scale=0.0001,
         # Intensity prior
         # Optional regularization
-        simpson_scale=None,
-        tv_loss_scale=None,
-        entropy_scale=None,
         # Center-focused prior parameters (for Dirichlet)
         use_center_focused_prior=True,
         prior_shape=(3, 21, 21),
@@ -147,9 +144,6 @@ class UnetLoss(torch.nn.Module):
             self._register_distribution_params(p_p_name, p_p_params, prefix="p_p_")
 
         # Optional regularization parameters
-        self.simpson_scale = simpson_scale
-        self.tv_loss_scale = tv_loss_scale
-        self.entropy_scale = entropy_scale
 
         # Store shape for profile reshaping
         self.prior_shape = prior_shape
@@ -217,37 +211,6 @@ class UnetLoss(torch.nn.Module):
 
         # Default case: return None or provided default
         return default_return
-
-    def inverse_simpson_regularization(self, p, eps=1e-6):
-        batch_size = p.shape[0]
-        p_flat = p.view(batch_size, -1)
-        simpson = torch.sum(p_flat**2, dim=1)
-        inv_simpson = 1.0 / (simpson + eps)
-        return inv_simpson
-
-    def concentration_entropy_loss(self, profile_mean):
-        """Calculate entropy of profile - lower entropy means more concentrated"""
-        # Reshape if needed
-        if profile_mean.dim() == 4:  # [batch, D, H, W]
-            profile_mean = profile_mean.view(profile_mean.size(0), -1)
-
-        # Add small epsilon to avoid log(0)
-        eps = 1e-10
-        entropy = -(profile_mean * torch.log(profile_mean + eps)).sum(dim=1)
-        return entropy
-
-    def total_variation_3d(self, volume):
-        batch_size = volume.shape[0]
-        batch_tv_loss = torch.zeros(batch_size, device=volume.device)
-
-        for b in range(batch_size):
-            single_vol = volume[b : b + 1]
-            diff_depth = torch.abs(single_vol[:, 1:, :, :] - single_vol[:, :-1, :, :])
-            diff_height = torch.abs(single_vol[:, :, 1:, :] - single_vol[:, :, :-1, :])
-            diff_width = torch.abs(single_vol[:, :, :, 1:] - single_vol[:, :, :, :-1])
-            batch_tv_loss[b] = diff_depth.sum() + diff_height.sum() + diff_width.sum()
-
-        return batch_tv_loss
 
     def compute_kl(self, q_dist, p_dist):
         """Compute KL divergence between distributions, with fallback sampling if needed."""
@@ -326,31 +289,10 @@ class UnetLoss(torch.nn.Module):
         kl_terms += kl_bg * self.p_bg_scale
 
         # Initialize regularization terms
-        profile_simpson_batch = torch.zeros(batch_size, device=device)
-        tv_loss_batch = torch.zeros(batch_size, device=device)
-        entropy_loss_batch = torch.zeros(batch_size, device=device)
-
         # Apply regularization if profile exists and has mean attribute
         if q_p is not None and hasattr(q_p, "mean"):
             # Reshape profile if needed
             profile_shape = (-1,) + self.prior_shape
-
-            if self.simpson_scale is not None:
-                profile_reshaped = q_p.mean.reshape(profile_shape)
-                profile_simpson_batch = (
-                    self.inverse_simpson_regularization(profile_reshaped)
-                    * self.simpson_scale
-                )
-
-            if self.tv_loss_scale is not None:
-                profile_reshaped = q_p.mean.reshape(profile_shape)
-                tv_loss_batch = (
-                    self.total_variation_3d(profile_reshaped) * self.tv_loss_scale
-                )
-
-            if self.entropy_scale is not None:
-                entropy_loss = self.concentration_entropy_loss(q_p.mean)
-                entropy_loss_batch = entropy_loss * self.entropy_scale
 
         ll_mean = (
             torch.distributions.Poisson(rate)
@@ -363,13 +305,7 @@ class UnetLoss(torch.nn.Module):
         neg_ll_batch = -ll_mean.sum()
 
         # Combine all loss terms
-        batch_loss = (
-            neg_ll_batch
-            + kl_terms
-            + tv_loss_batch
-            + profile_simpson_batch
-            + entropy_loss_batch
-        )
+        batch_loss = neg_ll_batch + kl_terms
 
         # Final scalar loss
         total_loss = batch_loss.mean()
@@ -381,7 +317,4 @@ class UnetLoss(torch.nn.Module):
             kl_terms.mean(),
             kl_bg.mean(),
             kl_p.mean() if p_p is not None else torch.tensor(0.0, device=device),
-            tv_loss_batch.mean(),
-            profile_simpson_batch.mean(),
-            entropy_loss_batch.mean(),
         )

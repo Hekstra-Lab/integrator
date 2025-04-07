@@ -315,14 +315,24 @@ def create_integrator(config):
 def create_integrator_from_checkpoint(config, checkpoint_path):
     integrator_name = config["integrator"]["name"]
     integrator_class = REGISTRY["integrator"][integrator_name]
-    (
-        image_encoder,
-        profile,
-        decoder,
-        background_distribution,
-        intensity_distribution,
-        # loss,
-    ) = create_components(config)
+
+    if "q_I" in config["components"]:
+        (
+            image_encoder,
+            profile,
+            decoder,
+            background_distribution,
+            intensity_distribution,
+            # loss,
+        ) = create_components(config)
+
+    else:
+        (
+            image_encoder,
+            profile,
+            decoder,
+            background_distribution,
+        ) = create_components(config)
 
     if integrator_name == "default_integrator":
         loss = create_loss(config)
