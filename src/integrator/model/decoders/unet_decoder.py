@@ -13,7 +13,7 @@ class UnetDecoder(BaseDecoder):
     ):
         super().__init__()
         self.mc_samples = mc_samples
-        # self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU(inplace=True)
         self.constraint = constraint
         self.eps = eps
 
@@ -33,13 +33,15 @@ class UnetDecoder(BaseDecoder):
         w = 1.0 / sigma_sq
 
         intensity = (
-            self.constraint(counts.unsqueeze(1) - zbg) * mask.unsqueeze(1) * zp * w
-        ).sum(-1) / ((zp.pow(2) * w).sum(-1) + self.eps)
+            self.relu(counts.unsqueeze(1) - zbg) * mask.unsqueeze(1) * zp * w
+        ).sum(-1) / ((zp.pow(2) * w * mask.unsqueeze(1)).sum(-1) + self.eps)
 
         intensity_mean = intensity.mean(1)
         intensity_variance = intensity.var(1)
 
-        rate = intensity_mean.unsqueeze(1).unsqueeze(1) * zp + zbg
+        rate = (intensity_mean.unsqueeze(1).unsqueeze(1) * zp + zbg) * mask.unsqueeze(
+            1
+        ) + self.eps
 
         return rate, intensity_mean, intensity_variance
 

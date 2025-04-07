@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 from integrator.model.integrators import BaseIntegrator
 from integrator.layers import Linear
 import torch.nn.functional as F

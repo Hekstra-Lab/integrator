@@ -174,7 +174,7 @@ class ResidualLayer(nn.Module):
         else:
             raise ValueError(f"Unsupported normalization type: {norm_type}")
 
-        self.relu = nn.LeakyReLU()
+        self.relu = nn.ReLU(inplace=True)
         self.dropout = nn.Dropout(dropout) if dropout else None
 
     def forward(self, x):

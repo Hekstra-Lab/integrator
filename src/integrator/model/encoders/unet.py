@@ -70,8 +70,7 @@ class BasicResBlock3D(nn.Module):
         )
         self.bn2 = nn.BatchNorm3d(out_channels)
 
-        # self.relu = nn.ReLU(inplace=True)
-        self.relu = nn.GELU()
+        self.relu = nn.ReLU(inplace=True)
 
         # If in/out channels or stride differ, we project the identity
         # to match shape for the residual addition.
@@ -153,8 +152,7 @@ class UNetDirichletConcentration(nn.Module):
                 bias=False,
             ),
             nn.BatchNorm3d(base_channels * 2),
-            # nn.ReLU(inplace=True),
-            nn.GELU(),
+            nn.ReLU(inplace=True),
         )
         self.dec1 = BasicResBlock3D(
             base_channels * 2, base_channels * 2, stride=(1, 1, 1)
@@ -167,8 +165,7 @@ class UNetDirichletConcentration(nn.Module):
                 base_channels * 2, base_channels, kernel_size=3, padding=1, bias=False
             ),
             nn.BatchNorm3d(base_channels),
-            # nn.ReLU(inplace=True),
-            nn.GELU(),
+            nn.ReLU(inplace=True),
         )
         self.dec2 = BasicResBlock3D(base_channels, base_channels, stride=(1, 1, 1))
 
@@ -224,6 +221,8 @@ def test_model():
     model = UNetDirichletConcentration(in_channels=1, out_channels=1, base_channels=8)
     x = torch.randn(10, 1323, 7)
     out = model(x)
+    print("Input shape:", x.shape)
+    print("Output shape:", out.shape)  # Should be [2, 1, 3, 21, 21]
     return out.shape == x.shape
 
 

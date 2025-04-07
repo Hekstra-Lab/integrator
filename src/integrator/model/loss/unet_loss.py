@@ -1,79 +1,45 @@
 import torch.nn as nn
 import numpy as np
 import torch
+import matplotlib.pyplot as plt
 
 
 def create_center_focused_dirichlet_prior(
     shape=(3, 21, 21),
-    base_alpha=5.0,
-    center_alpha=0.01,
-    decay_factor=0.5,
-    peak_percentage=0.05,
+    base_alpha=0.001,  # outer region
+    center_alpha=50.0,  # high alpha at the center => center gets more mass
+    decay_factor=0.1,
+    peak_percentage=0.025,
 ):
-    """
-    Create a Dirichlet prior concentration vector with lower values (higher concentration)
-    near the center of the image.
-
-    Parameters:
-    -----------
-    shape : tuple
-        Shape of the 3D image (channels, height, width)
-    base_alpha : float
-        Base concentration parameter value for most elements (higher = more uniform)
-    center_alpha : float
-        Minimum concentration value at the center (lower = more concentrated)
-    decay_factor : float
-        Controls how quickly the concentration values increase with distance from center
-    peak_percentage : float
-        Approximate percentage of elements that should have high concentration (low alpha)
-
-    Returns:
-    --------
-    alpha_vector : torch.Tensor
-        Flattened concentration vector for Dirichlet prior as a PyTorch tensor
-    """
     channels, height, width = shape
-    total_elements = channels * height * width
-
-    # Create a 3D array filled with the base alpha value
     alpha_3d = np.ones(shape) * base_alpha
 
-    # Calculate center coordinates
     center_c = channels // 2
     center_h = height // 2
     center_w = width // 2
 
-    # Calculate distance from center for each position
     for c in range(channels):
         for h in range(height):
             for w in range(width):
-                # Calculate normalized distance from center (0 to 1 scale)
+                # Normalized distance from center
                 dist_c = abs(c - center_c) / (channels / 2)
                 dist_h = abs(h - center_h) / (height / 2)
                 dist_w = abs(w - center_w) / (width / 2)
-
-                # Euclidean distance in normalized space
                 distance = np.sqrt(dist_c**2 + dist_h**2 + dist_w**2) / np.sqrt(3)
 
-                # Apply exponential increase based on distance
-                # For elements close to center: use low alpha (high concentration)
-                # For elements far from center: use high alpha (low concentration)
-                if (
-                    distance < peak_percentage * 5
-                ):  # Adjust this multiplier to control the size of high concentration region
+                if distance < peak_percentage * 5:
                     alpha_value = (
                         center_alpha
-                        + (base_alpha - center_alpha)
+                        - (center_alpha - base_alpha)
                         * (distance / (peak_percentage * 5)) ** decay_factor
                     )
                     alpha_3d[c, h, w] = alpha_value
 
-    # Flatten the 3D array to get the concentration vector and convert to torch tensor
     alpha_vector = torch.tensor(alpha_3d.flatten(), dtype=torch.float32)
-
     return alpha_vector
 
 
+# %%
 class UnetLoss(torch.nn.Module):
     def __init__(
         self,
@@ -89,10 +55,10 @@ class UnetLoss(torch.nn.Module):
         p_bg_scale=0.0001,
         use_center_focused_prior=True,
         prior_shape=(3, 21, 21),
-        prior_base_alpha=5.0,
-        prior_center_alpha=0.01,
-        prior_decay_factor=0.5,
-        prior_peak_percentage=0.05,
+        prior_base_alpha=0.001,
+        prior_center_alpha=50.0,
+        prior_decay_factor=0.15,
+        prior_peak_percentage=0.025,
     ):
         super().__init__()
 
@@ -210,35 +176,26 @@ class UnetLoss(torch.nn.Module):
         return default_return
 
     def compute_kl(self, q_dist, p_dist):
-        """Compute KL divergence between distributions, with fallback sampling if needed."""
+        """Compute KL divergence between distributions with more robust fallback."""
+
         if q_dist is None or p_dist is None:
-            # Return 0 if either distribution is missing
-            return torch.tensor(
-                0.0,
-                device=q_dist.loc.device
-                if hasattr(q_dist, "loc")
-                else torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-            )
+            return torch.tensor(0.0, device=self.eps.device)
 
         try:
+            # Try analytical KL first
             return torch.distributions.kl.kl_divergence(q_dist, p_dist)
         except NotImplementedError:
-            samples = q_dist.rsample([100])
+            # More stable sampling approach with more samples
+            num_samples = 1000  # Increase sample count for stability
+            samples = q_dist.rsample([num_samples])
             log_q = q_dist.log_prob(samples)
             log_p = p_dist.log_prob(samples)
             return (log_q - log_p).mean(dim=0)
         except Exception as e:
-            # If there's an error (e.g., device mismatch), return a small default value
-            default_device = (
-                q_dist.loc.device
-                if hasattr(q_dist, "loc")
-                else (
-                    samples.device
-                    if "samples" in locals()
-                    else torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                )
-            )
-            return torch.tensor(0.01, device=default_device)
+            # Log the error for debugging but don't silence it completely
+            print(f"Error in KL computation: {e}")
+            # Return a small value but consider raising a warning
+            return torch.tensor(0.0, device=self.eps.device)
 
     def _ensure_batch_dim(self, tensor, batch_size, device):
         """Ensure tensor has batch dimension, broadcasting if needed."""
@@ -277,12 +234,12 @@ class UnetLoss(torch.nn.Module):
         # Only calculate profile KL if we have both distributions
         if p_p is not None and q_p is not None:
             kl_p = self.compute_kl(q_p, p_p)
-            kl_p = self._ensure_batch_dim(kl_p, batch_size, device)
+            # kl_p = self._ensure_batch_dim(kl_p, batch_size, device)
             kl_terms += kl_p * self.p_p_scale
 
         # Calculate background and intensity KL divergence
         kl_bg = self.compute_kl(q_bg, p_bg)
-        kl_bg = self._ensure_batch_dim(kl_bg, batch_size, device)
+        # kl_bg = self._ensure_batch_dim(kl_bg, batch_size, device)
         kl_terms += kl_bg * self.p_bg_scale
 
         # Initialize regularization terms
@@ -315,3 +272,13 @@ class UnetLoss(torch.nn.Module):
             kl_bg.mean(),
             kl_p.mean() if p_p is not None else torch.tensor(0.0, device=device),
         )
+
+
+if __name__ == "__main__":
+    plt.imshow(
+        torch.distributions.dirichlet.Dirichlet(
+            create_center_focused_dirichlet_prior()
+        ).mean.reshape(3, 21, 21)[1]
+    )
+    plt.colorbar()
+    plt.show()
