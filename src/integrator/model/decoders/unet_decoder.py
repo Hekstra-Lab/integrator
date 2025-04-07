@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from integrator.model.decoders import BaseDecoder
+from integrator.layers import Constraint
 
 
 class UnetDecoder(BaseDecoder):
@@ -8,10 +9,12 @@ class UnetDecoder(BaseDecoder):
         self,
         mc_samples=100,
         eps=1e-6,
+        constraint=Constraint(),
     ):
         super().__init__()
         self.mc_samples = mc_samples
-        self.relu = nn.ReLU(inplace=True)
+        # self.relu = nn.ReLU(inplace=True)
+        self.constraint = constraint
         self.eps = eps
 
     def forward(self, q_bg, q_p, counts, mask):
@@ -30,7 +33,7 @@ class UnetDecoder(BaseDecoder):
         w = 1.0 / sigma_sq
 
         intensity = (
-            self.relu(counts.unsqueeze(1) - zbg) * mask.unsqueeze(1) * zp * w
+            self.constraint(counts.unsqueeze(1) - zbg) * mask.unsqueeze(1) * zp * w
         ).sum(-1) / ((zp.pow(2) * w).sum(-1) + self.eps)
 
         intensity_mean = intensity.mean(1)
@@ -47,7 +50,6 @@ if __name__ == "__main__":
     qbg = torch.distributions.gamma.Gamma(torch.ones(10), torch.ones(10))
     qp = torch.distributions.dirichlet.Dirichlet(torch.ones(10, 1323))
     counts = torch.rand(10, 1323)
-    eps = 1e-6
     # mask of randomly selected 0 or 1
     masks = torch.randint(0, 2, (10, 1323)).float()
 
@@ -65,7 +67,11 @@ if __name__ == "__main__":
     ) / ((zp.pow(2) * w).sum(-1) + eps)
 
     decoder = UnetDecoder()
-    rate, intensity_mean, intensity_variance = decoder(q_bg, q_p, counts)
+    rate, intensity_mean, intensity_variance = decoder(qbg, qp, counts, masks)
+
+    rate * masks.unsqueeze(1)
+
+    torch.distributions.Poisson(rate)
 
     print("Rate:", rate)
     print("Intensity Mean:", intensity_mean)

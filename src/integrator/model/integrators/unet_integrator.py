@@ -1,5 +1,4 @@
 import torch
-import torch.nn as nn
 from integrator.model.integrators import BaseIntegrator
 from integrator.layers import Linear
 import torch.nn.functional as F
@@ -178,7 +177,7 @@ class UNetIntegrator(BaseIntegrator):
         )
 
         # Clip gradients for stability
-        # torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
+        torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
 
         # Log metrics
         self.log("train_loss", loss.mean())

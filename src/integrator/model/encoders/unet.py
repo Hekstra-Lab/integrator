@@ -42,8 +42,6 @@ class ResidualBlock(nn.Module):
 
 
 # %%
-
-
 class BasicResBlock3D(nn.Module):
     """
     A simple 3D residual block.
@@ -72,7 +70,8 @@ class BasicResBlock3D(nn.Module):
         )
         self.bn2 = nn.BatchNorm3d(out_channels)
 
-        self.relu = nn.ReLU(inplace=True)
+        # self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.GELU()
 
         # If in/out channels or stride differ, we project the identity
         # to match shape for the residual addition.
@@ -154,7 +153,8 @@ class UNetDirichletConcentration(nn.Module):
                 bias=False,
             ),
             nn.BatchNorm3d(base_channels * 2),
-            nn.ReLU(inplace=True),
+            # nn.ReLU(inplace=True),
+            nn.GELU(),
         )
         self.dec1 = BasicResBlock3D(
             base_channels * 2, base_channels * 2, stride=(1, 1, 1)
@@ -167,7 +167,8 @@ class UNetDirichletConcentration(nn.Module):
                 base_channels * 2, base_channels, kernel_size=3, padding=1, bias=False
             ),
             nn.BatchNorm3d(base_channels),
-            nn.ReLU(inplace=True),
+            # nn.ReLU(inplace=True),
+            nn.GELU(),
         )
         self.dec2 = BasicResBlock3D(base_channels, base_channels, stride=(1, 1, 1))
 

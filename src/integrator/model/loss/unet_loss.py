@@ -87,9 +87,6 @@ class UnetLoss(torch.nn.Module):
         p_bg_name="gamma",
         p_bg_params={"concentration": 1.0, "rate": 1.0},
         p_bg_scale=0.0001,
-        # Intensity prior
-        # Optional regularization
-        # Center-focused prior parameters (for Dirichlet)
         use_center_focused_prior=True,
         prior_shape=(3, 21, 21),
         prior_base_alpha=5.0,
@@ -304,12 +301,10 @@ class UnetLoss(torch.nn.Module):
         )
 
         # Calculate negative log likelihood
-        neg_ll_batch = -ll_mean.sum()
+        neg_ll_batch = (-ll_mean).sum()
 
         # Combine all loss terms
         batch_loss = neg_ll_batch + kl_terms
-
-        # Final scalar loss
         total_loss = batch_loss.mean()
 
         # Return all components for monitoring
