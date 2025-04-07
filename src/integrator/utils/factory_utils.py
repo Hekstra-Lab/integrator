@@ -403,7 +403,7 @@ def create_integrator_from_checkpoint(config, checkpoint_path):
             **config["components"]["image_encoder"]["params"],
         )
 
-        integrator = integrator_class(
+        integrator = integrator_class.load_from_checkpoint(
             checkpoint_path,
             image_encoder=image_encoder,
             metadata_encoder=metadata_encoder,
