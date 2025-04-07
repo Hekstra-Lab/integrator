@@ -312,7 +312,7 @@ class UNetIntegrator(BaseIntegrator):
         qp = self.profile_model(representation)
 
         # Calculate rate using the decoder
-        rate, intensity_mean, intensity_var = self.decoder(q_bg, qp, counts)
+        rate, intensity_mean, intensity_var = self.decoder(q_bg, qp, counts, masks)
 
         return {
             "rates": rate,
@@ -344,9 +344,6 @@ class UNetIntegrator(BaseIntegrator):
             kl,
             kl_bg,
             kl_p,
-            tv_loss,
-            simpson_loss,
-            entropy_loss,
         ) = self.loss_fn(
             outputs["rates"],
             outputs["counts"],
@@ -356,7 +353,7 @@ class UNetIntegrator(BaseIntegrator):
         )
 
         # Clip gradients for stability
-        torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
+        # torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
 
         # Log metrics
         self.log("train_loss", loss.mean())
@@ -380,9 +377,6 @@ class UNetIntegrator(BaseIntegrator):
             kl,
             kl_bg,
             kl_p,
-            tv_loss,
-            simpson_loss,
-            entropy_loss,
         ) = self.loss_fn(
             outputs["rates"],
             outputs["counts"],
@@ -397,9 +391,6 @@ class UNetIntegrator(BaseIntegrator):
         self.log("val_kl", kl.mean())
         self.log("val_kl_bg", kl_bg.mean())
         self.log("val_kl_p", kl_p.mean())
-        self.log("val_tv_loss", tv_loss.mean())
-        self.log("val_simpson_loss", simpson_loss.mean())
-        self.log("val_entropy_loss", entropy_loss.mean())
 
         return outputs
 

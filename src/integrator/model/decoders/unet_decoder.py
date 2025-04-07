@@ -14,7 +14,7 @@ class UnetDecoder(BaseDecoder):
         self.relu = nn.ReLU(inplace=True)
         self.eps = eps
 
-    def forward(self, q_bg, q_p, counts,mask):
+    def forward(self, q_bg, q_p, counts, mask):
         # Sample from variational distributions
         # zbg = q_bg.rsample([100, 1323]).permute(2, 0, 1)
         zbg = (
@@ -29,9 +29,9 @@ class UnetDecoder(BaseDecoder):
         sigma_sq = zbg + counts.unsqueeze(1) + self.eps
         w = 1.0 / sigma_sq
 
-        intensity = (self.relu(counts.unsqueeze(1) - zbg) * zp * w).sum(-1) / (
-            (zp.pow(2) * w).sum(-1) + self.eps
-        )
+        intensity = (
+            self.relu(counts.unsqueeze(1) - zbg) * mask.unsqueeze(1) * zp * w
+        ).sum(-1) / ((zp.pow(2) * w).sum(-1) + self.eps)
 
         intensity_mean = intensity.mean(1)
         intensity_variance = intensity.var(1)
@@ -43,18 +43,26 @@ class UnetDecoder(BaseDecoder):
 
 if __name__ == "__main__":
     # Example usage
+    relu = torch.nn.ReLU(inplace=True)
     qbg = torch.distributions.gamma.Gamma(torch.ones(10), torch.ones(10))
     qp = torch.distributions.dirichlet.Dirichlet(torch.ones(10, 1323))
     counts = torch.rand(10, 1323)
     eps = 1e-6
+    # mask of randomly selected 0 or 1
+    masks = torch.randint(0, 2, (10, 1323)).float()
 
-    zbg = qbg.rsample([100]).unsqueeze(-1).expand(
-        100, 10, 1323
-    ).permute(1, 0, 2)  # [batch_size, mc_samples, pixels]
+    zbg = (
+        qbg.rsample([100]).unsqueeze(-1).expand(100, 10, 1323).permute(1, 0, 2)
+    )  # [batch_size, mc_samples, pixels]
+
     zp = qp.rsample([100]).permute(1, 0, 2)  # [batch_size, mc_samples, pixels]
 
     sigma_sq = zbg + counts.unsqueeze(1) + eps
     w = 1 / sigma_sq
+
+    intensity = (relu(counts.unsqueeze(1) - zbg) * masks.unsqueeze(1) * zp * w).sum(
+        -1
+    ) / ((zp.pow(2) * w).sum(-1) + eps)
 
     decoder = UnetDecoder()
     rate, intensity_mean, intensity_variance = decoder(q_bg, q_p, counts)
