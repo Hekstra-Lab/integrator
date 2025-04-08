@@ -33,7 +33,7 @@ class UnetDecoder(BaseDecoder):
         w = 1.0 / sigma_sq
 
         intensity = (
-            self.relu(counts.unsqueeze(1) - zbg) * mask.unsqueeze(1) * zp * w
+            self.constraint(counts.unsqueeze(1) - zbg) * mask.unsqueeze(1) * zp * w
         ).sum(-1) / ((zp.pow(2) * w * mask.unsqueeze(1)).sum(-1) + self.eps)
 
         intensity_mean = intensity.mean(1)

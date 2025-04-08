@@ -185,51 +185,41 @@ class UNetDirichletConcentration(nn.Module):
         Input: [B, in_channels, Z=3, H=21, W=21]
         Output: [B, out_channels, 3, 21, 21]
         """
-        # Do NOT mask at input
+        # Store original input size for final resize
+
         x = x[:, :, -1].view(-1, 1, 3, 21, 21)
         input_shape = x.shape
 
         # 1) Encoder
-        x1 = self.enc1(x)
-        x2 = self.enc2(x1)
-        x3 = self.enc3(x2)
-        x4 = self.enc4(x3)
-        x5 = self.enc5(x4)
+        x1 = self.enc1(x)  # [B, base_channels, 3, 21, 21]
+        x2 = self.enc2(x1)  # [B, base_channels*2, 3, 10/11, 10/11]
+        x3 = self.enc3(x2)  # same shape
+        x4 = self.enc4(x3)  # [B, base_channels*4, 3, 5/6, 5/6]
+        x5 = self.enc5(x4)  # same shape
 
-        # 2) Decoder with interpolation-based upsampling and skip connections
+        # 2) Decoder with interpolation-based upsampling
+        # First upsampling
         x = self.up_conv1(x5)
-        if x.shape[2:] != x3.shape[2:]:
-            x3_resized = F.interpolate(
-                x3, size=x.shape[2:], mode="trilinear", align_corners=False
-            )
-        else:
-            x3_resized = x3
-        x = x + x3_resized
         x = self.dec1(x)
 
+        # Second upsampling
         x = self.up_conv2(x)
-        if x.shape[2:] != x1.shape[2:]:
-            x1_resized = F.interpolate(
-                x1, size=x.shape[2:], mode="trilinear", align_corners=False
-            )
-        else:
-            x1_resized = x1
-        x = x + x1_resized
         x = self.dec2(x)
 
         # Final projection
         x = self.final_conv(x)
 
-        # Resize to match input shape
+        # Final resize to guarantee exact match with input dimensions
         if x.shape[2:] != input_shape[2:]:
             x = F.interpolate(
                 x, size=input_shape[2:], mode="trilinear", align_corners=False
             )
 
-        # Explicitly mask outputs
-        x = x.view(-1, 3 * 21 * 21)
         if mask is not None:
-            x = x * mask + self.eps  # Set masked regions to 0 explicitly at output
+            x = x.view(-1, 3 * 21 * 21) * mask
+        else:
+            x = x.view(-1, 3 * 21 * 21)
+
         return x
 
 
