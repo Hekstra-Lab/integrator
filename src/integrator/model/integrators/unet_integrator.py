@@ -31,6 +31,31 @@ class DirichletProfile(torch.nn.Module):
         return q_p
 
 
+class DynamicTanh(torch.nn.Module):
+    def __init__(self, num_features, alpha_init_value=0.5):
+        super().__init__()
+        self.alpha = torch.nn.Parameter(torch.ones(1) * alpha_init_value)
+        self.weight = torch.nn.Parameter(torch.ones(num_features))
+        self.bias = torch.nn.Parameter(torch.zeros(num_features))
+
+    def forward(self, x):
+        x = torch.tanh(self.alpha * x)
+
+        # Reshape weight and bias for 5D tensor [B, C, Z, H, W]
+        if x.dim() == 5:
+            weight = self.weight.view(1, -1, 1, 1, 1)
+            bias = self.bias.view(1, -1, 1, 1, 1)
+        # Handle 4D case for [B, C, H, W]
+        elif x.dim() == 4:
+            weight = self.weight.view(1, -1, 1, 1)
+            bias = self.bias.view(1, -1, 1, 1)
+        else:
+            weight = self.weight
+            bias = self.bias
+
+        return x * weight + bias
+
+
 # %%
 class UNetIntegrator(BaseIntegrator):
     def __init__(
