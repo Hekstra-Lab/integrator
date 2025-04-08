@@ -15,7 +15,7 @@ class DirichletProfile(torch.nn.Module):
         self.num_components = num_components
         self.alpha_layer = Linear(self.dmodel, self.num_components)
         self.rank = rank
-        self.max_value = 1000.0
+        self.max_value = 5000.0
         self.eps = 1e-6
 
     def smooth_bound(self, x, max_val):

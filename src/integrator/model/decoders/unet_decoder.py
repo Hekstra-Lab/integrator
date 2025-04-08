@@ -4,7 +4,7 @@ from integrator.model.decoders import BaseDecoder
 from integrator.layers import Constraint
 
 
-class tempUnetDecoder(BaseDecoder):
+class UnetDecoder(BaseDecoder):
     def __init__(
         self,
         mc_samples=100,
@@ -46,7 +46,7 @@ class tempUnetDecoder(BaseDecoder):
         return rate, intensity_mean, intensity_variance
 
 
-class UnetDecoder(BaseDecoder):
+class tempUnetDecoder(BaseDecoder):
     def __init__(
         self,
         mc_samples=100,
