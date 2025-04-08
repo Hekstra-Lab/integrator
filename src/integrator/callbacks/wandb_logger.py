@@ -1000,19 +1000,8 @@ class UNetPlotter(Callback):
             shoebox, dials, masks, metadata, counts = batch
             base_output = pl_module(shoebox, dials, masks, metadata, counts)
 
-            # 2) Call calculate_intensities with the relevant fields
-            # intensities = pl_module.calculate_intensities(
-            # counts=base_output["counts"],
-            # qbg=base_output["qbg"],
-            # profile=base_output["profile"],
-            # dead_pixel_mask=base_output["masks"],
-            # )
-
-            # 3) Merge intensities into a new dictionary
-            #    so that "weighted_sum_mean", "thresholded_mean", etc. are available
             predictions = {**base_output}
 
-            # 4) (Optional) Only update tracked predictions if we’re going to plot this epoch
             if self.current_epoch % self.plot_every_n_epochs == 0:
                 self.update_tracked_predictions(
                     predictions["qp"].mean,
@@ -1025,7 +1014,6 @@ class UNetPlotter(Callback):
                     predictions["intensity_var"],
                 )
 
-            # Store only a minimal version of the last batch predictions
             # Create CPU tensor versions to avoid keeping GPU memory
             self.train_predictions = {}
             for key in [

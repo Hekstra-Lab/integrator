@@ -15,10 +15,15 @@ class DirichletProfile(torch.nn.Module):
         self.num_components = num_components
         self.alpha_layer = Linear(self.dmodel, self.num_components)
         self.rank = rank
+        self.max_value = 1000.0
         self.eps = 1e-6
+
+    def smooth_bound(self, x, max_val):
+        return max_val * torch.sigmoid(x)
 
     def forward(self, representation):
         alphas = self.alpha_layer(representation)
+        alphas = self.smooth_bound(alphas, self.max_value)
         alphas = F.softplus(alphas) + self.eps
         q_p = torch.distributions.Dirichlet(alphas)
 
@@ -38,11 +43,20 @@ class UnetDirichletProfile(torch.nn.Module):
         self.alpha_layer = Linear(self.dmodel, self.num_components)
         self.rank = rank
         self.eps = 1e-6
+        self.max_value = 1000.0
+
+    def smooth_bound(self, x, max_val):
+        return max_val * torch.sigmoid(x)
 
     # def forward(self, representation):
     def forward(self, alphas):
-        alphas = torch.clamp(alphas, max=1000.0)
+        alphas = self.smooth_bound(alphas, self.max_value)
         alphas = F.softplus(alphas) + self.eps
         q_p = torch.distributions.Dirichlet(alphas)
 
         return q_p
+
+
+if __name__ == "__main__":
+    # Example usage
+    dmodel = 64

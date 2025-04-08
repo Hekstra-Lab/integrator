@@ -4,7 +4,7 @@ from integrator.model.decoders import BaseDecoder
 from integrator.layers import Constraint
 
 
-class UnetDecoder(BaseDecoder):
+class tempUnetDecoder(BaseDecoder):
     def __init__(
         self,
         mc_samples=100,
@@ -33,8 +33,49 @@ class UnetDecoder(BaseDecoder):
         w = 1.0 / sigma_sq
 
         intensity = (
-            self.constraint(counts.unsqueeze(1) - zbg) * mask.unsqueeze(1) * zp * w
+            self.relu(counts.unsqueeze(1) - zbg) * mask.unsqueeze(1) * zp * w
         ).sum(-1) / ((zp.pow(2) * w * mask.unsqueeze(1)).sum(-1) + self.eps)
+
+        intensity_mean = intensity.mean(1)
+        intensity_variance = intensity.var(1)
+
+        rate = (intensity_mean.unsqueeze(1).unsqueeze(1) * zp + zbg) * mask.unsqueeze(
+            1
+        ) + self.eps
+
+        return rate, intensity_mean, intensity_variance
+
+
+class UnetDecoder(BaseDecoder):
+    def __init__(
+        self,
+        mc_samples=100,
+        eps=1e-6,
+        constraint=Constraint(),
+    ):
+        super().__init__()
+        self.mc_samples = mc_samples
+        self.relu = nn.ReLU(inplace=True)
+        self.constraint = constraint
+        self.eps = eps
+
+    def forward(self, q_bg, q_p, counts, mask):
+        # Sample from variational distributions
+        # zbg = q_bg.rsample([100, 1323]).permute(2, 0, 1)
+
+        zbg = (
+            q_bg.rsample([self.mc_samples])
+            .unsqueeze(-1)
+            .expand(self.mc_samples, counts.shape[0], counts.shape[1])
+        ).permute(
+            1, 0, 2
+        )  # [batch_size, mc_samples, pixels]
+
+        zp = q_p.rsample([self.mc_samples]).permute(1, 0, 2)
+
+        intensity = (self.relu(counts.unsqueeze(1) - zbg) * mask.unsqueeze(1)).sum(
+            -1
+        ) / ((zp * mask.unsqueeze(1)).sum(-1) + self.eps)
 
         intensity_mean = intensity.mean(1)
         intensity_variance = intensity.var(1)
