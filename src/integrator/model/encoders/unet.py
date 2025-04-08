@@ -234,7 +234,7 @@ class UNetDirichletConcentration(nn.Module):
             )
 
         if mask is not None:
-            x = x.view(-1, 3 * 21 * 21) * mask + self.eps
+            x = x.view(-1, 3 * 21 * 21) * mask
         else:
             x = x.view(-1, 3 * 21 * 21)
 
