@@ -56,6 +56,25 @@ class DynamicTanh(torch.nn.Module):
         return x * weight + bias
 
 
+def total_variation_loss(alpha):
+    """
+    alpha: shape (N, C, H, W)
+    Returns a scalar that is the total variation penalty (anisotropic TV).
+    """
+    # Shifted differences in the horizontal (x) direction
+    diff_x = alpha[:, :, :, 1:] - alpha[:, :, :, :-1]
+    # Shifted differences in the vertical (y) direction
+    diff_y = alpha[:, :, 1:, :] - alpha[:, :, :-1, :]
+
+    # L1 norm of these differences
+    tv_x = diff_x.abs().sum()
+    tv_y = diff_y.abs().sum()
+
+    # total TV is sum of horizontal and vertical
+    tv = tv_x + tv_y
+    return tv
+
+
 # %%
 class UNetIntegrator(BaseIntegrator):
     def __init__(
@@ -92,6 +111,8 @@ class UNetIntegrator(BaseIntegrator):
         self.image_encoder = image_encoder
         self.metadata_encoder = metadata_encoder
         self.profile_model = profile_model
+        # self.dytanh = DynamicTanh(output_dims)
+        self.layer_norm = nn.LayerNorm(output_dims)
 
         self.background_distribution = q_bg
 
@@ -149,9 +170,7 @@ class UNetIntegrator(BaseIntegrator):
         counts = torch.clamp(counts, min=0) * masks
 
         # Extract representations from the shoebox and metadata
-
         shoebox_representation = self.image_encoder(shoebox, masks)
-
         meta_representation = self.metadata_encoder(metadata)
 
         # Combine representations and normalize
@@ -159,6 +178,7 @@ class UNetIntegrator(BaseIntegrator):
             representation = (
                 self.fc_representation(shoebox_representation) + meta_representation
             )
+            # shoebox_representation = self.layer_norm(shoebox_representation)
             qp = self.profile_model(shoebox_representation)
         else:
             representation = shoebox_representation + meta_representation
@@ -201,13 +221,7 @@ class UNetIntegrator(BaseIntegrator):
 
         # Calculate loss.
         # Updated call: note we no longer pass a separate q_I_nosignal.
-        (
-            loss,
-            neg_ll,
-            kl,
-            kl_bg,
-            kl_p,
-        ) = self.loss_fn(
+        (loss, neg_ll, kl, kl_bg, kl_p, tv_loss) = self.loss_fn(
             outputs["rates"],
             outputs["counts"],
             outputs["qp"],
@@ -217,7 +231,7 @@ class UNetIntegrator(BaseIntegrator):
         )
 
         # Clip gradients for stability
-        torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
+        # torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
 
         # Log metrics
         self.log("train_loss", loss.mean())
@@ -225,6 +239,7 @@ class UNetIntegrator(BaseIntegrator):
         self.log("train_kl", kl.mean())
         self.log("train_kl_bg", kl_bg.mean())
         self.log("train_kl_p", kl_p.mean())
+        self.log("train_tv_loss", tv_loss.mean())
 
         return loss.mean()
 
@@ -241,6 +256,7 @@ class UNetIntegrator(BaseIntegrator):
             kl,
             kl_bg,
             kl_p,
+            tv_loss,
         ) = self.loss_fn(
             outputs["rates"],
             outputs["counts"],
@@ -256,6 +272,7 @@ class UNetIntegrator(BaseIntegrator):
         self.log("val_kl", kl.mean())
         self.log("val_kl_bg", kl_bg.mean())
         self.log("val_kl_p", kl_p.mean())
+        self.log("val_tv_loss", tv_loss.mean())
 
         return outputs
 

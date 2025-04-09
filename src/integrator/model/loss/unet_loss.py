@@ -39,14 +39,6 @@ def create_center_focused_dirichlet_prior(
     return alpha_vector
 
 
-# plt.imshow(
-# torch.distributions.dirichlet.Dirichlet(
-# create_center_focused_dirichlet_prior()
-# ).mean.reshape(3, 21, 21)[0]
-# )
-# plt.show()
-
-
 # %%
 class UnetLoss(torch.nn.Module):
     def __init__(
@@ -128,6 +120,7 @@ class UnetLoss(torch.nn.Module):
 
         # Store shape for profile reshaping
         self.prior_shape = prior_shape
+        self.tv_scale = 0.1
 
     def _register_distribution_params(self, name, params, prefix):
         """Register distribution parameters as buffers with appropriate prefixes"""
@@ -192,6 +185,24 @@ class UnetLoss(torch.nn.Module):
 
         # Default case: return None or provided default
         return default_return
+
+    def total_variation_loss(self, alpha):
+        """
+        alpha: shape (N, C, H, W)
+        Returns a scalar that is the total variation penalty (anisotropic TV).
+        """
+        # Shifted differences in the horizontal (x) direction
+        diff_x = alpha[:, :, :, 1:] - alpha[:, :, :, :-1]
+        # Shifted differences in the vertical (y) direction
+        diff_y = alpha[:, :, 1:, :] - alpha[:, :, :-1, :]
+
+        # L1 norm of these differences
+        tv_x = diff_x.abs().sum()
+        tv_y = diff_y.abs().sum()
+
+        # total TV is sum of horizontal and vertical
+        tv = tv_x + tv_y
+        return tv
 
     def compute_kl(self, q_dist, p_dist):
         """Compute KL divergence between distributions with more robust fallback."""
@@ -285,9 +296,13 @@ class UnetLoss(torch.nn.Module):
         # Calculate negative log likelihood
         neg_ll_batch = (-ll_mean).sum()
 
+        tv_loss = (
+            self.total_variation_loss(q_p.mean.view(-1, 3, 21, 21)) * self.tv_scale
+        )
+
         # Combine all loss terms
         batch_loss = neg_ll_batch + kl_terms
-        total_loss = batch_loss.mean()
+        total_loss = batch_loss.mean() + tv_loss
 
         # Return all components for monitoring
         return (
@@ -296,6 +311,7 @@ class UnetLoss(torch.nn.Module):
             kl_terms.mean(),
             kl_bg.mean(),
             kl_p.mean() if p_p is not None else torch.tensor(0.0, device=device),
+            tv_loss
             # kl_I.mean() if p_I is not None else torch.tensor(0.0, device=device),
         )
 

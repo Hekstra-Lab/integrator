@@ -132,8 +132,8 @@ class MLPImageEncoder(torch.nn.Module):
         super().__init__()
         self.linear = Linear(feature_dim, dmodel)
         self.relu = torch.nn.ReLU(inplace=True)
-        # self.batch_norm = torch.nn.BatchNorm1d(dmodel)
-        self.dyt = DynamicTanh(dmodel)
+        self.batch_norm = torch.nn.BatchNorm1d(dmodel)
+        # self.dyt = DynamicTanh(dmodel)
         self.mlp_1 = MLP(dmodel, depth, dropout=dropout, output_dims=dmodel)
         self.mean_pool = MeanPool()
 
@@ -146,8 +146,8 @@ class MLPImageEncoder(torch.nn.Module):
 
         # Reshape for BatchNorm1d, apply it, then reshape back
         out = out.view(batch_size * num_pixels, -1)
-        # out = self.batch_norm(out)
-        out = self.dyt(out)
+        out = self.batch_norm(out)
+        # out = self.dyt(out)
         out = out.view(batch_size, num_pixels, -1)
 
         # Pass through residual blocks

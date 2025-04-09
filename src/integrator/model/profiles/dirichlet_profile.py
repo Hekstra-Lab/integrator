@@ -43,7 +43,7 @@ class UnetDirichletProfile(torch.nn.Module):
         self.alpha_layer = Linear(self.dmodel, self.num_components)
         self.rank = rank
         self.eps = 1e-6
-        self.max_value = 1000.0
+        self.max_value = 5000.0
 
     def smooth_bound(self, x, max_val):
         return max_val * torch.sigmoid(x)

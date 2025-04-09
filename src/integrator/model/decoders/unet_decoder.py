@@ -14,7 +14,8 @@ class UnetDecoder(BaseDecoder):
         super().__init__()
         self.mc_samples = mc_samples
         self.relu = nn.ReLU(inplace=True)
-        self.constraint = constraint
+        self.softplace = nn.Softplus()
+        # self.constraint = constraint
         self.eps = eps
 
     def forward(self, q_bg, q_p, counts, mask):
@@ -33,8 +34,8 @@ class UnetDecoder(BaseDecoder):
         w = 1.0 / sigma_sq
 
         intensity = (
-            self.relu(counts.unsqueeze(1) - zbg) * mask.unsqueeze(1) * zp * w
-        ).sum(-1) / ((zp.pow(2) * w * mask.unsqueeze(1)).sum(-1) + self.eps)
+            self.softplace(counts.unsqueeze(1) - zbg) * mask.unsqueeze(1) * zp
+        ).sum(-1) / ((zp.pow(2)).sum(-1) + self.eps)
 
         intensity_mean = intensity.mean(1)
         intensity_variance = intensity.var(1)
@@ -42,6 +43,46 @@ class UnetDecoder(BaseDecoder):
         rate = (intensity_mean.unsqueeze(1).unsqueeze(1) * zp + zbg) * mask.unsqueeze(
             1
         ) + self.eps
+
+        return rate, intensity_mean, intensity_variance
+
+
+class tempUnetDecoder(BaseDecoder):
+    def __init__(
+        self,
+        mc_samples=100,
+        eps=1e-6,
+        # constraint=Constraint(),
+    ):
+        super().__init__()
+        self.mc_samples = mc_samples
+        # self.relu = nn.ReLU(inplace=True)
+        self.softplace = nn.Softplus()
+        # self.constraint = constraint
+        self.eps = eps
+
+    def forward(self, q_bg, profile, counts, mask):
+        # profile.shape is [batch_size,pixels]
+        zbg = (q_bg.rsample([self.mc_samples]).unsqueeze(-1)).permute(
+            1, 0, 2
+        )  # [batch_size, mc_samples, pixels]
+
+        sigma_sq = zbg + counts.unsqueeze(1) + self.eps
+        w = 1.0 / sigma_sq
+
+        intensity = (
+            self.softplace(counts.unsqueeze(1) - zbg)
+            * mask.unsqueeze(1)
+            * profile.unsqueeze(1)
+        ).sum(-1) / ((profile.unsqueeze(1).pow(2)).sum(-1) + self.eps)
+
+        # intensity_mean = self.softplace(intensity.mean(1))
+        intensity_mean = intensity.mean(1)
+        intensity_variance = intensity.var(1)
+
+        rate = (
+            intensity_mean.unsqueeze(1).unsqueeze(1) * profile.unsqueeze(1) + zbg
+        ) * mask.unsqueeze(1) + self.eps
 
         return rate, intensity_mean, intensity_variance
 
