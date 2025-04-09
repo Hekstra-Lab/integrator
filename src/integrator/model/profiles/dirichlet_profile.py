@@ -40,7 +40,7 @@ class UnetDirichletProfile(torch.nn.Module):
         self.dmodel = dmodel
         self.mc_samples = mc_samples
         self.num_components = num_components
-        # self.alpha_layer = Linear(self.dmodel, self.num_components)
+        self.alpha_layer = Linear(self.num_components, self.num_components)
         self.rank = rank
         self.eps = 1e-6
         self.max_value = 500.0
@@ -50,6 +50,7 @@ class UnetDirichletProfile(torch.nn.Module):
 
     # def forward(self, representation):
     def forward(self, alphas):
+        alphas = self.alpha_layer(alphas)
         alphas = self.smooth_bound(alphas, self.max_value)
         alphas = F.softplus(alphas) + self.eps
         q_p = torch.distributions.Dirichlet(alphas)
