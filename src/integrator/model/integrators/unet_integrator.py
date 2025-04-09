@@ -140,23 +140,37 @@ class UNetIntegrator(BaseIntegrator):
                 1, 0, 2
             )  # [batch_size x mc_samples x pixels]
             batch_profile_samples = batch_profile_samples * dead_pixel_mask.unsqueeze(1)
+            thresholds = torch.quantile(
+                batch_profile_samples, 0.99, dim=-1, keepdim=True
+            )
+
             weighted_sum_intensity = (
                 batch_counts - batch_bg_samples
             ) * batch_profile_samples
             weighted_sum_intensity_sum = weighted_sum_intensity.sum(-1)
+
             summed_squared_prf = torch.norm(batch_profile_samples, p=2, dim=-1).pow(2)
+
             division = weighted_sum_intensity_sum / summed_squared_prf
             weighted_sum_mean = division.mean(-1)
             weighted_sum_var = division.var(-1)
-            profile_masks = batch_profile_samples > self.profile_threshold
+
+            profile_masks = batch_profile_samples > thresholds
+
             N_used = profile_masks.sum(-1).float()  # [batch_size × mc_samples]
+
             masked_counts = batch_counts * profile_masks
+
             thresholded_intensity = (
                 masked_counts - batch_bg_samples * profile_masks
             ).sum(-1)
+
             thresholded_mean = thresholded_intensity.mean(-1)
+
             centered_thresh = thresholded_intensity - thresholded_mean.unsqueeze(-1)
+
             thresholded_var = (centered_thresh**2).sum(-1) / (N_used.mean(-1) + 1e-6)
+
             intensities = {
                 "thresholded_mean": thresholded_mean,
                 "thresholded_var": thresholded_var,
@@ -178,7 +192,6 @@ class UNetIntegrator(BaseIntegrator):
             representation = (
                 self.fc_representation(shoebox_representation) + meta_representation
             )
-            # shoebox_representation = self.layer_norm(shoebox_representation)
             qp = self.profile_model(shoebox_representation)
         else:
             representation = shoebox_representation + meta_representation

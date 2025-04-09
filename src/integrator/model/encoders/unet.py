@@ -89,6 +89,8 @@ class UNetDirichletConcentration(nn.Module):
 
         # Final output conv
         x = self.conv_out(x)  # => (N, out_channels, H, W)
+        print("Final conv min:", x.min().item(), "max:", x.max().item())
+
         return x.view(-1, 3 * 21 * 21)
 
 

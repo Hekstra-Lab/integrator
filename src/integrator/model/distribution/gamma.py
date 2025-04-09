@@ -20,15 +20,7 @@ class GammaDistribution(BaseDistribution):
         self.min_value = 1e-3
         self.max_value = 100.0
 
-    def smooth_bound(self, x, max_val):
-        return max_val * torch.sigmoid(x)
-
     def distribution(self, params):
-        # concentration = self.smooth_bound(
-        # self.constraint(params[..., 0]),
-        # self.max_value,
-        # )
-        # rate = self.smooth_bound(self.constraint(params[..., 1]), self.max_value)
         concentration = self.constraint(params[..., 0])
         rate = self.constraint(params[..., 1])
         return self.q(concentration, rate)
