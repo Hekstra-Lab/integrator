@@ -358,7 +358,7 @@ class UnetLoss(torch.nn.Module):
         self.p_p_name = p_p_name
         self.p_p_params = p_p_params
 
-        # Register parameters for I and bg distributions
+        # Register parameters for bg distribution
         self._register_distribution_params(p_bg_name, p_bg_params, prefix="p_bg_")
 
         # Number of elements in the profile
@@ -409,6 +409,10 @@ class UnetLoss(torch.nn.Module):
             self.register_buffer(f"{prefix}scale", torch.tensor(params["scale"]))
         elif name == "exponential":
             self.register_buffer(f"{prefix}rate", torch.tensor(params["rate"]))
+
+        elif name == "half_normal":
+            self.register_buffer(f"{prefix}scale", torch.tensor(params["scale"]))
+
         elif name == "beta":
             self.register_buffer(
                 f"{prefix}concentration1", torch.tensor(params["concentration1"])
@@ -431,6 +435,10 @@ class UnetLoss(torch.nn.Module):
             return torch.distributions.gamma.Gamma(
                 concentration=concentration, rate=rate
             )
+        elif name == "half_normal":
+            scale = getattr(self, f"{params_prefix}scale").to(device)
+            return torch.distributions.half_normal.HalfNormal(scale=scale)
+
         elif name == "log_normal":
             loc = getattr(self, f"{params_prefix}loc").to(device)
             scale = getattr(self, f"{params_prefix}scale").to(device)
@@ -479,11 +487,13 @@ class UnetLoss(torch.nn.Module):
         kl_p = torch.tensor(0.0, device=device)  # Default value
 
         # Only calculate profile KL if we have both distributions
-        kl_p = self.compute_kl(q_p, p_p)
+        # kl_p = self.compute_kl(q_p, p_p)
+        kl_p = torch.distributions.kl.kl_divergence(q_p, p_p)
         kl_terms += kl_p * self.p_p_scale
 
         # Calculate background and intensity KL divergence
-        kl_bg = self.compute_kl(q_bg, p_bg)
+        kl_bg = self.compute_kl(q_bg, p_bg).squeeze(1)
+
         kl_terms += kl_bg * self.p_bg_scale
 
         # Calculate negative log likelihood
