@@ -963,7 +963,7 @@ class UNetPlotter(Callback):
             # Row 3: Rates (same scale as row 1)
             im2 = axes[2, i].imshow(rates_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13)
             axes[2, i].set_title(
-                f"Bg: {self.tracked_predictions['qbg'][refl_id]:.2f}\n I: {self.tracked_predictions['intensity_mean'][refl_id]:.2f}"
+                f"Bg: {float(self.tracked_predictions['qbg'][refl_id]):.2f}\n I: {self.tracked_predictions['intensity_mean'][refl_id]:.2f}"
             )
 
             axes[2, i].set_ylabel("rate = I*pij + Bg", labelpad=5)

@@ -50,6 +50,7 @@ REGISTRY = {
     },
     "q_bg": {
         "gamma": GammaDistribution,
+        "half_normal": HalfNormalDistribution,
     },
     "data_loader": {
         "default": ShoeboxDataModule,
@@ -67,6 +68,7 @@ ARGUMENT_RESOLVER = {
     "loss": {
         "p_bg": {
             "gamma": torch.distributions.gamma.Gamma,
+            "half_normal": torch.distributions.half_normal.HalfNormal,
         },
         "p_I": {
             "gamma": torch.distributions.gamma.Gamma,

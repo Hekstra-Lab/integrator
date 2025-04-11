@@ -49,9 +49,10 @@ class MLPIntegrator(BaseIntegrator):
         with torch.no_grad():
             counts = counts * dead_pixel_mask
             batch_counts = counts.unsqueeze(1)  # [batch_size x 1 x pixels]
-            batch_bg_samples = (qbg.rsample([self.mc_samples]).unsqueeze(-1)).permute(
-                1, 0, 2
-            )
+            # batch_bg_samples = (qbg.rsample([self.mc_samples]).unsqueeze(-1)).permute(
+            # 1, 0, 2
+            # )
+            batch_bg_samples = qbg.rsample([self.mc_samples]).permute(1, 0, 2)
             batch_profile_samples = qp.rsample([self.mc_samples]).permute(
                 1, 0, 2
             )  # [batch_size x mc_samples x pixels]
@@ -108,7 +109,8 @@ class MLPIntegrator(BaseIntegrator):
         if self.image_encoder is None:
             qp = self.qp(representation)
 
-        zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        # zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        zbg = qbg.rsample([self.mc_samples]).permute(1, 0, 2)
         zp = qp.rsample([self.mc_samples]).permute(
             1, 0, 2
         )  # [batch_size, mc_samples, pixels]
@@ -166,7 +168,7 @@ class MLPIntegrator(BaseIntegrator):
         )
 
         # Clip gradients for stability
-        # torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
+        torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
 
         # Log metrics
         self.log("train: loss", loss.mean())
