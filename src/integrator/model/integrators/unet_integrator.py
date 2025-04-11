@@ -104,7 +104,10 @@ class MLPIntegrator(BaseIntegrator):
         shoebox = torch.cat([shoebox[:, :, -1], metadata], dim=-1)
 
         representation = self.encoder(shoebox, masks)
+
+        print("Representation contains NaN:", torch.isnan(representation).any())
         qbg = self.qbg(representation)
+        print("qbg params contains NaN:", torch.isnan(qbg_params).any())
 
         if self.image_encoder is None:
             qp = self.qp(representation)
@@ -126,7 +129,7 @@ class MLPIntegrator(BaseIntegrator):
                 * zp
             ) / vi
             denominator = zp.pow(2) / vi + 1e-6
-            intensity = numerator.sum(-1) / denominator.sum(-1)
+            intensity = numerator.sum(-1) / denominator.sum(-1) + 1e-6
 
             vi = (intensity.unsqueeze(-1) * zp) + zbg
             vi = vi.mean(-1, keepdim=True) + 1e-6

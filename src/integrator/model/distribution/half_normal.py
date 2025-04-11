@@ -21,6 +21,7 @@ class HalfNormalDistribution(torch.nn.Module):
 
     def distribution(self, params):
         scale = self.constraint(params)
+        scale = torch.clamp(scale, min=self.min_value, max=self.max_value)
         return torch.distributions.half_normal.HalfNormal(scale)
 
     def forward(self, representation):
