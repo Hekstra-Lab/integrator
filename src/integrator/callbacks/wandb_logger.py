@@ -1219,7 +1219,6 @@ class tempMVNPlotter(Callback):
             "profile": [],
             "counts": [],
             "refl_ids": [],
-            "qI": [],
             "dials_I_prf_value": [],
             "weighted_sum_mean": [],
             "thresholded_mean": [],
@@ -1232,14 +1231,12 @@ class tempMVNPlotter(Callback):
             "counts": {},
             "qbg": {},
             "rates": {},
-            "qI": {},
-            # "qI_var": {},
             "qbg_var": {},
             "dials_I_prf_value": {},
         }
 
     def update_tracked_predictions(
-        self, profile_preds, qbg_preds, rates, count_preds, refl_ids, dials_I, qI
+        self, profile_preds, qbg_preds, rates, count_preds, refl_ids, dials_I
     ):
         current_refl_ids = refl_ids.cpu().numpy()
 
@@ -1256,8 +1253,6 @@ class tempMVNPlotter(Callback):
         rate_images = rates.mean(1).reshape(-1, 3, 21, 21)[..., 1, :, :]
         bg_mean = qbg_preds.mean
         bg_var = qbg_preds.variance
-        qI_mean = qI.mean
-        # qI_var = qI.variance
         dials_I_prf_value = dials_I
 
         for ref_id in self.tracked_refl_ids:
@@ -1269,8 +1264,6 @@ class tempMVNPlotter(Callback):
                 self.tracked_predictions["counts"][ref_id] = count_images[idx].cpu()
                 self.tracked_predictions["rates"][ref_id] = rate_images[idx].cpu()
                 self.tracked_predictions["qbg"][ref_id] = bg_mean[idx].cpu()
-                self.tracked_predictions["qI"][ref_id] = qI_mean[idx].cpu()
-                # self.tracked_predictions["qI_var"][ref_id] = qI_var[idx].cpu()
                 self.tracked_predictions["qbg_var"][ref_id] = bg_var[idx].cpu()
                 self.tracked_predictions["dials_I_prf_value"][
                     ref_id
@@ -1326,7 +1319,7 @@ class tempMVNPlotter(Callback):
             # Row 3: Rates (same scale as row 1)
             im2 = axes[2, i].imshow(rates_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13)
             axes[2, i].set_title(
-                f"Bg: {self.tracked_predictions['qbg'][refl_id]:.2f}\n qI: {self.tracked_predictions['qI'][refl_id]:.2f}"
+                f"Bg: {self.tracked_predictions['qbg'][refl_id]:.2f}\n"
             )
 
             axes[2, i].set_ylabel("rate = I*pij + Bg", labelpad=5)

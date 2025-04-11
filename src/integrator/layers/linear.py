@@ -104,13 +104,12 @@ class MLP(nn.Module):
             batch_size, features = data.shape
             num_pixels = None  # No pixels in this case
 
-        # data = data.view(-1, features)
         out = self.main(data)
 
-        # If there were pixels, reshape back to [batch_size, num_pixels, output_dims]
         if num_pixels is not None:
             out = out.view(batch_size, num_pixels, -1)  # Reshape back if needed
         return out
+
 
 class tempResidualLayer(nn.Module):
     def __init__(self, width, dropout=None, use_bn=False):
@@ -144,6 +143,3 @@ class tempResidualLayer(nn.Module):
         out += residual
         out = self.relu(out)
         return out
-
-
-

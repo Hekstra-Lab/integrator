@@ -338,9 +338,6 @@ class UnetLoss(torch.nn.Module):
         p_bg_params={"concentration": 1.0, "rate": 1.0},
         p_bg_scale=0.0001,
         # Intensity prior
-        p_I_name="gamma",
-        p_I_params={"concentration": 1.0, "rate": 1.0},
-        p_I_scale=0.0001,
         use_center_focused_prior=True,
         prior_shape=(3, 21, 21),
         prior_base_alpha=0.001,
@@ -352,20 +349,16 @@ class UnetLoss(torch.nn.Module):
 
         self.register_buffer("eps", torch.tensor(eps))
         self.register_buffer("beta", torch.tensor(beta))
-        self.register_buffer("p_I_scale", torch.tensor(p_I_scale))
         self.register_buffer("p_bg_scale", torch.tensor(p_bg_scale))
         self.register_buffer("p_p_scale", torch.tensor(p_p_scale))
 
         # Store distribution names and params
-        self.p_I_name = p_I_name
-        self.p_I_params = p_I_params
         self.p_bg_name = p_bg_name
         self.p_bg_params = p_bg_params
         self.p_p_name = p_p_name
         self.p_p_params = p_p_params
 
         # Register parameters for I and bg distributions
-        self._register_distribution_params(p_I_name, p_I_params, prefix="p_I_")
         self._register_distribution_params(p_bg_name, p_bg_params, prefix="p_bg_")
 
         # Number of elements in the profile
@@ -445,16 +438,6 @@ class UnetLoss(torch.nn.Module):
         elif name == "exponential":
             rate = getattr(self, f"{params_prefix}rate").to(device)
             return torch.distributions.exponential.Exponential(rate=rate)
-        elif name == "beta":
-            concentration1 = getattr(self, f"{params_prefix}concentration1").to(device)
-            concentration0 = getattr(self, f"{params_prefix}concentration0").to(device)
-            return torch.distributions.beta.Beta(
-                concentration1=concentration1, concentration0=concentration0
-            )
-        elif name == "laplace":
-            loc = getattr(self, f"{params_prefix}loc").to(device)
-            scale = getattr(self, f"{params_prefix}scale").to(device)
-            return torch.distributions.laplace.Laplace(loc=loc, scale=scale)
         elif name == "dirichlet":
             # For Dirichlet, use the dirichlet_concentration buffer
             if hasattr(self, "dirichlet_concentration"):
@@ -478,7 +461,7 @@ class UnetLoss(torch.nn.Module):
 
         return torch.distributions.kl.kl_divergence(q_dist, p_dist)
 
-    def forward(self, rate, counts, q_p, q_bg, masks, q_I=None):
+    def forward(self, rate, counts, q_p, q_bg, masks):
         # Get device and batch size
         device = rate.device
         batch_size = rate.shape[0]
@@ -490,7 +473,6 @@ class UnetLoss(torch.nn.Module):
         # Create distributions on the correct device
         p_bg = self.get_prior(self.p_bg_name, "p_bg_", device)
         p_p = self.get_prior(self.p_p_name, "p_p_", device)
-        p_I = self.get_prior(self.p_I_name, "p_I_", device)
 
         # Calculate KL terms
         kl_terms = torch.zeros(batch_size, device=device)
@@ -500,15 +482,12 @@ class UnetLoss(torch.nn.Module):
         kl_p = self.compute_kl(q_p, p_p)
         kl_terms += kl_p * self.p_p_scale
 
-        # l_I = self.compute_kl(q_I, p_I)
-        # kl_terms += kl_I * self.p_I_scale
-
         # Calculate background and intensity KL divergence
         kl_bg = self.compute_kl(q_bg, p_bg)
         kl_terms += kl_bg * self.p_bg_scale
 
         # Calculate negative log likelihood
-        ll = torch.distributions.Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
+        # ll = torch.distributions.Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
 
         ll_mean = (
             (
@@ -533,7 +512,6 @@ class UnetLoss(torch.nn.Module):
             kl_terms.mean(),
             kl_bg.mean(),
             kl_p.mean() if p_p is not None else torch.tensor(0.0, device=device),
-            torch.tensor(0.0),
         )
 
 

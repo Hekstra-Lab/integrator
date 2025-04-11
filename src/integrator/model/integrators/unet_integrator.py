@@ -15,7 +15,6 @@ class MLPIntegrator(BaseIntegrator):
         loss,
         qbg,
         qp,
-        qI,
         decoder,
         mc_samples=100,
         learning_rate=1e-3,
@@ -141,7 +140,6 @@ class MLPIntegrator(BaseIntegrator):
             "masks": masks,
             "qbg": qbg,
             "qp": qp,
-            "qI": torch.tensor(0.0),
             "intensity_mean": intensity_mean,
             "intensity_var": intensity_var,
             "dials_I_sum_value": dials[:, 0],
@@ -159,13 +157,12 @@ class MLPIntegrator(BaseIntegrator):
         outputs = self(shoebox, dials, masks, metadata, counts)
 
         # Calculate loss.
-        (loss, neg_ll, kl, kl_bg, kl_p, kl_I) = self.loss_fn(
+        (loss, neg_ll, kl, kl_bg, kl_p) = self.loss_fn(
             rate=outputs["rates"],
             counts=outputs["counts"],
             q_p=outputs["qp"],
             q_bg=outputs["qbg"],
             masks=outputs["masks"],
-            q_I=outputs["qI"],
         )
 
         # Clip gradients for stability
@@ -177,7 +174,6 @@ class MLPIntegrator(BaseIntegrator):
         self.log("train: kl", kl.mean())
         self.log("train: kl_bg", kl_bg.mean())
         self.log("train: kl_p", kl_p.mean())
-        self.log("train: kl_I", kl_I.mean())
 
         return loss.mean()
 
@@ -194,14 +190,12 @@ class MLPIntegrator(BaseIntegrator):
             kl,
             kl_bg,
             kl_p,
-            kl_I,
         ) = self.loss_fn(
             rate=outputs["rates"],
             counts=outputs["counts"],
             q_p=outputs["qp"],
             q_bg=outputs["qbg"],
             masks=outputs["masks"],
-            q_I=outputs["qI"],
         )
 
         # Log metrics
@@ -210,7 +204,6 @@ class MLPIntegrator(BaseIntegrator):
         self.log("val: kl", kl.mean())
         self.log("val: kl_bg", kl_bg.mean())
         self.log("val: kl_p", kl_p.mean())
-        self.log("val: kl_I", kl_I.mean())
 
         return outputs
 

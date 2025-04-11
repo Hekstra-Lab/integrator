@@ -127,13 +127,13 @@ class DynamicTanh(nn.Module):
         return x * weight + bias
 
 
-class MLPImageEncoder(torch.nn.Module):
+class tempMLPImageEncoder(torch.nn.Module):
     def __init__(self, depth=10, dmodel=64, feature_dim=7, dropout=None):
         super().__init__()
         self.linear = Linear(feature_dim, dmodel)
         self.relu = torch.nn.ReLU(inplace=True)
         self.batch_norm = torch.nn.BatchNorm1d(dmodel)
-        # self.dyt = DynamicTanh(dmodel)
+        self.dyt = DynamicTanh(dmodel)
         self.mlp_1 = MLP(dmodel, depth, dropout=dropout, output_dims=dmodel)
         self.mean_pool = MeanPool()
 

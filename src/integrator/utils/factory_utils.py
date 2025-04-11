@@ -285,7 +285,6 @@ def create_integrator(config):
         integrator = integrator_class(
             encoder=encoder,
             qbg=background_distribution,
-            qI=intensity_distribution,
             decoder=decoder,
             loss=loss,
             qp=profile,
@@ -373,6 +372,7 @@ def create_integrator_from_checkpoint(config, checkpoint_path):
         )
         return integrator
 
+
     if integrator_name == "mlp_integrator":
         loss = create_module(
             "loss",
@@ -380,33 +380,35 @@ def create_integrator_from_checkpoint(config, checkpoint_path):
             **config["components"]["loss"]["params"],
         )
 
-        metadata_encoder = create_module(
-            "metadata_encoder",
-            config["components"]["metadata_encoder"]["name"],
-            **config["components"]["metadata_encoder"]["params"],
+        encoder = create_module(
+            "encoder",
+            config["components"]["encoder"]["name"],
+            **config["components"]["encoder"]["params"],
         )
 
-        image_encoder = create_module(
-            "image_encoder",
-            config["components"]["image_encoder"]["name"],
-            **config["components"]["image_encoder"]["params"],
-        )
+        if "image_encoder" in config["components"]:
+            image_encoder = create_module(
+                "image_encoder",
+                config["components"]["image_encoder"]["name"],
+                **config["components"]["image_encoder"]["params"],
+            )
+        else:
+            image_encoder = None
 
         integrator = integrator_class.load_from_checkpoint(
             checkpoint_path,
-            image_encoder=image_encoder,
-            metadata_encoder=metadata_encoder,
-            q_bg=background_distribution,
+            encoder=encoder,
+            qbg=background_distribution,
             decoder=decoder,
             loss=loss,
-            profile_model=profile,
-            dmodel=config["global"]["dmodel"],
+            qp=profile,
             mc_samples=config["integrator"]["mc_samples"],
             learning_rate=config["integrator"]["learning_rate"],
             profile_threshold=config["integrator"]["profile_threshold"],
-            q_I=intensity_distribution,
+            image_encoder=image_encoder,
         )
         return integrator
+
 
     else:
         raise ValueError(f"Unknown integrator name: {integrator_name}")
