@@ -93,9 +93,7 @@ class MLPIntegrator(BaseIntegrator):
             return intensities
 
     def forward(self, shoebox, dials, masks, metadata, counts):
-        # Preprocess input data
         counts = torch.clamp(counts, min=0) * masks
-        batch_size = shoebox.shape[0]
 
         if self.image_encoder is not None:
             alphas = self.image_encoder(shoebox)
@@ -107,16 +105,13 @@ class MLPIntegrator(BaseIntegrator):
 
         print("Representation contains NaN:", torch.isnan(representation).any())
         qbg = self.qbg(representation)
-        print("qbg params contains NaN:", torch.isnan(qbg_params).any())
 
         if self.image_encoder is None:
             qp = self.qp(representation)
 
         # zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
         zbg = qbg.rsample([self.mc_samples]).permute(1, 0, 2)
-        zp = qp.rsample([self.mc_samples]).permute(
-            1, 0, 2
-        )  # [batch_size, mc_samples, pixels]
+        zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
 
         vi = zbg + 1e-6
 
