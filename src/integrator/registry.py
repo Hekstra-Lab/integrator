@@ -11,12 +11,15 @@ REGISTRY = {
     "metadata_encoder": {
         "mlp_metadata_encoder": MLPMetadataEncoder,  # for metadata
     },
+    "encoder": {
+        "mlp_image_encoder": MLPImageEncoder,  # done
+    },
     "image_encoder": {
         "cnn_3d": CNNResNet2,  # done
         "mlp_image_encoder": MLPImageEncoder,  # done
         "3d_cnn": CNN_3d,  # shoebox encoder
         "dev_encoder": DevEncoder,
-        "unet_dirichlet_concentration": UNetDirichletConcentration,
+        "dirchlet_concentration": DirichletConcentration,
     },
     "decoder": {
         "default_decoder": Decoder,
@@ -39,7 +42,7 @@ REGISTRY = {
         "default_integrator": DefaultIntegrator,
         "test_integrator": DevIntegrator,
         "mvn_integrator": MVNIntegrator,
-        "unet_integrator": UNetIntegrator,
+        "mlp_integrator": MLPIntegrator,
     },
     "q_I": {
         "gamma": GammaDistribution,
@@ -67,6 +70,7 @@ ARGUMENT_RESOLVER = {
         },
         "p_I": {
             "gamma": torch.distributions.gamma.Gamma,
+            "log_normal": torch.distributions.log_normal.LogNormal,
         },
         "p_p": {
             "beta": torch.distributions.beta.Beta,

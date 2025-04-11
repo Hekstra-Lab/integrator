@@ -9,22 +9,16 @@ class DirichletProfile(torch.nn.Module):
     Dirichlet profile model
     """
 
-    def __init__(self, dmodel, rank=None, mc_samples=100, num_components=3 * 21 * 21):
+    def __init__(self, dmodel=None, num_components=3 * 21 * 21):
         super().__init__()
+        if dmodel is not None:
+            self.alpha_layer = Linear(dmodel, num_components)
         self.dmodel = dmodel
-        self.mc_samples = mc_samples
-        self.num_components = num_components
-        self.alpha_layer = Linear(self.dmodel, self.num_components)
-        self.rank = rank
-        self.max_value = 5000.0
         self.eps = 1e-6
 
-    def smooth_bound(self, x, max_val):
-        return max_val * torch.sigmoid(x)
-
-    def forward(self, representation):
-        alphas = self.alpha_layer(representation)
-        alphas = self.smooth_bound(alphas, self.max_value)
+    def forward(self, alphas):
+        if self.dmodel is not None:
+            alphas = self.alpha_layer(alphas)
         alphas = F.softplus(alphas) + self.eps
         q_p = torch.distributions.Dirichlet(alphas)
 
@@ -36,22 +30,16 @@ class UnetDirichletProfile(torch.nn.Module):
     Dirichlet profile model
     """
 
-    def __init__(
-        self, dmodel=64, rank=None, mc_samples=100, num_components=3 * 21 * 21
-    ):
+    def __init__(self, dmodel=None, num_components=3 * 21 * 21):
         super().__init__()
+        if dmodel is not None:
+            self.alpha_layer = Linear(dmodel, num_components)
         self.dmodel = dmodel
-        self.mc_samples = mc_samples
-        self.num_components = num_components
-        self.rank = rank
         self.eps = 1e-6
-        self.max_value = 500.0
 
-    def smooth_bound(self, x, max_val):
-        return max_val * torch.sigmoid(x)
-
-    # def forward(self, representation):
     def forward(self, alphas):
+        if self.dmodel is not None:
+            alphas = self.alpha_layer(alphas)
         alphas = F.softplus(alphas) + self.eps
         q_p = torch.distributions.Dirichlet(alphas)
 

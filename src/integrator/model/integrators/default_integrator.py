@@ -118,41 +118,36 @@ class DefaultIntegrator(BaseIntegrator):
         self.profile_threshold = profile_threshold
         self.automatic_optimization = True
 
-    def calculate_intensities(self, counts, qbg, qp, dead_pixel_mask):
+    def calculate_intensities(self, counts, qbg, qp, mask):
         with torch.no_grad():
-            counts = counts * dead_pixel_mask
+            counts = counts * mask
             batch_counts = counts.unsqueeze(1)
 
-            batch_bg_samples = qbg.rsample([self.mc_samples]).unsqueeze(-1)
-            batch_bg_samples = batch_bg_samples.transpose(0, 1)
+            zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1)
+            zbg = zbg.transpose(0, 1)
+            zp = qp.rsample([self.mc_samples])
+            zp = zp.transpose(0, 1)
+            zp = zp * mask.unsqueeze(1)
 
-            batch_profile_samples = qp.rsample([self.mc_samples])
+            sigma_sq = zbg + batch_counts + 1e-6
+            w = 1.0 / sigma_sq
 
-            batch_profile_samples = batch_profile_samples.transpose(0, 1)
-
-            batch_profile_samples = batch_profile_samples * dead_pixel_mask.unsqueeze(1)
-
-            weighted_sum_intensity = (
-                batch_counts - batch_bg_samples
-            ) * batch_profile_samples
+            weighted_sum_intensity = (batch_counts - zbg) * zp * w
             weighted_sum_intensity_sum = weighted_sum_intensity.sum(-1)
 
-            summed_squared_prf = torch.sum(batch_profile_samples.pow(2), dim=-1)
-
+            summed_squared_prf = torch.sum(zp.pow(2) * w, dim=-1)
             division = weighted_sum_intensity_sum / summed_squared_prf
             weighted_sum_mean = division.mean(-1)
 
             # Variance calculation
             weighted_sum_var = division.var(-1)
-            profile_masks = batch_profile_samples > self.profile_threshold
+            profile_masks = zp > self.profile_threshold
 
             N_used = profile_masks.sum(-1).float()
             masked_counts = batch_counts * profile_masks
 
             # %%
-            thresholded_intensity = (
-                masked_counts - batch_bg_samples * profile_masks
-            ).sum(-1)
+            thresholded_intensity = (masked_counts - zbg * profile_masks).sum(-1)
             thresholded_mean = thresholded_intensity.mean(-1)
             centered_thresh = thresholded_intensity - thresholded_mean.unsqueeze(-1)
             thresholded_var = (centered_thresh**2).sum(-1) / (N_used.mean(-1) + 1e-6)

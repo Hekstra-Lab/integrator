@@ -8,89 +8,19 @@ import torch.nn.functional as F
 import torch
 
 
-class DirichletProfile(torch.nn.Module):
-    """
-    Dirichlet profile model
-    """
-
-    def __init__(self, dmodel, rank=None, mc_samples=100, num_components=3 * 21 * 21):
-        super().__init__()
-        self.dmodel = dmodel
-        self.mc_samples = mc_samples
-        self.num_components = num_components
-        self.alpha_layer = Linear(self.dmodel, self.num_components)
-        self.rank = rank
-        self.eps = 1e-6
-
-    # def forward(self, representation):
-    def forward(self, alphas):
-        # alphas = self.alpha_layer(representation)
-        alphas = F.softplus(alphas) + self.eps
-        q_p = torch.distributions.Dirichlet(alphas)
-
-        return q_p
-
-
-class DynamicTanh(torch.nn.Module):
-    def __init__(self, num_features, alpha_init_value=0.5):
-        super().__init__()
-        self.alpha = torch.nn.Parameter(torch.ones(1) * alpha_init_value)
-        self.weight = torch.nn.Parameter(torch.ones(num_features))
-        self.bias = torch.nn.Parameter(torch.zeros(num_features))
-
-    def forward(self, x):
-        x = torch.tanh(self.alpha * x)
-
-        # Reshape weight and bias for 5D tensor [B, C, Z, H, W]
-        if x.dim() == 5:
-            weight = self.weight.view(1, -1, 1, 1, 1)
-            bias = self.bias.view(1, -1, 1, 1, 1)
-        # Handle 4D case for [B, C, H, W]
-        elif x.dim() == 4:
-            weight = self.weight.view(1, -1, 1, 1)
-            bias = self.bias.view(1, -1, 1, 1)
-        else:
-            weight = self.weight
-            bias = self.bias
-
-        return x * weight + bias
-
-
-def total_variation_loss(alpha):
-    """
-    alpha: shape (N, C, H, W)
-    Returns a scalar that is the total variation penalty (anisotropic TV).
-    """
-    # Shifted differences in the horizontal (x) direction
-    diff_x = alpha[:, :, :, 1:] - alpha[:, :, :, :-1]
-    # Shifted differences in the vertical (y) direction
-    diff_y = alpha[:, :, 1:, :] - alpha[:, :, :-1, :]
-
-    # L1 norm of these differences
-    tv_x = diff_x.abs().sum()
-    tv_y = diff_y.abs().sum()
-
-    # total TV is sum of horizontal and vertical
-    tv = tv_x + tv_y
-    return tv
-
-
-# %%
-class UNetIntegrator(BaseIntegrator):
+class MLPIntegrator(BaseIntegrator):
     def __init__(
         self,
-        image_encoder,
-        metadata_encoder,
+        encoder,
         loss,
-        q_bg,
-        profile_model,
+        qbg,
+        qp,
+        qI,
         decoder,
-        dmodel=64,
-        output_dims=1323,
         mc_samples=100,
         learning_rate=1e-3,
         profile_threshold=0.001,
-        q_I=None,
+        image_encoder=None,
     ):
         super().__init__()
         # Save hyperparameters
@@ -108,26 +38,13 @@ class UNetIntegrator(BaseIntegrator):
         self.profile_threshold = profile_threshold
 
         # Model components
+        self.encoder = encoder
         self.image_encoder = image_encoder
-        self.metadata_encoder = metadata_encoder
-        self.profile_model = profile_model
-        # self.dytanh = DynamicTanh(output_dims)
-        self.layer_norm = nn.LayerNorm(output_dims)
-
-        self.background_distribution = q_bg
-
-        if q_I is not None:
-            self.intensity_distribution = q_I
-        else:
-            self.intensity_distribution = None
-
+        self.qp = qp
+        self.qbg = qbg
         self.decoder = decoder
-
-        self.loss_fn = loss  # Additional layers
-        self.fc_representation = Linear(1323, dmodel)
-
-        # Enable automatic optimization
         self.automatic_optimization = True
+        self.loss_fn = loss  # Additional layers
 
     def calculate_intensities(self, counts, qbg, qp, dead_pixel_mask):
         with torch.no_grad():
@@ -156,9 +73,7 @@ class UNetIntegrator(BaseIntegrator):
             weighted_sum_var = division.var(-1)
 
             profile_masks = batch_profile_samples > thresholds
-
             N_used = profile_masks.sum(-1).float()  # [batch_size × mc_samples]
-
             masked_counts = batch_counts * profile_masks
 
             thresholded_intensity = (
@@ -166,9 +81,7 @@ class UNetIntegrator(BaseIntegrator):
             ).sum(-1)
 
             thresholded_mean = thresholded_intensity.mean(-1)
-
             centered_thresh = thresholded_intensity - thresholded_mean.unsqueeze(-1)
-
             thresholded_var = (centered_thresh**2).sum(-1) / (N_used.mean(-1) + 1e-6)
 
             intensities = {
@@ -182,40 +95,53 @@ class UNetIntegrator(BaseIntegrator):
     def forward(self, shoebox, dials, masks, metadata, counts):
         # Preprocess input data
         counts = torch.clamp(counts, min=0) * masks
+        batch_size = shoebox.shape[0]
 
-        # Extract representations from the shoebox and metadata
-        shoebox_representation = self.image_encoder(shoebox, masks)
-        meta_representation = self.metadata_encoder(metadata)
+        if self.image_encoder is not None:
+            alphas = self.image_encoder(shoebox)
+            qp = self.qp(alphas)
 
-        # Combine representations and normalize
-        if shoebox_representation.shape[1] != meta_representation.shape[1]:
-            representation = (
-                self.fc_representation(shoebox_representation) + meta_representation
-            )
-            qp = self.profile_model(shoebox_representation)
-        else:
-            representation = shoebox_representation + meta_representation
-            qp = self.profile_model(representation)
+        shoebox = torch.cat([shoebox[:, :, -1], metadata], dim=-1)
 
-        # Get distributions from confidence model
-        q_bg = self.background_distribution(representation)
+        representation = self.encoder(shoebox, masks)
+        qbg = self.qbg(representation)
 
-        if self.intensity_distribution is not None:
-            q_I = self.intensity_distribution(representation)
-            rate, intensity_mean, intensity_var = self.decoder(q_bg, qp, q_I, masks)
-        else:
-            q_I = None
-            rate, intensity_mean, intensity_var = self.decoder(q_bg, qp, counts, masks)
+        if self.image_encoder is None:
+            qp = self.qp(representation)
 
-        # Calculate rate using the decoder
+        zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        zp = qp.rsample([self.mc_samples]).permute(
+            1, 0, 2
+        )  # [batch_size, mc_samples, pixels]
+
+        vi = zbg + 1e-6
+
+        max_iterations = 3
+        for i in range(max_iterations):
+            # Direct subtraction instead of softplus
+            numerator = (
+                torch.nn.functional.softplus(counts.unsqueeze(1) - zbg)
+                * masks.unsqueeze(1)
+                * zp
+            ) / vi
+            denominator = zp.pow(2) / vi + 1e-6
+            intensity = numerator.sum(-1) / denominator.sum(-1)
+
+            vi = (intensity.unsqueeze(-1) * zp) + zbg
+            vi = vi.mean(-1, keepdim=True) + 1e-6
+
+        intensity_mean = intensity.mean(-1)
+        intensity_var = intensity.var(-1)
+        rate = intensity.unsqueeze(-1) * zp + zbg
+        # rate = intensity_mean.unsqueeze(1)*zp.mean(1) + zbg.mean(1) # [batch_size, pixels]
 
         return {
             "rates": rate,
             "counts": counts,
             "masks": masks,
-            "qbg": q_bg,
+            "qbg": qbg,
             "qp": qp,
-            "qI": q_I,
+            "qI": torch.tensor(0.0),
             "intensity_mean": intensity_mean,
             "intensity_var": intensity_var,
             "dials_I_sum_value": dials[:, 0],
@@ -233,13 +159,12 @@ class UNetIntegrator(BaseIntegrator):
         outputs = self(shoebox, dials, masks, metadata, counts)
 
         # Calculate loss.
-        # Updated call: note we no longer pass a separate q_I_nosignal.
-        (loss, neg_ll, kl, kl_bg, kl_p, tv_loss) = self.loss_fn(
-            outputs["rates"],
-            outputs["counts"],
-            outputs["qp"],
-            outputs["qbg"],
-            outputs["masks"],
+        (loss, neg_ll, kl, kl_bg, kl_p, kl_I) = self.loss_fn(
+            rate=outputs["rates"],
+            counts=outputs["counts"],
+            q_p=outputs["qp"],
+            q_bg=outputs["qbg"],
+            masks=outputs["masks"],
             q_I=outputs["qI"],
         )
 
@@ -247,12 +172,12 @@ class UNetIntegrator(BaseIntegrator):
         # torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
 
         # Log metrics
-        self.log("train_loss", loss.mean())
-        self.log("train_nll", neg_ll.mean())
-        self.log("train_kl", kl.mean())
-        self.log("train_kl_bg", kl_bg.mean())
-        self.log("train_kl_p", kl_p.mean())
-        self.log("train_tv_loss", tv_loss.mean())
+        self.log("train: loss", loss.mean())
+        self.log("train: nll", neg_ll.mean())
+        self.log("train: kl", kl.mean())
+        self.log("train: kl_bg", kl_bg.mean())
+        self.log("train: kl_p", kl_p.mean())
+        self.log("train: kl_I", kl_I.mean())
 
         return loss.mean()
 
@@ -269,23 +194,23 @@ class UNetIntegrator(BaseIntegrator):
             kl,
             kl_bg,
             kl_p,
-            tv_loss,
+            kl_I,
         ) = self.loss_fn(
-            outputs["rates"],
-            outputs["counts"],
-            outputs["qp"],
-            outputs["qbg"],
-            outputs["masks"],
+            rate=outputs["rates"],
+            counts=outputs["counts"],
+            q_p=outputs["qp"],
+            q_bg=outputs["qbg"],
+            masks=outputs["masks"],
             q_I=outputs["qI"],
         )
 
         # Log metrics
-        self.log("val_loss", loss.mean())
-        self.log("val_nll", neg_ll.mean())
-        self.log("val_kl", kl.mean())
-        self.log("val_kl_bg", kl_bg.mean())
-        self.log("val_kl_p", kl_p.mean())
-        self.log("val_tv_loss", tv_loss.mean())
+        self.log("val: loss", loss.mean())
+        self.log("val: nll", neg_ll.mean())
+        self.log("val: kl", kl.mean())
+        self.log("val: kl_bg", kl_bg.mean())
+        self.log("val: kl_p", kl_p.mean())
+        self.log("val: kl_I", kl_I.mean())
 
         return outputs
 
@@ -309,34 +234,3 @@ class UNetIntegrator(BaseIntegrator):
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
-
-
-if __name__ == "__main__":
-    from integrator.model.encoders import MLPMetadataEncoder
-    from integrator.model.encoders import UNetDirichletConcentration, CNNResNet2
-    from integrator.model.distribution import GammaDistribution
-    from integrator.model.profiles import UnetDirichletProfile, DirichletProfile
-
-    Z, H, W = 3, 21, 21
-    dmodel = 64
-    batch_size = 4
-
-    # create networks
-    shoebox_encoder = CNNResNet2(conv1_out_channel=dmodel)
-    metadata_encoder = MLPMetadataEncoder(depth=10, dmodel=dmodel, feature_dim=7)
-    background_distribution = GammaDistribution(dmodel)
-    profile_model = DirichletProfile(dmodel)
-
-    x = torch.randn(batch_size, Z * H * W, 7)
-    masks = torch.ones(batch_size, Z * H * W)
-    metadata = torch.randn(batch_size, 7)
-
-    shoebox_representation = shoebox_encoder(x, masks)  # [batch_size, dmodel]
-    meta_representation = metadata_encoder(metadata)  # [batch_size, dmodel]
-
-    representation = (
-        shoebox_representation + meta_representation
-    )  # [batch_size, dmodel]
-
-    qbg = background_distribution(representation)
-    qp = profile_model(representation)  # [batch_size, num_components]

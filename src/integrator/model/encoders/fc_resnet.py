@@ -1,33 +1,26 @@
 import torch
 from torch.nn import Linear
+
 from integrator.layers import Residual, MLP, MeanPool
 from integrator.model.encoders import BaseEncoder
+import torch.nn as nn
 
 
 class MLPImageEncoder(BaseEncoder):
     def __init__(self, depth=10, dmodel=64, feature_dim=7, dropout=None):
         super().__init__()
         self.linear = Linear(feature_dim, dmodel)
-        self.relu = torch.nn.ReLU(inplace=True)
-        # self.batch_norm = nn.BatchNorm1d(dmodel)
-        self.layer_norm = torch.nn.LayerNorm(dmodel)
+        self.relu = nn.ReLU()
         self.mlp_1 = MLP(dmodel, depth, dropout=dropout, output_dims=dmodel)
-        self.mean_pool = MeanPool()
 
     def forward(self, shoebox_data, masks):
-        # shoebox_data shape: [batch_size, num_pixels, feature_dim]
-        # batch_size, features = shoebox_data.shape
-
-        # Initial linear transformation
         out = self.linear(shoebox_data)
         out = self.relu(out)
-        out = self.layer_norm(out)
         out = self.mlp_1(out)
-        pooled_out = self.mean_pool(out, masks.unsqueeze(-1))
-        return pooled_out
+        return out
 
 
-class MeanPool(torch.nn.Module):
+class MeanPool(nn.Module):
     def __init__(self, dim=-1):
         super().__init__()
         self.register_buffer(
@@ -43,5 +36,4 @@ class MeanPool(torch.nn.Module):
         else:
             denom = torch.sum(mask, dim=-2, keepdim=True)
         out = out / denom
-
         return out.squeeze(1)

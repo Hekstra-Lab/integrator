@@ -43,7 +43,7 @@ class ResidualBlock2D(nn.Module):
         return out
 
 
-class UNetDirichletConcentration(nn.Module):
+class DirichletConcentration(nn.Module):
     """
     A fully convolutional 2D ResNet that preserves input spatial dims.
     For example, if input is (N, 3, 21, 21), output is (N, out_channels, 21, 21).
@@ -89,7 +89,6 @@ class UNetDirichletConcentration(nn.Module):
 
         # Final output conv
         x = self.conv_out(x)  # => (N, out_channels, H, W)
-        print("Final conv min:", x.min().item(), "max:", x.max().item())
 
         return x.view(-1, 3 * 21 * 21)
 
@@ -97,7 +96,7 @@ class UNetDirichletConcentration(nn.Module):
 if __name__ == "__main__":
     # shoebox shape: (N, 3*21*21)
 
-    model = UNetDirichletConcentration(
+    model = DirichletConcentration(
         in_channels=3, base_ch=32, num_blocks=4, out_channels=3
     )
 

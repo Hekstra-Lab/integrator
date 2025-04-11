@@ -97,11 +97,16 @@ def load_config(config_path):
 # %%
 def create_components(config):
     # Base modules
-    image_encoder = create_module(
-        "image_encoder",
-        config["components"]["image_encoder"]["name"],
-        **config["components"]["image_encoder"]["params"],
-    )
+
+    if "image_encoder" in config["components"]:
+        image_encoder = create_module(
+            "image_encoder",
+            config["components"]["image_encoder"]["name"],
+            **config["components"]["image_encoder"]["params"],
+        )
+    else:
+        image_encoder = None
+
     profile = create_module(
         "profile",
         config["components"]["profile"]["name"],
@@ -197,40 +202,6 @@ def create_integrator(config):
         )
         return integrator
 
-    if integrator_name == "unet_integrator":
-        loss = create_module(
-            "loss",
-            config["components"]["loss"]["name"],
-            **config["components"]["loss"]["params"],
-        )
-
-        metadata_encoder = create_module(
-            "metadata_encoder",
-            config["components"]["metadata_encoder"]["name"],
-            **config["components"]["metadata_encoder"]["params"],
-        )
-
-        image_encoder = create_module(
-            "image_encoder",
-            config["components"]["image_encoder"]["name"],
-            **config["components"]["image_encoder"]["params"],
-        )
-
-        integrator = integrator_class(
-            image_encoder=image_encoder,
-            metadata_encoder=metadata_encoder,
-            q_bg=background_distribution,
-            decoder=decoder,
-            loss=loss,
-            profile_model=profile,
-            dmodel=config["global"]["dmodel"],
-            mc_samples=config["integrator"]["mc_samples"],
-            learning_rate=config["integrator"]["learning_rate"],
-            profile_threshold=config["integrator"]["profile_threshold"],
-            q_I=intensity_distribution,
-        )
-        return integrator
-
     if integrator_name == "bernoulli_integrator":
         loss = create_loss(config)
         q_z = create_module(
@@ -244,8 +215,13 @@ def create_integrator(config):
             **config["components"]["metadata_encoder"]["params"],
         )
 
+        image_encoder = create_module(
+            "image_encoder",
+            config["components"]["image_encoder"]["name"],
+            **config["components"]["image_encoder"]["params"],
+        )
+
         integrator = integrator_class(
-            image_encoder=image_encoder,
             metadata_encoder=metadata_encoder,
             q_bg=background_distribution,
             q_I=intensity_distribution,
@@ -257,6 +233,7 @@ def create_integrator(config):
             mc_samples=config["integrator"]["mc_samples"],
             learning_rate=config["integrator"]["learning_rate"],
             profile_threshold=config["integrator"]["profile_threshold"],
+            image_encoder=image_encoder,
         )
         return integrator
 
@@ -283,30 +260,39 @@ def create_integrator(config):
         )
         return integrator
 
-    elif integrator_name == "unet_integrator":
+    elif integrator_name == "mlp_integrator":
         loss = create_module(
             "loss",
             config["components"]["loss"]["name"],
             **config["components"]["loss"]["params"],
         )
 
-        metadata_encoder = create_module(
-            "metadata_encoder",
-            config["components"]["metadata_encoder"]["name"],
-            **config["components"]["metadata_encoder"]["params"],
+        encoder = create_module(
+            "encoder",
+            config["components"]["encoder"]["name"],
+            **config["components"]["encoder"]["params"],
         )
 
+        if "image_encoder" in config["components"]:
+            image_encoder = create_module(
+                "image_encoder",
+                config["components"]["image_encoder"]["name"],
+                **config["components"]["image_encoder"]["params"],
+            )
+        else:
+            image_encoder = None
+
         integrator = integrator_class(
-            image_encoder=image_encoder,
-            metadata_encoder=metadata_encoder,
-            q_bg=background_distribution,
-            q_I=intensity_distribution,
+            encoder=encoder,
+            qbg=background_distribution,
+            qI=intensity_distribution,
             decoder=decoder,
             loss=loss,
-            dmodel=config["global"]["dmodel"],
+            qp=profile,
             mc_samples=config["integrator"]["mc_samples"],
             learning_rate=config["integrator"]["learning_rate"],
             profile_threshold=config["integrator"]["profile_threshold"],
+            image_encoder=image_encoder,
         )
         return integrator
 
@@ -387,7 +373,7 @@ def create_integrator_from_checkpoint(config, checkpoint_path):
         )
         return integrator
 
-    if integrator_name == "unet_integrator":
+    if integrator_name == "mlp_integrator":
         loss = create_module(
             "loss",
             config["components"]["loss"]["name"],
