@@ -98,6 +98,12 @@ class MLPIntegrator(BaseIntegrator):
     def forward(self, shoebox, dials, masks, metadata, counts):
         counts = torch.clamp(counts, min=0) * masks
         # shoebox = torch.cat([shoebox[:, :, -1], metadata], dim=-1)
+        print("counts min:", counts.min())
+        print("counts max:", counts.max())
+        print("counts sum min: ", counts.sum(-1).min())
+        print("counts sum max: ", counts.sum(-1).max())
+        print("counts sum min:", mask.sum(-1).min())
+
         rep = self.encoder(shoebox, masks)
         qp = self.qp(rep)
         qbg = self.qbg(rep)
