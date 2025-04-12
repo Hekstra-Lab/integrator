@@ -97,7 +97,7 @@ class MLPIntegrator(BaseIntegrator):
 
     def forward(self, shoebox, dials, masks, metadata, counts):
         counts = torch.clamp(counts, min=0) * masks
-        shoebox = torch.cat([shoebox[:, :, -1], metadata], dim=-1)
+        # shoebox = torch.cat([shoebox[:, :, -1], metadata], dim=-1)
         rep = self.encoder(shoebox, masks)
         qp = self.qp(rep)
         qbg = self.qbg(rep)
@@ -162,7 +162,7 @@ class MLPIntegrator(BaseIntegrator):
         )
 
         # Clip gradients for stability
-        # torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
+        torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
 
         # Log metrics
         self.log("train: loss", loss.mean())

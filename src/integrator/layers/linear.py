@@ -22,7 +22,7 @@ class Linear(torch.nn.Linear):
         self.weight = weight_initializer(self.weight)
 
 
-class tempResidualLayer(nn.Module):
+class ResidualLayer(nn.Module):
     def __init__(self, width, dropout=None):
         super().__init__()
 
@@ -43,7 +43,7 @@ class tempResidualLayer(nn.Module):
         return out
 
 
-class tempMLP(nn.Module):
+class MLP(nn.Module):
     def __init__(self, width, depth, dropout=None, output_dims=None):
         super().__init__()
         layers = [ResidualLayer(width, dropout=dropout) for _ in range(depth)]
@@ -125,7 +125,7 @@ class DyT(nn.Module):
         return x * weight + bias
 
 
-class ResidualLayer(nn.Module):
+class tempResidualLayer(nn.Module):
     def __init__(self, width, dropout=None):
         super().__init__()
         self.fc1 = nn.Linear(width, width)
@@ -155,7 +155,7 @@ class ResidualLayer(nn.Module):
         return out
 
 
-class MLP(nn.Module):
+class tempMLP(nn.Module):
     def __init__(self, width, depth, dropout=None, output_dims=None):
         super().__init__()
         layers = [ResidualLayer(width, dropout=dropout) for _ in range(depth)]

@@ -56,8 +56,8 @@ class UnetLoss(torch.nn.Module):
         # Intensity prior
         use_center_focused_prior=True,
         prior_shape=(3, 21, 21),
-        prior_base_alpha=0.001,
-        prior_center_alpha=100.0,
+        prior_base_alpha=0.1,
+        prior_center_alpha=5.0,
         prior_decay_factor=0.2,
         prior_peak_percentage=0.05,
     ):

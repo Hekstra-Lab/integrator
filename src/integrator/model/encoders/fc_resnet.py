@@ -43,7 +43,7 @@ class tempMLPImageEncoder(BaseEncoder):
         return out
 
 
-class MLPImageEncoder(BaseEncoder):
+class tempMLPImageEncoder(BaseEncoder):
     def __init__(self, depth=10, dmodel=64, feature_dim=7, dropout=None):
         super().__init__()
         self.linear = nn.Linear(feature_dim, dmodel)
@@ -57,7 +57,7 @@ class MLPImageEncoder(BaseEncoder):
         return out
 
 
-class tempMLPImageEncoder(torch.nn.Module):
+class MLPImageEncoder(torch.nn.Module):
     def __init__(self, depth=10, dmodel=64, feature_dim=7, dropout=None):
         super().__init__()
         self.linear = Linear(feature_dim, dmodel)
