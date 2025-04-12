@@ -12,12 +12,13 @@ class MVNProfile(torch.nn.Module):
     def __init__(self, dmodel, image_shape):
         super().__init__()
         self.dmodel = dmodel
+        self.eps = 1e-6
 
         # Use different transformation for more flexible scale learning
         self.L_transform = FillScaleTriL(diag_transform=SoftplusTransform())
 
         # Create scale and mean prediction layers
-        self.scale_layer = Linear(self.dmodel, 6, bias=True)
+        self.scale_layer = Linear(self.dmodel, 6)
 
         # Initialize scale_layer to output an isotropic Gaussian by default
         with torch.no_grad():
@@ -26,7 +27,7 @@ class MVNProfile(torch.nn.Module):
             init_scale_raw = (
                 init_scale - 1.0
             )  # elu(x) + 1 = s  => x = s - 1 (since s > 0)
-            self.scale_layer.bias.copy_(init_scale_raw)
+            # self.scale_layer.bias.copy_(init_scale_raw)
             torch.nn.init.zeros_(
                 self.scale_layer.weight
             )  # prevents representation from influencing scale at init
@@ -64,12 +65,9 @@ class MVNProfile(torch.nn.Module):
         # Predict mean offsets
         means = self.mean_layer(representation).view(batch_size, 1, 3)
 
-        # Predict scale parameters - use ELU+1 for positive values with better gradient properties
+        # Predict scale parameter}
         scales_raw = self.scale_layer(representation).view(batch_size, 1, 6)
-
-        # Instead of sigmoid, use ELU+1 which has a better gradient flow and unbounded upper range
-        # This allows the model to learn scales more freely
-        scales = torch.nn.functional.elu(scales_raw) + 1.0
+        scales = torch.nn.functional.softplus(scales_raw) + self.eps
 
         # Transform scales
         L = self.L_transform(scales).to(torch.float32)
@@ -101,6 +99,7 @@ if __name__ == "__main__":
     representation = torch.randn(10, 64)
 
     profile = profile_model(representation)
+
     # The output should have shape [1, 3*21*21] = [1, 1323]
 
     expanded = profile.unsqueeze_(1).expand(-1, 100, -1)

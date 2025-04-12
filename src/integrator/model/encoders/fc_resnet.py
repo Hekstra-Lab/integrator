@@ -1,7 +1,6 @@
 import torch
 from torch.nn import Linear
-
-from integrator.layers import Residual, MLP, MeanPool
+from integrator.layers import MLP, MeanPool
 from integrator.model.encoders import BaseEncoder
 import torch.nn as nn
 
@@ -48,16 +47,42 @@ class MLPImageEncoder(BaseEncoder):
     def __init__(self, depth=10, dmodel=64, feature_dim=7, dropout=None):
         super().__init__()
         self.linear = nn.Linear(feature_dim, dmodel)
-        self.dyt = DyT(dmodel)  # Apply DyT after dimension change
         self.relu = nn.ReLU()
         self.mlp_1 = MLP(dmodel, depth, dropout=dropout, output_dims=dmodel)
 
     def forward(self, shoebox_data, masks):
         out = self.linear(shoebox_data)
-        out = self.dyt(out)  # Apply DyT before activation
         out = self.relu(out)
         out = self.mlp_1(out)
         return out
+
+
+class tempMLPImageEncoder(torch.nn.Module):
+    def __init__(self, depth=10, dmodel=64, feature_dim=7, dropout=None):
+        super().__init__()
+        self.linear = Linear(feature_dim, dmodel)
+        self.relu = torch.nn.ReLU(inplace=True)
+        # self.batch_norm = torch.nn.BatchNorm1d(dmodel)
+        self.mlp_1 = MLP(dmodel, depth, dropout=dropout, output_dims=dmodel)
+        self.mean_pool = MeanPool()
+
+    def forward(self, shoebox_data, mask):
+        batch_size, num_pixels, _ = shoebox_data.shape
+
+        # Initial transformations
+        out = self.linear(shoebox_data)
+        out = self.relu(out)
+
+        # Reshape for BatchNorm1d, apply it, then reshape back
+        out = out.view(batch_size * num_pixels, -1)
+        # out = self.batch_norm(out)
+        out = out.view(batch_size, num_pixels, -1)
+
+        # Pass through residual blocks
+        out = self.mlp_1(out)
+        pooled_out = self.mean_pool(out, mask.unsqueeze(-1))
+
+        return pooled_out
 
 
 class MeanPool(nn.Module):

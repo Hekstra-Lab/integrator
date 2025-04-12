@@ -1,4 +1,5 @@
 import torch
+import math
 import torch.nn as nn
 from integrator.model.integrators import BaseIntegrator
 from integrator.layers import Linear
@@ -6,6 +7,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
+from integrator.model.encoders import CNNResNet2
 
 
 class MLPIntegrator(BaseIntegrator):
@@ -20,6 +22,7 @@ class MLPIntegrator(BaseIntegrator):
         learning_rate=1e-3,
         profile_threshold=0.001,
         image_encoder=None,
+        max_iterations=4,
     ):
         super().__init__()
         # Save hyperparameters
@@ -38,12 +41,12 @@ class MLPIntegrator(BaseIntegrator):
 
         # Model components
         self.encoder = encoder
-        self.image_encoder = image_encoder
         self.qp = qp
         self.qbg = qbg
         self.decoder = decoder
         self.automatic_optimization = True
-        self.loss_fn = loss  # Additional layers
+        self.loss_fn = loss
+        self.max_iterations = max_iterations
 
     def calculate_intensities(self, counts, qbg, qp, dead_pixel_mask):
         with torch.no_grad():
@@ -94,45 +97,38 @@ class MLPIntegrator(BaseIntegrator):
 
     def forward(self, shoebox, dials, masks, metadata, counts):
         counts = torch.clamp(counts, min=0) * masks
-
-        if self.image_encoder is not None:
-            alphas = self.image_encoder(shoebox)
-            qp = self.qp(alphas)
-
         shoebox = torch.cat([shoebox[:, :, -1], metadata], dim=-1)
+        rep = self.encoder(shoebox, masks)
+        qp = self.qp(rep)
+        qbg = self.qbg(rep)
 
-        representation = self.encoder(shoebox, masks)
+        # kabsch monte carlo
 
-        print("Representation contains NaN:", torch.isnan(representation).any())
-        qbg = self.qbg(representation)
-
-        if self.image_encoder is None:
-            qp = self.qp(representation)
-
-        # zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
-        zbg = qbg.rsample([self.mc_samples]).permute(1, 0, 2)
-        zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
+        # sample background and profiles
+        zbg = qbg.sample([self.mc_samples]).permute(
+            1, 0, 2
+        )  # [batch_size x mc_samples x pixels]
+        zp = qp.rsample([self.mc_samples]).permute(
+            1, 0, 2
+        )  # [batch_size x mc_samples x pixels]
 
         vi = zbg + 1e-6
+        max_iterations = self.max_iterations
 
-        max_iterations = 3
         for i in range(max_iterations):
-            # Direct subtraction instead of softplus
-            numerator = (
+            num = (
                 torch.nn.functional.softplus(counts.unsqueeze(1) - zbg)
                 * masks.unsqueeze(1)
                 * zp
             ) / vi
-            denominator = zp.pow(2) / vi + 1e-6
-            intensity = numerator.sum(-1) / denominator.sum(-1) + 1e-6
-
+            denom = zp.pow(2) / vi
+            intensity = num.sum(-1) / denom.sum(-1)  # [batch_size, mc_samples]
             vi = (intensity.unsqueeze(-1) * zp) + zbg
-            vi = vi.mean(-1, keepdim=True) + 1e-6
 
-        intensity_mean = intensity.mean(-1)
-        intensity_var = intensity.var(-1)
-        rate = intensity.unsqueeze(-1) * zp + zbg
-        # rate = intensity_mean.unsqueeze(1)*zp.mean(1) + zbg.mean(1) # [batch_size, pixels]
+        intensity_mean = intensity.mean(-1)  # [batch_size]
+        intensity_var = intensity.var(-1)  # [batch_size]
+
+        rate = intensity.unsqueeze(-1) * zp + zbg  # [batch_size, mc_samples, pixels]
 
         return {
             "rates": rate,
@@ -166,7 +162,7 @@ class MLPIntegrator(BaseIntegrator):
         )
 
         # Clip gradients for stability
-        torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
+        # torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
 
         # Log metrics
         self.log("train: loss", loss.mean())

@@ -372,7 +372,6 @@ def create_integrator_from_checkpoint(config, checkpoint_path):
         )
         return integrator
 
-
     if integrator_name == "mlp_integrator":
         loss = create_module(
             "loss",
@@ -408,7 +407,6 @@ def create_integrator_from_checkpoint(config, checkpoint_path):
             image_encoder=image_encoder,
         )
         return integrator
-
 
     else:
         raise ValueError(f"Unknown integrator name: {integrator_name}")

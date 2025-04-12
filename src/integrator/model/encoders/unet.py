@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class tempResidualBlock2D(nn.Module):
+class ResidualBlock2D(nn.Module):
     """
     A basic residual block for 2D images:
     - Conv2D(in_ch -> out_ch), BN, ReLU
@@ -194,6 +194,51 @@ class DirichletConcentration(nn.Module):
         return x.view(-1, 3 * 21 * 21)
 
 
+class ResNetEncoder(nn.Module):
+    def __init__(
+        self, in_channels=3, base_ch=32, num_blocks=4, out_channels=1, vector_dim=64
+    ):
+        super().__init__()
+        # 1) Initial convolution to go from in_channels -> base_ch
+        self.conv_in = nn.Conv2d(
+            in_channels, base_ch, kernel_size=3, padding=1, stride=1
+        )
+        self.dyt_in = DyT(base_ch)
+
+        # 2) Stack of residual blocks
+        self.blocks = nn.ModuleList()
+        current_channels = base_ch
+        for _ in range(num_blocks):
+            block = ResidualBlock2D(current_channels, current_channels)
+            self.blocks.append(block)
+
+        # 3) Global pooling and projection to vector
+        self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(current_channels, vector_dim)
+
+    def forward(self, x, mask=None):
+        """
+        x: (N, in_channels, H, W)
+        returns: (N, vector_dim)
+        """
+        # Initial conv + DyT + ReLU
+        x = x[:, :, -1].view(-1, 3, 21, 21)
+        x = self.conv_in(x)
+        x = self.dyt_in(x)
+        x = F.relu(x, inplace=True)
+
+        # Residual blocks
+        for block in self.blocks:
+            x = block(x)
+
+        # Global pooling and projection to vector
+        x = self.global_pool(x)  # -> (N, current_channels, 1, 1)
+        x = x.view(x.size(0), -1)  # -> (N, current_channels)
+        x = self.fc(x)  # -> (N, vector_dim)
+
+        return x
+
+
 if __name__ == "__main__":
     # shoebox shape: (N, 3*21*21)
 
@@ -207,3 +252,7 @@ if __name__ == "__main__":
     output = model(dummy_input)
 
     print("Output shape:", output.shape)
+
+    resnet_model = ResNetEncoder()
+    resnet_output = resnet_model(dummy_input)
+# %%

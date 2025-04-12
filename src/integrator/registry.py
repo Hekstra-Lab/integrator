@@ -31,7 +31,6 @@ REGISTRY = {
         "dirichlet": DirichletProfile,
         "beta": BetaProfile,
         "mvn": MVNProfile,
-        "unet_dirichlet": UnetDirichletProfile,
     },
     "loss": {
         "elbo": Loss,

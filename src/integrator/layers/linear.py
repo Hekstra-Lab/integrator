@@ -22,48 +22,6 @@ class Linear(torch.nn.Linear):
         self.weight = weight_initializer(self.weight)
 
 
-class Residual(nn.Module):
-
-    """The Residual block of ResNet models."""
-
-    def __init__(self, in_channels, out_channels, strides=1, use_bn=True):
-        super().__init__()
-        self.use_bn = use_bn
-        self.conv1 = nn.Conv2d(
-            in_channels, out_channels, kernel_size=3, padding=1, stride=strides
-        )
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
-        if in_channels != out_channels or strides != 1:
-            self.conv3 = nn.Conv2d(
-                in_channels, out_channels, kernel_size=1, stride=strides
-            )
-        else:
-            self.conv3 = None
-
-        if self.use_bn:
-            self.bn1 = nn.BatchNorm2d(out_channels)
-            self.bn2 = nn.BatchNorm2d(out_channels)
-
-    #            if self.conv3:
-    #                self.bn3 = nn.BatchNorm2d(out_channels)
-
-    def forward(self, X):
-        Y = self.conv1(X)
-        if self.use_bn:
-            Y = self.bn1(Y)
-        Y = F.relu(Y)
-        Y = self.conv2(Y)
-        if self.use_bn:
-            Y = self.bn2(Y)
-
-        if self.conv3:
-            X = self.conv3(X)
-            # if self.use_bn:
-            #    X = self.bn3(X)
-        Y += X
-        return F.relu(Y)
-
-
 class tempResidualLayer(nn.Module):
     def __init__(self, width, dropout=None):
         super().__init__()
@@ -221,6 +179,3 @@ class MLP(nn.Module):
         if num_pixels is not None:
             out = out.view(batch_size, num_pixels, -1)  # Reshape back if needed
         return out
-
-
-

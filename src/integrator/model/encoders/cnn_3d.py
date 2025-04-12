@@ -1,5 +1,5 @@
 import torch
-from integrator.layers import Residual, MLP, MeanPool
+from integrator.layers import MLP, MeanPool
 from integrator.model.encoders import BaseEncoder
 
 

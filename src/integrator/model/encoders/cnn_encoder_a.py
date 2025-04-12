@@ -1,7 +1,6 @@
 import torch
 import math
 from torch.nn import Linear
-from integrator.layers import Residual, MLP, MeanPool
 from integrator.model.encoders import BaseEncoder
 
 
