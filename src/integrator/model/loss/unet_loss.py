@@ -7,9 +7,9 @@ import matplotlib.pyplot as plt
 def create_center_focused_dirichlet_prior(
     shape=(3, 21, 21),
     base_alpha=0.1,  # outer region
-    center_alpha=5.0,  # high alpha at the center => center gets more mass
-    decay_factor=0.2,
-    peak_percentage=0.05,
+    center_alpha=100.0,  # high alpha at the center => center gets more mass
+    decay_factor=1,
+    peak_percentage=0.1,
 ):
     channels, height, width = shape
     alpha_3d = np.ones(shape) * base_alpha
@@ -60,6 +60,9 @@ class UnetLoss(torch.nn.Module):
         prior_center_alpha=5.0,
         prior_decay_factor=0.2,
         prior_peak_percentage=0.05,
+        p_I_name="gamma",
+        p_I_params={"concentration": 1.0, "rate": 1.0},
+        p_I_scale=0.001,
     ):
         super().__init__()
 
@@ -236,8 +239,8 @@ class UnetLoss(torch.nn.Module):
 if __name__ == "__main__":
     plt.imshow(
         torch.distributions.dirichlet.Dirichlet(
-            create_center_focused_dirichlet_prior()
-        ).mean.reshape(3, 21, 21)[1]
+            create_center_focused_dirichlet_prior(peak_percentage=0.08)
+        ).concentration.reshape(3, 21, 21)[1]
     )
     plt.colorbar()
     plt.show()

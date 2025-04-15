@@ -8,7 +8,7 @@ class HalfNormalDistribution(torch.nn.Module):
         self,
         dmodel,
         constraint=Constraint(),
-        out_features=1323,
+        out_features=1,
     ):
         super().__init__()
         self.fc = Linear(
@@ -21,7 +21,7 @@ class HalfNormalDistribution(torch.nn.Module):
 
     def distribution(self, params):
         scale = self.constraint(params)
-        scale = torch.clamp(scale, min=self.min_value, max=self.max_value)
+        # scale = torch.clamp(scale, min=self.min_value, max=self.max_value)
         return torch.distributions.half_normal.HalfNormal(scale)
 
     def forward(self, representation):

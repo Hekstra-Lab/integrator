@@ -13,6 +13,7 @@ REGISTRY = {
     },
     "encoder": {
         "mlp_image_encoder": MLPImageEncoder,  # done
+        "cnn_3d": CNNResNet2,  # done
     },
     "image_encoder": {
         "cnn_3d": CNNResNet2,  # done
