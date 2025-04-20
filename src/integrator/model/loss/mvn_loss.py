@@ -195,10 +195,10 @@ class LRMVNLoss(torch.nn.Module):
         prior_shape=(3, 21, 21),
         p_I_name="gamma",
         p_I_params={"concentration": 1.0, "rate": 1.0},
-        p_I_scale=0.001,
-        p_p_mean_scale=0.001,
-        p_p_factor_scale=0.001,
-        p_p_diag_scale=0.001,
+        p_I_scale=0.0001,
+        p_p_mean_scale=0.01,
+        p_p_factor_scale=0.01,
+        p_p_diag_scale=0.01,
     ):
         super().__init__()
 
