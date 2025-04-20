@@ -1,5 +1,5 @@
 from .base_encoder import BaseEncoder
-from .encoder import CNNResNet
+from .encoder import ShoeboxEncoder
 from .fc_encoder import MLPMetadataEncoder
 from .cnn_encoder_a import CNNResNet2
 from .dev_encoder import DevEncoder

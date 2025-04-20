@@ -1,4 +1,6 @@
 import wandb
+import sys
+import traceback
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import matplotlib.pyplot as plt
 from pytorch_lightning.callbacks import Callback
@@ -586,8 +588,10 @@ class UNetPlotter(Callback):
             "intensity_mean": [],
             "intensity_var": [],
             "dials_I_prf_value": [],
+            "dials_I_prf_var": [],
             "qbg": [],
             "rates": [],
+            "x_c": [],
         }
 
         self.tracked_predictions = {
@@ -599,6 +603,10 @@ class UNetPlotter(Callback):
             "intensity_var": {},
             "qbg_var": {},
             "dials_I_prf_value": {},
+            "dials_I_prf_var": {},
+            "metadata": {},
+            "x_c": {},
+            "y_c": {},
         }
 
     def update_tracked_predictions(
@@ -609,8 +617,11 @@ class UNetPlotter(Callback):
         count_preds,
         refl_ids,
         dials_I,
+        dials_I_var,
         intensity_mean,
         intensity_var,
+        x_c,
+        y_c,
     ):
         current_refl_ids = refl_ids.cpu().numpy()
 
@@ -628,6 +639,8 @@ class UNetPlotter(Callback):
         bg_mean = qbg_preds.mean.mean(-1)
         bg_var = qbg_preds.variance.mean(-1)
         dials_I_prf_value = dials_I
+        x_c = x_c
+        y_c = y_c
 
         for ref_id in self.tracked_refl_ids:
             matches = np.where(current_refl_ids == ref_id)[0]
@@ -648,6 +661,9 @@ class UNetPlotter(Callback):
                 self.tracked_predictions["dials_I_prf_value"][
                     ref_id
                 ] = dials_I_prf_value[idx]
+                self.tracked_predictions["dials_I_prf_var"][ref_id] = dials_I_var[idx]
+                # self.tracked_predictions["x_c"][ref_id] = x_c[idx].cpu()
+                # self.tracked_predictions["y_c"][ref_id] = y_c[idx].cpu()
 
         torch.cuda.empty_cache()
 
@@ -736,30 +752,439 @@ class UNetPlotter(Callback):
             shoebox, dials, masks, metadata, counts = batch
             base_output = pl_module(shoebox, dials, masks, metadata, counts)
 
-            # 2) Call calculate_intensities with the relevant fields
+            # 2) Call calculate_intensities
             intensities = pl_module.calculate_intensities(
                 counts=base_output["counts"],
                 qbg=base_output["qbg"],
-                qp=base_output["qp"],
-                dead_pixel_mask=base_output["masks"],
+                qp=base_output["profile"],
+                masks=base_output["masks"],
             )
 
             predictions = {
                 **base_output,
-                "weighted_sum_mean": intensities["weighted_sum_mean"],
-                "weighted_sum_var": intensities["weighted_sum_var"],
-                "thresholded_mean": intensities["thresholded_mean"],
-                "thresholded_var": intensities["thresholded_var"],
+                "kabsch_sum_mean": intensities["kabsch_sum_mean"],
+                "kabsch_sum_var": intensities["kabsch_sum_var"],
+                "profile_masking_mean": intensities["profile_masking_mean"],
+                "profile_masking_var": intensities["profile_masking_var"],
             }
 
             if self.current_epoch % self.plot_every_n_epochs == 0:
                 self.update_tracked_predictions(
-                    predictions["qp"].mean,
+                    # predictions["qp"].mean,
+                    predictions["qp"],
                     predictions["qbg"],
                     predictions["rates"],
                     predictions["counts"],
                     predictions["refl_ids"],
                     predictions["dials_I_prf_value"],
+                    predictions["dials_I_prf_var"],
+                    predictions["intensity_mean"],
+                    predictions["intensity_var"],
+                    predictions["x_c"],
+                    predictions["y_c"],
+                )
+
+            # Create CPU tensor versions to avoid keeping GPU memory
+            self.train_predictions = {}
+            for key in [
+                "intensity_mean",
+                "intensity_var",
+                "dials_I_prf_value",
+                "dials_I_prf_var",
+                "kabsch_sum_mean",
+                "kabsch_sum_var",
+                "profile_masking_mean",
+                "profile_masking_var",
+                "profile",
+                "qbg",
+                "x_c",
+                "y_c",
+            ]:
+                if key in predictions:
+                    if key == "profile":
+                        self.train_predictions[key] = predictions[key].detach().cpu()
+                    elif hasattr(predictions[key], "sample"):
+                        self.train_predictions[key] = (
+                            predictions[key].mean.detach().cpu()
+                        )
+                    else:
+                        self.train_predictions[key] = predictions[key].detach().cpu()
+
+            # Clean up
+            del base_output, predictions
+            torch.cuda.empty_cache()
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        if self.train_predictions:
+            try:
+                # Create data for scatter plots
+                data = []
+
+                I_flat = self.train_predictions["intensity_mean"].flatten() + 1e-8
+
+                I_var_flat = self.train_predictions["intensity_var"].flatten() + 1e-8
+
+                dials_flat = (
+                    self.train_predictions["dials_I_prf_value"].flatten() + 1e-8
+                )
+                dials_var_flat = (
+                    self.train_predictions["dials_I_prf_var"].flatten() + 1e-8
+                )
+                kabsch_sum_flat = (
+                    self.train_predictions["kabsch_sum_mean"].flatten() + 1e-8
+                )
+                kabsch_sum_flat_var = (
+                    self.train_predictions["kabsch_sum_var"].flatten() + 1e-8
+                )
+                profile_masking_flat = (
+                    self.train_predictions["profile_masking_mean"].flatten() + 1e-8
+                )
+                profile_masking_flat_var = (
+                    self.train_predictions["profile_masking_var"].flatten() + 1e-8
+                )
+
+                # Create data points with safe log transform
+                for i in range(len(I_flat)):
+                    try:
+                        data.append(
+                            [
+                                float(I_flat[i]),
+                                float(I_var_flat[i]),
+                                float(dials_flat[i]),
+                                float(dials_var_flat[i]),
+                                float(kabsch_sum_flat[i]),
+                                float(kabsch_sum_flat_var[i]),
+                                float(profile_masking_flat[i]),
+                                float(profile_masking_flat_var[i]),
+                            ]
+                        )
+                    except Exception as e:
+                        print("Caught exception in on_train_epoch_end!")
+                        print("Type of exception:", type(e))
+                        print("Exception object:", e)
+                        traceback.print_exc(file=sys.stdout)
+
+                # Create table
+                table = wandb.Table(
+                    data=data,
+                    columns=[
+                        "intensity_mean",
+                        "intensity_var",
+                        "dials_I_prf_value",
+                        "dials_I_prf_var",
+                        "kabsch_sum_mean",
+                        "kabsch_sum_var",
+                        "profile_masking_mean",
+                        "profile_masking_var",
+                    ],
+                )
+
+                # Calculate correlation coefficients
+                corr_I = (
+                    torch.corrcoef(torch.vstack([I_flat, dials_flat]))[0, 1]
+                    if len(I_flat) > 1
+                    else 0
+                )
+
+                corr_masked = (
+                    torch.corrcoef(torch.vstack([profile_masking_flat, dials_flat]))[
+                        0, 1
+                    ]
+                    if len(profile_masking_flat) > 1
+                    else 0
+                )
+
+                # Create log dictionary
+                log_dict = {
+                    "train_I_vs_prf": wandb.plot.scatter(
+                        table, "intensity_mean", "dials_I_prf_value"
+                    ),
+                    "train_profile_masking_vs_prf": wandb.plot.scatter(
+                        table, "profile_masking_mean", "dials_I_prf_value"
+                    ),
+                    "train_kabsch_sum_vs_prf": wandb.plot.scatter(
+                        table, "kabsch_sum_mean", "dials_I_prf_value"
+                    ),
+                    "corrcoef_I": corr_I,
+                    "corrcoef_masked": corr_masked,
+                    "max_I": torch.max(I_flat),
+                    "mean_I": torch.mean(I_flat),
+                    "mean_I_var": torch.mean(I_var_flat),
+                    "min_I_var": torch.min(I_var_flat),
+                    "max_I_var": torch.max(I_var_flat),
+                }
+
+                # Add mean background if available
+                if "qbg" in self.train_predictions:
+                    log_dict["mean_bg"] = torch.mean(self.train_predictions["qbg"])
+                    log_dict["min_bg"] = torch.min(self.train_predictions["qbg"])
+                    log_dict["max_bg"] = torch.max(self.train_predictions["qbg"])
+
+                # Only create and log comparison grid on specified epochs
+                if self.current_epoch % self.plot_every_n_epochs == 0:
+                    comparison_fig = self.create_comparison_grid()
+
+                    if comparison_fig is not None:
+                        log_dict["profile_comparisons"] = wandb.Image(comparison_fig)
+                        plt.close(comparison_fig)
+
+                # Log metrics
+                wandb.log(log_dict)
+
+            except Exception as e:
+                print("Caught exception in on_train_epoch_end!")
+                print("Type of exception:", type(e))
+                print("Exception object:", e)
+                traceback.print_exc(file=sys.stdout)
+
+            # Clear memory
+            self.train_predictions = {}
+            torch.cuda.empty_cache()
+
+        # Increment epoch counter
+        self.current_epoch += 1
+
+    def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        # Only track the last validation batch to save memory
+
+        with torch.no_grad():
+            shoebox, dials, masks, metadata, counts = batch
+            base_output = pl_module(shoebox, dials, masks, metadata, counts)
+
+            # Store only minimal data needed for metrics
+            self.val_predictions = {}
+            for key in [
+                "intensity_mean",
+                "intensity_var",
+                "dials_I_prf_value",
+                "kabsch_sum_mean",
+                "kabsch_sum_var",
+                "profile_masking_mean",
+                "profile_masking_var",
+            ]:
+                if key in base_output:
+                    if hasattr(base_output[key], "sample"):
+                        self.val_predictions[key] = base_output[key].mean.detach().cpu()
+                    else:
+                        self.val_predictions[key] = base_output[key].detach().cpu()
+                elif key in base_output:
+                    self.val_predictions[key] = base_output[key].detach().cpu()
+
+            # Clean up
+            del base_output
+            torch.cuda.empty_cache()
+
+
+# %%
+# NOTE: TEMP
+class tempUNetPlotter(Callback):
+    def __init__(self, num_profiles=5, plot_every_n_epochs=5, d_vectors=None):
+        super().__init__()
+        self.train_predictions = {}
+        self.val_predictions = {}
+        self.num_profiles = num_profiles
+        self.tracked_refl_ids = None
+        self.all_seen_ids = set()
+
+        self.tracked_predictions = {
+            "qp_mean": {},
+            "counts": {},
+            "qbg": {},
+            "rates": {},
+        }
+        self.epoch_predictions = None
+        self.plot_every_n_epochs = plot_every_n_epochs
+        self.current_epoch = 0
+        self.d_vectors = d_vectors
+
+    def on_train_epoch_start(self, trainer, pl_module):
+        self.epoch_predictions = {
+            "qp_mean": [],
+            "counts": [],
+            "refl_ids": [],
+            "intensity_mean": [],
+            "intensity_var": [],
+            "dials_I_prf_value": [],
+            "dials_I_prf_var": [],
+            "qbg": [],
+            "rates": [],
+        }
+
+        self.tracked_predictions = {
+            "qp_mean": {},
+            "counts": {},
+            "qbg": {},
+            "rates": {},
+            "intensity_mean": {},
+            "intensity_var": {},
+            "qbg_var": {},
+            "dials_I_prf_value": {},
+            "dials_I_prf_var": {},
+        }
+
+    def update_tracked_predictions(
+        self,
+        profile_preds,
+        qbg_preds,
+        rates,
+        count_preds,
+        refl_ids,
+        dials_I,
+        dials_I_var,
+        intensity_mean,
+        intensity_var,
+    ):
+        current_refl_ids = refl_ids.cpu().numpy()
+
+        # Update all seen IDs and set tracked IDs if not set
+        self.all_seen_ids.update(current_refl_ids)
+        if self.tracked_refl_ids is None:
+            self.tracked_refl_ids = sorted(list(self.all_seen_ids))[: self.num_profiles]
+            print(
+                f"Selected {self.num_profiles} reflection IDs to track: {self.tracked_refl_ids}"
+            )
+
+        profile_images = profile_preds.reshape(-1, 3, 21, 21)[..., 1, :, :]
+        count_images = count_preds.reshape(-1, 3, 21, 21)[..., 1, :, :]
+        rate_images = rates.mean(1).reshape(-1, 3, 21, 21)[..., 1, :, :]
+        bg_mean = qbg_preds.mean.mean(-1)
+        bg_var = qbg_preds.variance.mean(-1)
+        dials_I_prf_value = dials_I
+
+        for ref_id in self.tracked_refl_ids:
+            matches = np.where(current_refl_ids == ref_id)[0]
+            if len(matches) > 0:
+                idx = matches[0]
+
+                self.tracked_predictions["qp_mean"][ref_id] = profile_images[idx].cpu()
+                self.tracked_predictions["counts"][ref_id] = count_images[idx].cpu()
+                self.tracked_predictions["rates"][ref_id] = rate_images[idx].cpu()
+                self.tracked_predictions["qbg"][ref_id] = bg_mean[idx].cpu()
+                self.tracked_predictions["intensity_mean"][ref_id] = intensity_mean[
+                    idx
+                ].cpu()
+                self.tracked_predictions["intensity_var"][ref_id] = intensity_var[
+                    idx
+                ].cpu()
+                self.tracked_predictions["qbg_var"][ref_id] = bg_var[idx].cpu()
+                self.tracked_predictions["dials_I_prf_value"][
+                    ref_id
+                ] = dials_I_prf_value[idx]
+                self.tracked_predictions["dials_I_prf_var"][ref_id] = dials_I_var[idx]
+
+        torch.cuda.empty_cache()
+
+    def create_comparison_grid(
+        self,
+        cmap="cividis",
+    ):
+        if not self.tracked_refl_ids:
+            return None
+
+        # Create figure with proper subplot layout
+        fig, axes = plt.subplots(
+            3, self.num_profiles, figsize=(5 * self.num_profiles, 8)
+        )
+
+        # Handle case where only one column
+        if self.num_profiles == 1:
+            axes = axes.reshape(-1, 1)
+
+        # Plot each column
+        for i, refl_id in enumerate(self.tracked_refl_ids):
+            # Get data for this column
+            counts_data = self.tracked_predictions["counts"][refl_id]
+            profile_data = self.tracked_predictions["qp_mean"][refl_id]
+            rates_data = self.tracked_predictions["rates"][refl_id]
+
+            vmin_13 = min(counts_data.min().item(), rates_data.min().item())
+            vmax_13 = max(counts_data.max().item(), rates_data.max().item())
+
+            # Row 1: Input counts
+            im0 = axes[0, i].imshow(counts_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13)
+            axes[0, i].set_title(
+                f"reflection ID: {refl_id}\n DIALS I_prf: {self.tracked_predictions['dials_I_prf_value'][refl_id]:.2f}"
+            )
+            axes[0, i].set_ylabel("raw image", labelpad=5)
+
+            # Turn off axes but keep the labels
+            axes[0, i].tick_params(
+                left=False, bottom=False, labelleft=False, labelbottom=False
+            )
+
+            # Row 2: Profile prediction (with its own scale)
+            im1 = axes[1, i].imshow(profile_data, cmap=cmap)
+            axes[1, i].set_ylabel("qp_mean", labelpad=5)
+            axes[1, i].tick_params(
+                left=False, bottom=False, labelleft=False, labelbottom=False
+            )
+
+            # Row 3: Rates (same scale as row 1)
+            im2 = axes[2, i].imshow(rates_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13)
+            axes[2, i].set_title(
+                f"Bg: {float(self.tracked_predictions['qbg'][refl_id]):.2f}\n I: {self.tracked_predictions['intensity_mean'][refl_id]:.2f}\n I_var: {self.tracked_predictions['intensity_var'][refl_id]:.2f}"
+            )
+
+            axes[2, i].set_ylabel("rate = I*pij + Bg", labelpad=5)
+            axes[2, i].tick_params(
+                left=False, bottom=False, labelleft=False, labelbottom=False
+            )
+
+            # Add colorbars
+            # First row colorbar (same as third row)
+            divider0 = make_axes_locatable(axes[0, i])
+            cax0 = divider0.append_axes("right", size="5%", pad=0.05)
+            cbar0 = plt.colorbar(im0, cax=cax0)
+            cbar0.ax.tick_params(labelsize=8)
+
+            # Second row colorbar (independent)
+            divider1 = make_axes_locatable(axes[1, i])
+            cax1 = divider1.append_axes("right", size="5%", pad=0.05)
+            cbar1 = plt.colorbar(im1, cax=cax1)
+            cbar1.ax.tick_params(labelsize=8)
+
+            # Third row colorbar (same as first row)
+            divider2 = make_axes_locatable(axes[2, i])
+            cax2 = divider2.append_axes("right", size="5%", pad=0.05)
+            cbar2 = plt.colorbar(im2, cax=cax2)
+            cbar2.ax.tick_params(labelsize=8)
+
+        plt.tight_layout()
+
+        return fig
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        with torch.no_grad():
+            # 1) Forward pass (no intensities yet)
+            shoebox, dials, masks, metadata, counts = batch
+            base_output = pl_module(shoebox, dials, masks, metadata, counts)
+
+            # 2) Call calculate_intensities
+            intensities = pl_module.calculate_intensities(
+                counts=base_output["counts"],
+                qbg=base_output["qbg"],
+                qp=base_output["profile"],
+                masks=base_output["masks"],
+            )
+
+            predictions = {
+                **base_output,
+                "kabsch_sum_mean": intensities["kabsch_sum_mean"],
+                "kabsch_sum_var": intensities["kabsch_sum_var"],
+                "profile_masking_mean": intensities["profile_masking_mean"],
+                "profile_masking_var": intensities["profile_masking_var"],
+            }
+
+            if self.current_epoch % self.plot_every_n_epochs == 0:
+                self.update_tracked_predictions(
+                    predictions["qp"].mean,
+                    # predictions["qp"],
+                    predictions["qbg"],
+                    predictions["rates"],
+                    predictions["counts"],
+                    predictions["refl_ids"],
+                    predictions["dials_I_prf_value"],
+                    predictions["dials_I_prf_var"],
                     predictions["intensity_mean"],
                     predictions["intensity_var"],
                 )
@@ -770,13 +1195,16 @@ class UNetPlotter(Callback):
                 "intensity_mean",
                 "intensity_var",
                 "dials_I_prf_value",
-                "weighted_sum_mean",
-                "thresholded_mean",
-                "profile",
+                "dials_I_prf_var",
+                "kabsch_sum_mean",
+                "kabsch_sum_var",
+                "profile_masking_mean",
+                "profile_masking_var",
+                "qp_mean",
                 "qbg",
             ]:
                 if key in predictions:
-                    if key == "profile":
+                    if key == "qp_mean":
                         self.train_predictions[key] = predictions[key].detach().cpu()
                     elif hasattr(predictions[key], "sample"):
                         self.train_predictions[key] = (
@@ -800,31 +1228,34 @@ class UNetPlotter(Callback):
                 dials_flat = (
                     self.train_predictions["dials_I_prf_value"].flatten() + 1e-8
                 )
-                weighted_sum_flat = (
-                    self.train_predictions["weighted_sum_mean"].flatten() + 1e-8
+                dials_var_flat = (
+                    self.train_predictions["dials_I_prf_var"].flatten() + 1e-8
                 )
-                thresholded_flat = (
-                    self.train_predictions["thresholded_mean"].flatten() + 1e-8
+                kabsch_sum_flat = (
+                    self.train_predictions["kabsch_sum_mean"].flatten() + 1e-8
                 )
-
-                # Calculate simpson index from profile
-                if "profile" in self.train_predictions:
-                    profile_flat = self.train_predictions["profile"]
-                    simpson_flat = torch.sum(profile_flat**2, dim=-1).flatten()
-                else:
-                    simpson_flat = torch.ones_like(I_flat)
-
+                kabsch_sum_flat_var = (
+                    self.train_predictions["kabsch_sum_var"].flatten() + 1e-8
+                )
+                profile_masking_flat = (
+                    self.train_predictions["profile_masking_mean"].flatten() + 1e-8
+                )
+                profile_masking_flat_var = (
+                    self.train_predictions["profile_masking_var"].flatten() + 1e-8
+                )
                 # Create data points with safe log transform
                 for i in range(len(I_flat)):
                     try:
                         data.append(
                             [
-                                float(torch.log(I_flat[i])),
-                                float(torch.log(I_var_flat[i])),
-                                float(torch.log(dials_flat[i])),
-                                float(torch.log(weighted_sum_flat[i])),
-                                float(torch.log(thresholded_flat[i])),
-                                float(simpson_flat[i]),
+                                float(I_flat[i]),
+                                float(I_var_flat[i]),
+                                float(dials_flat[i]),
+                                float(dials_var_flat[i]),
+                                float(kabsch_sum_flat[i]),
+                                float(kabsch_sum_flat_var[i]),
+                                float(profile_masking_flat[i]),
+                                float(profile_masking_flat_var[i]),
                             ]
                         )
                     except Exception as e:
@@ -838,13 +1269,15 @@ class UNetPlotter(Callback):
                         "intensity_mean",
                         "intensity_var",
                         "dials_I_prf_value",
-                        "weighted_sum_mean",
-                        "thresholded_mean",
-                        "simpson_idx",
+                        "dials_I_prf_var",
+                        "kabsch_sum_mean",
+                        "kabsch_sum_var",
+                        "profile_masking_mean",
+                        "profile_masking_var",
                     ],
                 )
 
-                # Calculate correlation coefficients safely
+                # Calculate correlation coefficients
                 corr_I = (
                     torch.corrcoef(torch.vstack([I_flat, dials_flat]))[0, 1]
                     if len(I_flat) > 1
@@ -852,8 +1285,10 @@ class UNetPlotter(Callback):
                 )
 
                 corr_masked = (
-                    torch.corrcoef(torch.vstack([thresholded_flat, dials_flat]))[0, 1]
-                    if len(thresholded_flat) > 1
+                    torch.corrcoef(torch.vstack([profile_masking_flat, dials_flat]))[
+                        0, 1
+                    ]
+                    if len(profile_masking_flat) > 1
                     else 0
                 )
 
@@ -862,8 +1297,11 @@ class UNetPlotter(Callback):
                     "train_I_vs_prf": wandb.plot.scatter(
                         table, "intensity_mean", "dials_I_prf_value"
                     ),
-                    "train_thresholded_vs_prf": wandb.plot.scatter(
-                        table, "thresholded_mean", "dials_I_prf_value"
+                    "train_profile_masking_vs_prf": wandb.plot.scatter(
+                        table, "profile_masking_mean", "dials_I_prf_value"
+                    ),
+                    "train_kabsch_sum_vs_prf": wandb.plot.scatter(
+                        table, "kabsch_sum_mean", "dials_I_prf_value"
                     ),
                     "corrcoef_I": corr_I,
                     "corrcoef_masked": corr_masked,
@@ -914,8 +1352,11 @@ class UNetPlotter(Callback):
                 "intensity_mean",
                 "intensity_var",
                 "dials_I_prf_value",
-                "weighted_sum_mean",
-                "thresholded_mean",
+                "dials_I_prf_var",
+                "kabsch_sum_mean",
+                "kabsch_sum_var",
+                "profile_masking_mean",
+                "profile_masking_var",
             ]:
                 if key in base_output:
                     if hasattr(base_output[key], "sample"):
@@ -1626,3 +2067,18 @@ class IntegratedPlotter(Callback):
         with torch.no_grad():
             shoebox, dials, masks, metadata, counts = batch
             self.val_predictions = pl_module(shoebox, dials, masks, metadata, counts)
+
+
+# counts = torch.ones(10, 1323)
+# masks = torch.ones(10, 1323)
+# qp = torch.distributions.Dirichlet(torch.ones(10, 1323))
+# qI = torch.distributions.LogNormal(
+# torch.ones(10, 1), torch.nn.functional.relu(torch.ones(10, 1))
+# )
+# qbg = torch.distributions.HalfNormal(scale=torch.ones(10, 1))
+# zp = qp.rsample([200]).permute(1, 0, 2)
+# zbg = qbg.rsample([200]).permute(1, 0, 2)
+# zI = integrator.qI(rep).rsample([100]).unsqueeze(-1).permute(1, 0, 2)
+
+
+# integrator.calculate_intensities(counts, qbg, zp, masks)

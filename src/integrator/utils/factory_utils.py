@@ -112,11 +112,15 @@ def create_components(config):
         config["components"]["profile"]["name"],
         **config["components"]["profile"]["params"],
     )
-    decoder = create_module(
-        "decoder",
-        config["components"]["decoder"]["name"],
-        **config["components"]["decoder"]["params"],
-    )
+
+    if "decoder" in config["components"]:
+        decoder = create_module(
+            "decoder",
+            config["components"]["decoder"]["name"],
+            **config["components"]["decoder"]["params"],
+        )
+    else:
+        decoder = None
 
     background_distribution = create_module(
         "q_bg",
@@ -260,6 +264,38 @@ def create_integrator(config):
         )
         return integrator
 
+    elif integrator_name == "lrmvn_integrator":
+        loss = create_module(
+            "loss",
+            config["components"]["loss"]["name"],
+            **config["components"]["loss"]["params"],
+        )
+
+        encoder = create_module(
+            "encoder",
+            config["components"]["encoder"]["name"],
+            **config["components"]["encoder"]["params"],
+        )
+
+        metadata_encoder = create_module(
+            "metadata_encoder",
+            config["components"]["metadata_encoder"]["name"],
+            **config["components"]["metadata_encoder"]["params"],
+        )
+
+        integrator = integrator_class(
+            encoder=encoder,
+            qbg=background_distribution,
+            qp=profile,
+            qI=intensity_distribution,
+            loss=loss,
+            metadata_encoder=metadata_encoder,
+            mc_samples=config["integrator"]["mc_samples"],
+            learning_rate=config["integrator"]["learning_rate"],
+            profile_threshold=config["integrator"]["profile_threshold"],
+        )
+        return integrator
+
     elif integrator_name == "mlp_integrator":
         loss = create_module(
             "loss",
@@ -373,6 +409,39 @@ def create_integrator_from_checkpoint(config, checkpoint_path):
         )
         return integrator
 
+    if integrator_name == "lrmvn_integrator":
+        loss = create_module(
+            "loss",
+            config["components"]["loss"]["name"],
+            **config["components"]["loss"]["params"],
+        )
+
+        encoder = create_module(
+            "encoder",
+            config["components"]["encoder"]["name"],
+            **config["components"]["encoder"]["params"],
+        )
+
+        metadata_encoder = create_module(
+            "metadata_encoder",
+            config["components"]["metadata_encoder"]["name"],
+            **config["components"]["metadata_encoder"]["params"],
+        )
+
+        integrator = integrator_class.load_from_checkpoint(
+            checkpoint_path,
+            encoder=encoder,
+            qbg=background_distribution,
+            qp=profile,
+            qI=intensity_distribution,
+            loss=loss,
+            metadata_encoder=metadata_encoder,
+            mc_samples=config["integrator"]["mc_samples"],
+            learning_rate=config["integrator"]["learning_rate"],
+            profile_threshold=config["integrator"]["profile_threshold"],
+        )
+        return integrator
+
     if integrator_name == "mlp_integrator":
         loss = create_module(
             "loss",
@@ -402,7 +471,7 @@ def create_integrator_from_checkpoint(config, checkpoint_path):
             decoder=decoder,
             loss=loss,
             qp=profile,
-            qI = intensity_distribution,
+            qI=intensity_distribution,
             mc_samples=config["integrator"]["mc_samples"],
             learning_rate=config["integrator"]["learning_rate"],
             profile_threshold=config["integrator"]["profile_threshold"],

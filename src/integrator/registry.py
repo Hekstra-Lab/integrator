@@ -9,18 +9,20 @@ import torch
 
 REGISTRY = {
     "metadata_encoder": {
-        "mlp_metadata_encoder": MLPMetadataEncoder,  # for metadata
+        "mlp_metadata_encoder": MLPMetadataEncoder,
     },
     "encoder": {
-        "mlp_image_encoder": MLPImageEncoder,  # done
-        "cnn_3d": CNNResNet2,  # done
+        "mlp_image_encoder": MLPImageEncoder,
+        "cnn_3d": CNNResNet2,
+        "shoebox_encoder": ShoeboxEncoder,
     },
     "image_encoder": {
-        "cnn_3d": CNNResNet2,  # done
-        "mlp_image_encoder": MLPImageEncoder,  # done
+        "cnn_3d": CNNResNet2,
+        "mlp_image_encoder": MLPImageEncoder,
         "3d_cnn": CNN_3d,  # shoebox encoder
         "dev_encoder": DevEncoder,
         "dirchlet_concentration": DirichletConcentration,
+        "shoebox_encoder": ShoeboxEncoder,
     },
     "decoder": {
         "default_decoder": Decoder,
@@ -37,6 +39,7 @@ REGISTRY = {
         "elbo": Loss,
         "mvn_loss": MVNLoss,
         "unet_loss": UnetLoss,
+        "lrmvn_loss": LRMVNLoss,
     },
     "integrator": {
         "default_integrator": DefaultIntegrator,
