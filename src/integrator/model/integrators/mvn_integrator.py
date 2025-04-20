@@ -554,7 +554,11 @@ class LRMVNIntegrator(BaseIntegrator):
             # kabsch sum
             for i in range(4):
                 num = (
-                    F.softplus(counts.unsqueeze(1) - zbg) * zp * masks.unsqueeze(1) / vi
+                    # F.softplus(counts.unsqueeze(1) - zbg) * zp * masks.unsqueeze(1) / vi
+                    (counts.unsqueeze(1) - zbg)
+                    * zp
+                    * masks.unsqueeze(1)
+                    / vi
                 )
                 denom = zp.pow(2) / vi
                 I = num.sum(-1) / denom.sum(-1)  # [batch_size, mc_samples]
