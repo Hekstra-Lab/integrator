@@ -570,7 +570,7 @@ class LRMVNIntegrator(BaseIntegrator):
             )  # threshold values
             profile_mask = zp > thresholds
 
-            N_used = profile_mask.sum(-1).float()  # number of pixels per mask
+            # N_used = profile_mask.sum(-1).float()  # number of pixels per mask
 
             masked_counts = counts.unsqueeze(1) * profile_mask
 
