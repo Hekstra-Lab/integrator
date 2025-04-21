@@ -439,6 +439,7 @@ def create_integrator_from_checkpoint(config, checkpoint_path):
             mc_samples=config["integrator"]["mc_samples"],
             learning_rate=config["integrator"]["learning_rate"],
             profile_threshold=config["integrator"]["profile_threshold"],
+            weights_only=False,
         )
         return integrator
 
