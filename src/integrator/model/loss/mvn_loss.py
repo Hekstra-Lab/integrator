@@ -195,6 +195,9 @@ class LRMVNLoss(torch.nn.Module):
         prior_shape=(3, 21, 21),
         p_I_name="gamma",
         p_I_params={"concentration": 1.0, "rate": 1.0},
+        p_p_mean={"loc": 0.0, "scale": 5.0},
+        p_p_diag={"scale": 0.3},
+        p_p_factor={"loc": 0.0, "scale": 0.5},
         p_I_scale=0.0001,
         p_p_mean_scale=0.001,
         p_p_factor_scale=0.001,
@@ -214,6 +217,9 @@ class LRMVNLoss(torch.nn.Module):
         )
         self.register_buffer("p_I_rate", torch.tensor(p_I_params["rate"]))
         self.register_buffer("p_I_scale", torch.tensor(p_I_scale))
+        self.p_p_mean = p_p_mean
+        self.p_p_diag = p_p_diag
+        self.p_p_factor = p_p_factor
 
         # Store distribution names and params
         self.p_bg_name = p_bg_name
@@ -253,17 +259,17 @@ class LRMVNLoss(torch.nn.Module):
         )
 
         p_p_mean = torch.distributions.normal.Normal(
-            loc=torch.tensor(0.0, device=device),
-            scale=torch.tensor(5.0, device=device),
+            loc=torch.tensor(self.p_p_mean["loc"], device=device),
+            scale=torch.tensor(self.p_p_mean["scale"], device=device),
         )
 
         p_p_diag = torch.distributions.half_normal.HalfNormal(
-            scale=torch.tensor(1.0, device=device)
+            scale=torch.tensor(self.p_p_diag["scale"], device=device)
         )
 
         p_p_factor = torch.distributions.normal.Normal(
-            loc=torch.tensor(1.0, device=device),
-            scale=torch.tensor(1.0, device=device),
+            loc=torch.tensor(self.p_p_factor["loc"], device=device),
+            scale=torch.tensor(self.p_p_factor["scale"], device=device),
         )
 
         # calculate kl terms
