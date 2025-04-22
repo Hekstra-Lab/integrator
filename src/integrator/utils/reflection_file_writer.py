@@ -29,7 +29,7 @@ def reflection_file_writer(
 
             # store all predictions in a dataframe
             for pred in glob.glob(pred_dir + "/*.pt"):
-                preds = torch.load(pred)
+                preds = torch.load(pred, weights_only=False)
                 data_dict = {key: np.concatenate(preds[key]) for key in preds}
                 empty_df = empty_df.vstack(plr.DataFrame(data_dict))
 
