@@ -597,8 +597,14 @@ def predict_from_checkpoints(config, trainer, pred_integrator, data, version_dir
         trainer.callbacks = [pred_writer]
         print(f"checkpoint:{ckpt}")
 
-        checkpoint = torch.load(ckpt, map_location="cpu")
+        checkpoint = torch.load(
+            ckpt,
+            map_location="cpu",
+            weights_only=False,
+        )
+
         pred_integrator.load_state_dict(checkpoint["state_dict"])
+
         if torch.cuda.is_available():
             pred_integrator.to(torch.device("cuda"))
         pred_integrator.eval()
