@@ -848,14 +848,14 @@ class UNetPlotter(Callback):
                     try:
                         data.append(
                             [
-                                float(I_flat[i]),
-                                float(I_var_flat[i]),
-                                float(dials_flat[i]),
-                                float(dials_var_flat[i]),
-                                float(kabsch_sum_flat[i]),
-                                float(kabsch_sum_flat_var[i]),
-                                float(profile_masking_flat[i]),
-                                float(profile_masking_flat_var[i]),
+                                float(torch.log(I_flat[i])),
+                                float(torch.log(I_var_flat[i])),
+                                float(torch.log(dials_flat[i])),
+                                float(torch.log(dials_var_flat[i])),
+                                float(torch.log(kabsch_sum_flat[i])),
+                                float(torch.log(kabsch_sum_flat_var[i])),
+                                float(torch.log(profile_masking_flat[i])),
+                                float(torch.log(profile_masking_flat_var[i])),
                             ]
                         )
                     except Exception as e:
