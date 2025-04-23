@@ -264,6 +264,38 @@ def create_integrator(config):
         )
         return integrator
 
+    elif integrator_name == "integrator":
+        loss = create_module(
+            "loss",
+            config["components"]["loss"]["name"],
+            **config["components"]["loss"]["params"],
+        )
+
+        encoder = create_module(
+            "encoder",
+            config["components"]["encoder"]["name"],
+            **config["components"]["encoder"]["params"],
+        )
+
+        metadata_encoder = create_module(
+            "metadata_encoder",
+            config["components"]["metadata_encoder"]["name"],
+            **config["components"]["metadata_encoder"]["params"],
+        )
+
+        integrator = integrator_class(
+            encoder=encoder,
+            qbg=background_distribution,
+            qp=profile,
+            qI=intensity_distribution,
+            loss=loss,
+            metadata_encoder=metadata_encoder,
+            mc_samples=config["integrator"]["mc_samples"],
+            learning_rate=config["integrator"]["learning_rate"],
+            profile_threshold=config["integrator"]["profile_threshold"],
+        )
+        return integrator
+
     elif integrator_name == "lrmvn_integrator":
         loss = create_module(
             "loss",
@@ -599,7 +631,6 @@ def predict_from_checkpoints(config, trainer, pred_integrator, data, version_dir
 
         checkpoint = torch.load(
             ckpt,
-            map_location="cpu",
             weights_only=False,
         )
 
