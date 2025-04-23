@@ -250,12 +250,16 @@ class LRMVNLoss(torch.nn.Module):
         masks = masks.to(device)
 
         p_bg = torch.distributions.half_normal.HalfNormal(
-            scale=torch.tensor(self.p_bg_scale, device=device)
+            scale=torch.tensor(self.p_bg_scale, device=device).clone().detach()
         )
 
         p_I = torch.distributions.gamma.Gamma(
-            concentration=torch.tensor(self.p_I_concentration, device=device),
-            rate=torch.tensor(self.p_I_rate, device=device),
+            concentration=torch.tensor(self.p_I_concentration, device=device)
+            .clone()
+            .detach(),
+            rate=torch.tensor(self.p_I_rate.clone().detach(), device=device)
+            .clone()
+            .detach(),
         )
 
         p_p_mean = torch.distributions.normal.Normal(
@@ -268,8 +272,8 @@ class LRMVNLoss(torch.nn.Module):
         )
 
         p_p_factor = torch.distributions.normal.Normal(
-            loc=torch.tensor(self.p_p_factor["loc"], device=device),
-            scale=torch.tensor(self.p_p_factor["scale"], device=device),
+            loc=torch.tensor(self.p_p_factor["loc"], device=device).view(1, 3, 1),
+            scale=torch.tensor(self.p_p_factor["scale"], device=device).view(1, 3, 1),
         )
 
         # calculate kl terms
@@ -292,14 +296,16 @@ class LRMVNLoss(torch.nn.Module):
         kl_p_factor = torch.distributions.kl.kl_divergence(q_p_factor, p_p_factor)
         kl_terms += kl_p_factor.sum() * self.p_p_factor_scale
 
-        ll = torch.distributions.Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
+        ll = torch.distributions.Poisson(rate + self.eps).log_prob(
+            counts.unsqueeze(1)
+        )  # [B, MC, pixels]
         ll_mean = torch.mean(ll, dim=1) * masks.squeeze(-1)
 
         # calculate negative log likelihood
         neg_ll_batch = (-ll_mean).sum(1)
 
         # combine all loss terms
-        batch_loss = neg_ll_batch + kl_terms
+        batch_loss = neg_ll_batch + kl_terms  # [batch_size, 1]
 
         # final scalar loss
         total_loss = batch_loss.mean()
