@@ -83,11 +83,21 @@ def reflection_file_writer(
             temp["intensity.sum.variance"] = flex.double(qI_variance_list)
             temp["intensity.prf.value"] = flex.double(weighted_sum_mean)
             temp["intensity.prf.variance"] = flex.double(weighted_sum_var)
-            temp.as_file(pred_dir + "/reflections/weighted_posterior.refl")
+            temp.as_file(pred_dir + "/reflections/weighted_posterior_.refl")
             weighted_posterior_refl = Path(
-                pred_dir + "/reflections/weighted_posterior.refl"
+                pred_dir + "/reflections/weighted_posterior_.refl"
             )
             file_dict["refl_files"].append(weighted_posterior_refl.resolve().as_posix())
+
+            temp["intensity.sum.value"] = flex.double(weighted_sum_mean)
+            temp["intensity.sum.variance"] = flex.double(weighted_sum_var)
+            temp["intensity.prf.variance"] = flex.double(qI_variance_list)
+            temp["intensity.prf.value"] = flex.double(qI_mean_list)
+            temp.as_file(pred_dir + "/reflections/posterior_weighted_.refl")
+            posterior_weighted_refl = Path(
+                pred_dir + "/reflections/posterior_weighted_.refl"
+            )
+            file_dict["refl_files"].append(posterior_weighted_refl.resolve().as_posix())
 
         # write the paths to a json file
         # refl_file_path = Path(weighted_refl.parents[2] / "paths.json")
