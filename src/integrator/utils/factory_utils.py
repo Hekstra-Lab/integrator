@@ -599,7 +599,6 @@ def predict_from_checkpoints(config, trainer, pred_integrator, data, version_dir
 
         checkpoint = torch.load(
             ckpt,
-            map_location="cpu",
             weights_only=False,
         )
 
