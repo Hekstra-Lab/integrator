@@ -11,7 +11,7 @@ class ShoeboxEncoder(nn.Module):
             out_dim: Output dimension of the encoded representation.
         """
         super(ShoeboxEncoder, self).__init__()
-        # The input shape is assumed to be (B, 1, 3, 21, 21).
+        # The input shape is  (B, 1, 3, 21, 21).
         # Convolution layer #1: Use (1, 3, 3) so that the depth (z) dimension stays unchanged.
         self.conv1 = nn.Conv3d(
             in_channels=1,
@@ -27,7 +27,7 @@ class ShoeboxEncoder(nn.Module):
             kernel_size=(1, 2, 2), stride=(1, 2, 2), ceil_mode=True
         )
 
-        # Convolution layer #2: Use a kernel that spans the entire depth (3) to collapse it.
+        # Convolution layer #2: Use a kernel that spans depth
         self.conv2 = nn.Conv3d(
             in_channels=16, out_channels=32, kernel_size=(3, 3, 3), stride=1, padding=0
         )
@@ -36,11 +36,12 @@ class ShoeboxEncoder(nn.Module):
         # After conv1, input shape is: (B, 16, 3, 21, 21);
         # after pooling: (B, 16, 3, approx. ceil(21/2)=11, ceil(21/2)=11);
         # after conv2: depth: 3-3+1=1; spatial dims: 11-3+1=9 (assuming exact arithmetic).
-        flattened_size = 32 * 1 * 9 * 9  # = 2592
+
+        flattened_size = 32 * 1 * 9 * 9
         self.fc = nn.Linear(flattened_size, out_dim)
 
     def forward(self, x, mask=None):
-        # assuming input  is shape
+        # assuming input is shape (B, 3*21*21, 7) and last dim is photons
         x = x[:, :, -1].reshape(x.shape[0], 1, 3, 21, 21)
 
         x = F.relu(self.norm1(self.conv1(x)))
