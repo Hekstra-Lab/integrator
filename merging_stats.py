@@ -514,13 +514,14 @@ if __name__ == "__main__":
     for h in data.html_files:
         method = h.parents[0].name.replace("dials_out_", "")
         epoch = h.parents[2].name.split("_")[1]
+
         wandb.log({f"DIALS {method}: epoch {epoch}": wandb.Html(h.read_text())})
 
     # log merging stats
     for method in data.counting_methods:
         # Plot each method
         fig = plot_method(method)
-        wandb.log({f"{method} Merging Stats": fig})
+        wandb.log({f"{method} Merging Stats": wandb.Html(fig.to_html())})
 
     # log anomalous peak height tables
     peakz_df_list = []
