@@ -186,37 +186,33 @@ class LRMVNLoss(torch.nn.Module):
         self,
         beta=1.0,
         eps=1e-5,
-        # Profile prior
-        # Background prior
         p_bg_name="half_normal",
         p_bg_params={"scale": 1.0},
-        p_bg_w=0.0001,
-        # Intensity prior
-        prior_shape=(3, 21, 21),
         p_I_name="gamma",
         p_I_params={"concentration": 1.0, "rate": 1.0},
         p_p_mean={"loc": 0.0, "scale": 5.0},
         p_p_diag={"scale": 0.3},
         p_p_factor={"loc": 0.0, "scale": 0.5},
-        p_I_scale=0.0001,
-        p_p_mean_scale=0.001,
-        p_p_factor_scale=0.001,
-        p_p_diag_scale=0.001,
+        p_bg_w=0.0001,
+        p_I_w=0.00001,
+        p_p_mean_w=0.001,
+        p_p_factor_w=0.001,
+        p_p_diag_w=0.001,
+        prior_shape=(3, 21, 21),
     ):
         super().__init__()
 
         self.register_buffer("eps", torch.tensor(eps))
         self.register_buffer("beta", torch.tensor(beta))
         self.register_buffer("p_bg_w", torch.tensor(p_bg_w))
-        self.register_buffer("p_bg_scale", torch.tensor(p_bg_params["scale"]))
-        self.register_buffer("p_p_mean_scale", torch.tensor(p_p_mean_scale))
-        self.register_buffer("p_p_factor_scale", torch.tensor(p_p_factor_scale))
-        self.register_buffer("p_p_diag_scale", torch.tensor(p_p_diag_scale))
-        self.register_buffer(
-            "p_I_concentration", torch.tensor(p_I_params["concentration"])
-        )
-        self.register_buffer("p_I_rate", torch.tensor(p_I_params["rate"]))
-        self.register_buffer("p_I_scale", torch.tensor(p_I_scale))
+        self.register_buffer("p_bg_w", torch.tensor(p_bg_params["scale"]))
+        self.register_buffer("p_p_mean_w", torch.tensor(p_p_mean_w))
+        self.register_buffer("p_p_factor_w", torch.tensor(p_p_factor_w))
+        self.register_buffer("p_p_diag_w", torch.tensor(p_p_diag_w))
+
+        self._register_distribution_params(p_I_name, p_I_params, prefix="p_I_")
+        self.register_buffer("p_I_w", torch.tensor(p_I_w))
+
         self.p_p_mean = p_p_mean
         self.p_p_diag = p_p_diag
         self.p_p_factor = p_p_factor
@@ -230,18 +226,48 @@ class LRMVNLoss(torch.nn.Module):
         # Number of elements in the profile
         self.profile_size = prior_shape[0] * prior_shape[1] * prior_shape[2]
 
-    def mc_kl(self, q, p, num_samples=10):
-        # Sample from q
-        samples = q.rsample((num_samples,))
-        log_q = q.log_prob(samples)
-        log_p = p.log_prob(samples)
-        kl_estimate = (log_q - log_p).mean(dim=0)
-        return kl_estimate.sum(dim=-1)
+    def get_prior(self, name, params_prefix, device):
+        """Create a distribution on the specified device"""
+        if name == "gamma":
+            concentration = getattr(self, f"{params_prefix}concentration").to(device)
+            rate = getattr(self, f"{params_prefix}rate").to(device)
+            return torch.distributions.gamma.Gamma(
+                concentration=concentration, rate=rate
+            )
+        elif name == "log_normal":
+            loc = getattr(self, f"{params_prefix}loc").to(device)
+            scale = getattr(self, f"{params_prefix}scale").to(device)
+            return torch.distributions.log_normal.LogNormal(loc=loc, scale=scale)
+        elif name == "exponential":
+            rate = getattr(self, f"{params_prefix}rate").to(device)
+            return torch.distributions.exponential.Exponential(rate=rate)
+        # Add more distribution types as needed
 
-    # Then in forward you can do something like:
+    def _register_distribution_params(self, name, params, prefix):
+        """Register distribution parameters as buffers with appropriate prefixes"""
+        if name == "gamma":
+            self.register_buffer(
+                f"{prefix}concentration", torch.tensor(params["concentration"])
+            )
+            self.register_buffer(f"{prefix}rate", torch.tensor(params["rate"]))
+        elif name == "log_normal":
+            self.register_buffer(f"{prefix}loc", torch.tensor(params["loc"]))
+            self.register_buffer(f"{prefix}scale", torch.tensor(params["scale"]))
+        elif name == "exponential":
+            self.register_buffer(f"{prefix}rate", torch.tensor(params["rate"]))
+
+    def compute_kl(self, q, p, num_samples=100):
+        try:
+            return torch.distributions.kl.kl_divergence(q, p)
+        except NotImplementedError:
+            # Sample from q
+            samples = q.rsample((num_samples,))
+            log_q = q.log_prob(samples)
+            log_p = p.log_prob(samples)
+            kl_estimate = (log_q - log_p).mean(dim=0)
+            return kl_estimate.sum(dim=-1)
 
     def forward(self, rate, counts, q_bg, q_I, masks, q_p_mean, q_p_diag, q_p_factor):
-        # get device and batch size
         device = rate.device
         batch_size = rate.shape[0]
         self.current_batch_size = batch_size
@@ -250,17 +276,10 @@ class LRMVNLoss(torch.nn.Module):
         masks = masks.to(device)
 
         p_bg = torch.distributions.half_normal.HalfNormal(
-            scale=torch.tensor(self.p_bg_scale, device=device).clone().detach()
+            scale=torch.tensor(self.p_bg_w, device=device)
         )
 
-        p_I = torch.distributions.gamma.Gamma(
-            concentration=torch.tensor(self.p_I_concentration, device=device)
-            .clone()
-            .detach(),
-            rate=torch.tensor(self.p_I_rate.clone().detach(), device=device)
-            .clone()
-            .detach(),
-        )
+        p_I = self.get_prior(self.p_I_name, "p_I_", device)
 
         p_p_mean = torch.distributions.normal.Normal(
             loc=torch.tensor(self.p_p_mean["loc"], device=device),
@@ -279,8 +298,8 @@ class LRMVNLoss(torch.nn.Module):
         # calculate kl terms
         kl_terms = torch.zeros(batch_size, device=device)
 
-        kl_I = torch.distributions.kl.kl_divergence(q_I, p_I)
-        kl_terms += kl_I * self.p_I_scale
+        kl_I = self.compute_kl(q_I, p_I)
+        kl_terms += kl_I * self.p_I_w
 
         # calculate background and intensity kl divergence
         kl_bg = torch.distributions.kl.kl_divergence(q_bg, p_bg)
@@ -288,13 +307,13 @@ class LRMVNLoss(torch.nn.Module):
         kl_terms += kl_bg * self.p_bg_w
 
         kl_p_p_mean = torch.distributions.kl.kl_divergence(q_p_mean, p_p_mean)
-        kl_terms += kl_p_p_mean.sum() * self.p_p_mean_scale
+        kl_terms += kl_p_p_mean.sum() * self.p_p_mean_w
 
         kl_p_p_diag = torch.distributions.kl.kl_divergence(q_p_diag, p_p_diag)
-        kl_terms += kl_p_p_diag.sum() * self.p_p_diag_scale
+        kl_terms += kl_p_p_diag.sum() * self.p_p_diag_w
 
         kl_p_factor = torch.distributions.kl.kl_divergence(q_p_factor, p_p_factor)
-        kl_terms += kl_p_factor.sum() * self.p_p_factor_scale
+        kl_terms += kl_p_factor.sum() * self.p_p_factor_w
 
         ll = torch.distributions.Poisson(rate + self.eps).log_prob(
             counts.unsqueeze(1)
@@ -315,9 +334,9 @@ class LRMVNLoss(torch.nn.Module):
             total_loss,
             neg_ll_batch.mean(),
             kl_terms.mean(),
-            kl_bg.mean() * self.p_bg_scale,
-            kl_I.mean() * self.p_I_scale,
-            kl_p_p_mean.mean() * self.p_p_mean_scale,
-            kl_p_p_diag.mean() * self.p_p_diag_scale,
-            kl_p_factor.mean() * self.p_p_factor_scale,
+            kl_bg.mean() * self.p_bg_w,
+            kl_I.mean() * self.p_I_w,
+            kl_p_p_mean.mean() * self.p_p_mean_w,
+            kl_p_p_diag.mean() * self.p_p_diag_w,
+            kl_p_factor.mean() * self.p_p_factor_w,
         )

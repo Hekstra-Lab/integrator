@@ -530,7 +530,7 @@ def create_data_loader(config):
             include_test=config["data_loader"]["params"]["include_test"],
             subset_size=config["data_loader"]["params"]["subset_size"],
             cutoff=config["data_loader"]["params"]["cutoff"],
-            shoebox_features=config["data_loader"]["params"]["shoebox_features"],
+            use_metadata=config["data_loader"]["params"]["use_metadata"],
             shoebox_file_names=config["data_loader"]["params"]["shoebox_file_names"],
         )
         data_module.setup()

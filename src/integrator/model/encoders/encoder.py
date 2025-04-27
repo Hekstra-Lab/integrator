@@ -42,7 +42,8 @@ class ShoeboxEncoder(nn.Module):
 
     def forward(self, x, mask=None):
         # assuming input is shape (B, 3*21*21, 7) and last dim is photons
-        x = x[:, :, -1].reshape(x.shape[0], 1, 3, 21, 21)
+        # x = x[:, :, -1].reshape(x.shape[0], 1, 3, 21, 21)
+        x = x.reshape(x.shape[0], 1, 3, 21, 21)
 
         x = F.relu(self.norm1(self.conv1(x)))
         x = self.pool(x)

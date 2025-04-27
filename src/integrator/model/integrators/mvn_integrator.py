@@ -553,13 +553,7 @@ class LRMVNIntegrator(BaseIntegrator):
 
             # kabsch sum
             for i in range(4):
-                num = (
-                    # F.softplus(counts.unsqueeze(1) - zbg) * zp * masks.unsqueeze(1) / vi
-                    (counts.unsqueeze(1) - zbg)
-                    * zp
-                    * masks.unsqueeze(1)
-                    / vi
-                )
+                num = (counts.unsqueeze(1) - zbg) * zp * masks.unsqueeze(1) / vi
                 denom = zp.pow(2) / vi
                 I = num.sum(-1) / denom.sum(-1)  # [batch_size, mc_samples]
                 vi = (I.unsqueeze(-1) * zp) + zbg
@@ -574,19 +568,12 @@ class LRMVNIntegrator(BaseIntegrator):
             )  # threshold values
             profile_mask = zp > thresholds
 
-            # N_used = profile_mask.sum(-1).float()  # number of pixels per mask
-
             masked_counts = counts.unsqueeze(1) * profile_mask
 
             profile_masking_I = (masked_counts - zbg * profile_mask).sum(-1)
 
             profile_masking_mean = profile_masking_I.mean(-1)
 
-            # centered_thresh = profile_masking_I - profile_masking_mean.unsqueeze(-1)
-
-            # profile_masking_var = (centered_thresh**2).sum(-1) / (
-            # N_used.mean(-1) + 1e-6
-            # )
             profile_masking_var = profile_masking_I.var(-1)
 
             intensities = {
@@ -598,23 +585,13 @@ class LRMVNIntegrator(BaseIntegrator):
 
             return intensities
 
-    def forward(self, shoebox, dials, masks, metadata, counts):
+    def forward(self, counts, shoebox, metadata, masks, reference):
         # Unpack batch
         counts = torch.clamp(counts, min=0) * masks
         batch_size = shoebox.shape[0]
 
-        metadata = torch.concat(
-            [
-                shoebox[..., :, 0].mean(-1, keepdim=True),
-                shoebox[..., :, 1].mean(-1, keepdim=True),
-                shoebox[..., :, 2].mean(-1, keepdim=True),
-            ],
-            dim=-1,
-        )
-
         meta_rep = self.metadata_encoder(metadata)
 
-        # shoebox = torch.cat([shoebox[:, :, -1], metadata], dim=-1)
         rep = self.encoder(shoebox, masks)
 
         mean = self.mean_layer(rep).unsqueeze(-1)
@@ -623,7 +600,7 @@ class LRMVNIntegrator(BaseIntegrator):
         mean_factor = self.mean2_layer(rep + meta_rep).unsqueeze(-1)
         std_factor = F.softplus(self.std2_layer(rep + meta_rep)).unsqueeze(-1)
 
-        # for the inverse gammas
+        # for halfnormal
         scale = F.softplus(self.scale_layer(rep)).unsqueeze(-1)
 
         qp_mean = torch.distributions.Normal(
@@ -669,7 +646,6 @@ class LRMVNIntegrator(BaseIntegrator):
         qbg = self.qbg(rep)
         qI = self.qI(rep, meta_rep)
 
-        # zbg = qbg.rsample([self.mc_samples, 1323]).squeeze(-1).permute(2, 0, 1)
         zbg = qbg.rsample([self.mc_samples]).permute(1, 0, 2)
 
         zI = qI.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
@@ -688,18 +664,26 @@ class LRMVNIntegrator(BaseIntegrator):
             "qI": qI,
             "intensity_mean": intensity_mean,
             "intensity_var": intensity_var,
-            "dials_I_sum_value": dials[:, 0],
-            "dials_I_sum_var": dials[:, 1],
-            "dials_I_prf_value": dials[:, 2],
-            "dials_I_prf_var": dials[:, 3],
-            "refl_ids": dials[:, 4],
+            "dials_I_sum_value": reference[:, 6],
+            "dials_I_sum_var": reference[:, 7],
+            "dials_I_prf_value": reference[:, 8],
+            "dials_I_prf_var": reference[:, 9],
+            "refl_ids": reference[:, -1],
             "profile": zp,
             "qp_mean": qp_mean,
             "qp_factor": qp_factor,
             "qp_diag": qp_diag,
             "metadata": metadata,
-            "x_c": metadata[:, -3],
-            "y_c": metadata[:, -2],
+            "x_c": reference[:, 0],
+            "y_c": reference[:, 1],
+            "z_c": reference[:, 2],
+            "x_c_mm": reference[:, 3],
+            "y_c_mm": reference[:, 4],
+            "z_c_mm": reference[:, 5],
+            "dials_bg_mean": reference[:, 10],
+            "dials_bg_sum_value": reference[:, 11],
+            "dials_bg_sum_var": reference[:, 12],
+            "d": reference[:, 13],
         }
 
     def training_step(self, batch, batch_idx):
@@ -743,29 +727,29 @@ class LRMVNIntegrator(BaseIntegrator):
         self.log("train: kl_p_mean", kl_p_mean.mean())
         self.log("train: kl_p_factor", kl_p_factor.mean())
         self.log("train: kl_p_diag", kl_p_diag.mean())
-        self.log("qI mean mean", outputs["qI"].mean.mean())
-        self.log("qI mean min", outputs["qI"].mean.min())
-        self.log("qI mean max", outputs["qI"].mean.max())
-        self.log("qp_mean_mean", outputs["qp_mean"].mean.mean())
-        self.log("qp_mean_min", outputs["qp_mean"].mean.min())
-        self.log("qp_mean_max", outputs["qp_mean"].mean.max())
-        self.log("qp_mean_variance", outputs["qp_mean"].variance.mean())
-        self.log("qp_factor_mean", outputs["qp_factor"].mean.mean())
-        self.log("qp_factor_min", outputs["qp_factor"].mean.min())
-        self.log("qp_factor_max", outputs["qp_factor"].mean.max())
-        self.log("qp_factor_variance", outputs["qp_factor"].variance.mean())
-        self.log("qp_diag_mean mean", outputs["qp_diag"].mean.mean())
-        self.log("qp_diag_mean min", outputs["qp_diag"].mean.min())
-        self.log("qp_diag_mean max", outputs["qp_diag"].mean.max())
-        self.log("qp_diag_variance var", outputs["qp_diag"].variance.mean())
-        self.log("qbg mean mean", outputs["qbg"].mean.mean())
-        self.log("qbg mean min", outputs["qbg"].mean.min())
-        self.log("qbg mean max", outputs["qbg"].mean.max())
-        self.log("qbg variance mean", outputs["qbg"].variance.mean())
-        self.log("qI E(var)", outputs["qI"].variance.mean())
-        self.log("qI E(mean)", outputs["qI"].mean.mean())
-        self.log("qI var max", outputs["qI"].variance.max())
-        self.log("qI var min", outputs["qI"].variance.min())
+        self.log("mean(qI.mean)", outputs["qI"].mean.mean())
+        self.log("min(qI.mean)", outputs["qI"].mean.min())
+        self.log("max(qI.mean)", outputs["qI"].mean.max())
+        self.log("mean(qp.mean)", outputs["qp_mean"].mean.mean())
+        self.log("min(qp.mean)", outputs["qp_mean"].mean.min())
+        self.log("max(qp.mean)", outputs["qp_mean"].mean.max())
+        self.log("mean(qp.variance)", outputs["qp_mean"].variance.mean())
+        self.log("mean(qp_factor.mean)", outputs["qp_factor"].mean.mean())
+        self.log("min(qp_factor.mean)", outputs["qp_factor"].mean.min())
+        self.log("max(qp_factor.mean)", outputs["qp_factor"].mean.max())
+        self.log("mean(qp_factor.variance)", outputs["qp_factor"].variance.mean())
+        self.log("mean(qp_diag.mean)", outputs["qp_diag"].mean.mean())
+        self.log("min(qp_diag.mean)", outputs["qp_diag"].mean.min())
+        self.log("max(qp_diag.mean)", outputs["qp_diag"].mean.max())
+        self.log("mean(qp_diag.variance)", outputs["qp_diag"].variance.mean())
+        self.log("mean(qbg.mean)", outputs["qbg"].mean.mean())
+        self.log("min(qbg.mean)", outputs["qbg"].mean.min())
+        self.log("max(qbg.mean)", outputs["qbg"].mean.max())
+        self.log("mean(qbg.variance)", outputs["qbg"].variance.mean())
+        self.log("mean(qI.variance)", outputs["qI"].variance.mean())
+        self.log("mean(qI.mean)", outputs["qI"].mean.mean())
+        self.log("max(qI.variance)", outputs["qI"].variance.max())
+        self.log("min(qI.variance)", outputs["qI"].variance.min())
 
         return loss.mean()
 
@@ -780,7 +764,6 @@ class LRMVNIntegrator(BaseIntegrator):
             neg_ll,
             kl,
             kl_bg,
-            # kl_p,
             kl_I,
             kl_p_mean,
             kl_p_diag,
@@ -788,7 +771,6 @@ class LRMVNIntegrator(BaseIntegrator):
         ) = self.loss_fn(
             rate=outputs["rates"],
             counts=outputs["counts"],
-            # q_p=outputs["qp"],
             q_bg=outputs["qbg"],
             masks=outputs["masks"],
             q_I=outputs["qI"],
@@ -798,20 +780,20 @@ class LRMVNIntegrator(BaseIntegrator):
         )
 
         # Log metrics
-        self.log("val: loss", loss.mean())
-        self.log("val: nll", neg_ll.mean())
-        self.log("val: kl", kl.mean())
-        self.log("val: kl_bg", kl_bg.mean())
-        self.log("val: kl_I", kl_I.mean())
-        self.log("val: kl_p_mean", kl_p_mean.mean())
-        self.log("val: kl_p_factor", kl_p_factor.mean())
-        self.log("val: kl_p_diag", kl_p_diag.mean())
+        self.log("val: -ELBO", loss.mean())
+        self.log("val: NLL", neg_ll.mean())
+        self.log("val: KL", kl.mean())
+        self.log("val: KL bg", kl_bg.mean())
+        self.log("val: KL I", kl_I.mean())
+        self.log("val: KL p_mean", kl_p_mean.mean())
+        self.log("val: KL p_factor", kl_p_factor.mean())
+        self.log("val: KL p_diag", kl_p_diag.mean())
 
         return outputs
 
     def predict_step(self, batch, batch_idx):
-        shoebox, dials, masks, metadata, counts = batch
-        outputs = self(shoebox, dials, masks, metadata, counts)
+        counts, shoebox, metadata, masks, reference = batch
+        outputs = self(counts, shoebox, metadata, masks, reference)
         intensities = self.calculate_intensities(
             counts=outputs["counts"],
             qbg=outputs["qbg"],

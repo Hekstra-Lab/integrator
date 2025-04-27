@@ -4,26 +4,33 @@ global:
 
 
 integrator:
-  name: unet_integrator
+  name: mlp_integrator
   learning_rate: 0.0001
-  mc_samples: 200
+  mc_samples: *dmodel
   profile_threshold: 0.01
   load_checkpoint: null
 
 components:
   image_encoder:
-    name: unet_dirichlet_concentration
+    name: dirchlet_concentration
     params:
-      in_channels: 1
-      out_channels: 1
-      base_channels: 16
+      in_channels: 3
+      base_ch: 32
+      out_channels: 3
 
-    #name: cnn_3d
+    #name: 3d_cnn
     #params:
       #Z: 3
       #H: 21
       #W: 21
-      #conv1_out_channel: 64
+      ##conv1_out_channel: 64
+
+    #name: mlp_image_encoder
+    #params:
+        #depth: 10
+        #dmodel: 64
+        #dropout: 0.5
+        #feature_dim: 7
 
   metadata_encoder:
     name: mlp_metadata_encoder
@@ -34,6 +41,10 @@ components:
       dropout: null
 
   profile:
+    #name: dirichlet
+    #params:
+      #dmodel: 64
+
     name: unet_dirichlet
     params:
       dmodel: 64
@@ -42,47 +53,39 @@ components:
   decoder:
     name: unet_decoder
     params:
-      mc_samples: 100
+      mc_samples: *mc_samples
 
   q_bg:
     name: gamma
     params:
       dmodel: 64
 
-  #q_I:
-    #name: gamma
-    #params:
-      #dmodel: 64
-
   loss:
     name: unet_loss
     params:
       p_bg_name: gamma
       p_bg_params:
-        concentration: 1.0
+        concentration: 5.0
         rate: 1.0
 
       p_p_name: dirichlet
-      p_p_params: null
+      p_p_params:
+        concentration: 0.1
 
-      #p_I_name: gamma
-      #p_I_params:
-        #concentration: 1.0
-        #rate: 1.0
-
-      p_p_scale: 0.001
+      p_p_scale: 0.0001
       p_bg_scale: 0.0001
+
 
 data_loader:
   name: default
   params:
     data_dir: "/Users/luis/integratorv3/integrator/data/hewl_816/"
-    batch_size: 10
+    batch_size: 5
     val_split: 0.3
     test_split: 0.0
     num_workers: 0
     include_test: false
-    subset_size: 100
+    subset_size: 50
     cutoff: null
     shoebox_features: true
     shoebox_file_names:
@@ -94,7 +97,7 @@ data_loader:
 
 trainer:
   params:
-    max_epochs: 200
+    max_epochs: 500
     accelerator: auto
     devices: 1
     logger: true

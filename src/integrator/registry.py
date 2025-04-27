@@ -47,6 +47,7 @@ REGISTRY = {
         "mvn_integrator": MVNIntegrator,
         "mlp_integrator": MLPIntegrator,
         "lrmvn_integrator": LRMVNIntegrator,
+        "integrator": Integrator,
     },
     "q_I": {
         "gamma": GammaDistribution,
