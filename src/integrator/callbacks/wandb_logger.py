@@ -1113,7 +1113,7 @@ class UNetPlotter(Callback):
 
 # %%
 # NOTE: for dirichlet model
-class tempUNetPlotter(Callback):
+class Plotter(Callback):
     def __init__(self, num_profiles=5, plot_every_n_epochs=5, d_vectors=None):
         super().__init__()
         self.train_predictions = {}
