@@ -864,6 +864,14 @@ class UNetPlotter(Callback):
 
                     shoebox, dials, masks, metadata, counts = batch
 
+                    # Move everything you need to the correct device
+                    device = pl_module.device
+                    shoebox = shoebox.to(device)
+                    dials = dials.to(device)
+                    masks = masks.to(device)
+                    metadata = metadata.to(device)  # careful here — depends on what metadata is
+                    counts = counts.to(device)
+
                     base_output = pl_module(shoebox, dials, masks, metadata, counts)
 
                     intensities = pl_module.calculate_intensities(
