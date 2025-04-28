@@ -132,31 +132,35 @@ class DefaultIntegrator(BaseIntegrator):
             sigma_sq = zbg + batch_counts + 1e-6
             w = 1.0 / sigma_sq
 
-            weighted_sum_intensity = (batch_counts - zbg) * zp * w
-            weighted_sum_intensity_sum = weighted_sum_intensity.sum(-1)
+            kabsch_sum_intensity = (batch_counts - zbg) * zp * w
+            kabsch_sum_intensity_sum = kabsch_sum_intensity.sum(-1)
 
             summed_squared_prf = torch.sum(zp.pow(2) * w, dim=-1)
-            division = weighted_sum_intensity_sum / summed_squared_prf
-            weighted_sum_mean = division.mean(-1)
+            division = kabsch_sum_intensity_sum / summed_squared_prf
+            kabsch_sum_mean = division.mean(-1)
 
             # Variance calculation
-            weighted_sum_var = division.var(-1)
+            kabsch_sum_var = division.var(-1)
             profile_masks = zp > self.profile_threshold
 
             N_used = profile_masks.sum(-1).float()
             masked_counts = batch_counts * profile_masks
 
             # %%
-            thresholded_intensity = (masked_counts - zbg * profile_masks).sum(-1)
-            thresholded_mean = thresholded_intensity.mean(-1)
-            centered_thresh = thresholded_intensity - thresholded_mean.unsqueeze(-1)
-            thresholded_var = (centered_thresh**2).sum(-1) / (N_used.mean(-1) + 1e-6)
+            profile_masking_intensity = (masked_counts - zbg * profile_masks).sum(-1)
+            profile_masking_mean = profile_masking_intensity.mean(-1)
+            centered_thresh = (
+                profile_masking_intensity - profile_masking_mean.unsqueeze(-1)
+            )
+            profile_masking_var = (centered_thresh**2).sum(-1) / (
+                N_used.mean(-1) + 1e-6
+            )
 
             intensities = {
-                "thresholded_mean": thresholded_mean,
-                "thresholded_var": thresholded_var,
-                "weighted_sum_mean": weighted_sum_mean,
-                "weighted_sum_var": weighted_sum_var,
+                "profile_masking_mean": profile_masking_mean,
+                "profile_masking_var": profile_masking_var,
+                "kabsch_sum_mean": kabsch_sum_mean,
+                "kabsch_sum_var": kabsch_sum_var,
             }
 
             return intensities
@@ -166,6 +170,7 @@ class DefaultIntegrator(BaseIntegrator):
 
         # Get representations and distributions
         shoebox_representation = self.image_encoder(shoebox, masks)
+
         meta_representation = self.metadata_encoder(metadata)
 
         representation = torch.cat([shoebox_representation, meta_representation], dim=1)
@@ -183,39 +188,29 @@ class DefaultIntegrator(BaseIntegrator):
             "counts": counts,
             "masks": masks,
             "qI": qI,
+            "intensity_mean": qI.mean,
+            "intensity_var": qI.variance,
             "qbg": qbg,
+            "qbg_mean": qbg.mean,
             "qp": qp,
-            "dials_I_sum_value": reference[:, 0],
-            "dials_I_sum_var": reference[:, 1],
-            "dials_I_prf_value": reference[:, 2],
-            "dials_I_prf_var": reference[:, 3],
-            "refl_ids": reference[:, 4],
+            "dials_I_sum_value": reference[:, 6],
+            "dials_I_sum_var": reference[:, 7],
+            "dials_I_prf_value": reference[:, 8],
+            "dials_I_prf_var": reference[:, 9],
+            "refl_ids": reference[:, -1],
+            "metadata": metadata,
+            "x_c": reference[:, 0],
+            "y_c": reference[:, 1],
+            "z_c": reference[:, 2],
+            "x_c_mm": reference[:, 3],
+            "y_c_mm": reference[:, 4],
+            "z_c_mm": reference[:, 5],
+            "dials_bg_mean": reference[:, 10],
+            "dials_bg_sum_value": reference[:, 11],
+            "dials_bg_sum_var": reference[:, 12],
+            "profile": qp.mean,
+            "d": reference[:, 13],
         }
-
-        # return {
-        # "rates": rate,
-        # "counts": counts,
-        # "masks": masks,
-        # "qI": qI,
-        # "qbg": qbg,
-        # "qp": qp,
-        # "dials_I_sum_value": reference[:, 6],
-        # "dials_I_sum_var": reference[:, 7],
-        # "dials_I_prf_value": reference[:, 8],
-        # "dials_I_prf_var": reference[:, 9],
-        # "refl_ids": reference[:, -1],
-        # "metadata": metadata,
-        # "x_c": reference[:, 0],
-        # "y_c": reference[:, 1],
-        # "z_c": reference[:, 2],
-        # "x_c_mm": reference[:, 3],
-        # "y_c_mm": reference[:, 4],
-        # "z_c_mm": reference[:, 5],
-        # "dials_bg_mean": reference[:, 10],
-        # "dials_bg_sum_value": reference[:, 11],
-        # "dials_bg_sum_var": reference[:, 12],
-        # "d": reference[:, 13],
-        # }
 
     def training_step(self, batch, batch_idx):
         # shoebox, dials, masks, metadata,counts,samples = batch
@@ -285,29 +280,33 @@ class DefaultIntegrator(BaseIntegrator):
         return outputs
 
     def predict_step(self, batch, batch_idx):
-        shoebox, dials, masks, metadata, counts = batch
-        outputs = self(shoebox, dials, masks, metadata, counts)
+        counts, shoebox, metadata, masks, reference = batch
+        outputs = self(counts, shoebox, metadata, masks, reference)
         intensities = self.calculate_intensities(
             outputs["counts"], outputs["qbg"], outputs["qp"], outputs["masks"]
         )
         return {
             "qI_mean": outputs["qI"].mean,
             "qI_variance": outputs["qI"].variance,
-            "weighted_sum_mean": intensities["weighted_sum_mean"],
-            "weighted_sum_var": intensities["weighted_sum_var"],
-            "thresholded_mean": intensities["thresholded_mean"],
-            "thresholded_var": intensities["thresholded_var"],
+            "kabsch_sum_mean": intensities["kabsch_sum_mean"],
+            "kabsch_sum_var": intensities["kabsch_sum_var"],
+            # "profile": outputs["qp"].mean,
+            "profile_masking_mean": intensities["profile_masking_mean"],
+            "profile_masking_var": intensities["profile_masking_var"],
             "refl_ids": outputs["refl_ids"],
-            "dials_I_sum_value": outputs["dials_I_sum_value"],
-            "dials_I_sum_var": outputs["dials_I_sum_var"],
             "dials_I_prf_value": outputs["dials_I_prf_value"],
             "dials_I_prf_var": outputs["dials_I_prf_var"],
-            "qbg_mean": outputs["qbg"].mean,
+            "qbg": outputs["qbg"].mean,
             "qbg_variance": outputs["qbg"].variance,
             "qp_variance": outputs["qp"].variance,
-            "qp_mean": outputs["qp"].mean,
-            "counts": outputs["counts"],
-            "masks": outputs["masks"],
+            # "qp_mean": outputs["qp"].mean,
+            # "counts": outputs["counts"],
+            # "masks": outputs["masks"],
+            "x_c": outputs["x_c"],
+            "y_c": outputs["y_c"],
+            "z_c": outputs["z_c"],
+            "d": outputs["d"],
+            "dials_bg_mean": outputs["dials_bg_mean"],
         }
 
     def configure_optimizers(self):
