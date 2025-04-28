@@ -781,21 +781,21 @@ class UNetPlotter(Callback):
             base_output = pl_module(shoebox, dials, masks, metadata, counts)
 
             # 2) Call calculate_intensities
-            # intensities = pl_module.calculate_intensities(
-            # counts=base_output["counts"],
-            # qbg=base_output["qbg"],
-            # qp=base_output["profile"],
-            # masks=base_output["masks"],
-            # )
+            intensities = pl_module.calculate_intensities(
+                counts=base_output["counts"],
+                qbg=base_output["qbg"],
+                qp=base_output["profile"],
+                masks=base_output["masks"],
+            )
 
             renyi_entropy = -torch.log(base_output["profile"].mean(1).pow(2).sum(-1))
 
             predictions = {
                 **base_output,
-                # "kabsch_sum_mean": intensities["kabsch_sum_mean"],
-                # "kabsch_sum_var": intensities["kabsch_sum_var"],
-                # "profile_masking_mean": intensities["profile_masking_mean"],
-                # "profile_masking_var": intensities["profile_masking_var"],
+                "kabsch_sum_mean": intensities["kabsch_sum_mean"],
+                "kabsch_sum_var": intensities["kabsch_sum_var"],
+                "profile_masking_mean": intensities["profile_masking_mean"],
+                "profile_masking_var": intensities["profile_masking_var"],
             }
 
             if self.current_epoch % self.plot_every_n_epochs == 0:
@@ -826,10 +826,10 @@ class UNetPlotter(Callback):
                 "intensity_var",
                 "dials_I_prf_value",
                 "dials_I_prf_var",
-                # "kabsch_sum_mean",
-                # "kabsch_sum_var",
-                # "profile_masking_mean",
-                # "profile_masking_var",
+                "kabsch_sum_mean",
+                "kabsch_sum_var",
+                "profile_masking_mean",
+                "profile_masking_var",
                 "profile",
                 "qbg",
                 "x_c",
@@ -859,36 +859,8 @@ class UNetPlotter(Callback):
     def on_train_epoch_end(self, trainer, pl_module):
         if self.train_predictions:
             try:
-                with torch.no_grad():
-                    batch = next(iter(trainer.train_dataloader))
-
-                    shoebox, dials, masks, metadata, counts = batch
-
-                    # Move everything you need to the correct device
-                    device = pl_module.device
-                    shoebox = shoebox.to(device)
-                    dials = dials.to(device)
-                    masks = masks.to(device)
-                    metadata = metadata.to(device)  # careful here — depends on what metadata is
-                    counts = counts.to(device)
-
-                    base_output = pl_module(shoebox, dials, masks, metadata, counts)
-
-                    intensities = pl_module.calculate_intensities(
-                        counts=base_output["counts"],
-                        qbg=base_output["qbg"],
-                        qp=base_output["profile"],
-                        masks=base_output["masks"],
-                    )
-
+                # Create data for scatter plots
                 data = []
-                predictions = {
-                    **base_output,
-                    "kabsch_sum_mean": intensities["kabsch_sum_mean"],
-                    "kabsch_sum_var": intensities["kabsch_sum_var"],
-                    "profile_masking_mean": intensities["profile_masking_mean"],
-                    "profile_masking_var": intensities["profile_masking_var"],
-                }
 
                 I_flat = self.train_predictions["intensity_mean"].flatten() + 1e-8
 
@@ -901,24 +873,16 @@ class UNetPlotter(Callback):
                     self.train_predictions["dials_I_prf_var"].flatten() + 1e-8
                 )
                 kabsch_sum_flat = (
-                    # self.train_predictions["kabsch_sum_mean"].flatten() + 1e-8
-                    intensities["kabsch_sum_mean"].flatten()
-                    + 1e-8
+                    self.train_predictions["kabsch_sum_mean"].flatten() + 1e-8
                 )
                 kabsch_sum_flat_var = (
-                    # self.train_predictions["kabsch_sum_var"].flatten() + 1e-8
-                    intensities["kabsch_sum_var"].flatten()
-                    + 1e-8
+                    self.train_predictions["kabsch_sum_var"].flatten() + 1e-8
                 )
                 profile_masking_flat = (
-                    # self.train_predictions["profile_masking_mean"].flatten() + 1e-8
-                    intensities["profile_masking_mean"].flatten()
-                    + 1e-8
+                    self.train_predictions["profile_masking_mean"].flatten() + 1e-8
                 )
                 profile_masking_flat_var = (
-                    # self.train_predictions["profile_masking_var"].flatten() + 1e-8
-                    intensities["profile_masking_var"].flatten()
-                    + 1e-8
+                    self.train_predictions["profile_masking_var"].flatten() + 1e-8
                 )
                 dials_bg_flat = self.train_predictions["dials_bg_mean"].flatten() + 1e-8
                 qbg_flat = self.train_predictions["qbg"].flatten() + 1e-8
