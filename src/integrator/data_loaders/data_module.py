@@ -35,16 +35,19 @@ class ShoeboxDataModule(BaseDataModule):
         subset_size=None,
         single_sample_index=None,
         cutoff=None,
-        shoebox_features=None,
+        use_metadata=None,
         persistent_workers=True,
         shoebox_file_names={
-            "shoeboxes": "weak_standardized_shoeboxes.pt",
-            "counts": "weak_raw_counts.pt",
-            "metadata": "metadata_subset.pt",
-            "masks": "masks_subset.pt",
-            "shoebox_features": "shoebox_features_subset.pt",
+            "counts": "counts.pt",
+            "metadata": "metadata.pt",
+            "masks": "masks.pt",
+            "stats": "stats.pt",
+            "reference": "reference.pt",
         },
         refl_file=None,
+        H=21,
+        W=21,
+        Z=3,
     ):
         super().__init__()
         self.data_dir = data_dir
@@ -57,60 +60,50 @@ class ShoeboxDataModule(BaseDataModule):
         self.num_workers = num_workers
         self.cutoff = cutoff
         self.full_dataset = None  # Will store the full dataset
-        self.shoebox_features = shoebox_features
+        self.use_metadata = use_metadata
         self.shoebox_file_names = shoebox_file_names
+        self.H = H
+        self.W = W
+        self.Z = Z
 
     def setup(self, stage=None):
-        # Load the tensors
-        #       samples = torch.load(os.path.join(self.data_dir, "samples.pt"))
-        shoeboxes = torch.load(
-            os.path.join(self.data_dir, self.shoebox_file_names["shoeboxes"])
-        )
         counts = torch.load(
             os.path.join(self.data_dir, self.shoebox_file_names["counts"])
         )
         metadata = torch.load(
             os.path.join(self.data_dir, self.shoebox_file_names["metadata"])
         )
-        dead_pixel_mask = torch.load(
+        masks = torch.load(
             os.path.join(self.data_dir, self.shoebox_file_names["masks"])
         )
-
-        if self.shoebox_features is not None:
-            shoebox_features = torch.load(
-                os.path.join(self.data_dir, self.shoebox_file_names["shoebox_features"])
-            )
-            shoebox_features = shoebox_features.float()
-        else:
-            shoebox_features = None
+        stats = torch.load(
+            os.path.join(self.data_dir, self.shoebox_file_names["stats"])
+        )
+        reference = torch.load(
+            os.path.join(self.data_dir, self.shoebox_file_names["reference"])
+        )
+        standardized_counts = (counts * masks) - stats[0] / stats[1].sqrt()
 
         if self.cutoff is not None:
-            selection = metadata[:, 0] < self.cutoff
-            shoeboxes = shoeboxes[selection]
-            #           samples = samples[selection]
+            selection = reference[:, -7] < self.cutoff
             counts = counts[selection]
-            metadata = metadata[selection]
-            dead_pixel_mask = dead_pixel_mask[selection]
-            if self.shoebox_features is not None:
-                shoebox_features = shoebox_features[selection]
+            masks = masks[selection]
+            reference = reference[selection]
+            if self.use_metadata is not None:
+                metadata = metadata[selection]
 
-        self.H = torch.unique(shoeboxes[..., 0], dim=1).size(-1)
-        self.W = torch.unique(shoeboxes[..., 1], dim=1).size(-1)
-        self.Z = torch.unique(shoeboxes[..., 2], dim=1).size(-1)
-
-        # Create the full dataset based on whether shoebox_features is present
-        if shoebox_features is not None:
+        # Create the full dataset based on whether metadata is present
+        if self.use_metadata is not None:
             self.full_dataset = TensorDataset(
-                #                shoeboxes, metadata, dead_pixel_mask, shoebox_features,counts,samples
-                shoeboxes,
-                metadata,
-                dead_pixel_mask,
-                shoebox_features,
                 counts,
+                standardized_counts,
+                metadata,
+                masks,
+                reference,
             )
         else:
             self.full_dataset = TensorDataset(
-                shoeboxes, metadata, dead_pixel_mask, counts
+                counts, standardized_counts, masks, reference
             )
 
         # If single_sample_index is specified, use only that sample
