@@ -11,9 +11,7 @@ class MLPMetadataEncoder(BaseEncoder):
     ):
         super().__init__()
         self.linear = Linear(feature_dim, dmodel)
-        # self.relu = torch.nn.ReLU(inplace=True)
         self.relu = nn.ReLU()
-        # self.batch_norm = nn.BatchNorm1d(dmodel)
         self.layer_norm = torch.nn.LayerNorm(dmodel)
         self.mlp_1 = MLP(dmodel, depth, dropout=dropout, output_dims=output_dims)
 

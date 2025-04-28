@@ -161,7 +161,7 @@ class DefaultIntegrator(BaseIntegrator):
 
             return intensities
 
-    def forward(self, shoebox, dials, masks, metadata, counts):
+    def forward(self, counts, shoebox, metadata, masks, reference):
         counts = torch.clamp(counts, min=0)
 
         # Get representations and distributions
@@ -185,12 +185,37 @@ class DefaultIntegrator(BaseIntegrator):
             "qI": qI,
             "qbg": qbg,
             "qp": qp,
-            "dials_I_sum_value": dials[:, 0],
-            "dials_I_sum_var": dials[:, 1],
-            "dials_I_prf_value": dials[:, 2],
-            "dials_I_prf_var": dials[:, 3],
-            "refl_ids": dials[:, 4],
+            "dials_I_sum_value": reference[:, 0],
+            "dials_I_sum_var": reference[:, 1],
+            "dials_I_prf_value": reference[:, 2],
+            "dials_I_prf_var": reference[:, 3],
+            "refl_ids": reference[:, 4],
         }
+
+        # return {
+        # "rates": rate,
+        # "counts": counts,
+        # "masks": masks,
+        # "qI": qI,
+        # "qbg": qbg,
+        # "qp": qp,
+        # "dials_I_sum_value": reference[:, 6],
+        # "dials_I_sum_var": reference[:, 7],
+        # "dials_I_prf_value": reference[:, 8],
+        # "dials_I_prf_var": reference[:, 9],
+        # "refl_ids": reference[:, -1],
+        # "metadata": metadata,
+        # "x_c": reference[:, 0],
+        # "y_c": reference[:, 1],
+        # "z_c": reference[:, 2],
+        # "x_c_mm": reference[:, 3],
+        # "y_c_mm": reference[:, 4],
+        # "z_c_mm": reference[:, 5],
+        # "dials_bg_mean": reference[:, 10],
+        # "dials_bg_sum_value": reference[:, 11],
+        # "dials_bg_sum_var": reference[:, 12],
+        # "d": reference[:, 13],
+        # }
 
     def training_step(self, batch, batch_idx):
         # shoebox, dials, masks, metadata,counts,samples = batch

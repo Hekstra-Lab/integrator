@@ -43,6 +43,7 @@ class ShoeboxDataModule(BaseDataModule):
             "masks": "masks.pt",
             "stats": "stats.pt",
             "reference": "reference.pt",
+            "standardized_counts": None,
         },
         refl_file=None,
         H=21,
@@ -65,6 +66,7 @@ class ShoeboxDataModule(BaseDataModule):
         self.H = H
         self.W = W
         self.Z = Z
+        self.standardized_counts = shoebox_file_names["standardized_counts"]
 
     def setup(self, stage=None):
         counts = torch.load(
@@ -72,7 +74,8 @@ class ShoeboxDataModule(BaseDataModule):
         )
         metadata = torch.load(
             os.path.join(self.data_dir, self.shoebox_file_names["metadata"])
-        )
+        ).type(torch.float32)
+
         masks = torch.load(
             os.path.join(self.data_dir, self.shoebox_file_names["masks"])
         )
@@ -82,7 +85,15 @@ class ShoeboxDataModule(BaseDataModule):
         reference = torch.load(
             os.path.join(self.data_dir, self.shoebox_file_names["reference"])
         )
-        standardized_counts = (counts * masks) - stats[0] / stats[1].sqrt()
+
+        if self.standardized_counts is not None:
+            standardized_counts = torch.load(
+                os.path.join(
+                    self.data_dir, self.shoebox_file_names["standardized_counts"]
+                )
+            )
+        else:
+            standardized_counts = (counts * masks) - stats[0] / stats[1].sqrt()
 
         if self.cutoff is not None:
             selection = reference[:, -7] < self.cutoff

@@ -29,8 +29,7 @@ class CNNResNet2(BaseEncoder):
         self.H_out = (H + 2 * conv1_padding - conv1_kernel_size) // conv1_stride + 1
         self.W_out = (W + 2 * conv1_padding - conv1_kernel_size) // conv1_stride + 1
 
-        # Improved position encoding
-        self.pos_encoding = ImprovedPositionalEncoding3D(Z, H, W, dmodel)
+        self.pos_encoding = PositionalEncoding3d(Z, H, W, dmodel)
 
         # Counts pathway
         self.conv1_counts = torch.nn.Conv3d(
@@ -173,7 +172,7 @@ class SinusoidalPositionalEncoding3D(torch.nn.Module):
         return self.pe.expand(batch_size, -1, -1, -1, -1)
 
 
-class ImprovedDetectorPositionalEncoding3D(torch.nn.Module):
+class DetectorPositionalEncoding3D(torch.nn.Module):
     def __init__(self, Z, H, W):
         super().__init__()
         self.Z = Z
@@ -185,8 +184,8 @@ class ImprovedDetectorPositionalEncoding3D(torch.nn.Module):
             "coord_ranges",
             torch.tensor(
                 [
-                    [0.0, 2500.0],  # X range
-                    [0.0, 2500.0],  # Y range
+                    [0.0, 4000.0],  # X range
+                    [0.0, 4000.0],  # Y range
                     [0.0, 2.0],  # Z range
                 ]
             ),
@@ -217,10 +216,10 @@ class ImprovedDetectorPositionalEncoding3D(torch.nn.Module):
         return self.norm(pos)
 
 
-class ImprovedPositionalEncoding3D(torch.nn.Module):
+class PositionalEncoding3d(torch.nn.Module):
     def __init__(self, Z, H, W, dmodel=32):
         super().__init__()
-        self.detector_pe = ImprovedDetectorPositionalEncoding3D(Z, H, W)
+        self.detector_pe = DetectorPositionalEncoding3D(Z, H, W)
         self.sinusoidal_pe = SinusoidalPositionalEncoding3D(Z, H, W, dmodel)
 
         # Balanced projection layers

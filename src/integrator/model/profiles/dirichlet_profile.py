@@ -23,8 +23,3 @@ class DirichletProfile(torch.nn.Module):
         q_p = torch.distributions.Dirichlet(alphas)
 
         return q_p
-
-
-if __name__ == "__main__":
-    # Example usage
-    dmodel = 64
