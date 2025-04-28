@@ -286,8 +286,8 @@ class DefaultIntegrator(BaseIntegrator):
             outputs["counts"], outputs["qbg"], outputs["qp"], outputs["masks"]
         )
         return {
-            "qI_mean": outputs["qI"].mean,
-            "qI_variance": outputs["qI"].variance,
+            "intensity_mean": outputs["qI"].mean,
+            "intensity_var": outputs["qI"].variance,
             "kabsch_sum_mean": intensities["kabsch_sum_mean"],
             "kabsch_sum_var": intensities["kabsch_sum_var"],
             # "profile": outputs["qp"].mean,
