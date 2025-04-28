@@ -184,6 +184,8 @@ class Loss(torch.nn.Module):
             self.register_buffer(
                 f"{prefix}concentration0", torch.tensor(params["concentration0"])
             )
+        elif name == "half_normal":
+            self.register_buffer(f"{prefix}scale", torch.tensor(params["scale"]))
         elif name == "laplace":
             self.register_buffer(f"{prefix}loc", torch.tensor(params["loc"]))
             self.register_buffer(f"{prefix}scale", torch.tensor(params["scale"]))
@@ -203,9 +205,15 @@ class Loss(torch.nn.Module):
             loc = getattr(self, f"{params_prefix}loc").to(device)
             scale = getattr(self, f"{params_prefix}scale").to(device)
             return torch.distributions.log_normal.LogNormal(loc=loc, scale=scale)
+
         elif name == "exponential":
             rate = getattr(self, f"{params_prefix}rate").to(device)
             return torch.distributions.exponential.Exponential(rate=rate)
+        elif name == "half_normal":
+            scale = getattr(self, f"{params_prefix}scale").to(device)
+            return torch.distributions.half_normal.HalfNormal(scale=scale)
+
+
         elif name == "beta":
             concentration1 = getattr(self, f"{params_prefix}concentration1").to(device)
             concentration0 = getattr(self, f"{params_prefix}concentration0").to(device)

@@ -94,15 +94,27 @@ class DefaultIntegrator(BaseIntegrator):
         mc_samples=100,
         learning_rate=1e-3,
         profile_threshold=0.001,
+        use_metarep=True,
+        use_metaonly=False,
     ):
         super().__init__()
         # Save all constructor arguments except module instances
         self.save_hyperparameters()
         self.learning_rate = learning_rate
 
-        # Model components
-        self.image_encoder = image_encoder
-        self.metadata_encoder = metadata_encoder
+        self.use_metarep = use_metarep
+        self.use_metaonly = use_metaonly
+
+        # Handle model components based on flags
+        if self.use_metaonly:
+            self.metadata_encoder = metadata_encoder
+            self.encoder = None
+            print("Using metadata encoder only")
+        else:
+            self.image_encoder = image_encoder
+            if self.use_metarep:
+                self.metadata_encoder = metadata_encoder
+
         self.profile_model = profile_model
 
         # Additional layers
@@ -123,8 +135,7 @@ class DefaultIntegrator(BaseIntegrator):
             counts = counts * mask
             batch_counts = counts.unsqueeze(1)
 
-            zbg = qbg.rsample([self.mc_samples]).view(
-                self.mc_samples, -1, 1)
+            zbg = qbg.rsample([self.mc_samples]).view(self.mc_samples, -1, 1)
             zbg = zbg.transpose(0, 1)
             zp = qp.rsample([self.mc_samples])
             zp = zp.transpose(0, 1)
@@ -170,13 +181,21 @@ class DefaultIntegrator(BaseIntegrator):
         counts = torch.clamp(counts, min=0)
 
         # Get representations and distributions
-        shoebox_representation = self.image_encoder(shoebox, masks)
 
-        meta_representation = self.metadata_encoder(metadata)
+        if self.use_metaonly:
+            representation = self.metadata_encoder(metadata)
+        else:
+            shoebox_representation = self.image_encoder(shoebox, masks)
+            if self.use_metarep:
+                meta_representation = self.metadata_encoder(metadata)
+                representation = torch.cat(
+                    [shoebox_representation, meta_representation], dim=1
+                )
+                representation = self.fc_representation(representation)
+            else:
+                representation = shoebox_representation
 
-        representation = torch.cat([shoebox_representation, meta_representation], dim=1)
-        representation = self.fc_representation(representation)
-        representation = self.norm(representation)
+        # representation = self.norm(representation)
 
         qbg = self.background_distribution(representation)
         qI = self.intensity_distribution(representation)
