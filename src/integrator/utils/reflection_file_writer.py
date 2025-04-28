@@ -42,8 +42,13 @@ def reflection_file_writer(
             sel = np.asarray([False] * len(refl_tbl))
             reflection_ids = empty_df["refl_ids"].explode().cast(plr.Int32).to_list()
 
-            qI_mean_list = empty_df["intensity_mean"].explode().to_list()
-            qI_variance_list = empty_df["intensity_var"].explode().to_list()
+            try:
+                qI_mean_list = empty_df["intensity_mean"].explode().to_list()
+                qI_variance_list = empty_df["intensity_var"].explode().to_list()
+            except KeyError:
+                qI_mean_list = empty_df["qI_mean"].explode().to_list()
+                qI_variance_list = empty_df["qI_variance"].explode().to_list()
+
             weighted_sum_mean = empty_df["profile_masking_mean"].explode().to_list()
             weighted_sum_var = empty_df["profile_masking_var"].explode().to_list()
             thresholded_mean = empty_df["kabsch_sum_mean"].explode().to_list()
