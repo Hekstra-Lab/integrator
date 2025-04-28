@@ -10,24 +10,51 @@ class LogNormalDistribution(BaseDistribution):
         dmodel,
         constraint=Constraint(),
         out_features=2,
+        use_metarep=False,
     ):
         super().__init__(q=LogNormal)
-        self.fc = Linear(
-            in_features=dmodel,
-            out_features=out_features,
-        )
+        self.use_metarep = use_metarep
+
         self.constraint = constraint
 
-    def distribution(self, params):
-        loc = params[..., 0]
-        scale = self.constraint(params[..., 1])
-        return self.q(loc=loc, scale=scale)
+        if self.use_metarep:
+            # separate layers for params1 and params2
+            self.fc1 = Linear(
+                in_features=dmodel,
+                out_features=1,
+            )
+            self.fc2 = Linear(
+                in_features=dmodel * 2,
+                out_features=1,
+            )
+        else:
+            self.fc = Linear(
+                in_features=dmodel,
+                out_features=out_features,
+            )
 
-    def forward(self, representation):
-        params = self.fc(representation)
-        lognormal = self.distribution(params)
+    def distribution(self, loc, scale):
+        scale = self.constraint(scale)
+        return self.q(loc=loc.flatten(), scale=scale.flatten())
+
+    def forward(self, representation, metarep=None):
+        if self.use_metarep:
+            assert metarep is not None, "metarep required when use_metarep=True"
+            params1 = self.fc1(representation)
+            combined_rep = torch.cat([representation, metarep], dim=1)
+            params2 = self.fc2(combined_rep)
+            lognormal = self.distribution(params1, params2)
+
+        else:
+            params = self.fc(representation)
+            lognormal = self.distribution(params[..., 0], params[..., 1])
         return lognormal
 
 
 if __name__ == "__main__":
-    data = torch.randn(10, 3, 21, 21)
+    representation = torch.randn(10, 64)
+    metarep = torch.randn(10, 64)
+    model = LogNormalDistribution(dmodel=64, use_metarep=True)
+    lognormal = model(representation, metarep)
+    lognormal.rsample([100])
+
