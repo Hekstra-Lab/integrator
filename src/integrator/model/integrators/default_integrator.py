@@ -123,7 +123,8 @@ class DefaultIntegrator(BaseIntegrator):
             counts = counts * mask
             batch_counts = counts.unsqueeze(1)
 
-            zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1)
+            zbg = qbg.rsample([self.mc_samples]).view(
+                self.mc_samples, -1, 1)
             zbg = zbg.transpose(0, 1)
             zp = qp.rsample([self.mc_samples])
             zp = zp.transpose(0, 1)

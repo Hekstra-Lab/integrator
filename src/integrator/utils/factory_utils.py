@@ -325,6 +325,8 @@ def create_integrator(config):
             mc_samples=config["integrator"]["mc_samples"],
             learning_rate=config["integrator"]["learning_rate"],
             profile_threshold=config["integrator"]["profile_threshold"],
+            use_metarep=config["integrator"]["use_metarep"],
+            use_metaonly=config["integrator"]["use_metaonly"],
         )
         return integrator
 
@@ -472,6 +474,8 @@ def create_integrator_from_checkpoint(config, checkpoint_path):
             learning_rate=config["integrator"]["learning_rate"],
             profile_threshold=config["integrator"]["profile_threshold"],
             weights_only=False,
+            use_metarep=config["integrator"]["use_metarep"],
+            use_metaonly=config["integrator"]["use_metaonly"],
         )
         return integrator
 
