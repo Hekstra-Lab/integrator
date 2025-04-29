@@ -17,10 +17,10 @@ class Decoder(BaseDecoder):
         q_p,
     ):
         # Sample from variational distributions
-        z = q_I.rsample([self.mc_samples]).unsqueeze(-1)
-        bg = q_bg.rsample([self.mc_samples]).view(self.mc_samples, -1, 1)
-        qp = q_p.rsample([self.mc_samples])
+        zI = q_I.rsample([self.mc_samples]).unsqueeze(-1)
+        zbg = q_bg.rsample([self.mc_samples]).unsqueeze(-1)
+        zp = q_p.rsample([self.mc_samples])
 
-        rate = z.permute(1, 0, 2) * qp.permute(1, 0, 2) + bg.permute(1, 0, 2)
+        rate = zI.permute(1, 0, 2) * zp.permute(1, 0, 2) + zbg.permute(1, 0, 2)
 
         return rate

@@ -130,29 +130,27 @@ class DefaultIntegrator(BaseIntegrator):
         self.profile_threshold = profile_threshold
         self.automatic_optimization = True
 
-    def calculate_intensities(self, counts, qbg, qp, mask):
+    def calculate_intensities(self, counts, qbg, qp, masks):
         with torch.no_grad():
-            counts = counts * mask
+            counts = counts * masks
             batch_counts = counts.unsqueeze(1)
 
-            zbg = qbg.rsample([self.mc_samples]).view(self.mc_samples, -1, 1)
-            zbg = zbg.transpose(0, 1)
+            zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
             zp = qp.rsample([self.mc_samples])
             zp = zp.transpose(0, 1)
-            zp = zp * mask.unsqueeze(1)
+            zp = zp * masks.unsqueeze(1)
+            vi = zbg + 1e-6
 
-            sigma_sq = zbg + batch_counts + 1e-6
-            w = 1.0 / sigma_sq
+            # kabsch sum
+            for i in range(4):
+                num = (counts.unsqueeze(1) - zbg) * zp * masks.unsqueeze(1) / vi
+                denom = zp.pow(2) / vi
+                I = num.sum(-1) / denom.sum(-1)  # [batch_size, mc_samples]
+                vi = (I.unsqueeze(-1) * zp) + zbg
+                vi = vi.mean(-1, keepdim=True)
+            kabsch_sum_mean = I.mean(-1)
+            kabsch_sum_var = I.var(-1)
 
-            kabsch_sum_intensity = (batch_counts - zbg) * zp * w
-            kabsch_sum_intensity_sum = kabsch_sum_intensity.sum(-1)
-
-            summed_squared_prf = torch.sum(zp.pow(2) * w, dim=-1)
-            division = kabsch_sum_intensity_sum / summed_squared_prf
-            kabsch_sum_mean = division.mean(-1)
-
-            # Variance calculation
-            kabsch_sum_var = division.var(-1)
             profile_masks = zp > self.profile_threshold
 
             N_used = profile_masks.sum(-1).float()

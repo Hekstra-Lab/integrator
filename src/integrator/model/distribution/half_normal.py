@@ -36,4 +36,4 @@ if __name__ == "__main__":
     half_normal_dist = HalfNormalDistribution(dmodel)
     representation = torch.randn(10, dmodel)  # Example input
     qbg = half_normal_dist(representation)
-    qbg.rsample([100]).shape  # Sample from the distribution
+    qbg.rsample([100])

@@ -654,8 +654,8 @@ class UNetPlotter(Callback):
         profile_images = profile_preds.reshape(-1, 3, 21, 21)[..., 1, :, :]
         count_images = count_preds.reshape(-1, 3, 21, 21)[..., 1, :, :]
         rate_images = rates.mean(1).reshape(-1, 3, 21, 21)[..., 1, :, :]
-        bg_mean = qbg_preds.mean.mean(-1)
-        bg_var = qbg_preds.variance.mean(-1)
+        bg_mean = qbg_preds.mean
+        bg_var = qbg_preds.variance
         dials_I_prf_value = dials_I
 
         for ref_id in self.tracked_refl_ids:
@@ -2549,7 +2549,7 @@ class IntegratedPlotter(Callback):
                 counts=base_output["counts"],
                 qbg=base_output["qbg"],
                 qp=base_output["qp"],
-                mask=base_output["masks"],
+                masks=base_output["masks"],
             )
 
             renyi_entropy = -torch.log(base_output["qp"].mean.pow(2).sum(-1))
