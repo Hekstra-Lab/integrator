@@ -1188,8 +1188,8 @@ class Plotter(Callback):
         profile_images = profile_preds.reshape(-1, 3, 21, 21)[..., 1, :, :]
         count_images = count_preds.reshape(-1, 3, 21, 21)[..., 1, :, :]
         rate_images = rates.mean(1).reshape(-1, 3, 21, 21)[..., 1, :, :]
-        bg_mean = qbg_preds.mean.mean(-1)
-        bg_var = qbg_preds.variance.mean(-1)
+        bg_mean = qbg_preds.mean
+        bg_var = qbg_preds.variance
         dials_I_prf_value = dials_I
         x_c = x_c
         y_c = y_c

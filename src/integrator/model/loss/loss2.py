@@ -166,6 +166,49 @@ class Loss2(torch.nn.Module):
             self.register_buffer(f"{prefix}loc", torch.tensor(params["loc"]))
             self.register_buffer(f"{prefix}scale", torch.tensor(params["scale"]))
 
+    def get_prior(self, name, params_prefix, device, default_return=None):
+        """Create a distribution on the specified device"""
+        if name is None:
+            return default_return
+
+        if name == "gamma":
+            concentration = getattr(self, f"{params_prefix}concentration").to(device)
+            rate = getattr(self, f"{params_prefix}rate").to(device)
+            return torch.distributions.gamma.Gamma(
+                concentration=concentration, rate=rate
+            )
+        elif name == "log_normal":
+            loc = getattr(self, f"{params_prefix}loc").to(device)
+            scale = getattr(self, f"{params_prefix}scale").to(device)
+            return torch.distributions.log_normal.LogNormal(loc=loc, scale=scale)
+
+        elif name == "exponential":
+            rate = getattr(self, f"{params_prefix}rate").to(device)
+            return torch.distributions.exponential.Exponential(rate=rate)
+        elif name == "half_normal":
+            scale = getattr(self, f"{params_prefix}scale").to(device)
+            return torch.distributions.half_normal.HalfNormal(scale=scale)
+
+        elif name == "beta":
+            concentration1 = getattr(self, f"{params_prefix}concentration1").to(device)
+            concentration0 = getattr(self, f"{params_prefix}concentration0").to(device)
+            return torch.distributions.beta.Beta(
+                concentration1=concentration1, concentration0=concentration0
+            )
+        elif name == "laplace":
+            loc = getattr(self, f"{params_prefix}loc").to(device)
+            scale = getattr(self, f"{params_prefix}scale").to(device)
+            return torch.distributions.laplace.Laplace(loc=loc, scale=scale)
+        elif name == "dirichlet":
+            # For Dirichlet, use the dirichlet_concentration buffer
+            if hasattr(self, "dirichlet_concentration"):
+                return torch.distributions.dirichlet.Dirichlet(
+                    self.dirichlet_concentration.to(device)
+                )
+
+        # Default case: return None or provided default
+        return default_return
+
     def mc_kl(self, q, p, num_samples=10):
         # Sample from q
         samples = q.rsample((num_samples,))
@@ -195,14 +238,16 @@ class Loss2(torch.nn.Module):
 
         p_p = torch.distributions.dirichlet.Dirichlet(self.concentration.to(device))
 
-        p_bg = torch.distributions.half_normal.HalfNormal(
-            scale=torch.tensor(1.0, device=device)
-        )
+        # p_bg = torch.distributions.half_normal.HalfNormal(
+        # scale=torch.tensor(1.0, device=device)
+        # )
 
-        p_I = torch.distributions.gamma.Gamma(
-            concentration=torch.tensor(self.p_I_concentration, device=device),
-            rate=torch.tensor(self.p_I_rate, device=device),
-        )
+        p_bg = self.get_prior(self.p_bg_name, "p_bg_", device)
+        p_I = self.get_prior(self.p_I_name, "p_I_", device)
+        # p_I = torch.distributions.gamma.Gamma(
+        # concentration=torch.tensor(self.p_I_concentration, device=device),
+        # rate=torch.tensor(self.p_I_rate, device=device),
+        # )
 
         # calculate kl terms
         kl_terms = torch.zeros(batch_size, device=device)

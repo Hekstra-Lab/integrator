@@ -57,7 +57,7 @@ class Integrator(BaseIntegrator):
         with torch.no_grad():
             counts = counts * masks
             # zbg = qbg.rsample([self.mc_samples, 1323]).squeeze(-1).permute(2, 0, 1)
-            zbg = qbg.rsample([self.mc_samples]).permute(1, 0, 2)
+            zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
             zp = qp
             vi = zbg + 1e-6
 
@@ -105,7 +105,7 @@ class Integrator(BaseIntegrator):
         qp = self.qp(rep)
         qI = self.qI(rep)
 
-        zbg = qbg.rsample([self.mc_samples]).permute(1, 0, 2)
+        zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
         zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
         zI = qI.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 

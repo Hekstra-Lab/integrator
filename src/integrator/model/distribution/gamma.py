@@ -53,3 +53,14 @@ class GammaDistribution(BaseDistribution):
             gamma = self.distribution(params[..., 0], params[..., 1])
 
         return gamma
+
+
+if __name__ == "__main__":
+    # Example usage
+    dmodel = 64
+    gamma_dist = GammaDistribution(dmodel)
+    representation = torch.randn(10, dmodel)  # Example input
+    metarep = torch.randn(10, dmodel * 2)  # Example metadata representation
+    qbg = gamma_dist(representation, metarep=metarep)
+    qbg.rsample([100]).shape  # Sample from the distribution
+
