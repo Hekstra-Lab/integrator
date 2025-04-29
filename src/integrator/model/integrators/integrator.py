@@ -13,6 +13,7 @@ from integrator.model.encoders import CNNResNet2
 from integrator.layers import Linear, Constraint
 from torch.distributions import Dirichlet, Gamma, LogNormal
 from integrator.model.encoders import MLPImageEncoder, MLPMetadataEncoder
+from lightning.pytorch.utilities import grad_norm
 
 
 # %%
@@ -165,7 +166,12 @@ class Integrator(BaseIntegrator):
             masks=outputs["masks"],
         )
 
-        # torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
+        # torch.nn.utils.clip_grad_norm_(self.parameters(), norm_type=2.0, max_norm=150.0)
+
+        # Track gradient norms here
+        norms = grad_norm(self, norm_type=2)
+        for name, norm in norms.items():
+            self.log(f"grad_norm/{name}", norm)
 
         # Log metrics
         self.log("train: loss", loss.mean())
@@ -243,6 +249,21 @@ class Integrator(BaseIntegrator):
             "x_c": outputs["x_c"],
             "y_c": outputs["y_c"],
         }
+
+    def on_before_optimizer_step(self, optimizer):
+        # Get current gradient norm
+        grad_norm_val = torch.nn.utils.clip_grad_norm_(
+            self.parameters(), max_norm=float("inf")
+        )
+
+        # Normalize gradients (scale all gradients to have unit norm)
+        if grad_norm_val > 0:
+            for param in self.parameters():
+                if param.grad is not None:
+                    param.grad.data.mul_(1.0 / grad_norm_val)
+
+        # Log the original norm
+        self.log("grad_norm", grad_norm_val)
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.learning_rate)

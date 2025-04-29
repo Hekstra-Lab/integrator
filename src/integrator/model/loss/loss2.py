@@ -69,7 +69,7 @@ class Loss2(torch.nn.Module):
         p_I_name="gamma",
         p_I_params={"concentration": 1.0, "rate": 1.0},
         p_I_scale=0.0001,
-        prior_tensor="/Users/luis/Downloads/new/concentration.pt",
+        prior_tensor=None,
     ):
         super().__init__()
         self.register_buffer("eps", torch.tensor(eps))
@@ -86,7 +86,10 @@ class Loss2(torch.nn.Module):
         self.p_bg_params = p_bg_params
         self.p_I_name = p_I_name
         self.p_I_params = p_I_params
-        self.concentration = torch.load(prior_tensor, weights_only=False)
+        if prior_tensor is not None:
+            self.concentration = torch.load(prior_tensor, weights_only=False)
+        else:
+            self.concentration = torch.ones(1323) * p_p_params["concentration"]
 
         self._register_distribution_params(p_bg_name, p_bg_params, prefix="p_bg_")
         self._register_distribution_params(p_I_name, p_I_params, prefix="p_I_")
@@ -147,7 +150,6 @@ class Loss2(torch.nn.Module):
         """Create a distribution on the specified device"""
         if name is None:
             return default_return
-
         if name == "gamma":
             concentration = getattr(self, f"{params_prefix}concentration").to(device)
             rate = getattr(self, f"{params_prefix}rate").to(device)
