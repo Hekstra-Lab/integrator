@@ -179,6 +179,7 @@ class Integrator(BaseIntegrator):
         self.log("train: kl", kl.mean())
         self.log("train: kl_bg", kl_bg.mean())
         self.log("train: kl_I", kl_I.mean())
+        self.log("train: kl_p", kl_p.mean())
         self.log("qI mean mean", outputs["qI"].mean.mean())
         self.log("qI mean min", outputs["qI"].mean.min())
         self.log("qI mean max", outputs["qI"].mean.max())
