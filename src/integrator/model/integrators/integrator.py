@@ -232,8 +232,8 @@ class Integrator(BaseIntegrator):
             "dials_I_prf_var": outputs["dials_I_prf_var"],
             "qbg": outputs["qbg"].mean,
             "qbg_scale": outputs["qbg"].scale,  # halfnormal param
-            "counts": outputs["counts"],
-            "profile": outputs["profile"],
+            # "counts": outputs["counts"],
+            # "profile": outputs["profile"],
             "profile_masking_mean": intensities["profile_masking_mean"],
             "profile_masking_var": intensities["profile_masking_var"],
             "kabsch_sum_mean": intensities["kabsch_sum_mean"],
