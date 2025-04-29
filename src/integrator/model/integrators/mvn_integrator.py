@@ -326,6 +326,7 @@ class LRMVNIntegrator(BaseIntegrator):
         with torch.no_grad():
             counts = counts * masks
             # zbg = qbg.rsample([self.mc_samples, 1323]).squeeze(-1).permute(2, 0, 1)
+
             zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
             zp = qp
             vi = zbg + 1e-6
@@ -430,10 +431,10 @@ class LRMVNIntegrator(BaseIntegrator):
         avg_profile = avg_profile / (avg_profile.sum(dim=-1, keepdim=True) + 1e-10)
 
         zp = profile / profile.sum(dim=-1, keepdim=True) + 1e-10
+
         qbg = self.qbg(rep)
 
         if self.use_metarep:
-            qbg = self.qbg(rep, meta_rep)
             qI = self.qI(rep, meta_rep)
         else:
             qbg = self.qbg(rep)
