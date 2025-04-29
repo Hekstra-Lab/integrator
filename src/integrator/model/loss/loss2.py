@@ -54,7 +54,7 @@ class Loss2(torch.nn.Module):
         # Profile prior
         p_p_name=None,  # Type: "dirichlet", "beta", or None
         p_p_params=None,  # Parameters for the distribution
-        p_p_scale=0.008,
+        p_p_scale=0.0001,
         # Background prior
         p_bg_name="gamma",
         p_bg_params={"concentration": 1.0, "rate": 1.0},
@@ -195,20 +195,11 @@ class Loss2(torch.nn.Module):
 
         # p_p = self.get_prior(self.p_p_name, "p_p_", device)
 
-        p_p = torch.distributions.dirichlet.Dirichlet(
-            # self.dirichlet_concentration.to(device)
-            self.concentration.to(device)
-            # torch.ones(1323, device=device)
-            # * 1e-6
-        )
+        p_p = torch.distributions.dirichlet.Dirichlet(self.concentration.to(device))
 
         p_bg = torch.distributions.half_normal.HalfNormal(
-            scale=torch.tensor(2.0, device=device)
+            scale=torch.tensor(1.0, device=device)
         )
-        # p_I = torch.distributions.log_normal.LogNormal(
-        # loc=torch.tensor(2.0, device=device),
-        # scale=torch.tensor(1.5, device=device),
-        # )
 
         p_I = torch.distributions.gamma.Gamma(
             concentration=torch.tensor(self.p_I_concentration, device=device),
@@ -234,7 +225,7 @@ class Loss2(torch.nn.Module):
         ll_mean = torch.mean(ll, dim=1) * masks.squeeze(-1)
 
         # calculate negative log likelihood
-        neg_ll_batch = (-ll_mean).sum(1)
+        neg_ll_batch = (-ll_mean).mean(1)
 
         # combine all loss terms
         batch_loss = neg_ll_batch + kl_terms
