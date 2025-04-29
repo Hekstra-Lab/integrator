@@ -52,6 +52,7 @@ class Integrator(BaseIntegrator):
         self.automatic_optimization = True
         self.loss_fn = loss
         self.max_iterations = max_iterations
+        self.bg_encoder = MLPMetadataEncoder(feature_dim=1323, output_dims=64)
 
     def calculate_intensities(self, counts, qbg, qp, masks):
         with torch.no_grad():
@@ -100,8 +101,9 @@ class Integrator(BaseIntegrator):
         counts = torch.clamp(counts, min=0) * masks
 
         rep = self.encoder(shoebox, masks)
+        bgrep = self.bg_encoder(shoebox)
 
-        qbg = self.qbg(rep)
+        qbg = self.qbg(bgrep)
         qp = self.qp(rep)
         qI = self.qI(rep)
 

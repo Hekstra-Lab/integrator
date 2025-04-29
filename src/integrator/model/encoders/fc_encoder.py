@@ -12,7 +12,7 @@ class MLPMetadataEncoder(BaseEncoder):
         super().__init__()
         self.linear = Linear(feature_dim, dmodel)
         self.relu = nn.ReLU()
-        self.layer_norm = torch.nn.LayerNorm(dmodel)
+        # self.layer_norm = torch.nn.LayerNorm(dmodel)
         self.mlp_1 = MLP(dmodel, depth, dropout=dropout, output_dims=output_dims)
 
     def forward(self, shoebox_data):
@@ -22,6 +22,6 @@ class MLPMetadataEncoder(BaseEncoder):
         # Initial linear transformation
         out = self.linear(shoebox_data)
         out = self.relu(out)
-        out = self.layer_norm(out)
+        # out = self.layer_norm(out)
         out = self.mlp_1(out)
         return out
