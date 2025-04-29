@@ -193,8 +193,6 @@ class Loss2(torch.nn.Module):
         counts = counts.to(device)
         masks = masks.to(device)
 
-        # p_p = self.get_prior(self.p_p_name, "p_p_", device)
-
         p_p = torch.distributions.dirichlet.Dirichlet(self.concentration.to(device))
 
         p_bg = torch.distributions.half_normal.HalfNormal(
@@ -210,13 +208,12 @@ class Loss2(torch.nn.Module):
         kl_terms = torch.zeros(batch_size, device=device)
 
         kl_I = torch.distributions.kl.kl_divergence(q_I, p_I)
-        # kl_I = self.mc_kl(q_I, p_I, num_samples=100)
         kl_terms += kl_I * self.p_I_scale
 
         # calculate background and intensity kl divergence
         kl_bg = torch.distributions.kl.kl_divergence(q_bg, p_bg)
         kl_bg = kl_bg.sum(-1)
-        kl_terms += kl_bg
+        kl_terms += kl_bg * self.p_bg_scale
 
         kl_p = torch.distributions.kl.kl_divergence(q_p, p_p)
         kl_terms += kl_p * self.p_p_scale
