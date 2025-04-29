@@ -229,22 +229,16 @@ class Loss2(torch.nn.Module):
             counts_unsqueezed = counts.unsqueeze(1)
             rates = rate + self.eps
 
-            # Negative binomial distribution - with proper handling of shapes
-            dispersion = torch.tensor(
-                1.0, device=device
-            )  # Try values between 0.1 and 5.0
+            dispersion = torch.tensor(1.0, device=device)
 
-            # NegativeBinomial in PyTorch needs total_count and probs parameters
-            # Convert rate to probs: p = dispersion/(dispersion + rate)
-            probs = 1 - (dispersion / (dispersion + rate + self.eps))
+            logits = torch.log(rates) - torch.log(dispersion + self.eps)
 
-            # Create NegativeBinomial distribution
-            nb_dist = torch.distributions.negative_binomial.NegativeBinomial(
-                total_count=dispersion, probs=probs
+            nb_dist = torch.distributions.NegativeBinomial(
+                total_count=dispersion,
+                logits=logits,
             )
 
-            # Calculate log probabilities
-            counts_expanded = counts.unsqueeze(1)  # Match dimensions with rate
+            counts_expanded = counts.unsqueeze(1)
             log_prob = nb_dist.log_prob(counts_expanded)
 
         else:
