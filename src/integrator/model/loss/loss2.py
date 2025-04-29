@@ -229,36 +229,29 @@ class Loss2(torch.nn.Module):
             counts_unsqueezed = counts.unsqueeze(1)
             rates = rate + self.eps
 
-            dispersion = torch.tensor(1.0)
+            # Negative binomial distribution - with proper handling of shapes
+            dispersion = torch.tensor(
+                1.0, device=device
+            )  # Try values between 0.1 and 5.0
 
-            # Negative binomial log probability formula
-            # P(X=k) = Gamma(k+r)/(Gamma(r)*Gamma(k+1)) * (r/(r+μ))^r * (μ/(r+μ))^k
-            # where r is dispersion, μ is rate, k is counts
+            # NegativeBinomial in PyTorch needs total_count and probs parameters
+            # Convert rate to probs: p = dispersion/(dispersion + rate)
+            probs = 1 - (dispersion / (dispersion + rate + self.eps))
 
-            # log P(X=k) = log(Gamma(k+r)) - log(Gamma(r)) - log(Gamma(k+1)) + r*log(r/(r+μ)) + k*log(μ/(r+μ))
-            term1 = torch.lgamma(counts_unsqueezed + dispersion)
-            term2 = torch.lgamma(dispersion)
-            term3 = torch.lgamma(counts_unsqueezed + 1)
-            term4 = dispersion * torch.log(dispersion / (dispersion + rates))
-            term5 = counts_unsqueezed * torch.log(rates / (dispersion + rates))
+            # Create NegativeBinomial distribution
+            nb_dist = torch.distributions.negative_binomial.NegativeBinomial(
+                total_count=dispersion, probs=probs
+            )
 
-            log_prob = term1 - term2 - term3 + term4 + term5
-            log_prob = torch.clamp(
-                log_prob, min=-1000.0
-            )  # Prevent extreme negative values
+            # Calculate log probabilities
+            counts_expanded = counts.unsqueeze(1)  # Match dimensions with rate
+            log_prob = nb_dist.log_prob(counts_expanded)
 
         else:
-            ll = torch.distributions.Poisson(rate + self.eps).log_prob(
+            log_prob = torch.distributions.Poisson(rate + self.eps).log_prob(
                 counts.unsqueeze(1)
             )
-            ll_mean = torch.mean(ll, dim=1) * masks.squeeze(-1)
-            # calculate negative log likelihood
-            neg_ll_batch = (-ll_mean).sum(1)
 
-            # combine all loss terms
-            batch_loss = neg_ll_batch + kl_terms
-
-        # Calculate mean over batch dimension and apply masks
         ll_mean = torch.mean(log_prob, dim=1) * masks.squeeze(-1)
 
         # Calculate negative log likelihood
