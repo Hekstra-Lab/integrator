@@ -70,6 +70,7 @@ class Loss2(torch.nn.Module):
         p_I_params={"concentration": 1.0, "rate": 1.0},
         p_I_scale=0.0001,
         prior_tensor=None,
+        use_robust=False,
     ):
         super().__init__()
         self.register_buffer("eps", torch.tensor(eps))
@@ -99,6 +100,7 @@ class Loss2(torch.nn.Module):
 
         # Number of elements in the profile
         self.profile_size = prior_shape[0] * prior_shape[1] * prior_shape[2]
+        self.use_robust = use_robust
 
         # Handle profile prior (p_p) - special handling for Dirichlet
         # Create center-focused Dirichlet prior
@@ -206,11 +208,6 @@ class Loss2(torch.nn.Module):
         masks = masks.to(device)
 
         p_p = torch.distributions.dirichlet.Dirichlet(self.concentration.to(device))
-
-        # p_bg = torch.distributions.half_normal.HalfNormal(
-        # scale=torch.tensor(1.0, device=device)
-        # )
-
         p_bg = self.get_prior(self.p_bg_name, "p_bg_", device)
         p_I = self.get_prior(self.p_I_name, "p_I_", device)
 
@@ -228,10 +225,43 @@ class Loss2(torch.nn.Module):
         kl_p = self.compute_kl(q_p, p_p)
         kl_terms += kl_p * self.p_p_scale
 
-        ll = torch.distributions.Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
-        ll_mean = torch.mean(ll, dim=1) * masks.squeeze(-1)
+        if self.use_robust:
+            counts_unsqueezed = counts.unsqueeze(1)
+            rates = rate + self.eps
 
-        # calculate negative log likelihood
+            dispersion = torch.tensor(1.0)
+
+            # Negative binomial log probability formula
+            # P(X=k) = Gamma(k+r)/(Gamma(r)*Gamma(k+1)) * (r/(r+μ))^r * (μ/(r+μ))^k
+            # where r is dispersion, μ is rate, k is counts
+
+            # log P(X=k) = log(Gamma(k+r)) - log(Gamma(r)) - log(Gamma(k+1)) + r*log(r/(r+μ)) + k*log(μ/(r+μ))
+            term1 = torch.lgamma(counts_unsqueezed + dispersion)
+            term2 = torch.lgamma(dispersion)
+            term3 = torch.lgamma(counts_unsqueezed + 1)
+            term4 = dispersion * torch.log(dispersion / (dispersion + rates))
+            term5 = counts_unsqueezed * torch.log(rates / (dispersion + rates))
+
+            log_prob = term1 - term2 - term3 + term4 + term5
+            log_prob = torch.clamp(
+                log_prob, min=-1000.0
+            )  # Prevent extreme negative values
+
+        else:
+            ll = torch.distributions.Poisson(rate + self.eps).log_prob(
+                counts.unsqueeze(1)
+            )
+            ll_mean = torch.mean(ll, dim=1) * masks.squeeze(-1)
+            # calculate negative log likelihood
+            neg_ll_batch = (-ll_mean).sum(1)
+
+            # combine all loss terms
+            batch_loss = neg_ll_batch + kl_terms
+
+        # Calculate mean over batch dimension and apply masks
+        ll_mean = torch.mean(log_prob, dim=1) * masks.squeeze(-1)
+
+        # Calculate negative log likelihood
         neg_ll_batch = (-ll_mean).sum(1)
 
         # combine all loss terms
@@ -249,3 +279,65 @@ class Loss2(torch.nn.Module):
             kl_I.mean() * self.p_I_scale,
             kl_p.mean() * self.p_p_scale,
         )
+
+    # def forward(
+    # self,
+    # rate,
+    # counts,
+    # q_p,
+    # q_I,
+    # q_bg,
+    # masks,
+    # ):
+    # # get device and batch size
+    # device = rate.device
+    # batch_size = rate.shape[0]
+    # self.current_batch_size = batch_size
+
+    # counts = counts.to(device)
+    # masks = masks.to(device)
+
+    # p_p = torch.distributions.dirichlet.Dirichlet(self.concentration.to(device))
+
+    # # p_bg = torch.distributions.half_normal.HalfNormal(
+    # # scale=torch.tensor(1.0, device=device)
+    # # )
+
+    # p_bg = self.get_prior(self.p_bg_name, "p_bg_", device)
+    # p_I = self.get_prior(self.p_I_name, "p_I_", device)
+
+    # # calculate kl terms
+    # kl_terms = torch.zeros(batch_size, device=device)
+
+    # kl_I = self.compute_kl(q_I, p_I)
+    # kl_terms += kl_I * self.p_I_scale
+
+    # # calculate background and intensity kl divergence
+    # kl_bg = self.compute_kl(q_bg, p_bg)
+    # kl_bg = kl_bg.sum(-1)
+    # kl_terms += kl_bg * self.p_bg_scale
+
+    # kl_p = self.compute_kl(q_p, p_p)
+    # kl_terms += kl_p * self.p_p_scale
+
+    # ll = torch.distributions.Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
+    # ll_mean = torch.mean(ll, dim=1) * masks.squeeze(-1)
+
+    # # calculate negative log likelihood
+    # neg_ll_batch = (-ll_mean).sum(1)
+
+    # # combine all loss terms
+    # batch_loss = neg_ll_batch + kl_terms
+
+    # # final scalar loss
+    # total_loss = batch_loss.mean()
+
+    # # return all components for monitoring
+    # return (
+    # total_loss,
+    # neg_ll_batch.mean(),
+    # kl_terms.mean(),
+    # kl_bg.mean() * self.p_bg_scale,
+    # kl_I.mean() * self.p_I_scale,
+    # kl_p.mean() * self.p_p_scale,
+    # )
