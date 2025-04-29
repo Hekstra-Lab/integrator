@@ -112,38 +112,15 @@ class Loss2(torch.nn.Module):
         # Store shape for profile reshaping
         self.prior_shape = prior_shape
 
-    def get_prior(self, name, params_prefix, device, default_return=None):
-        """Create a distribution on the specified device"""
-        if name is None:
-            return default_return
-
-        if name == "gamma":
-            concentration = getattr(self, f"{params_prefix}concentration").to(device)
-            rate = getattr(self, f"{params_prefix}rate").to(device)
-            return torch.distributions.gamma.Gamma(
-                concentration=concentration, rate=rate
-            )
-        elif name == "half_normal":
-            scale = getattr(self, f"{params_prefix}scale").to(device)
-            return torch.distributions.half_normal.HalfNormal(scale=scale)
-
-        elif name == "log_normal":
-            loc = getattr(self, f"{params_prefix}loc").to(device)
-            scale = getattr(self, f"{params_prefix}scale").to(device)
-            return torch.distributions.log_normal.LogNormal(loc=loc, scale=scale)
-        elif name == "exponential":
-            rate = getattr(self, f"{params_prefix}rate").to(device)
-            return torch.distributions.exponential.Exponential(rate=rate)
-
-        elif name == "dirichlet":
-            # For Dirichlet, use the dirichlet_concentration buffer
-            if hasattr(self, "dirichlet_concentration"):
-                return torch.distributions.dirichlet.Dirichlet(
-                    self.dirichlet_concentration.to(device)
-                )
-
-        # Default case: return None or provided default
-        return default_return
+    def compute_kl(self, q_dist, p_dist):
+        """Compute KL divergence between distributions, with fallback sampling if needed."""
+        try:
+            return torch.distributions.kl.kl_divergence(q_dist, p_dist)
+        except NotImplementedError:
+            samples = q_dist.rsample([100])
+            log_q = q_dist.log_prob(samples)
+            log_p = p_dist.log_prob(samples)
+            return (log_q - log_p).mean(dim=0)
 
     def _register_distribution_params(self, name, params, prefix):
         """Register distribution parameters as buffers with appropriate prefixes"""
@@ -209,16 +186,6 @@ class Loss2(torch.nn.Module):
         # Default case: return None or provided default
         return default_return
 
-    def mc_kl(self, q, p, num_samples=10):
-        # Sample from q
-        samples = q.rsample((num_samples,))
-        log_q = q.log_prob(samples)
-        log_p = p.log_prob(samples)
-        kl_estimate = (log_q - log_p).mean(dim=0)
-        return kl_estimate.sum(dim=-1)
-
-    # Then in forward you can do something like:
-
     def forward(
         self,
         rate,
@@ -244,23 +211,19 @@ class Loss2(torch.nn.Module):
 
         p_bg = self.get_prior(self.p_bg_name, "p_bg_", device)
         p_I = self.get_prior(self.p_I_name, "p_I_", device)
-        # p_I = torch.distributions.gamma.Gamma(
-        # concentration=torch.tensor(self.p_I_concentration, device=device),
-        # rate=torch.tensor(self.p_I_rate, device=device),
-        # )
 
         # calculate kl terms
         kl_terms = torch.zeros(batch_size, device=device)
 
-        kl_I = torch.distributions.kl.kl_divergence(q_I, p_I)
+        kl_I = self.compute_kl(q_I, p_I)
         kl_terms += kl_I * self.p_I_scale
 
         # calculate background and intensity kl divergence
-        kl_bg = torch.distributions.kl.kl_divergence(q_bg, p_bg)
+        kl_bg = self.compute_kl(q_bg, p_bg)
         kl_bg = kl_bg.sum(-1)
         kl_terms += kl_bg * self.p_bg_scale
 
-        kl_p = torch.distributions.kl.kl_divergence(q_p, p_p)
+        kl_p = self.compute_kl(q_p, p_p)
         kl_terms += kl_p * self.p_p_scale
 
         ll = torch.distributions.Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))

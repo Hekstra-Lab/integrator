@@ -271,15 +271,6 @@ class Loss(torch.nn.Module):
 
     def compute_kl(self, q_dist, p_dist):
         """Compute KL divergence between distributions, with fallback sampling if needed."""
-        if q_dist is None or p_dist is None:
-            # Return 0 if either distribution is missing
-            return torch.tensor(
-                0.0,
-                device=q_dist.loc.device
-                if hasattr(q_dist, "loc")
-                else torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-            )
-
         try:
             return torch.distributions.kl.kl_divergence(q_dist, p_dist)
         except NotImplementedError:
@@ -287,18 +278,6 @@ class Loss(torch.nn.Module):
             log_q = q_dist.log_prob(samples)
             log_p = p_dist.log_prob(samples)
             return (log_q - log_p).mean(dim=0)
-        except Exception as e:
-            # If there's an error (e.g., device mismatch), return a small default value
-            default_device = (
-                q_dist.loc.device
-                if hasattr(q_dist, "loc")
-                else (
-                    samples.device
-                    if "samples" in locals()
-                    else torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                )
-            )
-            return torch.tensor(0.01, device=default_device)
 
     def _ensure_batch_dim(self, tensor, batch_size, device):
         """Ensure tensor has batch dimension, broadcasting if needed."""
