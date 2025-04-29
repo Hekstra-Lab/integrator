@@ -21,7 +21,6 @@ class HalfNormalDistribution(torch.nn.Module):
 
     def distribution(self, params):
         scale = self.constraint(params + 1e-6)
-        # scale = torch.clamp(scale, min=self.min_value, max=self.max_value)
         return torch.distributions.half_normal.HalfNormal(scale)
 
     def forward(self, representation):
@@ -38,11 +37,3 @@ if __name__ == "__main__":
     representation = torch.randn(10, dmodel)  # Example input
     qbg = half_normal_dist(representation)
     qbg.rsample([100]).shape  # Sample from the distribution
-
-    qbg.variance.mean(-1)
-    qbg.sample([100]).permute(1, 0, 2)
-
-    q = integrator.qbg(torch.randn(10, 1323))
-    q2 = HalfNormal(2)
-
-    torch.distributions.kl.kl_divergence(q, q2).shape

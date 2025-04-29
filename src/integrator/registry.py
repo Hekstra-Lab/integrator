@@ -40,6 +40,7 @@ REGISTRY = {
         "mvn_loss": MVNLoss,
         "unet_loss": UnetLoss,
         "lrmvn_loss": LRMVNLoss,
+        "loss2": Loss2,
     },
     "integrator": {
         "default_integrator": DefaultIntegrator,

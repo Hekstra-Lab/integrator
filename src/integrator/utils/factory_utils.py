@@ -205,7 +205,6 @@ def create_integrator(config):
             profile_threshold=config["integrator"]["profile_threshold"],
             use_metarep=config["integrator"]["use_metarep"],
             use_metaonly=config["integrator"]["use_metaonly"],
-
         )
         return integrator
 
@@ -280,19 +279,12 @@ def create_integrator(config):
             **config["components"]["encoder"]["params"],
         )
 
-        metadata_encoder = create_module(
-            "metadata_encoder",
-            config["components"]["metadata_encoder"]["name"],
-            **config["components"]["metadata_encoder"]["params"],
-        )
-
         integrator = integrator_class(
             encoder=encoder,
             qbg=background_distribution,
             qp=profile,
             qI=intensity_distribution,
             loss=loss,
-            metadata_encoder=metadata_encoder,
             mc_samples=config["integrator"]["mc_samples"],
             learning_rate=config["integrator"]["learning_rate"],
             profile_threshold=config["integrator"]["profile_threshold"],

@@ -213,7 +213,6 @@ class Loss(torch.nn.Module):
             scale = getattr(self, f"{params_prefix}scale").to(device)
             return torch.distributions.half_normal.HalfNormal(scale=scale)
 
-
         elif name == "beta":
             concentration1 = getattr(self, f"{params_prefix}concentration1").to(device)
             concentration0 = getattr(self, f"{params_prefix}concentration0").to(device)
