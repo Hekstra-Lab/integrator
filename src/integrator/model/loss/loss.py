@@ -103,6 +103,7 @@ class Loss(torch.nn.Module):
         prior_center_alpha=0.01,
         prior_decay_factor=0.5,
         prior_peak_percentage=0.05,
+        prior_tensor=None,
     ):
         super().__init__()
 
@@ -119,6 +120,10 @@ class Loss(torch.nn.Module):
         self.p_bg_params = p_bg_params
         self.p_p_name = p_p_name
         self.p_p_params = p_p_params
+        if prior_tensor is not None:
+            self.prior_tensor = torch.load(prior_tensor, weights_only=False)
+        else:
+            self.prior_tensor = None
 
         # Register parameters for I and bg distributions
         self._register_distribution_params(p_I_name, p_I_params, prefix="p_I_")
@@ -324,7 +329,11 @@ class Loss(torch.nn.Module):
         # Create distributions on the correct device
         p_I = self.get_prior(self.p_I_name, "p_I_", device)
         p_bg = self.get_prior(self.p_bg_name, "p_bg_", device)
-        p_p = self.get_prior(self.p_p_name, "p_p_", device)
+
+        if self.prior_tensor is not None:
+            p_p = torch.distributions.dirichlet.Dirichlet(self.prior_tensor.to(device))
+        else:
+            p_p = self.get_prior(self.p_p_name, "p_p_", device)
 
         # Calculate log likelihood
         ll = torch.distributions.Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
