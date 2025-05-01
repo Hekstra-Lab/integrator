@@ -280,7 +280,7 @@ class Integrator(BaseIntegrator):
         intensities = self.calculate_intensities(
             counts=outputs["counts"],
             qbg=outputs["qbg"],
-            qp=outputs["profile"],
+            qp=outputs["qp"],
             masks=outputs["masks"],
         )
 

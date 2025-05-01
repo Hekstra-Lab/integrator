@@ -255,12 +255,12 @@ class DefaultIntegrator(BaseIntegrator):
         )
 
         # Log metrics
-        self.log("train_loss", loss.mean())
-        self.log("train_nll", neg_ll.mean())
-        self.log("train_kl", kl.mean())
-        self.log("kl_bg", kl_bg)
-        self.log("kl_I", kl_I)
-        self.log("kl_p", kl_p)
+        self.log("Train: -ELBO", loss.mean())
+        self.log("Train: NLL", neg_ll.mean())
+        self.log("Train: KL", kl.mean())
+        self.log("Train: KL Bg", kl_bg.mean())
+        self.log("Train: KL I", kl_I.mean())
+        self.log("Train: KL Prf", kl_p.mean())
 
         return loss.mean()
 
@@ -288,12 +288,12 @@ class DefaultIntegrator(BaseIntegrator):
         )
 
         # Log metrics
-        self.log("val_loss", loss.mean())
-        self.log("val_nll", neg_ll.mean())
-        self.log("val_kl", kl.mean())
-        self.log("val_kl_bg", kl_bg)
-        self.log("val_kl_I", kl_I)
-        self.log("val_kl_p", kl_p)
+        self.log("Val: -ELBO", loss.mean())
+        self.log("Val: NLL", neg_ll.mean())
+        self.log("Val: KL", kl.mean())
+        self.log("Val: KL bg", kl_bg.mean())
+        self.log("Val: KL I", kl_I.mean())
+        self.log("Val: KL prf", kl_p.mean())
 
         return outputs
 
