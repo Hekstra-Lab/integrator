@@ -154,14 +154,13 @@ class DyT(nn.Module):
 class ResidualLayer(nn.Module):
     def __init__(self, width, dropout_rate=0.0):
         super().__init__()
-
         # First layer
         self.fc1 = nn.Linear(width, width)
-        self.bn1 = nn.BatchNorm1d(width)
+        self.norm1 = nn.LayerNorm(width)  # 
 
         # Second layer
         self.fc2 = nn.Linear(width, width)
-        self.bn2 = nn.BatchNorm1d(width)
+        self.norm2 = nn.LayerNorm(width)  # 
 
         # Activation and dropout
         self.relu = nn.ReLU(inplace=True)
@@ -172,14 +171,14 @@ class ResidualLayer(nn.Module):
 
         # First layer
         out = self.fc1(x)
-        out = self.bn1(out)
+        out = self.norm1(out)
         out = self.relu(out)
         if self.dropout is not None:
             out = self.dropout(out)
 
         # Second layer
         out = self.fc2(out)
-        out = self.bn2(out)
+        out = self.norm2(out)
 
         # Residual connection
         out = out + residual
@@ -193,12 +192,11 @@ class MLP(nn.Module):
         self, input_dim, hidden_dim=120, depth=10, dropout_rate=0.1, output_dim=None
     ):
         super().__init__()
-
         layers = []
 
         # Input projection layer
         layers.append(nn.Linear(input_dim, hidden_dim))
-        layers.append(nn.BatchNorm1d(hidden_dim))
+        layers.append(nn.LayerNorm(hidden_dim))  # 
         layers.append(nn.ReLU(inplace=True))
 
         # Residual blocks
@@ -207,7 +205,9 @@ class MLP(nn.Module):
 
         # Output layer if needed
         if output_dim is not None:
-            layers.append(nn.BatchNorm1d(hidden_dim))
+            layers.append(
+                nn.LayerNorm(hidden_dim)
+            )   
             layers.append(nn.ReLU(inplace=True))
             layers.append(nn.Linear(hidden_dim, output_dim))
 
@@ -223,8 +223,6 @@ class MLP(nn.Module):
                 nn.init.zeros_(m.bias)
 
     def forward(self, x):
-        # Handle different input shapes
         # Process through the model
         x = self.model(x)
-
         return x
