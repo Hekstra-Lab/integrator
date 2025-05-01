@@ -146,13 +146,11 @@ class Integrator(BaseIntegrator):
         intensity_encoding = torch.concat((sin_encoding, cos_encoding), dim=1)
 
         rep = self.encoder(shoebox, masks)
-
         intensity_rep = self.bg_encoder(intensity_encoding)
-
         bgrep = self.bg_encoder(intensity_encoding)
 
-        rep = torch.concat([rep, intensity_rep], dim=-1)
-        rep = self.linear(rep)
+        # rep = torch.concat([rep, intensity_rep], dim=-1)
+        # rep = self.linear(rep)
 
         qbg = self.qbg(bgrep)
         qp = self.qp(rep)
@@ -228,19 +226,19 @@ class Integrator(BaseIntegrator):
         self.log("renyi_loss", renyi_loss)
 
         # Log metrics
-        self.log("train: loss", loss.mean())
-        self.log("train: nll", neg_ll.mean())
-        self.log("train: kl", kl.mean())
-        self.log("train: kl_bg", kl_bg.mean())
-        self.log("train: kl_I", kl_I.mean())
-        self.log("train: kl_p", kl_p.mean())
-        self.log("qI mean mean", outputs["qI"].mean.mean())
-        self.log("qI mean min", outputs["qI"].mean.min())
-        self.log("qI mean max", outputs["qI"].mean.max())
-        self.log("qbg mean mean", outputs["qbg"].mean.mean())
-        self.log("qbg mean min", outputs["qbg"].mean.min())
-        self.log("qbg mean max", outputs["qbg"].mean.max())
-        self.log("qbg variance mean", outputs["qbg"].variance.mean())
+        self.log("Train: -ELBO", loss.mean())
+        self.log("Train: NLL", neg_ll.mean())
+        self.log("Train: KL", kl.mean())
+        self.log("Train: KL Bg", kl_bg.mean())
+        self.log("Train: KL I", kl_I.mean())
+        self.log("Train: KL Prf", kl_p.mean())
+        self.log("Mean(qI.mean)", outputs["qI"].mean.mean())
+        self.log("Min(qI.mean)", outputs["qI"].mean.min())
+        self.log("Max(qI.mean)", outputs["qI"].mean.max())
+        self.log("Mean(qbg.mean)", outputs["qbg"].mean.mean())
+        self.log("Min(qbg.mean)", outputs["qbg"].mean.min())
+        self.log("Max(qbg.mean)", outputs["qbg"].mean.max())
+        self.log("Mean(qbg.variance)", outputs["qbg"].variance.mean())
 
         return loss.mean() + renyi_loss.mean()
 
@@ -267,12 +265,12 @@ class Integrator(BaseIntegrator):
         )
 
         # Log metrics
-        self.log("val: -ELBO", loss.mean())
-        self.log("val: NLL", neg_ll.mean())
-        self.log("val: KL", kl.mean())
-        self.log("val: KL bg", kl_bg.mean())
-        self.log("val: KL I", kl_I.mean())
-        self.log("val: KL prf", kl_p.mean())
+        self.log("Val: -ELBO", loss.mean())
+        self.log("Val: NLL", neg_ll.mean())
+        self.log("Val: KL", kl.mean())
+        self.log("Val: KL bg", kl_bg.mean())
+        self.log("Val: KL I", kl_I.mean())
+        self.log("Val: KL prf", kl_p.mean())
 
         return outputs
 
@@ -304,19 +302,19 @@ class Integrator(BaseIntegrator):
             "z_c": outputs["z_c"],
         }
 
-    def on_before_optimizer_step(self, optimizer):
-        grad_norm_val = torch.nn.utils.clip_grad_norm_(
-            self.parameters(), max_norm=float("inf")
-        )
+    # def on_before_optimizer_step(self, optimizer):
+    # grad_norm_val = torch.nn.utils.clip_grad_norm_(
+    # self.parameters(), max_norm=float("inf")
+    # )
 
-        # Normalize gradients (scale all gradients to have unit norm)
-        if grad_norm_val > 0:
-            for param in self.parameters():
-                if param.grad is not None:
-                    param.grad.data.mul_(1.0 / grad_norm_val)
+    # # Normalize gradients (scale all gradients to have unit norm)
+    # if grad_norm_val > 0:
+    # for param in self.parameters():
+    # if param.grad is not None:
+    # param.grad.data.mul_(1.0 / grad_norm_val)
 
-        # Log the original norm
-        self.log("grad_norm", grad_norm_val)
+    # # Log the original norm
+    # self.log("grad_norm", grad_norm_val)
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
