@@ -63,4 +63,3 @@ if __name__ == "__main__":
     metarep = torch.randn(10, dmodel * 2)  # Example metadata representation
     qbg = gamma_dist(representation, metarep=metarep)
     qbg.rsample([100]).shape  # Sample from the distribution
-

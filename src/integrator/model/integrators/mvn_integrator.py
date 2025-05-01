@@ -325,8 +325,6 @@ class LRMVNIntegrator(BaseIntegrator):
     def calculate_intensities(self, counts, qbg, qp, masks):
         with torch.no_grad():
             counts = counts * masks
-            # zbg = qbg.rsample([self.mc_samples, 1323]).squeeze(-1).permute(2, 0, 1)
-
             zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
             zp = qp
             vi = zbg + 1e-6
@@ -346,6 +344,7 @@ class LRMVNIntegrator(BaseIntegrator):
             thresholds = torch.quantile(
                 zp, 0.99, dim=-1, keepdim=True
             )  # threshold values
+
             profile_mask = zp > thresholds
 
             masked_counts = counts.unsqueeze(1) * profile_mask
@@ -455,6 +454,7 @@ class LRMVNIntegrator(BaseIntegrator):
             "masks": masks,
             "qbg": qbg,
             "qp": avg_profile,
+            "qp_mean": qp_mean,
             "qI": qI,
             "intensity_mean": intensity_mean,
             "intensity_var": intensity_var,
@@ -464,7 +464,6 @@ class LRMVNIntegrator(BaseIntegrator):
             "dials_I_prf_var": reference[:, 9],
             "refl_ids": reference[:, -1],
             "profile": zp,
-            "qp_mean": qp_mean,
             "qp_factor": qp_factor,
             "qp_diag": qp_diag,
             "metadata": metadata,
@@ -604,8 +603,6 @@ class LRMVNIntegrator(BaseIntegrator):
             "dials_I_prf_var": outputs["dials_I_prf_var"],
             "qbg": outputs["qbg"].mean,
             "qbg_scale": outputs["qbg"].scale,
-            # "counts": outputs["counts"],
-            # "profile": outputs["profile"],
             "profile_masking_mean": intensities["profile_masking_mean"],
             "profile_masking_var": intensities["profile_masking_var"],
             "kabsch_sum_mean": intensities["kabsch_sum_mean"],

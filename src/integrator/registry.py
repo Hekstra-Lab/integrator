@@ -12,39 +12,31 @@ REGISTRY = {
         "mlp_metadata_encoder": MLPMetadataEncoder,
     },
     "encoder": {
-        "mlp_image_encoder": MLPImageEncoder,
         "cnn_3d": CNNResNet2,
+        "mlp_image_encoder": MLPImageEncoder,
         "shoebox_encoder": ShoeboxEncoder,
     },
     "image_encoder": {
         "cnn_3d": CNNResNet2,
         "mlp_image_encoder": MLPImageEncoder,
-        "3d_cnn": CNN_3d,  # shoebox encoder
-        "dev_encoder": DevEncoder,
-        "dirchlet_concentration": DirichletConcentration,
         "shoebox_encoder": ShoeboxEncoder,
     },
     "decoder": {
         "default_decoder": Decoder,
         "mvn_decoder": MVNDecoder,
-        "unet_decoder": UnetDecoder,
-        "unet_decoder2": UnetDecoder2,
     },
     "profile": {
         "dirichlet": DirichletProfile,
-        "beta": BetaProfile,
         "mvn": MVNProfile,
     },
     "loss": {
         "elbo": Loss,
         "mvn_loss": MVNLoss,
-        "unet_loss": UnetLoss,
         "lrmvn_loss": LRMVNLoss,
         "loss2": Loss2,
     },
     "integrator": {
         "default_integrator": DefaultIntegrator,
-        "test_integrator": DevIntegrator,
         "mvn_integrator": MVNIntegrator,
         "mlp_integrator": MLPIntegrator,
         "lrmvn_integrator": LRMVNIntegrator,
@@ -82,7 +74,6 @@ ARGUMENT_RESOLVER = {
             "log_normal": torch.distributions.log_normal.LogNormal,
         },
         "p_p": {
-            "beta": torch.distributions.beta.Beta,
             "laplace": torch.distributions.laplace.Laplace,
         },
     },

@@ -219,10 +219,9 @@ class Loss2(torch.nn.Module):
         kl_terms += kl_I * self.p_I_scale
 
         # calculate background and intensity kl divergence
-        kl_bg = torch.clamp(self.compute_kl(q_bg, p_bg),max=1e3)
+        kl_bg = self.compute_kl(q_bg, p_bg)
         kl_terms += kl_bg * self.p_bg_scale
 
-        #kl_p = torch.clamp(self.compute_kl(q_p, p_p),max=1e3)
         kl_p = self.compute_kl(q_p, p_p)
         kl_terms += kl_p * self.p_p_scale
 
@@ -230,7 +229,7 @@ class Loss2(torch.nn.Module):
             counts_unsqueezed = counts.unsqueeze(1)
             rates = rate + self.eps
 
-            dispersion = torch.tensor(0.2, device=device)
+            dispersion = torch.tensor(1.0, device=device)
 
             logits = torch.log(rates) - torch.log(dispersion + self.eps)
 
@@ -243,41 +242,17 @@ class Loss2(torch.nn.Module):
             log_prob = nb_dist.log_prob(counts_expanded)
 
         else:
-
-            large_count_threshold = 1000
-            mask_large = counts > large_count_threshold
-
             # Use Poisson for small counts
-            log_prob_small = torch.distributions.Poisson(rate + self.eps).log_prob(
-                counts.unsqueeze(1)
-            )
-
-            # Use Normal approximation for large counts
-            log_prob_large = torch.distributions.Normal(rate, torch.sqrt(rate)).log_prob(
-                counts.unsqueeze(1)
-            )
-
-            # Combine based on mask
-            log_prob = torch.where(mask_large.unsqueeze(1), log_prob_large, log_prob_small)
-
             log_prob = torch.distributions.Poisson(rate + self.eps).log_prob(
                 counts.unsqueeze(1)
             )
 
-        # check if log_prob is NaN
-        print('min log_prob:', log_prob.min())
-        if torch.isnan(log_prob).any():
-            print("NaN detected in log_prob")
-            #raise ValueError("NaN detected in log_prob")
-
-
         ll_mean = torch.mean(log_prob, dim=1) * masks.squeeze(-1)
-        print("ll_mean:",ll_mean)
 
         # Calculate negative log likelihood
         neg_ll_batch = (-ll_mean).sum(1)
-        neg_ll_batch = torch.clamp(neg_ll_batch,max=1e5)
-        print("neg_ll_batch",neg_ll_batch)
+        neg_ll_batch = neg_ll_batch
+        print("neg_ll_batch", neg_ll_batch)
 
         # combine all loss terms
         batch_loss = neg_ll_batch + kl_terms
@@ -294,65 +269,3 @@ class Loss2(torch.nn.Module):
             kl_I.mean() * self.p_I_scale,
             kl_p.mean() * self.p_p_scale,
         )
-
-    # def forward(
-    # self,
-    # rate,
-    # counts,
-    # q_p,
-    # q_I,
-    # q_bg,
-    # masks,
-    # ):
-    # # get device and batch size
-    # device = rate.device
-    # batch_size = rate.shape[0]
-    # self.current_batch_size = batch_size
-
-    # counts = counts.to(device)
-    # masks = masks.to(device)
-
-    # p_p = torch.distributions.dirichlet.Dirichlet(self.concentration.to(device))
-
-    # # p_bg = torch.distributions.half_normal.HalfNormal(
-    # # scale=torch.tensor(1.0, device=device)
-    # # )
-
-    # p_bg = self.get_prior(self.p_bg_name, "p_bg_", device)
-    # p_I = self.get_prior(self.p_I_name, "p_I_", device)
-
-    # # calculate kl terms
-    # kl_terms = torch.zeros(batch_size, device=device)
-
-    # kl_I = self.compute_kl(q_I, p_I)
-    # kl_terms += kl_I * self.p_I_scale
-
-    # # calculate background and intensity kl divergence
-    # kl_bg = self.compute_kl(q_bg, p_bg)
-    # kl_bg = kl_bg.sum(-1)
-    # kl_terms += kl_bg * self.p_bg_scale
-
-    # kl_p = self.compute_kl(q_p, p_p)
-    # kl_terms += kl_p * self.p_p_scale
-
-    # ll = torch.distributions.Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
-    # ll_mean = torch.mean(ll, dim=1) * masks.squeeze(-1)
-
-    # # calculate negative log likelihood
-    # neg_ll_batch = (-ll_mean).sum(1)
-
-    # # combine all loss terms
-    # batch_loss = neg_ll_batch + kl_terms
-
-    # # final scalar loss
-    # total_loss = batch_loss.mean()
-
-    # # return all components for monitoring
-    # return (
-    # total_loss,
-    # neg_ll_batch.mean(),
-    # kl_terms.mean(),
-    # kl_bg.mean() * self.p_bg_scale,
-    # kl_I.mean() * self.p_I_scale,
-    # kl_p.mean() * self.p_p_scale,
-    # )

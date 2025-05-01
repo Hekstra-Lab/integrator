@@ -25,3 +25,4 @@ class MLPMetadataEncoder(BaseEncoder):
         # out = self.layer_norm(out)
         out = self.mlp_1(out)
         return out
+

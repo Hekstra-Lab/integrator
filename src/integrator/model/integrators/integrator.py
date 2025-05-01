@@ -54,15 +54,16 @@ class Integrator(BaseIntegrator):
         self.automatic_optimization = True
         self.loss_fn = loss
         self.max_iterations = max_iterations
-        self.intensity_encoder = MLP(input_dim=60,output_dim=64)
-        self.bg_encoder = MLP(input_dim=60,output_dim=64)
+        self.intensity_encoder = MLP(input_dim=60, output_dim=64)
+        self.bg_encoder = MLP(input_dim=60, output_dim=64)
+        self.linear = Linear(64 * 2, 64)
 
     def calculate_intensities(self, counts, qbg, qp, masks):
         with torch.no_grad():
             counts = counts * masks
-            # zbg = qbg.rsample([self.mc_samples, 1323]).squeeze(-1).permute(2, 0, 1)
             zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
-            zp = qp
+            zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
+
             vi = zbg + 1e-6
 
             # kabsch sum
@@ -81,14 +82,14 @@ class Integrator(BaseIntegrator):
                 zp, 0.99, dim=-1, keepdim=True
             )  # threshold values
             profile_mask = zp > thresholds
-            N_used = profile_mask.sum(-1).float()  # number of pixels per mask
+
             masked_counts = counts.unsqueeze(1) * profile_mask
+
             profile_masking_I = (masked_counts - zbg * profile_mask).sum(-1)
+
             profile_masking_mean = profile_masking_I.mean(-1)
-            centered_thresh = profile_masking_I - profile_masking_mean.unsqueeze(-1)
-            profile_masking_var = (centered_thresh**2).sum(-1) / (
-                N_used.mean(-1) + 1e-6
-            )
+
+            profile_masking_var = profile_masking_I.var(-1)
 
             intensities = {
                 "profile_masking_mean": profile_masking_mean,
@@ -102,6 +103,7 @@ class Integrator(BaseIntegrator):
     def forward(self, counts, shoebox, metadata, masks, reference):
         # Unpack batch
         counts = torch.clamp(counts, min=0) * masks
+        device = counts.device
 
         num_valid_pixels = masks.sum(1)
         total_photons = (counts).sum(1)
@@ -134,7 +136,7 @@ class Integrator(BaseIntegrator):
 
         encoding_dim = 64
         freqs = 2.0 ** torch.arange(
-            0, encoding_dim // (2 * vals.shape[-1]), dtype=torch.float32
+            0, encoding_dim // (2 * vals.shape[-1]), device=device
         )
 
         sin_encoding = torch.sin(vals.unsqueeze(-1) * freqs.unsqueeze(0).unsqueeze(0))
@@ -144,20 +146,18 @@ class Integrator(BaseIntegrator):
         intensity_encoding = torch.concat((sin_encoding, cos_encoding), dim=1)
 
         rep = self.encoder(shoebox, masks)
-        # check for nans
-        if torch.isnan(rep).any():
-            print("NaN detected in rep")
-            raise ValueError("NaN detected in rep")
+
         intensity_rep = self.bg_encoder(intensity_encoding)
+
         bgrep = self.bg_encoder(intensity_encoding)
-        # check for nans
-        if torch.isnan(bgrep).any():
-            print("NaN detected in bgrep")
-            raise ValueError("NaN detected in bgrep")
+
+        rep = torch.concat([rep, intensity_rep], dim=-1)
+        rep = self.linear(rep)
 
         qbg = self.qbg(bgrep)
         qp = self.qp(rep)
-        qI = self.qI(intensity_rep)
+        # qI = self.qI(intensity_rep)
+        qI = self.qI(intensity_rep, metarep=rep)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
         zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
@@ -186,8 +186,6 @@ class Integrator(BaseIntegrator):
             "refl_ids": reference[:, -1],
             "profile": qp.mean,
             "zp": zp,
-            "qp_factor": torch.tensor(0.0),
-            "qp_diag": torch.tensor(0.0),
             "x_c": reference[:, 0],
             "y_c": reference[:, 1],
             "z_c": reference[:, 2],
@@ -217,12 +215,17 @@ class Integrator(BaseIntegrator):
             masks=outputs["masks"],
         )
 
-        # torch.nn.utils.clip_grad_norm_(self.parameters(), norm_type=2.0, max_norm=150.0)
-
         # Track gradient norms here
         norms = grad_norm(self, norm_type=2)
         for name, norm in norms.items():
             self.log(f"grad_norm/{name}", norm)
+
+        renyi_loss = (
+            (-torch.log(outputs["qp"].rsample([100]).permute(1, 0, 2).pow(2).sum(-1)))
+            .mean(1)
+            .sum()
+        ) * 0.001
+        self.log("renyi_loss", renyi_loss)
 
         # Log metrics
         self.log("train: loss", loss.mean())
@@ -239,7 +242,7 @@ class Integrator(BaseIntegrator):
         self.log("qbg mean max", outputs["qbg"].mean.max())
         self.log("qbg variance mean", outputs["qbg"].variance.mean())
 
-        return loss.mean()
+        return loss.mean() + renyi_loss.mean()
 
     def validation_step(self, batch, batch_idx):
         # Unpack batch
@@ -264,12 +267,12 @@ class Integrator(BaseIntegrator):
         )
 
         # Log metrics
-        self.log("val: loss", loss.mean())
-        self.log("val: nll", neg_ll.mean())
-        self.log("val: kl", kl.mean())
-        self.log("val: kl_bg", kl_bg.mean())
-        self.log("val: kl_I", kl_I.mean())
-        self.log("val: kl_p", kl_p.mean())
+        self.log("val: -ELBO", loss.mean())
+        self.log("val: NLL", neg_ll.mean())
+        self.log("val: KL", kl.mean())
+        self.log("val: KL bg", kl_bg.mean())
+        self.log("val: KL I", kl_I.mean())
+        self.log("val: KL prf", kl_p.mean())
 
         return outputs
 
@@ -292,18 +295,16 @@ class Integrator(BaseIntegrator):
             "dials_I_prf_var": outputs["dials_I_prf_var"],
             "qbg": outputs["qbg"].mean,
             "qbg_scale": outputs["qbg"].scale,  # halfnormal param
-            # "counts": outputs["counts"],
-            # "profile": outputs["profile"],
             "profile_masking_mean": intensities["profile_masking_mean"],
             "profile_masking_var": intensities["profile_masking_var"],
             "kabsch_sum_mean": intensities["kabsch_sum_mean"],
             "kabsch_sum_var": intensities["kabsch_sum_var"],
             "x_c": outputs["x_c"],
             "y_c": outputs["y_c"],
+            "z_c": outputs["z_c"],
         }
 
     def on_before_optimizer_step(self, optimizer):
-        # Get current gradient norm
         grad_norm_val = torch.nn.utils.clip_grad_norm_(
             self.parameters(), max_norm=float("inf")
         )

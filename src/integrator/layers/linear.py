@@ -156,11 +156,11 @@ class ResidualLayer(nn.Module):
         super().__init__()
         # First layer
         self.fc1 = nn.Linear(width, width)
-        self.norm1 = nn.LayerNorm(width)  # 
+        self.norm1 = nn.LayerNorm(width)  #
 
         # Second layer
         self.fc2 = nn.Linear(width, width)
-        self.norm2 = nn.LayerNorm(width)  # 
+        self.norm2 = nn.LayerNorm(width)  #
 
         # Activation and dropout
         self.relu = nn.ReLU(inplace=True)
@@ -196,7 +196,7 @@ class MLP(nn.Module):
 
         # Input projection layer
         layers.append(nn.Linear(input_dim, hidden_dim))
-        layers.append(nn.LayerNorm(hidden_dim))  # 
+        layers.append(nn.LayerNorm(hidden_dim))  #
         layers.append(nn.ReLU(inplace=True))
 
         # Residual blocks
@@ -205,9 +205,7 @@ class MLP(nn.Module):
 
         # Output layer if needed
         if output_dim is not None:
-            layers.append(
-                nn.LayerNorm(hidden_dim)
-            )   
+            layers.append(nn.LayerNorm(hidden_dim))
             layers.append(nn.ReLU(inplace=True))
             layers.append(nn.Linear(hidden_dim, output_dim))
 
