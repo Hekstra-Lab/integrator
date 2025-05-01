@@ -43,7 +43,7 @@ class ResidualLayer(nn.Module):
         return out
 
 
-class tempResidualLayer(nn.Module):
+class ResidualLayer(nn.Module):
     def __init__(self, width, dropout=None, use_bn=True):
         super().__init__()
         self.use_bn = use_bn
@@ -51,7 +51,7 @@ class tempResidualLayer(nn.Module):
         self.fc1 = Linear(width, width)
 
         if self.use_bn:
-            self.bn1 = BatchNorm1d(width)
+            self.bn1 = nn.BatchNorm1d(width)
 
         self.fc2 = Linear(width, width)
 
@@ -77,37 +77,33 @@ class tempResidualLayer(nn.Module):
         return out
 
 
-class tempResidualLayer(nn.Module):
-    def __init__(self, width, dropout=None):
+class MLP(nn.Module):
+    def __init__(self, width, depth, dropout=None, output_dims=None):
         super().__init__()
-        self.fc1 = Linear(width, width)
-        self.dyt1 = DyT(width)  # Add DyT after first linear layer
-        self.fc2 = Linear(width, width)
-        self.dyt2 = DyT(width)  # Add DyT after second linear layer
-        self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(dropout) if dropout else None
+        layers = [ResidualLayer(width, dropout=dropout) for _ in range(depth)]
+        if output_dims is not None:
+            layers.append(Linear(width, output_dims))
+        self.main = nn.Sequential(*layers)
 
-    def forward(self, x):
-        residual = x
+    def forward(self, data):
+        # Check if the input has 2 or 3 dimensions
+        if len(data.shape) == 3:
+            batch_size, num_pixels, features = data.shape
+            data = data.view(
+                -1, features
+            )  # Flatten to [batch_size * num_pixels, features]
+        elif len(data.shape) == 2:
+            batch_size, features = data.shape
+            num_pixels = None  # No pixels in this case
 
-        # First block: linear -> DyT -> ReLU -> dropout
-        out = self.fc1(x)
-        out = self.dyt1(out)  # Apply DyT before activation
-        out = self.relu(out)
-        if self.dropout:
-            out = self.dropout(out)
+        out = self.main(data)
 
-        # Second block: linear -> DyT
-        out = self.fc2(out)
-        out = self.dyt2(out)  # Apply DyT before adding residual
-
-        # Add residual and apply final ReLU
-        out += residual
-        out = self.relu(out)
+        if num_pixels is not None:
+            out = out.view(batch_size, num_pixels, -1)  # Reshape back if needed
         return out
 
 
-class MLP(nn.Module):
+class tempMLP(nn.Module):
     def __init__(self, width, depth, dropout=None, output_dims=None):
         super().__init__()
         layers = [ResidualLayer(width, dropout=dropout) for _ in range(depth)]
@@ -155,27 +151,80 @@ class DyT(nn.Module):
         return x * weight + bias
 
 
-class tempMLP(nn.Module):
-    def __init__(self, width, depth, dropout=None, output_dims=None):
+class ResidualLayer(nn.Module):
+    def __init__(self, width, dropout_rate=0.0):
         super().__init__()
-        layers = [ResidualLayer(width, dropout=dropout) for _ in range(depth)]
-        if output_dims is not None:
-            layers.append(Linear(width, output_dims))
-        self.main = nn.Sequential(*layers)
 
-    def forward(self, data):
-        # Check if the input has 2 or 3 dimensions
-        if len(data.shape) == 3:
-            batch_size, num_pixels, features = data.shape
-            data = data.view(
-                -1, features
-            )  # Flatten to [batch_size * num_pixels, features]
-        elif len(data.shape) == 2:
-            batch_size, features = data.shape
-            num_pixels = None  # No pixels in this case
+        # First layer
+        self.fc1 = nn.Linear(width, width)
+        self.bn1 = nn.BatchNorm1d(width)
 
-        out = self.main(data)
+        # Second layer
+        self.fc2 = nn.Linear(width, width)
+        self.bn2 = nn.BatchNorm1d(width)
 
-        if num_pixels is not None:
-            out = out.view(batch_size, num_pixels, -1)  # Reshape back if needed
+        # Activation and dropout
+        self.relu = nn.ReLU(inplace=True)
+        self.dropout = nn.Dropout(dropout_rate) if dropout_rate > 0 else None
+
+    def forward(self, x):
+        residual = x
+
+        # First layer
+        out = self.fc1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        if self.dropout is not None:
+            out = self.dropout(out)
+
+        # Second layer
+        out = self.fc2(out)
+        out = self.bn2(out)
+
+        # Residual connection
+        out = out + residual
+        out = self.relu(out)
+
         return out
+
+
+class MLP(nn.Module):
+    def __init__(
+        self, input_dim, hidden_dim=120, depth=10, dropout_rate=0.1, output_dim=None
+    ):
+        super().__init__()
+
+        layers = []
+
+        # Input projection layer
+        layers.append(nn.Linear(input_dim, hidden_dim))
+        layers.append(nn.BatchNorm1d(hidden_dim))
+        layers.append(nn.ReLU(inplace=True))
+
+        # Residual blocks
+        for _ in range(depth):
+            layers.append(ResidualLayer(hidden_dim, dropout_rate=dropout_rate))
+
+        # Output layer if needed
+        if output_dim is not None:
+            layers.append(nn.BatchNorm1d(hidden_dim))
+            layers.append(nn.ReLU(inplace=True))
+            layers.append(nn.Linear(hidden_dim, output_dim))
+
+        self.model = nn.Sequential(*layers)
+
+        # Apply proper initialization
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+
+    def forward(self, x):
+        # Handle different input shapes
+        # Process through the model
+        x = self.model(x)
+
+        return x

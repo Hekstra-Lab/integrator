@@ -57,6 +57,7 @@ REGISTRY = {
     "q_bg": {
         "gamma": GammaDistribution,
         "half_normal": HalfNormalDistribution,
+        "log_normal": LogNormalDistribution,
     },
     "data_loader": {
         "default": ShoeboxDataModule,
