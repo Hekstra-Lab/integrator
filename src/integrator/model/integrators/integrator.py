@@ -240,7 +240,7 @@ class Integrator(BaseIntegrator):
         self.log("Max(qbg.mean)", outputs["qbg"].mean.max())
         self.log("Mean(qbg.variance)", outputs["qbg"].variance.mean())
 
-        return loss.mean() + renyi_loss.mean()
+        return loss.mean() + renyi_loss.sum()
 
     def validation_step(self, batch, batch_idx):
         # Unpack batch
