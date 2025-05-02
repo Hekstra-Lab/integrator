@@ -31,6 +31,7 @@ class Integrator(BaseIntegrator):
         learning_rate=1e-3,
         max_iterations=4,
         profile_threshold=0.001,
+        renyi_scale=0.00,
     ):
         super().__init__()
         # Save hyperparameters
@@ -57,6 +58,7 @@ class Integrator(BaseIntegrator):
         self.intensity_encoder = MLPMetadataEncoder(feature_dim=60, output_dims=64)
         self.bg_encoder = MLPMetadataEncoder(feature_dim=60, output_dims=64)
         self.linear = Linear(64 * 2, 64)
+        self.renyi_scale = renyi_scale
 
     def calculate_intensities(self, counts, qbg, qp, masks):
         with torch.no_grad():
@@ -222,7 +224,7 @@ class Integrator(BaseIntegrator):
             (-torch.log(outputs["qp"].rsample([100]).permute(1, 0, 2).pow(2).sum(-1)))
             .mean(1)
             .sum()
-        ) * 0.001
+        ) * self.renyi_scale
         self.log("renyi_loss", renyi_loss)
 
         # Log metrics

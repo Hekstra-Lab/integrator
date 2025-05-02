@@ -243,6 +243,7 @@ def create_integrator(config):
             mc_samples=config["integrator"]["mc_samples"],
             learning_rate=config["integrator"]["learning_rate"],
             profile_threshold=config["integrator"]["profile_threshold"],
+            renyi_scale = config["integrator"]["renyi_scale"],
         )
         return integrator
 
