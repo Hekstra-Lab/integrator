@@ -252,7 +252,6 @@ class Loss2(torch.nn.Module):
         # Calculate negative log likelihood
         neg_ll_batch = (-ll_mean).sum(1)
         neg_ll_batch = neg_ll_batch
-        print("neg_ll_batch", neg_ll_batch)
 
         # combine all loss terms
         batch_loss = neg_ll_batch + kl_terms

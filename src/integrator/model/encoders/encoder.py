@@ -5,22 +5,33 @@ from torch.nn import Linear
 
 
 class ShoeboxEncoder(nn.Module):
-    def __init__(self, out_dim=64):
+    def __init__(
+        self,
+        out_dim=64,
+        conv1_out_channels=16,
+        norm1_num_groups=4,
+        norm1_num_channels=16,
+        conv2_in_channels=16,
+        conv2_out_channels=32,
+        norm2_num_groups=4,
+        norm2_num_channels=32,
+    ):
         """
         Args:
             out_dim: Output dimension of the encoded representation.
         """
         super(ShoeboxEncoder, self).__init__()
         # The input shape is  (B, 1, 3, 21, 21).
-        # Convolution layer #1: Use (1, 3, 3) so that the depth (z) dimension stays unchanged.
         self.conv1 = nn.Conv3d(
             in_channels=1,
-            out_channels=16,
+            out_channels=conv1_out_channels,
             kernel_size=(1, 3, 3),
             stride=1,
             padding=(0, 1, 1),
         )
-        self.norm1 = nn.GroupNorm(num_groups=4, num_channels=16)
+        self.norm1 = nn.GroupNorm(
+            num_groups=norm1_num_groups, num_channels=norm1_num_channels
+        )
 
         # Pooling applied only across height and width.
         self.pool = nn.MaxPool3d(
@@ -29,9 +40,15 @@ class ShoeboxEncoder(nn.Module):
 
         # Convolution layer #2: Use a kernel that spans depth
         self.conv2 = nn.Conv3d(
-            in_channels=16, out_channels=32, kernel_size=(3, 3, 3), stride=1, padding=0
+            in_channels=conv2_in_channels,
+            out_channels=conv2_out_channels,
+            kernel_size=(3, 3, 3),
+            stride=1,
+            padding=0,
         )
-        self.norm2 = nn.GroupNorm(num_groups=4, num_channels=32)
+        self.norm2 = nn.GroupNorm(
+            num_groups=norm2_num_groups, num_channels=norm2_num_channels
+        )
 
         # After conv1, input shape is: (B, 16, 3, 21, 21);
         # after pooling: (B, 16, 3, approx. ceil(21/2)=11, ceil(21/2)=11);

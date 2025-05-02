@@ -54,8 +54,8 @@ class Integrator(BaseIntegrator):
         self.automatic_optimization = True
         self.loss_fn = loss
         self.max_iterations = max_iterations
-        self.intensity_encoder = MLP(input_dim=60, output_dim=64)
-        self.bg_encoder = MLP(input_dim=60, output_dim=64)
+        self.intensity_encoder = MLPMetadataEncoder(feature_dim=60, output_dims=64)
+        self.bg_encoder = MLPMetadataEncoder(feature_dim=60, output_dims=64)
         self.linear = Linear(64 * 2, 64)
 
     def calculate_intensities(self, counts, qbg, qp, masks):

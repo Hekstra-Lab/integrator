@@ -193,7 +193,7 @@ class DefaultIntegrator(BaseIntegrator):
             else:
                 representation = shoebox_representation
 
-        # representation = self.norm(representation)
+        representation = self.norm(representation)
 
         qbg = self.background_distribution(representation)
         qI = self.intensity_distribution(representation)

@@ -129,56 +129,37 @@ class tempMLP(nn.Module):
         return out
 
 
-class DyT(nn.Module):
-    def __init__(self, num_features, alpha_init_value=0.5):
-        super().__init__()
-        self.alpha = nn.Parameter(torch.ones(1) * alpha_init_value)
-        self.weight = nn.Parameter(torch.ones(num_features))
-        self.bias = nn.Parameter(torch.zeros(num_features))
-
-    def forward(self, x):
-        # Apply tanh with learnable alpha parameter
-        x = torch.tanh(self.alpha * x)
-
-        # Reshape weight and bias for proper broadcasting with 4D tensors (N,C,H,W)
-        if len(x.shape) == 4:
-            weight = self.weight.view(1, -1, 1, 1)
-            bias = self.bias.view(1, -1, 1, 1)
-        else:
-            weight = self.weight
-            bias = self.bias
-
-        return x * weight + bias
+# %%
 
 
 class ResidualLayer(nn.Module):
     def __init__(self, width, dropout_rate=0.0):
         super().__init__()
         # First layer
-        self.fc1 = nn.Linear(width, width)
+        self.fc1 = Linear(width, width)
         self.norm1 = nn.LayerNorm(width)  #
 
         # Second layer
-        self.fc2 = nn.Linear(width, width)
+        self.fc2 = Linear(width, width)
         self.norm2 = nn.LayerNorm(width)  #
 
         # Activation and dropout
         self.relu = nn.ReLU(inplace=True)
-        self.dropout = nn.Dropout(dropout_rate) if dropout_rate > 0 else None
+        self.dropout = nn.Dropout(dropout_rate)
 
     def forward(self, x):
         residual = x
 
         # First layer
-        out = self.fc1(x)
-        out = self.norm1(out)
+        out = self.norm1(x)
         out = self.relu(out)
-        if self.dropout is not None:
-            out = self.dropout(out)
+        out = self.fc1(out)
+        out = self.dropout(out)
 
         # Second layer
-        out = self.fc2(out)
         out = self.norm2(out)
+        out = self.relu(out)
+        out = self.fc2(out)
 
         # Residual connection
         out = out + residual
@@ -188,37 +169,36 @@ class ResidualLayer(nn.Module):
 
 
 class MLP(nn.Module):
-    def __init__(
-        self, input_dim, hidden_dim=120, depth=10, dropout_rate=0.1, output_dim=None
-    ):
+    def __init__(self, feature_dim, depth=10, dropout=0.0, output_dims=None):
         super().__init__()
         layers = []
+        hidden_dim = feature_dim * 2
 
         # Input projection layer
-        layers.append(nn.Linear(input_dim, hidden_dim))
+        layers.append(Linear(feature_dim, hidden_dim))
         layers.append(nn.LayerNorm(hidden_dim))  #
         layers.append(nn.ReLU(inplace=True))
 
         # Residual blocks
         for _ in range(depth):
-            layers.append(ResidualLayer(hidden_dim, dropout_rate=dropout_rate))
+            layers.append(ResidualLayer(hidden_dim, dropout_rate=dropout))
 
         # Output layer if needed
-        if output_dim is not None:
+        if output_dims is not None:
             layers.append(nn.LayerNorm(hidden_dim))
             layers.append(nn.ReLU(inplace=True))
-            layers.append(nn.Linear(hidden_dim, output_dim))
+            layers.append(Linear(hidden_dim, output_dims))
 
         self.model = nn.Sequential(*layers)
 
         # Apply proper initialization
-        self.apply(self._init_weights)
+        # self.apply(self._init_weights)
 
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
-            if m.bias is not None:
-                nn.init.zeros_(m.bias)
+    # def _init_weights(self, m):
+    # if isinstance(m, nn.Linear):
+    # nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+    # if m.bias is not None:
+    # nn.init.zeros_(m.bias)
 
     def forward(self, x):
         # Process through the model

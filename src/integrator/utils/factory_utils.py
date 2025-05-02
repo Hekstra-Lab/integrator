@@ -43,16 +43,6 @@ def create_prior(dist_name, dist_params):
         scale = torch.tensor(dist_params["scale"])
         return torch.distributions.log_normal.LogNormal(loc, scale)
 
-    if dist_name == "beta":
-        concentration1 = torch.tensor(dist_params["concentration1"])
-        concentration0 = torch.tensor(dist_params["concentration0"])
-        return torch.distributions.beta.Beta(concentration1, concentration0)
-
-    if dist_name == "laplace":
-        loc = torch.tensor(dist_params["loc"])
-        scale = torch.tensor(dist_params["scale"])
-        return torch.distributions.laplace.Laplace(loc, scale)
-
     elif dist_name == "dirichlet":
         # For a simple case where all dimensions use the same concentration
         if "concentration" in dist_params:
@@ -205,41 +195,6 @@ def create_integrator(config):
             profile_threshold=config["integrator"]["profile_threshold"],
             use_metarep=config["integrator"]["use_metarep"],
             use_metaonly=config["integrator"]["use_metaonly"],
-        )
-        return integrator
-
-    if integrator_name == "bernoulli_integrator":
-        loss = create_loss(config)
-        q_z = create_module(
-            "q_z",
-            config["components"]["q_z"]["name"],
-            **config["components"]["q_z"]["params"],
-        )
-        metadata_encoder = create_module(
-            "metadata_encoder",
-            config["components"]["metadata_encoder"]["name"],
-            **config["components"]["metadata_encoder"]["params"],
-        )
-
-        image_encoder = create_module(
-            "image_encoder",
-            config["components"]["image_encoder"]["name"],
-            **config["components"]["image_encoder"]["params"],
-        )
-
-        integrator = integrator_class(
-            metadata_encoder=metadata_encoder,
-            q_bg=background_distribution,
-            q_I=intensity_distribution,
-            profile_model=profile,
-            q_z=q_z,
-            dmodel=config["global"]["dmodel"],
-            decoder=decoder,
-            loss=loss,
-            mc_samples=config["integrator"]["mc_samples"],
-            learning_rate=config["integrator"]["learning_rate"],
-            profile_threshold=config["integrator"]["profile_threshold"],
-            image_encoder=image_encoder,
         )
         return integrator
 

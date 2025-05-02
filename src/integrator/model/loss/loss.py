@@ -121,9 +121,11 @@ class Loss(torch.nn.Module):
         self.p_p_name = p_p_name
         self.p_p_params = p_p_params
         if prior_tensor is not None:
-            self.prior_tensor = torch.load(prior_tensor, weights_only=False)
+            self.concentration = torch.load(prior_tensor, weights_only=False)
+            self.concentration[self.concentration > 2] *= 40
+            self.concentration /= self.concentration.sum()
         else:
-            self.prior_tensor = None
+            self.concentration = torch.ones(1323) * p_p_params["concentration"]
 
         # Register parameters for I and bg distributions
         self._register_distribution_params(p_I_name, p_I_params, prefix="p_I_")
@@ -308,11 +310,7 @@ class Loss(torch.nn.Module):
         # Create distributions on the correct device
         p_I = self.get_prior(self.p_I_name, "p_I_", device)
         p_bg = self.get_prior(self.p_bg_name, "p_bg_", device)
-
-        if self.prior_tensor is not None:
-            p_p = torch.distributions.dirichlet.Dirichlet(self.prior_tensor.to(device))
-        else:
-            p_p = self.get_prior(self.p_p_name, "p_p_", device)
+        p_p = torch.distributions.dirichlet.Dirichlet(self.concentration.to(device))
 
         # Calculate log likelihood
         ll = torch.distributions.Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
@@ -322,18 +320,14 @@ class Loss(torch.nn.Module):
         kl_p = torch.tensor(0.0, device=device)  # Default value
 
         # Only calculate profile KL if we have both distributions
-        if p_p is not None and q_p is not None:
-            kl_p = self.compute_kl(q_p, p_p)
-            kl_p = self._ensure_batch_dim(kl_p, batch_size, device)
-            kl_terms += kl_p * self.p_p_scale
+        kl_p = self.compute_kl(q_p, p_p)
+        kl_terms += kl_p * self.p_p_scale
 
         # Calculate background and intensity KL divergence
         kl_bg = self.compute_kl(q_bg, p_bg)
-        kl_bg = self._ensure_batch_dim(kl_bg, batch_size, device)
         kl_terms += kl_bg * self.p_bg_scale
 
         kl_I = self.compute_kl(q_I, p_I)
-        kl_I = self._ensure_batch_dim(kl_I, batch_size, device)
         kl_terms += kl_I * self.p_I_scale
 
         # Initialize regularization terms
