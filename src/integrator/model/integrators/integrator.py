@@ -62,9 +62,12 @@ class Integrator(BaseIntegrator):
 
     def calculate_intensities(self, counts, qbg, qp, masks):
         with torch.no_grad():
-            counts = counts * masks
-            zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
-            zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
+            counts = counts * masks  # [B,P]
+            zbg = (
+                qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+            )  # [B,S,1]
+            # zp = qp.rsample([self.mc_samples]).permute(1, 0, 2) #
+            zp = qp.mean.unsqueeze(1)  # [B,1,P]
 
             vi = zbg + 1e-6
 
