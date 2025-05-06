@@ -99,6 +99,9 @@ class ShoeboxDataModule(BaseDataModule):
                 standardized_counts = (counts[..., -1] * masks) - stats[0] / stats[
                     1
                 ].sqrt()
+                counts[:, :, 0] = 2 * (counts[:, :, 0] / counts[:, :, 0].max()) - 1
+                counts[:, :, 1] = 2 * (counts[:, :, 1] / counts[:, :, 1].max()) - 1
+                counts[:, :, 2] = 2 * (counts[:, :, 2] / counts[:, :, 2].max()) - 1
 
         if self.cutoff is not None:
             selection = reference[:, -7] < self.cutoff
