@@ -41,6 +41,7 @@ REGISTRY = {
         "mlp_integrator": MLPIntegrator,
         "lrmvn_integrator": LRMVNIntegrator,
         "integrator": Integrator,
+        "integrator2": IntegratorFourierFeatures,
     },
     "q_I": {
         "gamma": GammaDistribution,

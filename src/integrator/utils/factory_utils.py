@@ -221,6 +221,38 @@ def create_integrator(config):
         )
         return integrator
 
+    elif integrator_name == "integrator2":
+        loss = create_module(
+            "loss",
+            config["components"]["loss"]["name"],
+            **config["components"]["loss"]["params"],
+        )
+
+        encoder = create_module(
+            "encoder",
+            config["components"]["encoder"]["name"],
+            **config["components"]["encoder"]["params"],
+        )
+        encoder2 = create_module(
+            "image_encoder",
+            config["components"]["encoder"]["name"],
+            **config["components"]["encoder"]["params"],
+        )
+
+        integrator = integrator_class(
+            encoder=encoder,
+            encoder2=encoder2,
+            loss=loss,
+            qbg=background_distribution,
+            qp=profile,
+            qI=intensity_distribution,
+            mc_samples=config["integrator"]["mc_samples"],
+            learning_rate=config["integrator"]["learning_rate"],
+            profile_threshold=config["integrator"]["profile_threshold"],
+            renyi_scale=config["integrator"]["renyi_scale"],
+        )
+        return integrator
+
     elif integrator_name == "integrator":
         loss = create_module(
             "loss",
@@ -243,7 +275,7 @@ def create_integrator(config):
             mc_samples=config["integrator"]["mc_samples"],
             learning_rate=config["integrator"]["learning_rate"],
             profile_threshold=config["integrator"]["profile_threshold"],
-            renyi_scale = config["integrator"]["renyi_scale"],
+            renyi_scale=config["integrator"]["renyi_scale"],
         )
         return integrator
 

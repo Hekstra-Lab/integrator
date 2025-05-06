@@ -8,6 +8,7 @@ class ShoeboxEncoder(nn.Module):
     def __init__(
         self,
         out_dim=64,
+        conv1_in_channels=1,
         conv1_out_channels=16,
         norm1_num_groups=4,
         norm1_num_channels=16,
@@ -23,7 +24,7 @@ class ShoeboxEncoder(nn.Module):
         super(ShoeboxEncoder, self).__init__()
         # The input shape is  (B, 1, 3, 21, 21).
         self.conv1 = nn.Conv3d(
-            in_channels=1,
+            in_channels=conv1_in_channels,
             out_channels=conv1_out_channels,
             kernel_size=(1, 3, 3),
             stride=1,
@@ -60,7 +61,6 @@ class ShoeboxEncoder(nn.Module):
     def forward(self, x, mask=None):
         # assuming input is shape (B, 3*21*21, 7) and last dim is photons
         # x = x[:, :, -1].reshape(x.shape[0], 1, 3, 21, 21)
-        x = x.reshape(x.shape[0], 1, 3, 21, 21)
 
         x = F.relu(self.norm1(self.conv1(x)))
         x = self.pool(x)
