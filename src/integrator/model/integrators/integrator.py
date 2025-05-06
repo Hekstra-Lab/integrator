@@ -1176,7 +1176,7 @@ class IntegratorFFLog1p(BaseIntegrator):
         self.automatic_optimization = True
         self.loss_fn = loss
         self.max_iterations = max_iterations
-        self.intensity_encoder = MLPMetadataEncoder(feature_dim=10, output_dims=64)
+        # self.intensity_encoder = MLPMetadataEncoder(feature_dim=10, output_dims=64)
         self.bg_encoder = MLPMetadataEncoder(feature_dim=10, output_dims=64)
         self.linear = Linear(64 * 2, 64)
         self.renyi_scale = renyi_scale
@@ -1268,10 +1268,11 @@ class IntegratorFFLog1p(BaseIntegrator):
         ).transpose(1, 0)
 
         profile_rep = self.encoder(samples_, masks)
-        intensity_rep = self.intensity_encoder(samples_)
+        intensity_rep = self.bg_encoder(intensity_encoding)
+        bgrep = self.bg_encoder(intensity_encoding)
 
         qp = self.qp(profile_rep)
-        qbg = self.qbg(intensity_encoding)
+        qbg = self.qbg(bgrep)
         qI = self.qI(intensity_rep, metarep=profile_rep)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
