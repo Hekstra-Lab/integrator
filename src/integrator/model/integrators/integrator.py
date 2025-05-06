@@ -367,6 +367,7 @@ class IntegratorFourierFeatures(BaseIntegrator):
         self.intensity_encoder = encoder2
         self.linear = Linear(64 * 2, 64)
         self.renyi_scale = renyi_scale
+        self.B = torch.randn(10, 3)  # Gaussian matrix
 
     def calculate_intensities(self, counts, qbg, qp, masks):
         with torch.no_grad():
@@ -418,13 +419,11 @@ class IntegratorFourierFeatures(BaseIntegrator):
         counts_ = torch.clamp(counts[..., -1].clone(), min=0) * masks
         device = counts_.device
 
-        B = torch.randn(10, 3)
-
         counts[:, :, 0] = 2 * (counts[:, :, 0] / counts[:, :, 0].max()) - 1
         counts[:, :, 1] = 2 * (counts[:, :, 1] / counts[:, :, 1].max()) - 1
         counts[:, :, 2] = 2 * (counts[:, :, 2] / counts[:, :, 2].max()) - 1
 
-        proj = 2 * torch.pi * counts[..., :3] @ B.T
+        proj = 2 * torch.pi * counts[..., :3] @ self.B.T
         features = torch.cat([torch.sin(proj), torch.cos(proj)], dim=-1)
         samples_ = torch.concat([features, counts[..., -1].unsqueeze(-1)], dim=-1)
         samples_ = samples_.view(samples_.shape[0], 3, 21, 21, 21)
