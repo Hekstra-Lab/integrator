@@ -597,6 +597,7 @@ class IntegratorFourierFeatures(BaseIntegrator):
         return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
 
 
+# %%
 class IntegratorLog1p(BaseIntegrator):
     def __init__(
         self,
@@ -885,6 +886,253 @@ class IntegratorLog1p(BaseIntegrator):
 
     # # Log the original norm
     # self.log("grad_norm", grad_norm_val)
+
+    def configure_optimizers(self):
+        return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+
+
+# %%
+class IntegratorLog1p2(BaseIntegrator):
+    def __init__(
+        self,
+        encoder,
+        loss,
+        qbg,
+        qp,
+        qI,
+        mc_samples=100,
+        learning_rate=1e-3,
+        max_iterations=4,
+        profile_threshold=0.001,
+        renyi_scale=0.00,
+    ):
+        super().__init__()
+        # Save hyperparameters
+        self.save_hyperparameters(
+            ignore=[
+                "image_encoder",
+                "mlp_encoder",
+                "profile_model",
+                "unet",
+                "signal_preprocessor",
+            ]
+        )
+        self.learning_rate = learning_rate
+        self.mc_samples = mc_samples
+
+        # Model components
+        self.encoder = encoder
+        self.qp = qp
+        self.qI = qI
+        self.qbg = qbg
+        self.automatic_optimization = True
+        self.loss_fn = loss
+        self.max_iterations = max_iterations
+        self.renyi_scale = renyi_scale
+
+    def calculate_intensities(self, counts, qbg, qp, masks):
+        with torch.no_grad():
+            counts = counts * masks  # [B,P]
+            zbg = (
+                qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+            )  # [B,S,1]
+            # zp = qp.rsample([self.mc_samples]).permute(1, 0, 2) #
+            zp = qp.mean.unsqueeze(1)  # [B,1,P]
+
+            vi = zbg + 1e-6
+
+            # kabsch sum
+            for i in range(4):
+                num = (counts.unsqueeze(1) - zbg) * zp * masks.unsqueeze(1) / vi
+                denom = zp.pow(2) / vi
+                I = num.sum(-1) / denom.sum(-1)  # [batch_size, mc_samples]
+                vi = (I.unsqueeze(-1) * zp) + zbg
+                vi = vi.mean(-1, keepdim=True)
+            kabsch_sum_mean = I.mean(-1)
+            kabsch_sum_var = I.var(-1)
+
+            # profile masking
+            zp = zp * masks.unsqueeze(1)  # profiles
+            thresholds = torch.quantile(
+                zp, 0.99, dim=-1, keepdim=True
+            )  # threshold values
+            profile_mask = zp > thresholds
+
+            masked_counts = counts.unsqueeze(1) * profile_mask
+
+            profile_masking_I = (masked_counts - zbg * profile_mask).sum(-1)
+
+            profile_masking_mean = profile_masking_I.mean(-1)
+
+            profile_masking_var = profile_masking_I.var(-1)
+
+            intensities = {
+                "profile_masking_mean": profile_masking_mean,
+                "profile_masking_var": profile_masking_var,
+                "kabsch_sum_mean": kabsch_sum_mean,
+                "kabsch_sum_var": kabsch_sum_var,
+            }
+
+            return intensities
+
+    def forward(self, counts, shoebox, metadata, masks, reference):
+        # Unpack batch
+        counts = torch.clamp(counts, min=0) * masks
+        device = counts.device
+
+        rep = self.encoder(
+            torch.log1p(shoebox.reshape(shoebox.shape[0], 1, 3, 21, 21)), masks
+        )
+
+        qbg = self.qbg(rep)
+        qp = self.qp(rep)
+        qI = self.qI(rep)
+
+        zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
+        zI = qI.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+
+        intensity_mean = qI.mean  # [batch_size]
+        intensity_var = qI.variance  # [batch_size]
+
+        rate = zI * zp + zbg
+
+        return {
+            "rates": rate,
+            "counts": counts,
+            "masks": masks,
+            "qbg": qbg,
+            "qp": qp,
+            "qp_mean": qp.mean,
+            "qI": qI,
+            "intensity_mean": intensity_mean,
+            "intensity_mean": intensity_mean,
+            "intensity_var": intensity_var,
+            "dials_I_sum_value": reference[:, 6],
+            "dials_I_sum_var": reference[:, 7],
+            "dials_I_prf_value": reference[:, 8],
+            "dials_I_prf_var": reference[:, 9],
+            "refl_ids": reference[:, -1],
+            "profile": qp.mean,
+            "zp": zp,
+            "x_c": reference[:, 0],
+            "y_c": reference[:, 1],
+            "z_c": reference[:, 2],
+            "x_c_mm": reference[:, 3],
+            "y_c_mm": reference[:, 4],
+            "z_c_mm": reference[:, 5],
+            "dials_bg_mean": reference[:, 10],
+            "dials_bg_sum_value": reference[:, 11],
+            "dials_bg_sum_var": reference[:, 12],
+            "d": reference[:, 13],
+        }
+
+    def training_step(self, batch, batch_idx):
+        # Unpack batch
+        shoebox, dials, masks, metadata, counts = batch
+
+        # Get model outputs
+        outputs = self(shoebox, dials, masks, metadata, counts)
+
+        # Calculate loss
+        (loss, neg_ll, kl, kl_bg, kl_I, kl_p) = self.loss_fn(
+            rate=outputs["rates"],
+            counts=outputs["counts"],
+            q_p=outputs["qp"],
+            q_I=outputs["qI"],
+            q_bg=outputs["qbg"],
+            masks=outputs["masks"],
+        )
+
+        # Track gradient norms here
+        norms = grad_norm(self, norm_type=2)
+        for name, norm in norms.items():
+            self.log(f"grad_norm/{name}", norm)
+
+        renyi_loss = (
+            (-torch.log(outputs["qp"].rsample([100]).permute(1, 0, 2).pow(2).sum(-1)))
+            .mean(1)
+            .sum()
+        ) * self.renyi_scale
+        self.log("renyi_loss", renyi_loss)
+
+        # Log metrics
+        self.log("Train: -ELBO", loss.mean())
+        self.log("Train: NLL", neg_ll.mean())
+        self.log("Train: KL", kl.mean())
+        self.log("Train: KL Bg", kl_bg.mean())
+        self.log("Train: KL I", kl_I.mean())
+        self.log("Train: KL Prf", kl_p.mean())
+        self.log("Mean(qI.mean)", outputs["qI"].mean.mean())
+        self.log("Min(qI.mean)", outputs["qI"].mean.min())
+        self.log("Max(qI.mean)", outputs["qI"].mean.max())
+        self.log("Mean(qbg.mean)", outputs["qbg"].mean.mean())
+        self.log("Min(qbg.mean)", outputs["qbg"].mean.min())
+        self.log("Max(qbg.mean)", outputs["qbg"].mean.max())
+        self.log("Mean(qbg.variance)", outputs["qbg"].variance.mean())
+
+        return loss.mean() + renyi_loss.sum()
+
+    def validation_step(self, batch, batch_idx):
+        # Unpack batch
+        shoebox, dials, masks, metadata, counts = batch
+        # Get model outputs
+        outputs = self(shoebox, dials, masks, metadata, counts)
+
+        (
+            loss,
+            neg_ll,
+            kl,
+            kl_bg,
+            kl_I,
+            kl_p,
+        ) = self.loss_fn(
+            rate=outputs["rates"],
+            counts=outputs["counts"],
+            q_p=outputs["qp"],
+            q_I=outputs["qI"],
+            q_bg=outputs["qbg"],
+            masks=outputs["masks"],
+        )
+
+        # Log metrics
+        self.log("Val: -ELBO", loss.mean())
+        self.log("Val: NLL", neg_ll.mean())
+        self.log("Val: KL", kl.mean())
+        self.log("Val: KL bg", kl_bg.mean())
+        self.log("Val: KL I", kl_I.mean())
+        self.log("Val: KL prf", kl_p.mean())
+        self.log("val_loss", neg_ll.mean())
+
+        return outputs
+
+    def predict_step(self, batch, batch_idx):
+        shoebox, dials, masks, metadata, counts = batch
+        outputs = self(shoebox, dials, masks, metadata, counts)
+        intensities = self.calculate_intensities(
+            counts=outputs["counts"],
+            qbg=outputs["qbg"],
+            qp=outputs["qp"],
+            masks=outputs["masks"],
+        )
+
+        return {
+            "intensity_mean": outputs["intensity_mean"],  # qI.mean
+            "intensity_var": outputs["intensity_var"],  # qI.variance
+            "refl_ids": outputs["refl_ids"],
+            "dials_I_sum_var": outputs["dials_I_sum_var"],
+            "dials_I_prf_value": outputs["dials_I_prf_value"],
+            "dials_I_prf_var": outputs["dials_I_prf_var"],
+            "qbg": outputs["qbg"].mean,
+            "qbg_scale": outputs["qbg"].scale,  # halfnormal param
+            "profile_masking_mean": intensities["profile_masking_mean"],
+            "profile_masking_var": intensities["profile_masking_var"],
+            "kabsch_sum_mean": intensities["kabsch_sum_mean"],
+            "kabsch_sum_var": intensities["kabsch_sum_var"],
+            "x_c": outputs["x_c"],
+            "y_c": outputs["y_c"],
+            "z_c": outputs["z_c"],
+        }
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
