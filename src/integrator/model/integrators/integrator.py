@@ -1239,18 +1239,18 @@ class IntegratorFFLog1p(BaseIntegrator):
         samples_ = samples_.permute(0, 4, 1, 2, 3)
 
         num_valid_pixels = masks.sum(1)
-        total_photons = (counts).sum(1)
+        total_photons = (counts_).sum(1)
         mean_photons = total_photons / num_valid_pixels
-        max_photons = counts.max(1)[0]
+        max_photons = counts_.max(1)[0]
         std_photons = torch.sqrt(
             (1 / (num_valid_pixels - 1))
-            * (((counts - mean_photons.unsqueeze(1)) ** 2) * masks).sum(1)
+            * (((counts_ - mean_photons.unsqueeze(1)) ** 2) * masks).sum(1)
         )
-        q1 = torch.quantile(counts, 0.9999, dim=1)
-        q2 = torch.quantile(counts, 0.999, dim=1)
-        q3 = torch.quantile(counts, 0.9, dim=1)
-        q4 = torch.quantile(counts, 0.50, dim=1)
-        q5 = torch.quantile(counts, 0.25, dim=1)
+        q1 = torch.quantile(counts_, 0.9999, dim=1)
+        q2 = torch.quantile(counts_, 0.999, dim=1)
+        q3 = torch.quantile(counts_, 0.9, dim=1)
+        q4 = torch.quantile(counts_, 0.50, dim=1)
+        q5 = torch.quantile(counts_, 0.25, dim=1)
 
         intensity_encoding = torch.stack(
             [
