@@ -11,7 +11,7 @@ class MLPMetadataEncoder(BaseEncoder):
         layers = []
         hidden_dim = feature_dim * 2
 
-        # Input projection layer
+        # Input layer
         layers.append(Linear(feature_dim, hidden_dim))
         layers.append(nn.LayerNorm(hidden_dim))  #
         layers.append(nn.ReLU(inplace=True))
