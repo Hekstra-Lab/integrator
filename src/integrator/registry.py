@@ -44,6 +44,7 @@ REGISTRY = {
         "integrator2": IntegratorFourierFeatures,
         "integrator3": IntegratorLog1p,
         "integrator4": IntegratorLog1p2,
+        "integrator5": IntegratorFFLog1p,
     },
     "q_I": {
         "gamma": GammaDistribution,

@@ -253,7 +253,7 @@ def create_integrator(config):
         )
         return integrator
 
-    elif integrator_name in {"integrator", "integrator3", "integrator4"}:
+    elif integrator_name in {"integrator", "integrator3", "integrator4", "integrator5"}:
         loss = create_module(
             "loss",
             config["components"]["loss"]["name"],
