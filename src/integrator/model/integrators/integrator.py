@@ -338,6 +338,8 @@ class IntegratorFourierFeatures(BaseIntegrator):
         max_iterations=4,
         profile_threshold=0.001,
         renyi_scale=0.00,
+        ff_scale=1.0,
+        num_fourier_features=10,
     ):
         super().__init__()
         # Save hyperparameters
@@ -364,7 +366,9 @@ class IntegratorFourierFeatures(BaseIntegrator):
         self.intensity_encoder = encoder2
         self.linear = Linear(64 * 2, 64)
         self.renyi_scale = renyi_scale
-        self.B = torch.distributions.Normal(0, 2**4).sample((10, 3))
+        self.B = torch.distributions.Normal(0, ff_scale).sample(
+            (num_fourier_features, 3)
+        )
 
     def calculate_intensities(self, counts, qbg, qp, masks):
         with torch.no_grad():
