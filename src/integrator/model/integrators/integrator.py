@@ -366,9 +366,8 @@ class IntegratorFourierFeatures(BaseIntegrator):
         self.intensity_encoder = encoder2
         self.linear = Linear(64 * 2, 64)
         self.renyi_scale = renyi_scale
-        self.B = torch.distributions.Normal(0, ff_scale).sample(
-            (num_fourier_features, 3)
-        )
+        B = torch.distributions.Normal(0, ff_scale).sample((num_fourier_features, 3))
+        self.register_buffer("B", B, persistent=True)
 
     def calculate_intensities(self, counts, qbg, qp, masks):
         with torch.no_grad():
@@ -1172,6 +1171,7 @@ class IntegratorFFLog1p(BaseIntegrator):
         self.linear = Linear(64 * 2, 64)
         self.renyi_scale = renyi_scale
         # self.B = torch.randn(10, 3)  # Gaussian matrix
+
         self.B = torch.distributions.Normal(0, 2**4).sample((10, 3))
 
     def calculate_intensities(self, counts, qbg, qp, masks):
