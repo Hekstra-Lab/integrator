@@ -366,7 +366,7 @@ class IntegratorFourierFeatures(BaseIntegrator):
         self.intensity_encoder = encoder2
         self.linear = Linear(64 * 2, 64)
         self.renyi_scale = renyi_scale
-        B = torch.distributions.Normal(0, ff_scale).sample((num_fourier_features, 3))
+        B = torch.distributions.Normal(0, ff_scale).sample((num_fourier_features, 4))
         self.register_buffer("B", B, persistent=True)
 
     def calculate_intensities(self, counts, qbg, qp, masks):
@@ -416,13 +416,17 @@ class IntegratorFourierFeatures(BaseIntegrator):
 
     def forward(self, counts, shoebox, metadata, masks, reference):
         # Unpack batch
+
         counts_ = torch.clamp(counts[..., -1].clone(), min=0) * masks
         device = counts_.device
 
-        proj = 2 * torch.pi * counts[..., :3] @ self.B.to(device).T
-        features = torch.cat([torch.sin(proj), torch.cos(proj)], dim=-1)
-        samples_ = torch.concat([features, counts[..., -1].unsqueeze(-1)], dim=-1)
-        samples_ = samples_.view(samples_.shape[0], 3, 21, 21, 21)
+        smpls = torch.concat([counts[..., :3], shoebox.unsqueeze(-1)], dim=-1)
+
+        # proj = 2 * torch.pi * counts[..., :3] @ self.B.to(device).T
+        proj = 2 * torch.pi * smpls @ self.B.to(device).T
+        samples_ = torch.cat([torch.sin(proj), torch.cos(proj)], dim=-1)
+        # samples_ = torch.concat([features, counts[..., -1].unsqueeze(-1)], dim=-1)
+        samples_ = samples_.view(samples_.shape[0], 3, 21, 21, 20)
         samples_ = samples_.permute(0, 4, 1, 2, 3)
 
         rep = self.encoder(samples_, masks)
@@ -1426,3 +1430,6 @@ class IntegratorFFLog1p(BaseIntegrator):
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+
+
+# %%
