@@ -202,11 +202,8 @@ class Integrator(BaseIntegrator):
         }
 
     def training_step(self, batch, batch_idx):
-        # Unpack batch
-        shoebox, dials, masks, metadata, counts = batch
-
-        # Get model outputs
-        outputs = self(shoebox, dials, masks, metadata, counts)
+        counts, shoebox, metadata, masks, reference = batch
+        outputs = self(counts, shoebox, metadata, masks, reference)
 
         # Calculate loss
         (loss, neg_ll, kl, kl_bg, kl_I, kl_p) = self.loss_fn(
@@ -249,9 +246,8 @@ class Integrator(BaseIntegrator):
 
     def validation_step(self, batch, batch_idx):
         # Unpack batch
-        shoebox, dials, masks, metadata, counts = batch
-        # Get model outputs
-        outputs = self(shoebox, dials, masks, metadata, counts)
+        counts, shoebox, metadata, masks, reference = batch
+        outputs = self(counts, shoebox, metadata, masks, reference)
 
         (
             loss,
@@ -281,8 +277,9 @@ class Integrator(BaseIntegrator):
         return outputs
 
     def predict_step(self, batch, batch_idx):
-        shoebox, dials, masks, metadata, counts = batch
-        outputs = self(shoebox, dials, masks, metadata, counts)
+        counts, shoebox, metadata, masks, reference = batch
+        outputs = self(counts, shoebox, metadata, masks, reference)
+
         intensities = self.calculate_intensities(
             counts=outputs["counts"],
             qbg=outputs["qbg"],
@@ -473,11 +470,8 @@ class IntegratorFourierFeatures(BaseIntegrator):
         }
 
     def training_step(self, batch, batch_idx):
-        # Unpack batch
-        shoebox, dials, masks, metadata, counts = batch
-
-        # Get model outputs
-        outputs = self(shoebox, dials, masks, metadata, counts)
+        counts, shoebox, metadata, masks, reference = batch
+        outputs = self(counts, shoebox, metadata, masks, reference)
 
         # Calculate loss
         (loss, neg_ll, kl, kl_bg, kl_I, kl_p) = self.loss_fn(
@@ -520,9 +514,8 @@ class IntegratorFourierFeatures(BaseIntegrator):
 
     def validation_step(self, batch, batch_idx):
         # Unpack batch
-        shoebox, dials, masks, metadata, counts = batch
-        # Get model outputs
-        outputs = self(shoebox, dials, masks, metadata, counts)
+        counts, shoebox, metadata, masks, reference = batch
+        outputs = self(counts, shoebox, metadata, masks, reference)
 
         (
             loss,
@@ -553,7 +546,7 @@ class IntegratorFourierFeatures(BaseIntegrator):
 
     def predict_step(self, batch, batch_idx):
         counts, shoebox, metadata, masks, reference = batch
-        outputs = self(counts, shoebox, metadata, masks, counts)
+        outputs = self(counts, shoebox, metadata, masks, reference)
         intensities = self.calculate_intensities(
             counts=outputs["counts"],
             qbg=outputs["qbg"],
@@ -768,11 +761,8 @@ class IntegratorLog1p(BaseIntegrator):
         }
 
     def training_step(self, batch, batch_idx):
-        # Unpack batch
-        shoebox, dials, masks, metadata, counts = batch
-
-        # Get model outputs
-        outputs = self(shoebox, dials, masks, metadata, counts)
+        counts, shoebox, metadata, masks, reference = batch
+        outputs = self(counts, shoebox, metadata, masks, reference)
 
         # Calculate loss
         (loss, neg_ll, kl, kl_bg, kl_I, kl_p) = self.loss_fn(
@@ -815,9 +805,8 @@ class IntegratorLog1p(BaseIntegrator):
 
     def validation_step(self, batch, batch_idx):
         # Unpack batch
-        shoebox, dials, masks, metadata, counts = batch
-        # Get model outputs
-        outputs = self(shoebox, dials, masks, metadata, counts)
+        counts, shoebox, metadata, masks, reference = batch
+        outputs = self(counts, shoebox, metadata, masks, reference)
 
         (
             loss,
@@ -847,8 +836,9 @@ class IntegratorLog1p(BaseIntegrator):
         return outputs
 
     def predict_step(self, batch, batch_idx):
-        shoebox, dials, masks, metadata, counts = batch
-        outputs = self(shoebox, dials, masks, metadata, counts)
+        counts, shoebox, metadata, masks, reference = batch
+        outputs = self(counts, shoebox, metadata, masks, reference)
+
         intensities = self.calculate_intensities(
             counts=outputs["counts"],
             qbg=outputs["qbg"],
@@ -1029,11 +1019,8 @@ class IntegratorLog1p2(BaseIntegrator):
         }
 
     def training_step(self, batch, batch_idx):
-        # Unpack batch
-        shoebox, dials, masks, metadata, counts = batch
-
-        # Get model outputs
-        outputs = self(shoebox, dials, masks, metadata, counts)
+        counts, shoebox, metadata, masks, reference = batch
+        outputs = self(counts, shoebox, metadata, masks, reference)
 
         # Calculate loss
         (loss, neg_ll, kl, kl_bg, kl_I, kl_p) = self.loss_fn(
@@ -1076,9 +1063,8 @@ class IntegratorLog1p2(BaseIntegrator):
 
     def validation_step(self, batch, batch_idx):
         # Unpack batch
-        shoebox, dials, masks, metadata, counts = batch
-        # Get model outputs
-        outputs = self(shoebox, dials, masks, metadata, counts)
+        counts, shoebox, metadata, masks, reference = batch
+        outputs = self(counts, shoebox, metadata, masks, reference)
 
         (
             loss,
@@ -1108,8 +1094,9 @@ class IntegratorLog1p2(BaseIntegrator):
         return outputs
 
     def predict_step(self, batch, batch_idx):
-        shoebox, dials, masks, metadata, counts = batch
-        outputs = self(shoebox, dials, masks, metadata, counts)
+        counts, shoebox, metadata, masks, reference = batch
+        outputs = self(counts, shoebox, metadata, masks, reference)
+
         intensities = self.calculate_intensities(
             counts=outputs["counts"],
             qbg=outputs["qbg"],
@@ -1274,7 +1261,7 @@ class IntegratorFFLog1p(BaseIntegrator):
 
         qp = self.qp(profile_rep)
         qbg = self.qbg(bgrep)
-        qI = self.qI(intensity_rep, metarep=profile_rep)
+        qI = self.qI(intensity_rep)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
         zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
@@ -1316,11 +1303,8 @@ class IntegratorFFLog1p(BaseIntegrator):
         }
 
     def training_step(self, batch, batch_idx):
-        # Unpack batch
-        shoebox, dials, masks, metadata, counts = batch
-
-        # Get model outputs
-        outputs = self(shoebox, dials, masks, metadata, counts)
+        counts, shoebox, metadata, masks, reference = batch
+        outputs = self(counts, shoebox, metadata, masks, reference)
 
         # Calculate loss
         (loss, neg_ll, kl, kl_bg, kl_I, kl_p) = self.loss_fn(
@@ -1363,9 +1347,8 @@ class IntegratorFFLog1p(BaseIntegrator):
 
     def validation_step(self, batch, batch_idx):
         # Unpack batch
-        shoebox, dials, masks, metadata, counts = batch
-        # Get model outputs
-        outputs = self(shoebox, dials, masks, metadata, counts)
+        counts, shoebox, metadata, masks, reference = batch
+        outputs = self(counts, shoebox, metadata, masks, reference)
 
         (
             loss,
@@ -1396,7 +1379,8 @@ class IntegratorFFLog1p(BaseIntegrator):
 
     def predict_step(self, batch, batch_idx):
         counts, shoebox, metadata, masks, reference = batch
-        outputs = self(counts, shoebox, metadata, masks, counts)
+        outputs = self(counts, shoebox, metadata, masks, reference)
+
         intensities = self.calculate_intensities(
             counts=outputs["counts"],
             qbg=outputs["qbg"],
