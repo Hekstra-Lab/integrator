@@ -410,10 +410,11 @@ class MeanPool(torch.nn.Module):
             data = data * mask.unsqueeze(-1)
 
         out = torch.sum(data, dim=1, keepdim=True)
+
         if mask is None:
             denom = data.shape[-1]
         else:
-            denom = torch.sum(mask, dim=-2, keepdim=True)
+            denom = torch.sum(mask, dim=-1, keepdim=True)
         out = out / (denom + 1e-6)
 
         return out
@@ -430,7 +431,7 @@ class Encoder(torch.nn.Module):
 
     def forward(self, shoebox_data, mask=None):
         out = self.mlp_1(shoebox_data)
-        pooled_out = self.mean_pool(out)
+        pooled_out = self.mean_pool(out, mask)
         # outputs = self.linear(pooled_out)
         return pooled_out.squeeze(1)
 
@@ -500,7 +501,7 @@ class IntegratorMLP(BaseIntegrator):
             zbg = (
                 qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
             )  # [B,S,1]
-            # zp = qp.rsample([self.mc_samples]).permute(1, 0, 2) #
+
             zp = qp.mean.unsqueeze(1)  # [B,1,P]
 
             vi = zbg + 1e-6
