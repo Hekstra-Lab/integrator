@@ -5,4 +5,5 @@ from .wandb_logger import (
     IntensityPlotter,
     IntegratedPlotter,
     Plotter,
+    Plotter2,
 )
