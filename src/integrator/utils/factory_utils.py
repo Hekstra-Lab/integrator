@@ -293,6 +293,8 @@ def create_integrator(config):
             prior_tensor=config["integrator"]["prior_tensor"],
             pI_params=config["integrator"]["pI_params"],
             pbg_params=config["integrator"]["pbg_params"],
+            count_stats=config["integrator"]["count_stats"],
+            coord_stats=config["integrator"]["coord_stats"],
         )
         return integrator
 
