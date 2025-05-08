@@ -930,7 +930,7 @@ class IntegratorLog1p2(BaseIntegrator):
             zbg = (
                 qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
             )  # [B,S,1]
-            # zp = qp.rsample([self.mc_samples]).permute(1, 0, 2) #
+            # zp = qp.rsample([self.mc_samples]).permute(1, 0, 2) #integrator.py
             zp = qp.mean.unsqueeze(1)  # [B,1,P]
 
             vi = zbg + 1e-6
@@ -1143,6 +1143,8 @@ class IntegratorFFLog1p(BaseIntegrator):
         max_iterations=4,
         profile_threshold=0.001,
         renyi_scale=0.00,
+        ff_scale=1.0,
+        num_fourier_features=10,
     ):
         super().__init__()
         # Save hyperparameters
@@ -1170,9 +1172,8 @@ class IntegratorFFLog1p(BaseIntegrator):
         self.bg_encoder = MLPMetadataEncoder(feature_dim=10, output_dims=64)
         self.linear = Linear(64 * 2, 64)
         self.renyi_scale = renyi_scale
-        # self.B = torch.randn(10, 3)  # Gaussian matrix
-
         self.B = torch.distributions.Normal(0, 2**4).sample((10, 3))
+        self.register_buffer("B", B, persistent=True)
 
     def calculate_intensities(self, counts, qbg, qp, masks):
         with torch.no_grad():
@@ -1244,7 +1245,7 @@ class IntegratorFFLog1p(BaseIntegrator):
         q4 = torch.quantile(counts_, 0.50, dim=1)
         q5 = torch.quantile(counts_, 0.25, dim=1)
 
-        intensity_encoding = torch.stack(
+        vals = torch.stack(
             [
                 torch.log1p(total_photons),
                 torch.log1p(mean_photons),
@@ -1259,20 +1260,31 @@ class IntegratorFFLog1p(BaseIntegrator):
             ]
         ).transpose(1, 0)
 
+        encoding_dim = 64
+        freqs = 2.0 ** torch.arange(
+            0, encoding_dim // (2 * vals.shape[-1]), device=device
+        )
+
+        sin_encoding = torch.sin(vals.unsqueeze(-1) * freqs.unsqueeze(0).unsqueeze(0))
+        cos_encoding = torch.cos(vals.unsqueeze(-1) * freqs.unsqueeze(0).unsqueeze(0))
+        sin_encoding = sin_encoding.reshape(sin_encoding.shape[0], -1)
+        cos_encoding = cos_encoding.reshape(cos_encoding.shape[0], -1)
+        intensity_encoding = torch.concat((sin_encoding, cos_encoding), dim=1)
+
         profile_rep = self.encoder(samples_, masks)
         intensity_rep = self.bg_encoder(intensity_encoding)
         bgrep = self.bg_encoder(intensity_encoding)
 
         qp = self.qp(profile_rep)
         qbg = self.qbg(bgrep)
-        qI = self.qI(intensity_rep)
+        qI = self.qI(intensity_rep, metarep=rep)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
         zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
         zI = qI.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
-        intensity_mean = qI.mean  # [batch_size]
-        intensity_var = qI.variance  # [batch_size]
+        intensity_mean = qI.mean
+        intensity_var = qI.variance
 
         rate = zI * zp + zbg
 
@@ -1428,4 +1440,4 @@ class IntegratorFFLog1p(BaseIntegrator):
         return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
 
 
-
+# %%
