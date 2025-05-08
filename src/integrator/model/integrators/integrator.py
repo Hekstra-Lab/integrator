@@ -1172,7 +1172,7 @@ class IntegratorFFLog1p(BaseIntegrator):
         self.bg_encoder = MLPMetadataEncoder(feature_dim=60, output_dims=64)
         self.linear = Linear(64 * 2, 64)
         self.renyi_scale = renyi_scale
-        self.B = torch.distributions.Normal(0, 2**4).sample((10, 3))
+        B = torch.distributions.Normal(0, 2**4).sample((10, 3))
         self.register_buffer("B", B, persistent=True)
 
     def calculate_intensities(self, counts, qbg, qp, masks):
