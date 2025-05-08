@@ -332,9 +332,6 @@ class DefaultIntegrator(BaseIntegrator):
 
 
 # %%
-
-
-# %%
 import math
 
 
@@ -355,57 +352,48 @@ class Linear(torch.nn.Linear):
         self.weight = weight_initializer(self.weight)
 
 
-class ResidualLayer(nn.Module):
-    def __init__(self, width, dropout=None):
+class ResidualLayer(torch.nn.Module):
+    def __init__(self, dims, dropout=None):
         super().__init__()
+        self.linear_1 = Linear(dims, 2 * dims)
+        self.linear_2 = Linear(2 * dims, dims)
+        self.dropout = (
+            torch.nn.Dropout(dropout) if dropout is not None else torch.nn.Identity()
+        )
 
-        self.fc1 = Linear(width, width)
-        self.fc2 = Linear(width, width)
+    def activation(self, data):
+        return torch.relu(data)
 
-        self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(dropout) if dropout else None
-
-    def forward(self, x):
-        residual = x
-        out = x
-        out = self.relu(out)
-        out = self.fc1(out)
-        out = self.relu(out)
-
-        if self.dropout:
-            out = self.dropout(out)
-        out = self.fc2(out)
-        out += residual
-
-        return out
+    def forward(self, data):
+        out = self.activation(data)
+        out = self.linear_1(out)
+        out = self.activation(out)
+        out = self.dropout(out)
+        out = self.linear_2(out)
+        return out + data
 
 
 class MLP(torch.nn.Module):
-    def __init__(self, width, depth, dropout=None, output_dims=None):
+    """
+    If d_in \neq width, you must specify it .
+    """
+
+    # If d_in \neq width, you must specify it
+    def __init__(self, width, depth, dropout=None, d_in=None, output_dims=None):
+        """
+        Multi-layer perceptron (MLP) module
+        """
         super().__init__()
-        layers = [ResidualLayer(width, dropout=dropout) for _ in range(depth)]
+        layers = []
+        if d_in is not None:
+            layers.append(Linear(d_in, width))
+        layers.extend([ResidualLayer(width, dropout=dropout) for i in range(depth)])
         if output_dims is not None:
             layers.append(Linear(width, output_dims))
         self.main = torch.nn.Sequential(*layers)
 
-    def forward(self, data):
-        # Check if the input has 2 or 3 dimensions
-        if len(data.shape) == 3:
-            batch_size, num_pixels, features = data.shape
-            data = data.view(
-                -1, features
-            )  # Flatten to [batch_size * num_pixels, features]
-        elif len(data.shape) == 2:
-            batch_size, features = data.shape
-            num_pixels = None  # No pixels in this case
-
-        # data = data.view(-1, features)
+    def forward(self, data, **kwargs):
         out = self.main(data)
-
-        # If there were pixels, reshape back to [batch_size, num_pixels, output_dims]
-        if num_pixels is not None:
-            out = out.view(batch_size, num_pixels, -1)  # Reshape back if needed
-
         return out
 
 
@@ -418,41 +406,33 @@ class MeanPool(torch.nn.Module):
         )
 
     def forward(self, data, mask=None):
-        data = data * mask
+        if mask is not None:
+            data = data * mask.unsqueeze(-1)
+
         out = torch.sum(data, dim=1, keepdim=True)
         if mask is None:
             denom = data.shape[-1]
         else:
             denom = torch.sum(mask, dim=-2, keepdim=True)
-        out = out / denom
+        out = out / (denom + 1e-6)
 
-        return out.squeeze(1)
+        return out
 
 
-class MLPResNet(torch.nn.Module):
+class Encoder(torch.nn.Module):
     def __init__(self, depth=10, dmodel=64, feature_dim=7, dropout=None):
         super().__init__()
-        self.linear = Linear(feature_dim, dmodel)
-        self.relu = torch.nn.ReLU()
-        self.mlp_1 = MLP(dmodel, depth, dropout=dropout, output_dims=dmodel)
+        self.dropout = None
+        self.mlp_1 = MLP(
+            dmodel, depth, d_in=feature_dim, dropout=self.dropout, output_dims=dmodel
+        )
         self.mean_pool = MeanPool()
 
-    def forward(self, shoebox_data, mask):
-        batch_size, num_pixels, _ = shoebox_data.shape
-
-        # Initial transformations
-        out = self.linear(shoebox_data)
-        out = self.relu(out)
-
-        # Reshape for BatchNorm1d, apply it, then reshape back
-        out = out.view(batch_size * num_pixels, -1)
-        out = out.view(batch_size, num_pixels, -1)
-
-        # Pass through residual blocks
-        out = self.mlp_1(out)
-        pooled_out = self.mean_pool(out, mask.unsqueeze(-1))
-
-        return pooled_out
+    def forward(self, shoebox_data, mask=None):
+        out = self.mlp_1(shoebox_data)
+        pooled_out = self.mean_pool(out)
+        # outputs = self.linear(pooled_out)
+        return pooled_out.squeeze(1)
 
 
 class IntegratorMLP(BaseIntegrator):
@@ -494,7 +474,7 @@ class IntegratorMLP(BaseIntegrator):
         self.qbg = qbg
         self.automatic_optimization = True
         self.max_iterations = max_iterations
-        self.encoder = MLPResNet(feature_dim=7, dmodel=64)
+        self.encoder = Encoder(feature_dim=7, dmodel=64)
         if prior_tensor is not None:
             self.concentration = torch.load(prior_tensor, weights_only=False)
             self.concentration[self.concentration > 2] *= 40
@@ -577,13 +557,10 @@ class IntegratorMLP(BaseIntegrator):
         kl_terms = torch.zeros(batch_size, device=device)
 
         kl_p = torch.distributions.kl.kl_divergence(qp, pp)
-        # kl_terms += kl_p * self.pp_scale
 
         kl_bg = torch.distributions.kl.kl_divergence(qbg, pbg)
-        # kl_terms += kl_bg * self.pbg_scale
 
         kl_I = torch.distributions.kl.kl_divergence(qI, pI)
-        # kl_terms += kl_I * self.pI_scale
 
         kl_terms = kl_I * self.pI_scale + kl_bg * self.pbg_scale + kl_p * self.pp_scale
 
