@@ -362,7 +362,7 @@ class ResidualLayer(nn.Module):
         self.fc1 = Linear(width, width)
         self.fc2 = Linear(width, width)
 
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU()
         self.dropout = nn.Dropout(dropout) if dropout else None
 
     def forward(self, x):
@@ -433,7 +433,7 @@ class MLPResNet(torch.nn.Module):
     def __init__(self, depth=10, dmodel=64, feature_dim=7, dropout=None):
         super().__init__()
         self.linear = Linear(feature_dim, dmodel)
-        self.relu = torch.nn.ReLU(inplace=True)
+        self.relu = torch.nn.ReLU()
         self.mlp_1 = MLP(dmodel, depth, dropout=dropout, output_dims=dmodel)
         self.mean_pool = MeanPool()
 
@@ -577,16 +577,21 @@ class IntegratorMLP(BaseIntegrator):
         kl_terms = torch.zeros(batch_size, device=device)
 
         kl_p = torch.distributions.kl.kl_divergence(qp, pp)
-        kl_terms += kl_p * self.pp_scale
+        # kl_terms += kl_p * self.pp_scale
 
         kl_bg = torch.distributions.kl.kl_divergence(qbg, pbg)
-        kl_terms += kl_bg * self.pbg_scale
+        # kl_terms += kl_bg * self.pbg_scale
+
         kl_I = torch.distributions.kl.kl_divergence(qI, pI)
-        kl_terms += kl_I * self.pI_scale
+        # kl_terms += kl_I * self.pI_scale
+
+        kl_terms = kl_I * self.pI_scale + kl_bg * self.pbg_scale + kl_p * self.pp_scale
 
         # calculate expected log likelihood
         ll = torch.distributions.Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
+
         ll_mean = torch.mean(ll, dim=1) * masks.squeeze(-1)
+
         neg_ll_batch = -ll_mean.sum(dim=1)
 
         batch_loss = neg_ll_batch + kl_terms
@@ -604,13 +609,18 @@ class IntegratorMLP(BaseIntegrator):
 
     def forward(self, counts, masks, reference):
         # Unpack batch
-        coords = counts[:, :, :6]
+        coords = counts[:, :, :6].clone()
         counts = torch.clamp(counts[..., -1], min=0) * masks
 
         device = counts.device
 
-        standardized_counts = (counts - self.count_mean.to(device)) / self.count_std.to(device)
-        standardized_coords = (coords - self.coord_mean.to(device)) / self.coord_std.to(device)
+        standardized_counts = (counts - self.count_mean.to(device)) / self.count_std.to(
+            device
+        )
+        standardized_coords = (coords - self.coord_mean.to(device)) / self.coord_std.to(
+            device
+        )
+
         shoebox = torch.cat(
             [
                 standardized_coords,
@@ -631,6 +641,7 @@ class IntegratorMLP(BaseIntegrator):
 
         intensity_mean = qI.mean
         intensity_var = qI.variance
+
         rate = zI * zp + zbg
 
         return {
