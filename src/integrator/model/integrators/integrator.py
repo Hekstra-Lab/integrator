@@ -55,10 +55,10 @@ class Integrator(BaseIntegrator):
         self.automatic_optimization = True
         self.loss_fn = loss
         self.max_iterations = max_iterations
-        self.intensity_encoder = MLPMetadataEncoder(feature_dim=60, output_dims=64)
-        self.bg_encoder = MLPMetadataEncoder(feature_dim=60, output_dims=64)
-        self.linear = Linear(64 * 2, 64)
+        self.bg_encoder = MLPMetadataEncoder(feature_dim=64, output_dims=64)
         self.renyi_scale = renyi_scale
+        B = torch.distributions.Normal(0, 1).sample((32, 10))
+        self.register_buffer("B", B, persistent=True)
 
     def calculate_intensities(self, counts, qbg, qp, masks):
         with torch.no_grad():
@@ -139,23 +139,24 @@ class Integrator(BaseIntegrator):
             ]
         ).transpose(1, 0)
 
-        encoding_dim = 64
-        freqs = 2.0 ** torch.arange(
-            0, encoding_dim // (2 * vals.shape[-1]), device=device
-        )
+        # encoding_dim = 64
+        # freqs = 2.0 ** torch.arange(
+        # 0, encoding_dim // (2 * vals.shape[-1]), device=device
+        # )
 
-        sin_encoding = torch.sin(vals.unsqueeze(-1) * freqs.unsqueeze(0).unsqueeze(0))
-        cos_encoding = torch.cos(vals.unsqueeze(-1) * freqs.unsqueeze(0).unsqueeze(0))
-        sin_encoding = sin_encoding.reshape(sin_encoding.shape[0], -1)
-        cos_encoding = cos_encoding.reshape(cos_encoding.shape[0], -1)
-        intensity_encoding = torch.concat((sin_encoding, cos_encoding), dim=1)
+        # sin_encoding = torch.sin(vals.unsqueeze(-1) * freqs.unsqueeze(0).unsqueeze(0))
+        # cos_encoding = torch.cos(vals.unsqueeze(-1) * freqs.unsqueeze(0).unsqueeze(0))
+        # sin_encoding = sin_encoding.reshape(sin_encoding.shape[0], -1)
+        # cos_encoding = cos_encoding.reshape(cos_encoding.shape[0], -1)
+        # intensity_encoding = torch.concat((sin_encoding, cos_encoding), dim=1)
+
+        proj = 2 * torch.pi * vals @ self.B.to(device).T
+
+        intensity_encoding = torch.cat([torch.sin(proj), torch.cos(proj)], dim=-1)
 
         rep = self.encoder(shoebox.reshape(shoebox.shape[0], 1, 3, 21, 21), masks)
         intensity_rep = self.bg_encoder(intensity_encoding)
         bgrep = self.bg_encoder(intensity_encoding)
-
-        # rep = torch.concat([rep, intensity_rep], dim=-1)
-        # rep = self.linear(rep)
 
         qbg = self.qbg(bgrep)
         qp = self.qp(rep)
