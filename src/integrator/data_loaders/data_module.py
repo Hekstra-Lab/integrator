@@ -238,6 +238,7 @@ class ShoeboxDataModule2(BaseDataModule):
             "counts": "counts.pt",
             "masks": "masks.pt",
             "stats": "stats.pt",
+            "coord_stats": "coords_stats.pt",
             "reference": "reference.pt",
             "standardized_counts": None,
         },
@@ -280,11 +281,17 @@ class ShoeboxDataModule2(BaseDataModule):
         reference = torch.load(
             os.path.join(self.data_dir, self.shoebox_file_names["reference"])
         )
+        coord_stats = torch.load(
+            os.path.join(self.data_dir, self.shoebox_file_names["coord_stats"])
+        )
 
         standardized_counts = (counts[..., -1] * masks) - stats[0] / stats[1].sqrt()
+
         coords = counts[:, :, :6]
-        mean_coords = coords.mean(dim=(0, 1))
-        std_coords = coords.view(-1, 6).std(dim=0, unbiased=True)
+
+        mean_coords = coord_stats["mean_coords"]
+        std_coords = coord_stats["std_coords"]
+
         standardized_coords = (coords - mean_coords) / std_coords
 
         shoeboxes = torch.cat(
