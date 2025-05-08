@@ -237,8 +237,6 @@ class ShoeboxDataModule2(BaseDataModule):
         shoebox_file_names={
             "counts": "counts.pt",
             "masks": "masks.pt",
-            "stats": "stats.pt",
-            "coord_stats": "coords_stats.pt",
             "reference": "reference.pt",
             "standardized_counts": None,
         },
@@ -275,35 +273,11 @@ class ShoeboxDataModule2(BaseDataModule):
         masks = torch.load(
             os.path.join(self.data_dir, self.shoebox_file_names["masks"])
         )
-        stats = torch.load(
-            os.path.join(self.data_dir, self.shoebox_file_names["stats"])
-        )
         reference = torch.load(
             os.path.join(self.data_dir, self.shoebox_file_names["reference"])
         )
-        coord_stats = torch.load(
-            os.path.join(self.data_dir, self.shoebox_file_names["coord_stats"])
-        )
 
-        standardized_counts = (counts[..., -1] * masks) - stats[0] / stats[1].sqrt()
-
-        coords = counts[:, :, :6]
-
-        mean_coords = coord_stats["mean_coords"]
-        std_coords = coord_stats["std_coords"]
-
-        standardized_coords = (coords - mean_coords) / std_coords
-
-        shoeboxes = torch.cat(
-            [
-                standardized_coords,
-                standardized_counts.unsqueeze(-1),
-            ],
-            dim=-1,
-        )
-        raw_counts = counts[..., -1]
-
-        self.full_dataset = TensorDataset(raw_counts, shoeboxes, masks, reference)
+        self.full_dataset = TensorDataset(counts, masks, reference)
 
         # Optionally, create a subset of the dataset
         if self.subset_size is not None and self.subset_size < len(self.full_dataset):
