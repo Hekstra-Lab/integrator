@@ -1169,7 +1169,7 @@ class IntegratorFFLog1p(BaseIntegrator):
         self.loss_fn = loss
         self.max_iterations = max_iterations
         # self.intensity_encoder = MLPMetadataEncoder(feature_dim=10, output_dims=64)
-        self.bg_encoder = MLPMetadataEncoder(feature_dim=60, output_dims=64)
+        self.bg_encoder = MLPMetadataEncoder(feature_dim=10, output_dims=64)
         self.linear = Linear(64 * 2, 64)
         self.renyi_scale = renyi_scale
         B = torch.distributions.Normal(0, 2**4).sample((10, 3))
@@ -1245,7 +1245,7 @@ class IntegratorFFLog1p(BaseIntegrator):
         q4 = torch.quantile(counts_, 0.50, dim=1)
         q5 = torch.quantile(counts_, 0.25, dim=1)
 
-        vals = torch.stack(
+        intensity_encoding = torch.stack(
             [
                 torch.log1p(total_photons),
                 torch.log1p(mean_photons),
@@ -1260,24 +1260,13 @@ class IntegratorFFLog1p(BaseIntegrator):
             ]
         ).transpose(1, 0)
 
-        encoding_dim = 64
-        freqs = 2.0 ** torch.arange(
-            0, encoding_dim // (2 * vals.shape[-1]), device=device
-        )
-
-        sin_encoding = torch.sin(vals.unsqueeze(-1) * freqs.unsqueeze(0).unsqueeze(0))
-        cos_encoding = torch.cos(vals.unsqueeze(-1) * freqs.unsqueeze(0).unsqueeze(0))
-        sin_encoding = sin_encoding.reshape(sin_encoding.shape[0], -1)
-        cos_encoding = cos_encoding.reshape(cos_encoding.shape[0], -1)
-        intensity_encoding = torch.concat((sin_encoding, cos_encoding), dim=1)
-
         profile_rep = self.encoder(samples_, masks)
         intensity_rep = self.bg_encoder(intensity_encoding)
         bgrep = self.bg_encoder(intensity_encoding)
 
         qp = self.qp(profile_rep)
         qbg = self.qbg(bgrep)
-        qI = self.qI(intensity_rep, metarep=profile_rep)
+        qI = self.qI(intensity_rep)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
         zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
