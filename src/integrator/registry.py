@@ -4,7 +4,7 @@ from .model.profiles import *
 from .model.loss import *
 from .model.integrators import *
 from .model.distribution import *
-from .data_loaders import ShoeboxDataModule
+from .data_loaders import *
 import torch
 
 REGISTRY = {
@@ -45,6 +45,7 @@ REGISTRY = {
         "integrator3": IntegratorLog1p,
         "integrator4": IntegratorLog1p2,
         "integrator5": IntegratorFFLog1p,
+        "integrator6": IntegratorMLP,
     },
     "q_I": {
         "gamma": GammaDistribution,
@@ -57,6 +58,7 @@ REGISTRY = {
     },
     "data_loader": {
         "default": ShoeboxDataModule,
+        "shoebox_data_module": ShoeboxDataModule2,
     },
 }
 

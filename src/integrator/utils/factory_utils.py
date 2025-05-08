@@ -221,7 +221,7 @@ def create_integrator(config):
         )
         return integrator
 
-    elif integrator_name == "integrator2":
+    elif integrator_name in {"integrator2", "integrator5"}:
         loss = create_module(
             "loss",
             config["components"]["loss"]["name"],
@@ -250,10 +250,12 @@ def create_integrator(config):
             learning_rate=config["integrator"]["learning_rate"],
             profile_threshold=config["integrator"]["profile_threshold"],
             renyi_scale=config["integrator"]["renyi_scale"],
+            num_fourier_features=config["integrator"]["num_fourier_features"],
+            ff_scale=config["integrator"]["ff_scale"],
         )
         return integrator
 
-    elif integrator_name in {"integrator", "integrator3", "integrator4", "integrator5"}:
+    elif integrator_name in {"integrator", "integrator3", "integrator4"}:
         loss = create_module(
             "loss",
             config["components"]["loss"]["name"],
@@ -276,6 +278,21 @@ def create_integrator(config):
             learning_rate=config["integrator"]["learning_rate"],
             profile_threshold=config["integrator"]["profile_threshold"],
             renyi_scale=config["integrator"]["renyi_scale"],
+        )
+        return integrator
+
+    elif integrator_name in {"integrator6"}:
+        integrator = integrator_class(
+            qbg=background_distribution,
+            qp=profile,
+            qI=intensity_distribution,
+            mc_samples=config["integrator"]["mc_samples"],
+            learning_rate=config["integrator"]["learning_rate"],
+            pI_scale=config["integrator"]["pI_scale"],
+            pbg_scale=config["integrator"]["pbg_scale"],
+            prior_tensor=config["integrator"]["prior_tensor"],
+            pI_params=config["integrator"]["pI_params"],
+            pbg_params=config["integrator"]["pbg_params"],
         )
         return integrator
 
@@ -507,7 +524,7 @@ def create_data_loader(config):
     data_loader_name = config["data_loader"]["name"]
     data_loader_class = REGISTRY["data_loader"][data_loader_name]
 
-    if data_loader_name == "default":
+    if data_loader_name in {"default", "shoebox_data_module"}:
         data_module = data_loader_class(
             data_dir=config["data_loader"]["params"]["data_dir"],
             batch_size=config["data_loader"]["params"]["batch_size"],
