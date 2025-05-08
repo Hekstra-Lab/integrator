@@ -1169,7 +1169,7 @@ class IntegratorFFLog1p(BaseIntegrator):
         self.loss_fn = loss
         self.max_iterations = max_iterations
         # self.intensity_encoder = MLPMetadataEncoder(feature_dim=10, output_dims=64)
-        self.bg_encoder = MLPMetadataEncoder(feature_dim=10, output_dims=64)
+        self.bg_encoder = MLPMetadataEncoder(feature_dim=60, output_dims=64)
         self.linear = Linear(64 * 2, 64)
         self.renyi_scale = renyi_scale
         self.B = torch.distributions.Normal(0, 2**4).sample((10, 3))
