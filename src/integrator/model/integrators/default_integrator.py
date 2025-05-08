@@ -503,6 +503,7 @@ class IntegratorMLP(BaseIntegrator):
             self.concentration = torch.ones(1323) * 0.0001
         self.pI_scale = pI_scale
         self.pbg_scale = pbg_scale
+        self.pp_scale = pp_scale
         self.pI_params = pI_params
         self.pbg_params = pbg_params
         self.eps = eps
@@ -584,7 +585,7 @@ class IntegratorMLP(BaseIntegrator):
         kl_terms += kl_I * self.pI_scale
 
         # calculate expected log likelihood
-        ll = torch.distributions.Poisson(rate + self.eps).log_prob(counts)
+        ll = torch.distributions.Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
         ll_mean = torch.mean(ll, dim=1) * masks.squeeze(-1)
         neg_ll_batch = -ll_mean.sum(dim=1)
 
@@ -603,13 +604,13 @@ class IntegratorMLP(BaseIntegrator):
 
     def forward(self, counts, masks, reference):
         # Unpack batch
-        counts = torch.clamp(counts[..., -1], min=0) * masks
         coords = counts[:, :, :6]
+        counts = torch.clamp(counts[..., -1], min=0) * masks
 
         device = counts.device
 
-        standardized_counts = (counts - self.count_mean) / self.count_std
-        standardized_coords = (coords - self.coord_mean) / self.coord_std
+        standardized_counts = (counts - self.count_mean.to(device)) / self.count_std.to(device)
+        standardized_coords = (coords - self.coord_mean.to(device)) / self.coord_std.to(device)
         shoebox = torch.cat(
             [
                 standardized_coords,
