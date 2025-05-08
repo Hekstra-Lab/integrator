@@ -1277,7 +1277,7 @@ class IntegratorFFLog1p(BaseIntegrator):
 
         qp = self.qp(profile_rep)
         qbg = self.qbg(bgrep)
-        qI = self.qI(intensity_rep, metarep=rep)
+        qI = self.qI(intensity_rep, metarep=profile_rep)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
         zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
