@@ -817,7 +817,7 @@ class IntegratorLog1p(BaseIntegrator):
         qbg = self.qbg(bgrep)
         qp = self.qp(rep)
         # qI = self.qI(intensity_rep)
-        qI = self.qI(intensity_rep, metarep=rep)
+        qI = self.qI(intensity_rep)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
         zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
