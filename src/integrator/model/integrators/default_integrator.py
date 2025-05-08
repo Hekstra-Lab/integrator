@@ -409,7 +409,7 @@ class MeanPool(torch.nn.Module):
         if mask is not None:
             data = data * mask.unsqueeze(-1)
 
-        out = torch.sum(data, dim=1, keepdim=True)
+        out = torch.sum(data, dim=1)
 
         if mask is None:
             denom = data.shape[-1]
@@ -417,7 +417,7 @@ class MeanPool(torch.nn.Module):
             denom = torch.sum(mask, dim=-1, keepdim=True)
         out = out / (denom + 1e-6)
 
-        return out
+        return out.squeeze(1)
 
 
 class Encoder(torch.nn.Module):
