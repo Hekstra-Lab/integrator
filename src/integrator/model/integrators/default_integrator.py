@@ -471,6 +471,8 @@ class IntegratorMLP(BaseIntegrator):
         pbg_scale=0.0001,
         pp_scale=0.0001,
         eps=1e-6,
+        count_stats="stats.pt",
+        coord_stats="coords.pt",
     ):
         super().__init__()
         # Save hyperparameters
@@ -504,6 +506,12 @@ class IntegratorMLP(BaseIntegrator):
         self.pI_params = pI_params
         self.pbg_params = pbg_params
         self.eps = eps
+        self.coord_stats = torch.load(coord_stats, weights_only=False)
+        self.count_stats = torch.load(count_stats, weights_only=False)
+        self.coord_mean = self.coord_stats["mean_coords"]
+        self.coord_std = self.coord_stats["std_coords"]
+        self.count_mean = self.count_stats[0]
+        self.count_std = self.count_stats[1].sqrt()
 
     def calculate_intensities(self, counts, qbg, qp, masks):
         with torch.no_grad():
@@ -593,10 +601,22 @@ class IntegratorMLP(BaseIntegrator):
             kl_p * self.pp_scale,
         )
 
-    def forward(self, counts, shoebox, masks, reference):
+    def forward(self, counts, masks, reference):
         # Unpack batch
-        counts = torch.clamp(counts, min=0) * masks
+        counts = torch.clamp(counts[..., -1], min=0) * masks
+        coords = counts[:, :, :6]
+
         device = counts.device
+
+        standardized_counts = (counts - self.count_mean) / self.count_std
+        standardized_coords = (coords - self.coord_mean) / self.coord_std
+        shoebox = torch.cat(
+            [
+                standardized_coords,
+                standardized_counts.unsqueeze(-1),
+            ],
+            dim=-1,
+        )
 
         rep = self.encoder(shoebox, masks)
 
@@ -643,8 +663,8 @@ class IntegratorMLP(BaseIntegrator):
         }
 
     def training_step(self, batch, batch_idx):
-        counts, shoebox, masks, reference = batch
-        outputs = self(counts, shoebox, masks, reference)
+        counts, masks, reference = batch
+        outputs = self(counts, masks, reference)
 
         # Calculate loss
         (loss, neg_ll, kl, kl_bg, kl_I, kl_p) = self.loss_fn(
@@ -675,8 +695,8 @@ class IntegratorMLP(BaseIntegrator):
 
     def validation_step(self, batch, batch_idx):
         # Unpack batch
-        counts, shoebox, masks, reference = batch
-        outputs = self(counts, shoebox, masks, reference)
+        counts, masks, reference = batch
+        outputs = self(counts, masks, reference)
 
         (
             loss,
@@ -706,8 +726,8 @@ class IntegratorMLP(BaseIntegrator):
         return outputs
 
     def predict_step(self, batch, batch_idx):
-        counts, shoebox, masks, reference = batch
-        outputs = self(counts, shoebox, masks, reference)
+        counts, masks, reference = batch
+        outputs = self(counts, masks, reference)
 
         intensities = self.calculate_intensities(
             counts=outputs["counts"],
