@@ -4,7 +4,7 @@ from integrator.model.integrators import BaseIntegrator
 from integrator.model.loss import Loss
 from integrator.model.decoders import Decoder
 from integrator.layers import Linear
-from integrator.model.profiles import DirichletProfile,MVNProfile
+from integrator.model.profiles import DirichletProfile, MVNProfile
 import torch.nn.functional as F
 import numpy as np
 from integrator.model.encoders import ShoeboxEncoder
@@ -426,7 +426,7 @@ class Encoder(torch.nn.Module):
     def __init__(self, depth=10, dmodel=64, feature_dim=7, dropout=None):
         super().__init__()
         self.dropout = None
-        self.dmodel=dmodel
+        self.dmodel = dmodel
         self.mlp_1 = MLP(
             dmodel, depth, d_in=feature_dim, dropout=self.dropout, output_dims=dmodel
         )
@@ -435,10 +435,11 @@ class Encoder(torch.nn.Module):
     def forward(self, shoebox_data, mask=None):
         batch_size = shoebox_data.shape[0]
         out = self.mlp_1(shoebox_data)
-        #pooled_out = self.mean_pool(out, mask)
+        # pooled_out = self.mean_pool(out, mask)
         # outputs = self.linear(pooled_out)
-        #return pooled_out.view(batch_size,self.dmodel)
-        return out.view(batch_size,self.dmodel)
+        # return pooled_out.view(batch_size,self.dmodel)
+        return out.view(batch_size, self.dmodel)
+
 
 class DirichletProfile(torch.nn.Module):
     """
@@ -457,8 +458,8 @@ class DirichletProfile(torch.nn.Module):
             alphas = self.alpha_layer(alphas)
 
         alphas = F.softplus(alphas) + self.eps
-        alphas = torch.clamp(alphas,max=1e3)
-        print('max alpha',alphas.max())
+        alphas = torch.clamp(alphas, max=1e3)
+        print("max alpha", alphas.max())
         q_p = torch.distributions.Dirichlet(alphas + 1e-4)
 
         return q_p
@@ -470,33 +471,64 @@ class TinyNet(nn.Module):
     1323 → 512 → 128 → d_out
     """
 
-    def __init__(self, d_out: int,dropout_rate:float):
+    def __init__(self, d_out: int, dropout_rate: float):
         super().__init__()
-        self.fc1 = nn.Linear(1323, 512)   # layer 1
-        self.fc2 = nn.Linear(512, 128)    # layer 2
+        self.fc1 = nn.Linear(1323, 512)  # layer 1
+        self.fc2 = nn.Linear(512, 128)  # layer 2
         self.fc3 = nn.Linear(128, d_out)  # output layer
-        self.dropout = nn.Dropout(dropout_rate)    # optional; set p=0.0 to disable
+        self.dropout = nn.Dropout(dropout_rate)  # optional; set p=0.0 to disable
 
-        # Kaiming-uniform is already the default for nn.Linear,
-        # so we do NOT override reset_parameters.
-
-    def forward(self, x,mask=None):
+    def forward(self, x, mask=None):
         x = F.relu(self.fc1(x))
-        x = self.dropout(x)               # has no effect if p=0
+        x = self.dropout(x)  # has no effect if p=0
         x = F.relu(self.fc2(x))
-        x = self.fc3(x)                   # leave last activation to the caller
+        x = self.fc3(x)  # leave last activation to the caller
         return x
 
-WIDTH = 2048               # 1–4 × 1323 is typical
+
+WIDTH = 2048  # 1–4 × 1323 is typical
+
+class TinyCNN(nn.Module):
+    def __init__(self, d_out: int):
+        super().__init__()
+        # Simple CNN layers
+        self.conv1 = nn.Conv2d(3, 32, kernel_size=3, padding=1)  # 3×21×21 -> 32×21×21
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1) # 32×21×21 -> 64×21×21
+        self.pool = nn.MaxPool2d(2)                             # 64×21×21 -> 64×10×10
+
+        # Calculate flattened size
+        flattened_size = 64 * 10 * 10  # = 6400
+
+        # Dense layers
+        self.fc1 = nn.Linear(flattened_size, 512)
+        self.fc2 = nn.Linear(512, d_out)
+        self.act = nn.GELU()  # Same as your WideTinyNet
+        self.drop = nn.Dropout(0.1)
+
+    def forward(self, x, mask=None):
+        # x shape: [batch, 3, 21, 21]
+        x = self.act(self.conv1(x))
+        x = self.act(self.conv2(x))
+        x = self.pool(x)
+
+        # Flatten
+        x = x.view(x.size(0), -1)
+
+        x = self.act(self.fc1(x))
+        x = self.drop(x)
+        x = self.fc2(x)
+        return x
+
+
 class WideTinyNet(nn.Module):
     def __init__(self, d_out: int):
         super().__init__()
         self.fc1 = nn.Linear(1323, WIDTH)
         self.fc2 = nn.Linear(WIDTH, d_out)
-        self.act = nn.GELU()          # smoother than ReLU, still norm-free
-        self.drop = nn.Dropout(0.1)   # mild regularisation
+        self.act = nn.GELU()  # smoother than ReLU, still norm-free
+        self.drop = nn.Dropout(0.1)  # mild regularisation
 
-    def forward(self, x,mask=None):
+    def forward(self, x, mask=None):
         x = self.act(self.fc1(x))
         x = self.drop(x)
         return self.fc2(x)
@@ -541,20 +573,16 @@ class IntegratorMLP(BaseIntegrator):
         self.qbg = qbg
         self.automatic_optimization = True
         self.max_iterations = max_iterations
-        #self.encoder = TinyNet(d_out = 64,dropout_rate=0.0)
-        #self.encoder2 = TinyNet(d_out = 64,dropout_rate=0.0)
-        self.encoder = WideTinyNet(d_out = 64)
-        self.encoder2 = WideTinyNet(d_out = 64)
-        #self.encoder2 = TinyNet(d_out = 64)
-
-
-        #if prior_tensor is not None:
-        #    self.concentration = torch.load(prior_tensor, weights_only=False)
-        #    self.concentration[self.concentration > 2] *= 40
-        #    self.concentration /= self.concentration.sum()
-        #else:
-            #self.concentration = torch.ones(1323) * 0.0001
-        self.concentration = torch.ones(1323)
+        # self.encoder = TinyNet(d_out = 64,dropout_rate=0.0)
+        # self.encoder2 = TinyNet(d_out = 64,dropout_rate=0.0)
+        self.encoder = WideTinyNet(d_out=64)
+        self.encoder2 = WideTinyNet(d_out=64)
+        if prior_tensor is not None:
+           self.concentration = torch.load(prior_tensor, weights_only=False)
+           self.concentration[self.concentration > 2] *= 40
+           self.concentration /= self.concentration.sum()
+        else:
+        self.concentration = torch.ones(1323) * 0.0001
 
         self.pI_scale = pI_scale
         self.pbg_scale = pbg_scale
@@ -577,7 +605,7 @@ class IntegratorMLP(BaseIntegrator):
             )  # [B,S,1]
 
             zp = qp.mean.unsqueeze(1)  # [B,1,P]
-            #zp = qp.unsqueeze(1)
+            # zp = qp.unsqueeze(1)
 
             vi = zbg + 1e-6
 
@@ -639,7 +667,7 @@ class IntegratorMLP(BaseIntegrator):
         kl_I = torch.distributions.kl.kl_divergence(qI, pI)
 
         kl_terms = kl_I * self.pI_scale + kl_bg * self.pbg_scale + kl_p * self.pp_scale
-        #kl_terms = kl_I * self.pI_scale + kl_bg * self.pbg_scale 
+        # kl_terms = kl_I * self.pI_scale + kl_bg * self.pbg_scale
 
         # calculate expected log likelihood
         ll = torch.distributions.Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
@@ -659,44 +687,43 @@ class IntegratorMLP(BaseIntegrator):
             kl_bg * self.pbg_scale,
             kl_I * self.pI_scale,
             kl_p * self.pp_scale,
-            #torch.tensor([0.0])
+            # torch.tensor([0.0])
         )
 
     def forward(self, counts, masks, reference):
         # Unpack batch
-        #coords = counts[:, :, :6].clone()
+        # coords = counts[:, :, :6].clone()
         counts = torch.clamp(counts[..., -1], min=0) * masks
-        print('counts max',counts.sum(-1).max())
+        print("counts max", counts.sum(-1).max())
 
-        #device = counts.device
+        # device = counts.device
 
-        #standardized_counts = (counts - self.count_mean.to(device)) / self.count_std.to(
+        # standardized_counts = (counts - self.count_mean.to(device)) / self.count_std.to(
         #    device
-        #)
-        #standardized_coords = (coords - self.coord_mean.to(device)) / self.coord_std.to(
+        # )
+        # standardized_coords = (coords - self.coord_mean.to(device)) / self.coord_std.to(
         #    device
-        #)
+        # )
         ##normed_counts = (counts/counts.max(-1)[0].unsqueeze(-1)).unsqueeze(-1)
 
-        #print('count mean',standardized_counts.mean())
-        #print('count var',standardized_counts.var())
+        # print('count mean',standardized_counts.mean())
+        # print('count var',standardized_counts.var())
 
-
-        #shoebox = torch.cat(
+        # shoebox = torch.cat(
         #    [
         #        standardized_coords,
         #        standardized_counts.unsqueeze(-1),
         #    ],
         #    dim=-1,
-        #)
+        # )
 
         logged_counts = torch.log1p(counts)
-        #logged_counts = counts/self.max
+        # logged_counts = counts/self.max
 
         rep = self.encoder(logged_counts, masks)
-        #rep = self.encoder(standardized_counts.reshape(shoebox.shape[0], 1, 3, 21, 21), masks)
-        #rep2 = self.encoder2(shoebox,masks)
-        rep2 = self.encoder2(logged_counts,masks)
+        # rep = self.encoder(standardized_counts.reshape(shoebox.shape[0], 1, 3, 21, 21), masks)
+        # rep2 = self.encoder2(shoebox,masks)
+        rep2 = self.encoder2(logged_counts, masks)
 
         qp = self.qp(rep)
         qbg = self.qbg(rep2)
@@ -710,7 +737,7 @@ class IntegratorMLP(BaseIntegrator):
         intensity_var = qI.variance
 
         rate = zI * zp + zbg
-        #rate = zI * qp.unsqueeze(1) + zbg
+        # rate = zI * qp.unsqueeze(1) + zbg
 
         return {
             "rates": rate,
@@ -719,7 +746,7 @@ class IntegratorMLP(BaseIntegrator):
             "qbg": qbg,
             "qp": qp,
             "qp_mean": qp.mean,
-            #"qp_mean": qp,
+            # "qp_mean": qp,
             "qI": qI,
             "intensity_mean": intensity_mean,
             "intensity_mean": intensity_mean,
@@ -730,7 +757,7 @@ class IntegratorMLP(BaseIntegrator):
             "dials_I_prf_var": reference[:, 9],
             "refl_ids": reference[:, -1],
             "profile": qp.mean,
-            #"profile":qp,
+            # "profile":qp,
             "zp": qp,
             "x_c": reference[:, 0],
             "y_c": reference[:, 1],
@@ -837,5 +864,5 @@ class IntegratorMLP(BaseIntegrator):
         }
 
     def configure_optimizers(self):
-        #return torch.optim.Adam(self.parameters(), lr=self.learning_rate,weight_decay=1e-6)
+        # return torch.optim.Adam(self.parameters(), lr=self.learning_rate,weight_decay=1e-6)
         return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
