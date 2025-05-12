@@ -221,6 +221,33 @@ def create_integrator(config):
         )
         return integrator
 
+    elif integrator_name in {"integrator5"}:
+        loss = create_module(
+            "loss",
+            config["components"]["loss"]["name"],
+            **config["components"]["loss"]["params"],
+        )
+
+        encoder = create_module(
+            "encoder",
+            config["components"]["encoder"]["name"],
+            **config["components"]["encoder"]["params"],
+        )
+        integrator = integrator_class(
+            encoder=encoder,
+            loss=loss,
+            qbg=background_distribution,
+            qp=profile,
+            qI=intensity_distribution,
+            mc_samples=config["integrator"]["mc_samples"],
+            learning_rate=config["integrator"]["learning_rate"],
+            profile_threshold=config["integrator"]["profile_threshold"],
+            renyi_scale=config["integrator"]["renyi_scale"],
+            num_fourier_features=config["integrator"]["num_fourier_features"],
+            ff_scale=config["integrator"]["ff_scale"],
+        )
+        return integrator
+
     elif integrator_name in {"integrator2", "integrator5"}:
         loss = create_module(
             "loss",
