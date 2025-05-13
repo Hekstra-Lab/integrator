@@ -158,7 +158,7 @@ class Integrator(BaseIntegrator):
         self.loss_fn = loss
         self.max_iterations = max_iterations
         # self.bg_encoder = MLPMetadataEncoder(feature_dim=60, output_dims=64)
-        self.bg_encoder = PixelEncoder(encoding_dim=1323)
+        self.bg_encoder = MLPMetadataEncoder(feature_dim=1323)
         self.renyi_scale = renyi_scale
         B = torch.distributions.Normal(0, 1).sample((32, 10))
         self.register_buffer("B", B, persistent=True)
