@@ -142,7 +142,6 @@ def create_components(config):
 
 
 def create_integrator(config):
-
     integrator_name = config["integrator"]["name"]
     integrator_class = REGISTRY["integrator"][integrator_name]
 
@@ -310,9 +309,20 @@ def create_integrator(config):
         return integrator
 
     elif integrator_name in {"integrator6"}:
+        encoder1 = create_module(
+            "image_encoder",
+            config["components"]["image_encoder"]["name"],
+            **config["components"]["image_encoder"]["params"],
+        )
+        encoder2 = create_module(
+            "encoder",
+            config["components"]["encoder"]["name"],
+            **config["components"]["encoder"]["params"],
+        )
+
         integrator = integrator_class(
-            encoder1=config["components"]["image_encoder"],
-            encoder2=config["components"]["encoder"],
+            encoder1=encoder1,
+            encoder2=encoder2,
             qbg=background_distribution,
             qp=profile,
             qI=intensity_distribution,
