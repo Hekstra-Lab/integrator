@@ -471,9 +471,9 @@ class TinyNet(nn.Module):
     1323 → 512 → 128 → d_out
     """
 
-    def __init__(self, d_out: int, dropout_rate: float):
+    def __init__(self, d_out: int, dropout_rate: float, d_in= 1323):
         super().__init__()
-        self.fc1 = nn.Linear(1323, 512)  # layer 1
+        self.fc1 = nn.Linear(d_in, 512)  # layer 1
         self.fc2 = nn.Linear(512, 128)  # layer 2
         self.fc3 = nn.Linear(128, d_out)  # output layer
         self.dropout = nn.Dropout(dropout_rate)  # optional; set p=0.0 to disable
@@ -507,7 +507,9 @@ class TinyCNN(nn.Module):
 
     def forward(self, x, mask=None):
         # x shape: [batch, 3, 21, 21]
-        x = self.act(self.conv1(x))
+        #x = self.act(self.conv1(x.view(x.shape[0],3,21,21)))
+        if x.ndim != 4:
+            x = x.view(x.shape[0], 3, 21, 21)
         x = self.act(self.conv2(x))
         x = self.pool(x)
 
@@ -518,6 +520,82 @@ class TinyCNN(nn.Module):
         x = self.drop(x)
         x = self.fc2(x)
         return x
+
+
+class TinyConv3D(nn.Module):
+    def __init__(
+        self,
+        d_out=64,
+        in_channels=1,
+        input_shape=(21, 21, 3),  # (H, W, D)
+    ):
+        super().__init__()
+        
+        # First define all activation functions
+        self.act = nn.GELU()
+        self.drop = nn.Dropout(0.1)
+        
+        # Conv layers
+        self.conv1 = nn.Conv3d(
+            in_channels=in_channels,
+            out_channels=32,
+            kernel_size=(1, 3, 3),
+            padding=(0, 1, 1),
+        )
+        
+        self.pool = nn.MaxPool3d(
+            kernel_size=(1, 2, 2), 
+            stride=(1, 2, 2), 
+            ceil_mode=True
+        )
+        
+        self.conv2 = nn.Conv3d(
+            in_channels=32,
+            out_channels=64,
+            kernel_size=(3, 3, 3),
+            padding=(0, 0, 0),
+        )
+        
+        # Calculate flattened size
+        self.flattened_size = self._infer_flattened_size(
+            input_shape=input_shape, 
+            in_channels=in_channels
+        )
+        
+        # Final linear layer
+        self.fc = nn.Linear(self.flattened_size, d_out)
+        
+    def _infer_flattened_size(self, input_shape, in_channels):
+        # input_shape: (H, W, D)
+        with torch.no_grad():
+            # (B, C, D, H, W)
+            dummy = torch.zeros(
+                1, in_channels, input_shape[2], input_shape[0], input_shape[1]
+            )
+            x = self.pool(self.act(self.conv1(dummy)))
+            x = self.act(self.conv2(x))
+            return x.numel()
+        
+    def forward(self, x, mask=None):
+        # Make sure input is correctly shaped: [B, C, D, H, W]
+        # If not already shaped correctly, reshape it
+        if x.ndim != 5:
+            x = x.view(x.shape[0], 1, 3, 21, 21)
+            
+        # Apply first conv and pooling
+        x = self.act(self.conv1(x))
+        x = self.pool(x)
+        
+        # Apply second conv
+        x = self.act(self.conv2(x))
+        
+        # Flatten and apply fully connected layer
+        x = x.view(x.size(0), -1)
+        x = self.drop(x)
+        x = self.fc(x)
+        
+        return x
+
 
 
 class WideTinyNet(nn.Module):
@@ -532,6 +610,14 @@ class WideTinyNet(nn.Module):
         x = self.act(self.fc1(x))
         x = self.drop(x)
         return self.fc2(x)
+
+def kl_beta(epoch, total_warmup_epochs=20):
+    """
+    Linear warm-up:
+    β = 0 at epoch 0,  β = 1 after `total_warmup_epochs`.
+    """
+    return min(1.0, epoch / total_warmup_epochs)
+
 
 
 class IntegratorMLP(BaseIntegrator):
@@ -548,7 +634,7 @@ class IntegratorMLP(BaseIntegrator):
         pbg_params={"loc": 0.0, "scale": 1.0},
         pI_scale=0.0001,
         pbg_scale=0.0001,
-        pp_scale=0.0001,
+        pp_scale=10.0,
         eps=1e-6,
         count_stats="stats.pt",
         coord_stats="coords.pt",
@@ -566,6 +652,7 @@ class IntegratorMLP(BaseIntegrator):
         )
         self.learning_rate = learning_rate
         self.mc_samples = mc_samples
+        self.kl_warmup_epochs = 40
 
         # Model components
         self.qp = DirichletProfile(dmodel=64)
@@ -573,16 +660,23 @@ class IntegratorMLP(BaseIntegrator):
         self.qbg = qbg
         self.automatic_optimization = True
         self.max_iterations = max_iterations
-        # self.encoder = TinyNet(d_out = 64,dropout_rate=0.0)
-        # self.encoder2 = TinyNet(d_out = 64,dropout_rate=0.0)
-        self.encoder = WideTinyNet(d_out=64)
-        self.encoder2 = WideTinyNet(d_out=64)
+        #self.encoder = TinyNet(d_out = 64,dropout_rate=0.0)
+        self.encoder2 = TinyNet(d_out = 64,dropout_rate=0.0,d_in=1323+10)
+        #self.encoder = WideTinyNet(d_out=64)
+        #self.encoder2 = WideTinyNet(d_out=64)
+        #self.encoder = TinyCNN(d_out=64)
+        #self.encoder2 = TinyCNN(d_out=64)
+        self.encoder = TinyConv3D(d_out=64)
+        #self.encoder2 = TinyConv3D(d_out=64)
+
+
+
         if prior_tensor is not None:
            self.concentration = torch.load(prior_tensor, weights_only=False)
            self.concentration[self.concentration > 2] *= 40
            self.concentration /= self.concentration.sum()
         else:
-        self.concentration = torch.ones(1323) * 0.0001
+           self.concentration = torch.ones(1323) * 0.0001
 
         self.pI_scale = pI_scale
         self.pbg_scale = pbg_scale
@@ -596,6 +690,7 @@ class IntegratorMLP(BaseIntegrator):
         self.coord_std = self.coord_stats["std_coords"]
         self.count_mean = self.count_stats[0]
         self.count_std = self.count_stats[1].sqrt()
+        self.max = 1048576
 
     def calculate_intensities(self, counts, qbg, qp, masks):
         with torch.no_grad():
@@ -643,7 +738,7 @@ class IntegratorMLP(BaseIntegrator):
 
             return intensities
 
-    def loss_fn(self, rate, counts, qp, qI, qbg, masks):
+    def loss_fn(self, rate, counts, qp, qI, qbg, masks,beta):
         device = rate.device
         batch_size = rate.shape[0]
 
@@ -666,7 +761,7 @@ class IntegratorMLP(BaseIntegrator):
 
         kl_I = torch.distributions.kl.kl_divergence(qI, pI)
 
-        kl_terms = kl_I * self.pI_scale + kl_bg * self.pbg_scale + kl_p * self.pp_scale
+        kl_terms = beta* (kl_I * self.pI_scale + kl_bg * self.pbg_scale + kl_p * self.pp_scale)
         # kl_terms = kl_I * self.pI_scale + kl_bg * self.pbg_scale
 
         # calculate expected log likelihood
@@ -693,18 +788,50 @@ class IntegratorMLP(BaseIntegrator):
     def forward(self, counts, masks, reference):
         # Unpack batch
         # coords = counts[:, :, :6].clone()
-        counts = torch.clamp(counts[..., -1], min=0) * masks
-        print("counts max", counts.sum(-1).max())
+        counts = torch.clamp(counts, min=0) * masks
+        #print("counts max", counts.sum(-1).max())
 
-        # device = counts.device
+        device = counts.device
 
-        # standardized_counts = (counts - self.count_mean.to(device)) / self.count_std.to(
-        #    device
-        # )
+        num_valid_pixels = masks.sum(1)
+        total_photons = (counts).sum(1)
+        mean_photons = total_photons / num_valid_pixels
+        max_photons = counts.max(1)[0]
+        std_photons = torch.sqrt(
+            (1 / (num_valid_pixels - 1))
+            * (((counts - mean_photons.unsqueeze(1)) ** 2) * masks).sum(1)
+        )
+        q1 = torch.quantile(counts, 0.9999, dim=1)
+        q2 = torch.quantile(counts, 0.999, dim=1)
+        q3 = torch.quantile(counts, 0.9, dim=1)
+        q4 = torch.quantile(counts, 0.50, dim=1)
+        q5 = torch.quantile(counts, 0.25, dim=1)
+
+        vals = torch.stack(
+            [
+                torch.log1p(total_photons),
+                torch.log1p(mean_photons),
+                torch.log1p(max_photons),
+                torch.log1p(std_photons),
+                torch.log1p(q1),
+                torch.log1p(q2),
+                torch.log1p(q3),
+                torch.log1p(q4),
+                torch.log1p(q5),
+                std_photons / mean_photons,
+            ]
+        ).transpose(1, 0)
+        
+
+
+
+        #standardized_counts = (counts - self.count_mean.to(device)) / self.count_std.to(
+        #   device
+        #)
         # standardized_coords = (coords - self.coord_mean.to(device)) / self.coord_std.to(
         #    device
         # )
-        ##normed_counts = (counts/counts.max(-1)[0].unsqueeze(-1)).unsqueeze(-1)
+        #normed_counts = (counts/counts.max(-1)[0].unsqueeze(-1)).unsqueeze(-1)
 
         # print('count mean',standardized_counts.mean())
         # print('count var',standardized_counts.var())
@@ -717,13 +844,20 @@ class IntegratorMLP(BaseIntegrator):
         #    dim=-1,
         # )
 
-        logged_counts = torch.log1p(counts)
-        # logged_counts = counts/self.max
+        logged_counts = torch.log1p(counts.float())
+
+        samples = torch.concat([logged_counts,vals],dim=-1)
+
+
+        #logged_counts = counts/self.max
+        #logged_counts = 2*torch.sqrt(counts.float() + (3/8))
 
         rep = self.encoder(logged_counts, masks)
-        # rep = self.encoder(standardized_counts.reshape(shoebox.shape[0], 1, 3, 21, 21), masks)
+        #rep = self.encoder(standardized_counts.reshape(standardized_counts.shape[0], 1, 3, 21, 21), masks)
+        #rep = self.encoder(logged_counts.reshape(logged_counts.shape[0], 1, 3, 21, 21), masks)
         # rep2 = self.encoder2(shoebox,masks)
-        rep2 = self.encoder2(logged_counts, masks)
+        rep2 = self.encoder2(samples, masks)
+        #rep2 = self.encoder2(standardized_counts, masks)
 
         qp = self.qp(rep)
         qbg = self.qbg(rep2)
@@ -772,8 +906,14 @@ class IntegratorMLP(BaseIntegrator):
         }
 
     def training_step(self, batch, batch_idx):
+
+        #beta = kl_beta(self.current_epoch,self.kl_warmup_epochs)
+        beta = 1.0
+
         counts, masks, reference = batch
         outputs = self(counts, masks, reference)
+
+        torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
 
         # Calculate loss
         (loss, neg_ll, kl, kl_bg, kl_I, kl_p) = self.loss_fn(
@@ -783,7 +923,10 @@ class IntegratorMLP(BaseIntegrator):
             qI=outputs["qI"],
             qbg=outputs["qbg"],
             masks=outputs["masks"],
+            beta=beta,
         )
+
+        self.log("Train/β", beta)
 
         # Log metrics
         self.log("Train: -ELBO", loss.mean())
@@ -795,6 +938,9 @@ class IntegratorMLP(BaseIntegrator):
         self.log("Mean(qI.mean)", outputs["qI"].mean.mean())
         self.log("Min(qI.mean)", outputs["qI"].mean.min())
         self.log("Max(qI.mean)", outputs["qI"].mean.max())
+        self.log("Max(qI.var)", outputs["qI"].variance.max())
+        self.log("Min(qI.var)", outputs["qI"].variance.min())
+        self.log("Mean(qI.var)", outputs["qI"].variance.mean())
         self.log("Mean(qbg.mean)", outputs["qbg"].mean.mean())
         self.log("Min(qbg.mean)", outputs["qbg"].mean.min())
         self.log("Max(qbg.mean)", outputs["qbg"].mean.max())
@@ -804,6 +950,8 @@ class IntegratorMLP(BaseIntegrator):
 
     def validation_step(self, batch, batch_idx):
         # Unpack batch
+        beta = 1.0
+
         counts, masks, reference = batch
         outputs = self(counts, masks, reference)
 
@@ -821,6 +969,7 @@ class IntegratorMLP(BaseIntegrator):
             qI=outputs["qI"],
             qbg=outputs["qbg"],
             masks=outputs["masks"],
+            beta=beta
         )
 
         # Log metrics
