@@ -15,11 +15,15 @@ REGISTRY = {
         "cnn_3d": CNNResNet2,
         "mlp_image_encoder": MLPImageEncoder,
         "shoebox_encoder": ShoeboxEncoder,
+        "normfree_mlp": NormFreeNet,
+        "normfree_3d": NormFreeConv3D,
     },
     "image_encoder": {
         "cnn_3d": CNNResNet2,
         "mlp_image_encoder": MLPImageEncoder,
         "shoebox_encoder": ShoeboxEncoder,
+        "normfree_mlp": NormFreeNet,
+        "normfree_3d": NormFreeConv3D,
     },
     "decoder": {
         "default_decoder": Decoder,

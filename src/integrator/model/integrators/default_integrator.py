@@ -334,282 +334,7 @@ class DefaultIntegrator(BaseIntegrator):
 
 
 # %%
-import math
 
-
-def weight_initializer(weight):
-    fan_avg = 0.5 * (weight.shape[-1] + weight.shape[-2])
-    std = math.sqrt(1.0 / fan_avg / 10.0)
-    a = -2.0 * std
-    b = 2.0 * std
-    torch.nn.init.trunc_normal_(weight, 0.0, std, a, b)
-    return weight
-
-
-class Linear(torch.nn.Linear):
-    def __init__(self, in_features: int, out_features: int):
-        super().__init__(in_features, out_features, bias=False)  # Set bias=False
-
-    def reset_parameters(self) -> None:
-        weight_initializer(self.weight)
-
-
-class ResidualLayer(torch.nn.Module):
-    def __init__(self, dims, dropout=None):
-        super().__init__()
-        self.linear_1 = Linear(dims, 2 * dims)
-        self.linear_2 = Linear(2 * dims, dims)
-        self.dropout = (
-            torch.nn.Dropout(dropout) if dropout is not None else torch.nn.Identity()
-        )
-
-    def activation(self, data):
-        return torch.relu(data)
-
-    def forward(self, data):
-        out = self.activation(data)
-        out = self.linear_1(out)
-        out = self.activation(out)
-        out = self.dropout(out)
-        out = self.linear_2(out)
-        return out + data
-
-
-class MLP(torch.nn.Module):
-    """
-    If d_in \neq width, you must specify it .
-    """
-
-    # If d_in \neq width, you must specify it
-    def __init__(self, width, depth, dropout=None, d_in=None, output_dims=None):
-        """
-        Multi-layer perceptron (MLP) module
-        """
-        super().__init__()
-        layers = []
-        if d_in is not None:
-            layers.append(Linear(d_in, width))
-        layers.extend([ResidualLayer(width, dropout=dropout) for i in range(depth)])
-        if output_dims is not None:
-            layers.append(Linear(width, output_dims))
-        self.main = torch.nn.Sequential(*layers)
-
-    def forward(self, data, **kwargs):
-        out = self.main(data)
-        return out
-
-
-class MeanPool(torch.nn.Module):
-    def __init__(self, dim=-1):
-        super().__init__()
-        self.register_buffer(
-            "dim",
-            torch.tensor(dim),
-        )
-
-    def forward(self, data, mask=None):
-        if mask is not None:
-            data = data * mask.unsqueeze(-1)
-
-        out = torch.sum(data, dim=1)
-
-        if mask is None:
-            denom = data.shape[-1]
-        else:
-            denom = torch.sum(mask, dim=-1, keepdim=True)
-        out = out / (denom + 1e-6)
-
-        return out.squeeze(1)
-
-
-class Encoder(torch.nn.Module):
-    def __init__(self, depth=10, dmodel=64, feature_dim=7, dropout=None):
-        super().__init__()
-        self.dropout = None
-        self.dmodel = dmodel
-        self.mlp_1 = MLP(
-            dmodel, depth, d_in=feature_dim, dropout=self.dropout, output_dims=dmodel
-        )
-        self.mean_pool = MeanPool()
-
-    def forward(self, shoebox_data, mask=None):
-        batch_size = shoebox_data.shape[0]
-        out = self.mlp_1(shoebox_data)
-        # pooled_out = self.mean_pool(out, mask)
-        # outputs = self.linear(pooled_out)
-        # return pooled_out.view(batch_size,self.dmodel)
-        return out.view(batch_size, self.dmodel)
-
-
-class DirichletProfile(torch.nn.Module):
-    """
-    Dirichlet profile model
-    """
-
-    def __init__(self, dmodel=None, num_components=3 * 21 * 21):
-        super().__init__()
-        if dmodel is not None:
-            self.alpha_layer = Linear(dmodel, num_components)
-        self.dmodel = dmodel
-        self.eps = 1e-6
-
-    def forward(self, alphas):
-        if self.dmodel is not None:
-            alphas = self.alpha_layer(alphas)
-
-        alphas = F.softplus(alphas) + self.eps
-        alphas = torch.clamp(alphas, max=1e3)
-        print("max alpha", alphas.max())
-        q_p = torch.distributions.Dirichlet(alphas + 1e-4)
-
-        return q_p
-
-
-class TinyNet(nn.Module):
-    """
-    Minimal MLP for 1323-D inputs.
-    1323 → 512 → 128 → d_out
-    """
-
-    def __init__(self, d_out: int, dropout_rate: float, d_in= 1323):
-        super().__init__()
-        self.fc1 = nn.Linear(d_in, 512)  # layer 1
-        self.fc2 = nn.Linear(512, 128)  # layer 2
-        self.fc3 = nn.Linear(128, d_out)  # output layer
-        self.dropout = nn.Dropout(dropout_rate)  # optional; set p=0.0 to disable
-
-    def forward(self, x, mask=None):
-        x = F.relu(self.fc1(x))
-        x = self.dropout(x)  # has no effect if p=0
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)  # leave last activation to the caller
-        return x
-
-
-WIDTH = 2048  # 1–4 × 1323 is typical
-
-class TinyCNN(nn.Module):
-    def __init__(self, d_out: int):
-        super().__init__()
-        # Simple CNN layers
-        self.conv1 = nn.Conv2d(3, 32, kernel_size=3, padding=1)  # 3×21×21 -> 32×21×21
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1) # 32×21×21 -> 64×21×21
-        self.pool = nn.MaxPool2d(2)                             # 64×21×21 -> 64×10×10
-
-        # Calculate flattened size
-        flattened_size = 64 * 10 * 10  # = 6400
-
-        # Dense layers
-        self.fc1 = nn.Linear(flattened_size, 512)
-        self.fc2 = nn.Linear(512, d_out)
-        self.act = nn.GELU()  # Same as your WideTinyNet
-        self.drop = nn.Dropout(0.1)
-
-    def forward(self, x, mask=None):
-        # x shape: [batch, 3, 21, 21]
-        #x = self.act(self.conv1(x.view(x.shape[0],3,21,21)))
-        if x.ndim != 4:
-            x = x.view(x.shape[0], 3, 21, 21)
-        x = self.act(self.conv2(x))
-        x = self.pool(x)
-
-        # Flatten
-        x = x.view(x.size(0), -1)
-
-        x = self.act(self.fc1(x))
-        x = self.drop(x)
-        x = self.fc2(x)
-        return x
-
-
-class TinyConv3D(nn.Module):
-    def __init__(
-        self,
-        d_out=64,
-        in_channels=1,
-        input_shape=(21, 21, 3),  # (H, W, D)
-    ):
-        super().__init__()
-        
-        # First define all activation functions
-        self.act = nn.GELU()
-        self.drop = nn.Dropout(0.1)
-        
-        # Conv layers
-        self.conv1 = nn.Conv3d(
-            in_channels=in_channels,
-            out_channels=32,
-            kernel_size=(1, 3, 3),
-            padding=(0, 1, 1),
-        )
-        
-        self.pool = nn.MaxPool3d(
-            kernel_size=(1, 2, 2), 
-            stride=(1, 2, 2), 
-            ceil_mode=True
-        )
-        
-        self.conv2 = nn.Conv3d(
-            in_channels=32,
-            out_channels=64,
-            kernel_size=(3, 3, 3),
-            padding=(0, 0, 0),
-        )
-        
-        # Calculate flattened size
-        self.flattened_size = self._infer_flattened_size(
-            input_shape=input_shape, 
-            in_channels=in_channels
-        )
-        
-        # Final linear layer
-        self.fc = nn.Linear(self.flattened_size, d_out)
-        
-    def _infer_flattened_size(self, input_shape, in_channels):
-        # input_shape: (H, W, D)
-        with torch.no_grad():
-            # (B, C, D, H, W)
-            dummy = torch.zeros(
-                1, in_channels, input_shape[2], input_shape[0], input_shape[1]
-            )
-            x = self.pool(self.act(self.conv1(dummy)))
-            x = self.act(self.conv2(x))
-            return x.numel()
-        
-    def forward(self, x, mask=None):
-        # Make sure input is correctly shaped: [B, C, D, H, W]
-        # If not already shaped correctly, reshape it
-        if x.ndim != 5:
-            x = x.view(x.shape[0], 1, 3, 21, 21)
-            
-        # Apply first conv and pooling
-        x = self.act(self.conv1(x))
-        x = self.pool(x)
-        
-        # Apply second conv
-        x = self.act(self.conv2(x))
-        
-        # Flatten and apply fully connected layer
-        x = x.view(x.size(0), -1)
-        x = self.drop(x)
-        x = self.fc(x)
-        
-        return x
-
-
-
-class WideTinyNet(nn.Module):
-    def __init__(self, d_out: int):
-        super().__init__()
-        self.fc1 = nn.Linear(1323, WIDTH)
-        self.fc2 = nn.Linear(WIDTH, d_out)
-        self.act = nn.GELU()  # smoother than ReLU, still norm-free
-        self.drop = nn.Dropout(0.1)  # mild regularisation
-
-    def forward(self, x, mask=None):
-        x = self.act(self.fc1(x))
-        x = self.drop(x)
-        return self.fc2(x)
 
 def kl_beta(epoch, total_warmup_epochs=20):
     """
@@ -619,10 +344,11 @@ def kl_beta(epoch, total_warmup_epochs=20):
     return min(1.0, epoch / total_warmup_epochs)
 
 
-
 class IntegratorMLP(BaseIntegrator):
     def __init__(
         self,
+        encoder1,
+        encoder2,
         qbg,
         qp,
         qI,
@@ -655,28 +381,20 @@ class IntegratorMLP(BaseIntegrator):
         self.kl_warmup_epochs = 40
 
         # Model components
-        self.qp = DirichletProfile(dmodel=64)
+        self.qp = qp
         self.qI = qI
         self.qbg = qbg
         self.automatic_optimization = True
         self.max_iterations = max_iterations
-        #self.encoder = TinyNet(d_out = 64,dropout_rate=0.0)
-        self.encoder2 = TinyNet(d_out = 64,dropout_rate=0.0,d_in=1323+10)
-        #self.encoder = WideTinyNet(d_out=64)
-        #self.encoder2 = WideTinyNet(d_out=64)
-        #self.encoder = TinyCNN(d_out=64)
-        #self.encoder2 = TinyCNN(d_out=64)
-        self.encoder = TinyConv3D(d_out=64)
-        #self.encoder2 = TinyConv3D(d_out=64)
-
-
+        self.encoder = encoder1
+        self.encoder2 = encoder2
 
         if prior_tensor is not None:
-           self.concentration = torch.load(prior_tensor, weights_only=False)
-           self.concentration[self.concentration > 2] *= 40
-           self.concentration /= self.concentration.sum()
+            self.concentration = torch.load(prior_tensor, weights_only=False)
+            self.concentration[self.concentration > 2] *= 40
+            self.concentration /= self.concentration.sum()
         else:
-           self.concentration = torch.ones(1323) * 0.0001
+            self.concentration = torch.ones(1323) * 0.0001
 
         self.pI_scale = pI_scale
         self.pbg_scale = pbg_scale
@@ -738,7 +456,7 @@ class IntegratorMLP(BaseIntegrator):
 
             return intensities
 
-    def loss_fn(self, rate, counts, qp, qI, qbg, masks,beta):
+    def loss_fn(self, rate, counts, qp, qI, qbg, masks, beta):
         device = rate.device
         batch_size = rate.shape[0]
 
@@ -761,7 +479,9 @@ class IntegratorMLP(BaseIntegrator):
 
         kl_I = torch.distributions.kl.kl_divergence(qI, pI)
 
-        kl_terms = beta* (kl_I * self.pI_scale + kl_bg * self.pbg_scale + kl_p * self.pp_scale)
+        kl_terms = beta * (
+            kl_I * self.pI_scale + kl_bg * self.pbg_scale + kl_p * self.pp_scale
+        )
         # kl_terms = kl_I * self.pI_scale + kl_bg * self.pbg_scale
 
         # calculate expected log likelihood
@@ -789,7 +509,7 @@ class IntegratorMLP(BaseIntegrator):
         # Unpack batch
         # coords = counts[:, :, :6].clone()
         counts = torch.clamp(counts, min=0) * masks
-        #print("counts max", counts.sum(-1).max())
+        # print("counts max", counts.sum(-1).max())
 
         device = counts.device
 
@@ -821,17 +541,14 @@ class IntegratorMLP(BaseIntegrator):
                 std_photons / mean_photons,
             ]
         ).transpose(1, 0)
-        
 
-
-
-        #standardized_counts = (counts - self.count_mean.to(device)) / self.count_std.to(
+        # standardized_counts = (counts - self.count_mean.to(device)) / self.count_std.to(
         #   device
-        #)
+        # )
         # standardized_coords = (coords - self.coord_mean.to(device)) / self.coord_std.to(
         #    device
         # )
-        #normed_counts = (counts/counts.max(-1)[0].unsqueeze(-1)).unsqueeze(-1)
+        # normed_counts = (counts/counts.max(-1)[0].unsqueeze(-1)).unsqueeze(-1)
 
         # print('count mean',standardized_counts.mean())
         # print('count var',standardized_counts.var())
@@ -846,18 +563,17 @@ class IntegratorMLP(BaseIntegrator):
 
         logged_counts = torch.log1p(counts.float())
 
-        samples = torch.concat([logged_counts,vals],dim=-1)
+        samples = torch.concat([logged_counts, vals], dim=-1)
 
-
-        #logged_counts = counts/self.max
-        #logged_counts = 2*torch.sqrt(counts.float() + (3/8))
+        # logged_counts = counts/self.max
+        # logged_counts = 2*torch.sqrt(counts.float() + (3/8))
 
         rep = self.encoder(logged_counts, masks)
-        #rep = self.encoder(standardized_counts.reshape(standardized_counts.shape[0], 1, 3, 21, 21), masks)
-        #rep = self.encoder(logged_counts.reshape(logged_counts.shape[0], 1, 3, 21, 21), masks)
+        # rep = self.encoder(standardized_counts.reshape(standardized_counts.shape[0], 1, 3, 21, 21), masks)
+        # rep = self.encoder(logged_counts.reshape(logged_counts.shape[0], 1, 3, 21, 21), masks)
         # rep2 = self.encoder2(shoebox,masks)
         rep2 = self.encoder2(samples, masks)
-        #rep2 = self.encoder2(standardized_counts, masks)
+        # rep2 = self.encoder2(standardized_counts, masks)
 
         qp = self.qp(rep)
         qbg = self.qbg(rep2)
@@ -906,8 +622,7 @@ class IntegratorMLP(BaseIntegrator):
         }
 
     def training_step(self, batch, batch_idx):
-
-        #beta = kl_beta(self.current_epoch,self.kl_warmup_epochs)
+        # beta = kl_beta(self.current_epoch,self.kl_warmup_epochs)
         beta = 1.0
 
         counts, masks, reference = batch
@@ -969,7 +684,7 @@ class IntegratorMLP(BaseIntegrator):
             qI=outputs["qI"],
             qbg=outputs["qbg"],
             masks=outputs["masks"],
-            beta=beta
+            beta=beta,
         )
 
         # Log metrics

@@ -142,8 +142,10 @@ def create_components(config):
 
 
 def create_integrator(config):
+
     integrator_name = config["integrator"]["name"]
     integrator_class = REGISTRY["integrator"][integrator_name]
+
     if "q_I" in config["components"]:
         (
             image_encoder,
@@ -152,7 +154,6 @@ def create_integrator(config):
             background_distribution,
             intensity_distribution,
         ) = create_components(config)
-
     else:
         (
             image_encoder,
@@ -310,6 +311,8 @@ def create_integrator(config):
 
     elif integrator_name in {"integrator6"}:
         integrator = integrator_class(
+            encoder1=config["components"]["image_encoder"],
+            encoder2=config["components"]["encoder"],
             qbg=background_distribution,
             qp=profile,
             qI=intensity_distribution,
