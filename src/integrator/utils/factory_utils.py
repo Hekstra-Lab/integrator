@@ -316,6 +316,7 @@ def create_integrator(config):
             mc_samples=config["integrator"]["mc_samples"],
             learning_rate=config["integrator"]["learning_rate"],
             pI_scale=config["integrator"]["pI_scale"],
+            pp_scale=config["integrator"]["pp_scale"],
             pbg_scale=config["integrator"]["pbg_scale"],
             prior_tensor=config["integrator"]["prior_tensor"],
             pI_params=config["integrator"]["pI_params"],
