@@ -158,7 +158,7 @@ class Integrator(BaseIntegrator):
         self.loss_fn = loss
         self.max_iterations = max_iterations
         # self.bg_encoder = MLPMetadataEncoder(feature_dim=60, output_dims=64)
-        self.bg_encoder = PixelEncoder()
+        self.bg_encoder = PixelEncoder(encoding_dim=1323)
         self.renyi_scale = renyi_scale
         B = torch.distributions.Normal(0, 1).sample((32, 10))
         self.register_buffer("B", B, persistent=True)
@@ -258,13 +258,13 @@ class Integrator(BaseIntegrator):
         shoebox = torch.log1p(shoebox)
 
         rep = self.encoder(shoebox.reshape(shoebox.shape[0], 1, 3, 21, 21), masks)
-        intensity_rep = self.bg_encoder(shoebox)
-        bgrep = self.bg_encoder(shoebox)
+        rep2 = self.bg_encoder(shoebox)
+        # bgrep = self.bg_encoder(shoebox)
 
-        qbg = self.qbg(bgrep)
+        qbg = self.qbg(rep2)
         qp = self.qp(rep)
         # qI = self.qI(intensity_rep)
-        qI = self.qI(intensity_rep, metarep=rep)
+        qI = self.qI(rep2, metarep=rep)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
         zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
