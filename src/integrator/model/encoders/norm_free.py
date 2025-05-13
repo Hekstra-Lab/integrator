@@ -40,6 +40,7 @@ class NormFreeConv3D(nn.Module):
 
         self.act = nn.GELU()
         self.drop = nn.Dropout(0.1)
+        self.in_channels = in_channels
 
         # Conv layers
         self.conv1 = nn.Conv3d(
