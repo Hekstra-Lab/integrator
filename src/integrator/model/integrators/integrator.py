@@ -10,109 +10,116 @@ import torch.nn.functional as F
 import torch
 from integrator.model.distribution import BaseDistribution
 from integrator.model.encoders import CNNResNet2
-from integrator.layers import Linear, Constraint,MLP,ResidualLayer
+from integrator.layers import Linear, Constraint, MLP, ResidualLayer
 from torch.distributions import Dirichlet, Gamma, LogNormal
 from integrator.model.encoders import MLPImageEncoder, MLPMetadataEncoder
 from lightning.pytorch.utilities import grad_norm
 
+
 class PixelEncoder(nn.Module):
-    def __init__(
-        self, encoding_dim=64, depth=10, dmodel=64, dropout=0.0
-    ):
+    def __init__(self, encoding_dim=64, depth=10, dmodel=64, dropout=0.0):
         super().__init__()
-        
+
         # Initial projection to match the dimension we want to process
         self.input_projection = Linear(encoding_dim, dmodel)
         self.relu = nn.ReLU(inplace=True)
         self.norm = nn.LayerNorm(dmodel)
-        
+
         # MLP to process each pixel's features (shared across all pixels)
         layers = []
         for _ in range(depth):
             layers.append(ResidualLayer(dmodel, dropout_rate=dropout))
         self.pixel_mlp = nn.Sequential(*layers)
-        
+
         # Final layer norm
         self.final_norm = nn.LayerNorm(dmodel)
-        
+
         # Optional: Add another projection after pooling
         self.output_projection = Linear(dmodel, dmodel)
-        
+
     def forward(self, x):
         """
         Args:
             x: Encoded pixel data with shape [batch_size, num_pixels, encoding_dim]
-            
+
         Returns:
             Representation with shape [batch_size, dmodel]
         """
         batch_size, num_pixels, encoding_dim = x.shape
-        
+
         # Initial projection
         x = self.input_projection(x)  # [batch_size, num_pixels, dmodel]
         x = self.relu(x)
         x = self.norm(x)
-        
+
         # Process each pixel with shared MLP
         x = self.pixel_mlp(x)  # [batch_size, num_pixels, dmodel]
         x = self.final_norm(x)
-        
+
         # Average pooling across pixels
         x = x.mean(dim=1)  # [batch_size, dmodel]
-        
+
         # Optional final projection
         x = self.output_projection(x)  # [batch_size, dmodel]
-        
+
         return x
+
 
 def encode_raw_counts(counts, masks, encoding_dim=64):
     """
     Apply frequency encoding to raw pixel counts
-    
+
     Args:
         counts: Tensor of shape [batch_size, num_pixels] (your 1323 pixels)
         masks: Binary tensor indicating valid pixels
         encoding_dim: Dimension of the encoding
-        
+
     Returns:
         Encoded features of shape [batch_size, num_pixels, encoding_dim]
     """
     device = counts.device
     batch_size, num_pixels = counts.shape
-    
+
     # Apply masking and clamp to ensure valid values
     masked_counts = torch.clamp(counts, min=0) * masks
-    
-    # Create a range of frequencies 
+
+    # Create a range of frequencies
     freqs_per_encoding = encoding_dim // 4  # We'll divide encoding_dim into 4 parts
     freqs = 2.0 ** torch.linspace(0, 8, freqs_per_encoding, device=device)  # 2^0 to 2^8
-    
+
     # Apply log1p to counts to handle large ranges better
     log_counts = torch.log1p(masked_counts)
-    
+
     # Create embeddings: [batch_size, num_pixels, freqs_per_encoding]
     sin_encoding = torch.sin(log_counts.unsqueeze(-1) * freqs.unsqueeze(0).unsqueeze(0))
     cos_encoding = torch.cos(log_counts.unsqueeze(-1) * freqs.unsqueeze(0).unsqueeze(0))
-    
+
     # Create position indices tensor and expand to match batch size
     # Shape: [batch_size, num_pixels]
-    pixel_pos = torch.arange(num_pixels, device=device).float().unsqueeze(0).expand(batch_size, -1)
-    
+    pixel_pos = (
+        torch.arange(num_pixels, device=device)
+        .float()
+        .unsqueeze(0)
+        .expand(batch_size, -1)
+    )
+
     # Normalize positions to [0, 1] range for better numerical stability
     normalized_pos = pixel_pos / num_pixels
-    
+
     # Create position embeddings: [batch_size, num_pixels, freqs_per_encoding]
     sin_pos = torch.sin(normalized_pos.unsqueeze(-1) * freqs.unsqueeze(0).unsqueeze(0))
     cos_pos = torch.cos(normalized_pos.unsqueeze(-1) * freqs.unsqueeze(0).unsqueeze(0))
-    
+
     # Now all tensors have shape [batch_size, num_pixels, freqs_per_encoding]
     # Combine value encoding and position encoding
     encoding = torch.cat([sin_encoding, cos_encoding, sin_pos, cos_pos], dim=-1)
-    
+
     # Apply mask to ensure invalid pixels have zero encoding
     encoding = encoding * masks.unsqueeze(-1)
-    
-    return encoding# %%
+
+    return encoding  # %%
+
+
 # dirichlet version
 class Integrator(BaseIntegrator):
     def __init__(
@@ -211,8 +218,8 @@ class Integrator(BaseIntegrator):
         # mean_photons = total_photons / num_valid_pixels
         # max_photons = counts.max(1)[0]
         # std_photons = torch.sqrt(
-            # (1 / (num_valid_pixels - 1))
-            # * (((counts - mean_photons.unsqueeze(1)) ** 2) * masks).sum(1)
+        # (1 / (num_valid_pixels - 1))
+        # * (((counts - mean_photons.unsqueeze(1)) ** 2) * masks).sum(1)
         # )
         # q1 = torch.quantile(counts, 0.9999, dim=1)
         # q2 = torch.quantile(counts, 0.999, dim=1)
@@ -221,18 +228,18 @@ class Integrator(BaseIntegrator):
         # q5 = torch.quantile(counts, 0.25, dim=1)
 
         # vals = torch.stack(
-            # [
-                # torch.log1p(total_photons),
-                # torch.log1p(mean_photons),
-                # torch.log1p(max_photons),
-                # torch.log1p(std_photons),
-                # torch.log1p(q1),
-                # torch.log1p(q2),
-                # torch.log1p(q3),
-                # torch.log1p(q4),
-                # torch.log1p(q5),
-                # std_photons / mean_photons,
-            # ]
+        # [
+        # torch.log1p(total_photons),
+        # torch.log1p(mean_photons),
+        # torch.log1p(max_photons),
+        # torch.log1p(std_photons),
+        # torch.log1p(q1),
+        # torch.log1p(q2),
+        # torch.log1p(q3),
+        # torch.log1p(q4),
+        # torch.log1p(q5),
+        # std_photons / mean_photons,
+        # ]
         # ).transpose(1, 0)
 
         # encoding_dim = 64
@@ -245,12 +252,14 @@ class Integrator(BaseIntegrator):
         # sin_encoding = sin_encoding.reshape(sin_encoding.shape[0], -1)
         # cos_encoding = cos_encoding.reshape(cos_encoding.shape[0], -1)
         # intensity_encoding = torch.concat((sin_encoding, cos_encoding), dim=1)
-        
-        intensity_encoding = encode_raw_counts(counts,masks)
+
+        # intensity_encoding = encode_raw_counts(counts, masks)
+
+        shoebox = torch.log1p(shoebox)
 
         rep = self.encoder(shoebox.reshape(shoebox.shape[0], 1, 3, 21, 21), masks)
-        intensity_rep = self.bg_encoder(intensity_encoding)
-        bgrep = self.bg_encoder(intensity_encoding)
+        intensity_rep = self.bg_encoder(shoebox)
+        bgrep = self.bg_encoder(shoebox)
 
         qbg = self.qbg(bgrep)
         qp = self.qp(rep)
@@ -1523,5 +1532,7 @@ class IntegratorFFLog1p(BaseIntegrator):
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
 
+
 # %%
 
+torch.distributions.LogNormal(loc=0.0, scale=2.0).variance
