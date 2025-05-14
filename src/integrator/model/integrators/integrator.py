@@ -148,6 +148,7 @@ class Integrator(BaseIntegrator):
         )
         self.learning_rate = learning_rate
         self.mc_samples = mc_samples
+        self.train_loss = []
 
         # Model components
         self.encoder = encoder
@@ -158,7 +159,7 @@ class Integrator(BaseIntegrator):
         self.loss_fn = loss
         self.max_iterations = max_iterations
         # self.bg_encoder = MLPMetadataEncoder(feature_dim=60, output_dims=64)
-        self.bg_encoder = MLPMetadataEncoder(feature_dim=1323)
+        self.bg_encoder = MLPMetadataEncoder(feature_dim=1323, output_dims=64, depth=5)
         self.renyi_scale = renyi_scale
         B = torch.distributions.Normal(0, 1).sample((32, 10))
         self.register_buffer("B", B, persistent=True)
@@ -255,7 +256,7 @@ class Integrator(BaseIntegrator):
 
         # intensity_encoding = encode_raw_counts(counts, masks)
 
-        shoebox = torch.log1p(shoebox)
+        # shoebox = torch.log1p(counts)
 
         rep = self.encoder(shoebox.reshape(shoebox.shape[0], 1, 3, 21, 21), masks)
         rep2 = self.bg_encoder(shoebox)
@@ -263,8 +264,7 @@ class Integrator(BaseIntegrator):
 
         qbg = self.qbg(rep2)
         qp = self.qp(rep)
-        # qI = self.qI(intensity_rep)
-        qI = self.qI(rep2, metarep=rep)
+        qI = self.qI(rep2)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
         zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
@@ -345,8 +345,13 @@ class Integrator(BaseIntegrator):
         self.log("Min(qbg.mean)", outputs["qbg"].mean.min())
         self.log("Max(qbg.mean)", outputs["qbg"].mean.max())
         self.log("Mean(qbg.variance)", outputs["qbg"].variance.mean())
-
+        self.train_loss.append(loss.mean())
         return loss.mean() + renyi_loss.sum()
+
+    def on_train_epoch_end(self):
+        avg_loss = sum(self.train_loss) / len(self.train_loss)
+        self.log("train_loss", avg_loss)
+        self.train_loss = []
 
     def validation_step(self, batch, batch_idx):
         # Unpack batch
