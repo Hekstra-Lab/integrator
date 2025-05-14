@@ -491,7 +491,7 @@ if __name__ == "__main__":
     argparser.add_argument(
         "--reference_path",
         type=str,
-        default="/Users/luis/integratorv3/data/pass1/",
+        default="/n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/data/"
     )
     args = argparser.parse_args()
 

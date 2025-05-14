@@ -15,12 +15,13 @@ from integrator.utils import (
 torch.set_float32_matmul_precision("medium")
 
 # Create configuration file
-config = load_config(
-'/n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/lightning_logs/wandb/run-20250421_121835-mxp871sk/files/config_copy.yaml'
 
+config = load_config(
+'/n/hekstra_lab/people/aldama/lightning_logs/wandb/run-20250501_165045-l8e9r0ox'
 )
+
 # update batch_size
-config["data_loader"]["params"]["batch_size"] = 900
+config["data_loader"]["params"]["batch_size"] = 1000
  
 # create DataLoader
 data = create_data_loader(config)

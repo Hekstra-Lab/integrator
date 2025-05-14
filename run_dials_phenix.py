@@ -81,6 +81,8 @@ def analysis(prediction_path, dials_env, phenix_env, pdb):
             f"output.reflections='{scaled_refl_out}' "
             f"output.experiments='{scaled_expt_out}' "
             f"output.html='{parent_dir}/dials_out/scaling.html' "
+#            f"weighting.error_model.error_model=None "
+#            f"combine.Imid=200 "
             f"output.log='{parent_dir}/dials_out/scaling.log'"
         )
 

@@ -19,6 +19,7 @@ from integrator.utils import (
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pathlib import Path
 import torch
+from integrator.model.encoders import ShoeboxEncoder
 import subprocess
 
 # from lightning.pytorch.loggers import TensorBoardLogger
@@ -27,10 +28,14 @@ from integrator.callbacks import (
     IntensityPlotter,
     MVNPlotter,
     UNetPlotter,
+    Plotter,
+    Plotter2,
     IntegratedPlotter,
 )
+from integrator.model import *
+import lightning_fabric.utilities.cloud_io as cloud_io
 
-torch.set_float32_matmul_precision("high")
+torch.set_float32_matmul_precision("medium")
 
 
 if __name__ == "__main__":
@@ -213,9 +218,6 @@ if __name__ == "__main__":
     # Create data loader
     data = create_data_loader(config)
 
-    # Create integrator modentel
-    integrator = create_integrator(config)
-
     # Get gitinfo
 
     # Create callbacks
@@ -227,13 +229,22 @@ if __name__ == "__main__":
     )
 
     integrator_name = config["integrator"]["name"]
-    encoder_name = config["components"]["image_encoder"]["name"]
+    if "image_encoder" in config["components"]:
+        encoder_name = config["components"]["image_encoder"]["name"]
+    else:
+        encoder_name = config["components"]["encoder"]["name"]
 
-    qI_name = config["components"]["q_I"]["name"]
     qbg_name = config["components"]["q_bg"]["name"]
     profile_name = config["components"]["profile"]["name"]
-    pI_name = config["components"]["loss"]["params"]["p_I"]["name"]
-    pbg_name = config["components"]["loss"]["params"]["p_bg"]["name"]
+    pbg_name = config["components"]["loss"]["params"]["p_bg_name"]
+
+    if "q_I" in config["components"]:
+        qI_name = config["components"]["q_I"]["name"]
+        pI_name = config["components"]["loss"]["params"]["p_I_name"]
+    else:
+        qI_name = ""
+        pI_name = ""
+
 
     if "p_p" in config["components"]["loss"]["params"]:
         pp_name = config["components"]["loss"]["params"]["p_p"]["name"]
@@ -241,7 +252,7 @@ if __name__ == "__main__":
         pp_name = ""
 
     logger = WandbLogger(
-        project="integrator",
+        project="integrator_",
         name="Integrator_"
         + integrator_name
         + "_Encoder_"
@@ -258,19 +269,39 @@ if __name__ == "__main__":
         + profile_name
         + "_"
         + pp_name,
-        save_dir="lightning_logs",
+        save_dir="/n/hekstra_lab/people/aldama/lightning_logs"
     )
 
-    if config["integrator"]["name"] == "unet_integrator":
+    if config["integrator"]["name"] == "mlp_integrator":
         plotter = UNetPlotter(
             num_profiles=10,
             plot_every_n_epochs=1,
         )
+
+    elif config["integrator"]["name"] == "integrator6":
+        plotter = Plotter2(
+            num_profiles=10,
+            plot_every_n_epochs=1,
+        )
+
+
     elif config["integrator"]["name"] == "mvn_integrator":
         plotter = MVNPlotter(
             num_profiles=10,
             plot_every_n_epochs=1,
         )
+
+    elif config['integrator']['name'] in {"integrator", "integrator2","integrator3","integrator4","integrator5"}:
+        plotter = Plotter(
+            num_profiles=10,
+            plot_every_n_epochs=1,
+        )
+
+    elif config["integrator"]["name"] == "lrmvn_integrator":
+        plotter = UNetPlotter(
+                num_profiles=10,
+                plot_every_n_epochs=1,
+                )
     else:
         # plotter = IntensityPlotter(num_profiles=10)
         plotter = IntegratedPlotter(
@@ -282,8 +313,10 @@ if __name__ == "__main__":
     checkpoint_callback = ModelCheckpoint(
         dirpath=logger.experiment.dir + "/checkpoints",  # when using wandb logger
         filename="{epoch}-{val_loss:.2f}",
-        every_n_epochs=config["trainer"]["params"]["check_val_every_n_epoch"],
-        save_top_k=-1,
+#        every_n_epochs=config["trainer"]["params"]["check_val_every_n_epoch"],
+        save_top_k=20,
+        monitor='val_loss',
+        mode='min',
         save_last="link",
     )
 
@@ -302,16 +335,11 @@ if __name__ == "__main__":
         logger=logger,
     )
 
-    #    os.makedirs(trainer.logger.log_dir,exist_ok=True)
-    #    log_dirr = trainer.logger.log_dir
+    # os.makedirs(trainer.logger.log_dir,exist_ok=True)
+    # log_dirr = trainer.logger.log_dir
     os.makedirs(trainer.logger.experiment.dir, exist_ok=True)
 
     log_dirr = trainer.logger.experiment.dir
-
-    save_config = os.path.join(log_dirr, "config_copy.yaml")
-
-    with open(save_config, "w") as file:
-        yaml.dump(config, file, default_flow_style=False)
 
     git_info = get_git_info()
 
@@ -328,6 +356,19 @@ if __name__ == "__main__":
         with open(os.path.join(log_dirr, "uncommitted.diff"), "w") as f:
             f.write(diff)
 
+    # Create integrator model
+    integrator = create_integrator(config)
+
+    #checkpoint_path =  '/n/hekstra_lab/people/aldama/lightning_logs/wandb/run-20250504_125302-7tkfopqd/files/checkpoints/epoch=95-val_loss=0.00.ckpt'
+
+    #checkpoint = torch.load(
+    #        checkpoint_path,
+    #        weights_only=False
+    #        )
+#
+#    integrator = create_integrator(config)
+#    integrator.load_state_dict(checkpoint['state_dict'])
+
     # Fit the model
     trainer.fit(
         integrator,
@@ -335,19 +376,20 @@ if __name__ == "__main__":
         val_dataloaders=data.val_dataloader(),
     )
 
-    # create prediction integrator from last checkpoint
-    pred_integrator = create_integrator_from_checkpoint(
-        config,
-        log_dirr + "/checkpoints/last.ckpt",
-    )
+
+   # pred_checkpoint = torch.load(
+   #         log_dirr + "/checkpoints/last.ckpt",
+   #         weights_only=False
+   #         )
+
+   # integrator.load_state_dict(pred_checkpoint['state_dict'])
 
     # Predict
-    trainer.predict(
-        pred_integrator,
-        return_predictions=False,
-        dataloaders=data.predict_dataloader(),
-        ckpt_path=log_dirr + "/checkpoints/last.ckpt",
-    )
+#    trainer.predict(
+#        pred_integrator,
+#        return_predictions=False,
+#        dataloaders=data.predict_dataloader(),
+#    )
 
     version_dir = log_dirr
     path = os.path.join(version_dir, "checkpoints", "epoch*.ckpt")
@@ -357,6 +399,17 @@ if __name__ == "__main__":
 
     # clean from memory
     clean_from_memory(pred_writer, pred_writer, pred_writer, checkpoint_callback)
+
+    save_config = os.path.join(log_dirr, "config_copy.yaml")
+    config['data_loader']['params']['batch_size'] = 1000
+    config['data_loader']['params']['subset_size'] = None
+
+    with open(save_config, "w") as file:
+        yaml.dump(config, file, default_flow_style=False)
+
+    config = load_config(save_config)
+
+    pred_integrator = create_integrator(config)
 
     # predict from checkpoints
     predict_from_checkpoints(config, trainer, pred_integrator, data, version_dir, path)
@@ -372,7 +425,7 @@ if __name__ == "__main__":
         config["output"]["refl_file"],
     )
 
-    analysis(prediction_path, dials_env, phenix_env, pdb, expt_file)
+    #analysis(prediction_path, dials_env, phenix_env, pdb, expt_file)
 
     # reflection_file_writer(prediction_directories, prediction_files)
     # for ckpt in glob.glob(path):

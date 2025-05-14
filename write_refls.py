@@ -29,21 +29,31 @@ from integrator.callbacks import (
     UNetPlotter,
     IntegratedPlotter,
 )
+import argparse
 
-config= '/n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/lightning_logs/wandb/run-20250421_121835-mxp871sk/files/config_copy.yaml'
 
-config = load_config(config)
+if __name__ == "__main__":
+    # load data
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument(
+        "--path",
+        type=str,
+    )
 
-pred_dirs = ['/n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/lightning_logs/wandb/run-20250421_121835-mxp871sk/files/predictions/epoch_5/']
+    args = argparser.parse_args()
 
-prediction_files = glob.glob(pred_dirs[0] + "*.pt")
+    path = Path(args.path)
+    pred_path = path.as_posix() + "/files/predictions"
+    pred_dirs = glob.glob(pred_path + "/epoch*")
+    prediction_files = glob.glob(pred_path + "/epoch*/*.pt")
 
-print(prediction_files)
+    print(prediction_files)
+    print(pred_dirs)
 
-reflection_file_writer(
-    pred_dirs,
-    prediction_files,
-    "/n/holylabs/LABS/hekstra_lab/Users/laldama/integratorv2/integrator/data/pass1/reflections_.refl"
-)
+    reflection_file_writer(
+        pred_dirs,
+        prediction_files,
+        "/n/holylabs/LABS/hekstra_lab/Users/laldama/integratorv2/integrator/data/pass1/reflections_.refl"
+    )
 
 

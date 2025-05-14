@@ -1585,7 +1585,8 @@ class Plotter2(Callback):
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         with torch.no_grad():
             # 1) Forward pass (no intensities yet)
-            counts, masks, reference = batch(counts, masks, reference)
+            counts, masks, reference = batch
+            base_output = pl_module(counts, masks, reference)
 
             # 2) Call calculate_intensities
             intensities = pl_module.calculate_intensities(
@@ -1882,8 +1883,9 @@ class Plotter2(Callback):
         # Only track the last validation batch to save memory
 
         with torch.no_grad():
-            shoebox, dials, masks, metadata, counts = batch
-            base_output = pl_module(shoebox, dials, masks, metadata, counts)
+
+            counts, masks, reference = batch
+            base_output = pl_module(counts,masks,reference)
 
             # Store only minimal data needed for metrics
             self.val_predictions = {}

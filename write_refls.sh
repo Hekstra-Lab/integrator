@@ -9,10 +9,20 @@
 #SBATCH -o write_refls_%j.out
 #SBATCH -e write_refls_%j.err
 
+
+
+INPUT_PATH=$1
+
+# Check if path was provided
+if [ -z "$INPUT_PATH" ]; then
+  echo "Error: Path argument is required"
+  exit 1
+fi
+
 # Load environment
 
 source /n/holylabs/LABS/hekstra_lab/Users/laldama/micromamba/etc/profile.d/micromamba.sh
 
 micromamba activate pt2.0.1_cuda11.8
 
-python write_refls.py
+python write_refls.py --path "$INPUT_PATH"

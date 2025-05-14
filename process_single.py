@@ -88,6 +88,7 @@ def process_single_refl(refl_file, expt_file, dials_env, phenix_env, phenix_eff)
     parent_dir = Path(refl_file).parent
     integration_type = Path(refl_file).name.replace("_.refl", "")
     output_dir = parent_dir / f"dials_out_{integration_type}"
+    print("output directory:",output_dir)
 
     scaled_refl_out = output_dir / f"dials_out_{integration_type}_scaled.refl"
     scaled_expt_out = output_dir / f"dials_out_{integration_type}_scaled.expt"
@@ -99,6 +100,7 @@ def process_single_refl(refl_file, expt_file, dials_env, phenix_env, phenix_eff)
         f"dials.scale '{refl_file}' '{expt_file}' "
         f"output.reflections='{scaled_refl_out}' "
         f"output.experiments='{scaled_expt_out}' "
+        f"output.html='{parent_dir}/dials_out/scaling.html' "
         f"output.html='{output_dir}/scaling.html' "
         f"output.log='{output_dir}/scaling.log' "
     )
@@ -118,6 +120,7 @@ def process_single_refl(refl_file, expt_file, dials_env, phenix_env, phenix_eff)
 
     # Update phenix.eff and run phenix
     updated_phenix_eff = output_dir / "phenix_updated.eff"
+    print("updated phenix.eff: ", updated_phenix_eff)
     update_phenix_eff(phenix_eff, updated_phenix_eff, merge_mtz_out)
     run_phenix(phenix_env, merge_mtz_out, updated_phenix_eff)
     
