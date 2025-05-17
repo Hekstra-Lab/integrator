@@ -68,7 +68,7 @@ class Loss2(torch.nn.Module):
         prior_peak_percentage=0.026,
         p_I_name="gamma",
         p_I_params={"concentration": 1.0, "rate": 1.0},
-        p_I_scale=0.0001,
+        p_I_weight=.001,
         prior_tensor=None,
         use_robust=False,
     ):
@@ -77,7 +77,8 @@ class Loss2(torch.nn.Module):
         self.register_buffer("beta", torch.tensor(beta))
         self.register_buffer("p_bg_scale", torch.tensor(p_bg_scale))
         self.register_buffer("p_p_scale", torch.tensor(p_p_scale))
-        self.register_buffer("p_I_scale", torch.tensor(p_I_scale))
+        #self.register_buffer("p_I_scale", p_I_scale)
+        self.p_I_weight = p_I_weight
 
         # Store distribution names and params
         self.p_p_name = p_p_name
@@ -216,7 +217,7 @@ class Loss2(torch.nn.Module):
         kl_terms = torch.zeros(batch_size, device=device)
 
         kl_I = self.compute_kl(q_I, p_I)
-        kl_terms += kl_I * self.p_I_scale
+        kl_terms += (kl_I * self.p_I_weight)
 
         # calculate background and intensity kl divergence
         kl_bg = self.compute_kl(q_bg, p_bg)
@@ -264,7 +265,7 @@ class Loss2(torch.nn.Module):
             total_loss,
             neg_ll_batch.mean(),
             kl_terms.mean(),
-            kl_bg.mean() * self.p_bg_scale,
-            kl_I.mean() * self.p_I_scale,
-            kl_p.mean() * self.p_p_scale,
+            (kl_bg * self.p_bg_scale).mean(),
+            kl_I.mean() * self.p_I_weight,
+            (kl_p * self.p_p_scale).mean(),
         )

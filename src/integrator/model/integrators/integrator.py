@@ -12,7 +12,7 @@ from integrator.model.distribution import BaseDistribution
 from integrator.model.encoders import CNNResNet2
 from integrator.layers import Linear, Constraint, MLP, ResidualLayer
 from torch.distributions import Dirichlet, Gamma, LogNormal
-from integrator.model.encoders import MLPImageEncoder, MLPMetadataEncoder
+from integrator.model.encoders import MLPImageEncoder, MLPMetadataEncoder, ShoeboxEncoder
 from lightning.pytorch.utilities import grad_norm
 
 
@@ -54,8 +54,9 @@ class Integrator(BaseIntegrator):
         self.loss_fn = loss
         self.max_iterations = max_iterations
         #self.bg_encoder = MLPMetadataEncoder(feature_dim=240, output_dims=64)
-        #self.bg_encoder = MLPMetadataEncoder(feature_dim=60, output_dims=64,depth=5)
-        self.bg_encoder = MLPMetadataEncoder(feature_dim=1323, output_dims=64, depth=5)
+        self.bg_encoder = MLPMetadataEncoder(feature_dim=60, output_dims=64,depth=4)
+        #self.bg_encoder = MLPMetadataEncoder(feature_dim=1323, output_dims=64, depth=5)
+        #self.bg_encoder = ShoeboxEncoder(in_channels=1,conv1_out_channels=8,conv2_out_channels=16)
         self.renyi_scale = renyi_scale
         B = torch.distributions.Normal(0, 1).sample((32, 10))
         self.register_buffer("B", B, persistent=True)
@@ -110,50 +111,51 @@ class Integrator(BaseIntegrator):
         counts = torch.clamp(counts, min=0) * masks
         device = counts.device
 
-#        num_valid_pixels = masks.sum(1)
-#        total_photons = (counts).sum(1)
-#        mean_photons = total_photons / num_valid_pixels
-#        max_photons = counts.max(1)[0]
-#        std_photons = torch.sqrt(
-#            (1 / (num_valid_pixels - 1))
-#            * (((counts - mean_photons.unsqueeze(1)) ** 2) * masks).sum(1)
-#        )
-#        q1 = torch.quantile(counts, 0.9999, dim=1)
-#        q2 = torch.quantile(counts, 0.999, dim=1)
-#        q3 = torch.quantile(counts, 0.9, dim=1)
-#        q4 = torch.quantile(counts, 0.50, dim=1)
-#        q5 = torch.quantile(counts, 0.25, dim=1)
-#
-#        vals = torch.stack(
-#            [
-#                torch.log1p(total_photons),
-#                torch.log1p(mean_photons),
-#                torch.log1p(max_photons),
-#                torch.log1p(std_photons),
-#                torch.log1p(q1),
-#                torch.log1p(q2),
-#                torch.log1p(q3),
-#                torch.log1p(q4),
-#                torch.log1p(q5),
-#                std_photons / mean_photons,
-#            ]
-#        ).transpose(1, 0)
-#
-#        #encoding_dim = 256
-#        encoding_dim = 64
-#        freqs = 2.0 ** torch.arange(
-#            0, encoding_dim // (2 * vals.shape[-1]), device=device
-#        )
-#
-#        sin_encoding = torch.sin(vals.unsqueeze(-1) * freqs.unsqueeze(0).unsqueeze(0))
-#        cos_encoding = torch.cos(vals.unsqueeze(-1) * freqs.unsqueeze(0).unsqueeze(0))
-#        sin_encoding = sin_encoding.reshape(sin_encoding.shape[0], -1)
-#        cos_encoding = cos_encoding.reshape(cos_encoding.shape[0], -1)
-#        intensity_encoding = torch.concat((sin_encoding, cos_encoding), dim=1)
-#
+        num_valid_pixels = masks.sum(1)
+        total_photons = (counts).sum(1)
+        mean_photons = total_photons / num_valid_pixels
+        max_photons = counts.max(1)[0]
+        std_photons = torch.sqrt(
+            (1 / (num_valid_pixels - 1))
+            * (((counts - mean_photons.unsqueeze(1)) ** 2) * masks).sum(1)
+        )
+        q1 = torch.quantile(counts, 0.9999, dim=1)
+        q2 = torch.quantile(counts, 0.999, dim=1)
+        q3 = torch.quantile(counts, 0.9, dim=1)
+        q4 = torch.quantile(counts, 0.50, dim=1)
+        q5 = torch.quantile(counts, 0.25, dim=1)
+
+        vals = torch.stack(
+            [
+                torch.log1p(total_photons),
+                torch.log1p(mean_photons),
+                torch.log1p(max_photons),
+                torch.log1p(std_photons),
+                torch.log1p(q1),
+                torch.log1p(q2),
+                torch.log1p(q3),
+                torch.log1p(q4),
+                torch.log1p(q5),
+                std_photons / mean_photons,
+            ]
+        ).transpose(1, 0)
+
+        #encoding_dim = 256
+        encoding_dim = 64
+        freqs = 2.0 ** torch.arange(
+            0, encoding_dim // (2 * vals.shape[-1]), device=device
+        )
+
+        sin_encoding = torch.sin(vals.unsqueeze(-1) * freqs.unsqueeze(0).unsqueeze(0))
+        cos_encoding = torch.cos(vals.unsqueeze(-1) * freqs.unsqueeze(0).unsqueeze(0))
+        sin_encoding = sin_encoding.reshape(sin_encoding.shape[0], -1)
+        cos_encoding = cos_encoding.reshape(cos_encoding.shape[0], -1)
+        intensity_encoding = torch.concat((sin_encoding, cos_encoding), dim=1)
+
         rep = self.encoder(shoebox.reshape(shoebox.shape[0], 1, 3, 21, 21), masks)
-        #rep2 = self.bg_encoder(intensity_encoding)
-        rep2 = self.bg_encoder(shoebox)
+        rep2 = self.bg_encoder(intensity_encoding)
+       # rep2 = self.bg_encoder(shoebox.reshape(shoebox.shape[0], 1, 3, 21, 21), masks)
+        #rep2 = self.bg_encoder(shoebox)
         # bgrep = self.bg_encoder(shoebox)
 
         qbg = self.qbg(rep2)

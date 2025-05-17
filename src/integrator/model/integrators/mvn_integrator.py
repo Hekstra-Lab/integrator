@@ -375,7 +375,7 @@ class LRMVNIntegrator(BaseIntegrator):
         if self.use_metaonly:
             rep = self.metadata_encoder(metadata)
         else:
-            rep = self.encoder(shoebox, masks)
+            rep = self.encoder(shoebox.reshape(shoebox.shape[0],1,3,21,21), masks)
 
         mean = self.mean_layer(rep).unsqueeze(-1)
         std = F.softplus(self.std_layer(rep)).unsqueeze(-1)
