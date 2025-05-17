@@ -88,12 +88,31 @@ class ShoeboxDataModule(BaseDataModule):
             os.path.join(self.data_dir, self.shoebox_file_names["reference"])
         )
 
+        # Apply cutoff before standardization to ensure we only process needed data
+        if self.cutoff is not None:
+            # Make sure we're checking the first column of reference against cutoff
+            # Ensure reference has the right shape before filtering
+            if reference.dim() > 1:
+                selection = reference[:, 0] < self.cutoff
+            else:
+                selection = reference < self.cutoff
+
+            # Apply selection filter to all tensors
+            counts = counts[selection]
+            masks = masks[selection]
+            reference = reference[selection]
+            if self.use_metadata is not None:
+                metadata = metadata[selection]
+
+        # Standardize counts after filtering
         if self.standardized_counts is not None:
             standardized_counts = torch.load(
                 os.path.join(
                     self.data_dir, self.shoebox_file_names["standardized_counts"]
                 )
             )
+            if self.cutoff is not None:
+                standardized_counts = standardized_counts[selection]
         else:
             if counts.dim() == 2:
                 standardized_counts = (counts * masks) - stats[0] / stats[1].sqrt()
@@ -101,17 +120,18 @@ class ShoeboxDataModule(BaseDataModule):
                 standardized_counts = (counts[..., -1] * masks) - stats[0] / stats[
                     1
                 ].sqrt()
-                counts[:, :, 0] = 2 * (counts[:, :, 0] / counts[:, :, 0].max()) - 1
-                counts[:, :, 1] = 2 * (counts[:, :, 1] / counts[:, :, 1].max()) - 1
-                counts[:, :, 2] = 2 * (counts[:, :, 2] / counts[:, :, 2].max()) - 1
-
-        if self.cutoff is not None:
-            selection = reference[:, -7] < self.cutoff
-            counts = counts[selection]
-            masks = masks[selection]
-            reference = reference[selection]
-            if self.use_metadata is not None:
-                metadata = metadata[selection]
+                # Normalize first three channels of counts
+                # Only attempt this if counts has enough dimensions
+                if counts.dim() >= 3 and counts.size(-1) >= 3:
+                    counts[:, :, 0] = (
+                        2 * (counts[:, :, 0] / (counts[:, :, 0].max() + 1e-8)) - 1
+                    )
+                    counts[:, :, 1] = (
+                        2 * (counts[:, :, 1] / (counts[:, :, 1].max() + 1e-8)) - 1
+                    )
+                    counts[:, :, 2] = (
+                        2 * (counts[:, :, 2] / (counts[:, :, 2].max() + 1e-8)) - 1
+                    )
 
         # Create the full dataset based on whether metadata is present
         if self.use_metadata is not None:
@@ -164,7 +184,6 @@ class ShoeboxDataModule(BaseDataModule):
             shuffle=True,
             num_workers=self.num_workers,
             pin_memory=True,
-            # prefetch_factor=0,
         )
 
     def val_dataloader(self):
@@ -174,7 +193,6 @@ class ShoeboxDataModule(BaseDataModule):
             shuffle=False,
             num_workers=self.num_workers,
             pin_memory=True,
-            # prefetch_factor=2,
         )
 
     def test_dataloader(self):
@@ -185,7 +203,6 @@ class ShoeboxDataModule(BaseDataModule):
                 shuffle=False,
                 num_workers=self.num_workers,
                 pin_memory=True,
-                # prefetch_factor=2,
             )
         else:
             return None
