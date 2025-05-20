@@ -332,18 +332,6 @@ class DefaultIntegrator(BaseIntegrator):
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
 
-
-# %%
-
-
-def kl_beta(epoch, total_warmup_epochs=20):
-    """
-    Linear warm-up:
-    β = 0 at epoch 0,  β = 1 after `total_warmup_epochs`.
-    """
-    return min(1.0, epoch / total_warmup_epochs)
-
-
 class IntegratorMLP(BaseIntegrator):
     def __init__(
         self,
@@ -408,7 +396,6 @@ class IntegratorMLP(BaseIntegrator):
         self.coord_std = self.coord_stats["std_coords"]
         self.count_mean = self.count_stats[0]
         self.count_std = self.count_stats[1].sqrt()
-        self.max = 1048576
 
     def calculate_intensities(self, counts, qbg, qp, masks):
         with torch.no_grad():
@@ -512,68 +499,43 @@ class IntegratorMLP(BaseIntegrator):
         # print("counts max", counts.sum(-1).max())
 
         device = counts.device
-
-        num_valid_pixels = masks.sum(1)
-        total_photons = (counts).sum(1)
-        mean_photons = total_photons / num_valid_pixels
-        max_photons = counts.max(1)[0]
-        std_photons = torch.sqrt(
-            (1 / (num_valid_pixels - 1))
-            * (((counts - mean_photons.unsqueeze(1)) ** 2) * masks).sum(1)
-        )
-        q1 = torch.quantile(counts, 0.9999, dim=1)
-        q2 = torch.quantile(counts, 0.999, dim=1)
-        q3 = torch.quantile(counts, 0.9, dim=1)
-        q4 = torch.quantile(counts, 0.50, dim=1)
-        q5 = torch.quantile(counts, 0.25, dim=1)
-
-        vals = torch.stack(
-            [
-                torch.log1p(total_photons),
-                torch.log1p(mean_photons),
-                torch.log1p(max_photons),
-                torch.log1p(std_photons),
-                torch.log1p(q1),
-                torch.log1p(q2),
-                torch.log1p(q3),
-                torch.log1p(q4),
-                torch.log1p(q5),
-                std_photons / mean_photons,
-            ]
-        ).transpose(1, 0)
-
-        # standardized_counts = (counts - self.count_mean.to(device)) / self.count_std.to(
-        #   device
-        # )
-        # standardized_coords = (coords - self.coord_mean.to(device)) / self.coord_std.to(
-        #    device
-        # )
-        # normed_counts = (counts/counts.max(-1)[0].unsqueeze(-1)).unsqueeze(-1)
-
-        # print('count mean',standardized_counts.mean())
-        # print('count var',standardized_counts.var())
-
-        # shoebox = torch.cat(
-        #    [
-        #        standardized_coords,
-        #        standardized_counts.unsqueeze(-1),
-        #    ],
-        #    dim=-1,
-        # )
-
+#
+#        num_valid_pixels = masks.sum(1)
+#        total_photons = (counts).sum(1)
+#        mean_photons = total_photons / num_valid_pixels
+#        max_photons = counts.max(1)[0]
+#        std_photons = torch.sqrt(
+#            (1 / (num_valid_pixels - 1))
+#            * (((counts - mean_photons.unsqueeze(1)) ** 2) * masks).sum(1)
+#        )
+#        q1 = torch.quantile(counts, 0.9999, dim=1)
+#        q2 = torch.quantile(counts, 0.999, dim=1)
+#        q3 = torch.quantile(counts, 0.9, dim=1)
+#        q4 = torch.quantile(counts, 0.50, dim=1)
+#        q5 = torch.quantile(counts, 0.25, dim=1)
+#
+#        vals = torch.stack(
+#            [
+#                torch.log1p(total_photons),
+#                torch.log1p(mean_photons),
+#                torch.log1p(max_photons),
+#                torch.log1p(std_photons),
+#                torch.log1p(q1),
+#                torch.log1p(q2),
+#                torch.log1p(q3),
+#                torch.log1p(q4),
+#                torch.log1p(q5),
+#                std_photons / mean_photons,
+#            ]
+#        ).transpose(1, 0)
+#
         logged_counts = torch.log1p(counts.float())
 
-        samples = torch.concat([logged_counts, vals], dim=-1)
-
-        # logged_counts = counts/self.max
-        # logged_counts = 2*torch.sqrt(counts.float() + (3/8))
+        #samples = torch.concat([logged_counts, vals], dim=-1)
 
         rep = self.encoder(logged_counts, masks)
-        # rep = self.encoder(standardized_counts.reshape(standardized_counts.shape[0], 1, 3, 21, 21), masks)
-        # rep = self.encoder(logged_counts.reshape(logged_counts.shape[0], 1, 3, 21, 21), masks)
-        # rep2 = self.encoder2(shoebox,masks)
-        rep2 = self.encoder2(samples, masks)
-        # rep2 = self.encoder2(standardized_counts, masks)
+        #rep2 = self.encoder2(samples, masks)
+        rep2 = self.encoder2(logged_counts, masks)
 
         qp = self.qp(rep)
         qbg = self.qbg(rep2)
@@ -587,7 +549,6 @@ class IntegratorMLP(BaseIntegrator):
         intensity_var = qI.variance
 
         rate = zI * zp + zbg
-        # rate = zI * qp.unsqueeze(1) + zbg
 
         return {
             "rates": rate,
@@ -660,7 +621,7 @@ class IntegratorMLP(BaseIntegrator):
         self.log("Min(qbg.mean)", outputs["qbg"].mean.min())
         self.log("Max(qbg.mean)", outputs["qbg"].mean.max())
         self.log("Mean(qbg.variance)", outputs["qbg"].variance.mean())
-
+        self.train_loss.append(loss.mean())
         return loss.mean()
 
     def validation_step(self, batch, batch_idx):
@@ -695,7 +656,6 @@ class IntegratorMLP(BaseIntegrator):
         self.log("Val: KL I", kl_I.mean())
         self.log("Val: KL prf", kl_p.mean())
         self.log("val_loss", neg_ll.mean())
-
         return outputs
 
     def predict_step(self, batch, batch_idx):
@@ -728,5 +688,4 @@ class IntegratorMLP(BaseIntegrator):
         }
 
     def configure_optimizers(self):
-        # return torch.optim.Adam(self.parameters(), lr=self.learning_rate,weight_decay=1e-6)
         return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
