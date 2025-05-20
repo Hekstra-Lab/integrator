@@ -54,6 +54,7 @@ REGISTRY = {
     "q_I": {
         "gamma": GammaDistribution,
         "log_normal": LogNormalDistribution,
+        "normal": NormalDistribution,
     },
     "q_bg": {
         "gamma": GammaDistribution,
@@ -82,6 +83,7 @@ ARGUMENT_RESOLVER = {
         "p_I": {
             "gamma": torch.distributions.gamma.Gamma,
             "log_normal": torch.distributions.log_normal.LogNormal,
+            "normal": torch.distributions.normal.Normal,
         },
         "p_p": {
             "laplace": torch.distributions.laplace.Laplace,
