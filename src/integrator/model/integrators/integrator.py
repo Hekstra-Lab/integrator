@@ -12,7 +12,7 @@ from integrator.model.distribution import BaseDistribution
 from integrator.model.encoders import CNNResNet2
 from integrator.layers import Linear, Constraint, MLP, ResidualLayer
 from torch.distributions import Dirichlet, Gamma, LogNormal
-from integrator.model.encoders import MLPImageEncoder, MLPMetadataEncoder, ShoeboxEncoder
+from integrator.model.encoders import MLPImageEncoder, MLPMetadataEncoder, ShoeboxEncoder, NormFreeNet
 from lightning.pytorch.utilities import grad_norm
 
 
@@ -54,9 +54,13 @@ class Integrator(BaseIntegrator):
         self.loss_fn = loss
         self.max_iterations = max_iterations
         #self.bg_encoder = MLPMetadataEncoder(feature_dim=240, output_dims=64)
-        self.bg_encoder = MLPMetadataEncoder(feature_dim=60, output_dims=64,depth=4)
+        #self.encoder3 = MLPMetadataEncoder(feature_dim=60, output_dims=64,depth=4)
+        self.encoder3 = nn.Linear(11,64)
+        #self.bg_encoder = MLPMetadataEncoder(feature_dim=60, output_dims=64,depth=4)
         #self.bg_encoder = MLPMetadataEncoder(feature_dim=1323, output_dims=64, depth=5)
-        #self.bg_encoder = ShoeboxEncoder(in_channels=1,conv1_out_channels=8,conv2_out_channels=16)
+        #self.encoder3 = MLPMetadataEncoder(feature_dim=11, output_dims=64, depth=5)
+        #self.bg_encoder = NormFreeNet(d_in = 1323, out_dim=64,dropout_rate=0.1)
+        self.bg_encoder = ShoeboxEncoder(in_channels=1,conv1_out_channels=8,conv2_out_channels=16)
         self.renyi_scale = renyi_scale
         B = torch.distributions.Normal(0, 1).sample((32, 10))
         self.register_buffer("B", B, persistent=True)
@@ -137,30 +141,35 @@ class Integrator(BaseIntegrator):
                 torch.log1p(q4),
                 torch.log1p(q5),
                 std_photons / mean_photons,
+                reference[:,-2]
             ]
         ).transpose(1, 0)
-
-        #encoding_dim = 256
-        encoding_dim = 64
-        freqs = 2.0 ** torch.arange(
-            0, encoding_dim // (2 * vals.shape[-1]), device=device
-        )
-
-        sin_encoding = torch.sin(vals.unsqueeze(-1) * freqs.unsqueeze(0).unsqueeze(0))
-        cos_encoding = torch.cos(vals.unsqueeze(-1) * freqs.unsqueeze(0).unsqueeze(0))
-        sin_encoding = sin_encoding.reshape(sin_encoding.shape[0], -1)
-        cos_encoding = cos_encoding.reshape(cos_encoding.shape[0], -1)
-        intensity_encoding = torch.concat((sin_encoding, cos_encoding), dim=1)
-
+#
+#        #encoding_dim = 256
+#        encoding_dim = 64
+#        freqs = 2.0 ** torch.arange(
+#            0, encoding_dim // (2 * vals.shape[-1]), device=device
+#        )
+#
+#        sin_encoding = torch.sin(vals.unsqueeze(-1) * freqs.unsqueeze(0).unsqueeze(0))
+#        cos_encoding = torch.cos(vals.unsqueeze(-1) * freqs.unsqueeze(0).unsqueeze(0))
+#        sin_encoding = sin_encoding.reshape(sin_encoding.shape[0], -1)
+#        cos_encoding = cos_encoding.reshape(cos_encoding.shape[0], -1)
+#        intensity_encoding = torch.concat((sin_encoding, cos_encoding), dim=1)
+#
+#
         rep = self.encoder(shoebox.reshape(shoebox.shape[0], 1, 3, 21, 21), masks)
-        rep2 = self.bg_encoder(intensity_encoding)
-       # rep2 = self.bg_encoder(shoebox.reshape(shoebox.shape[0], 1, 3, 21, 21), masks)
+        #rep2 = self.bg_encoder(intensity_encoding)
+        rep2 = self.bg_encoder(shoebox.reshape(shoebox.shape[0], 1, 3, 21, 21), masks)
         #rep2 = self.bg_encoder(shoebox)
+        #rep2 = self.bg_encoder(torch.log1p(counts))
+        rep3 = self.encoder3(vals)
         # bgrep = self.bg_encoder(shoebox)
 
-        qbg = self.qbg(rep2)
+        qbg = self.qbg(rep2,metarep=rep3)
         qp = self.qp(rep)
-        qI = self.qI(rep2, metarep=rep)
+        qI = self.qI(rep2, metarep=rep3)
+        #qI = self.qI(rep2)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
         zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
@@ -213,6 +222,7 @@ class Integrator(BaseIntegrator):
             q_I=outputs["qI"],
             q_bg=outputs["qbg"],
             masks=outputs["masks"],
+            d= outputs['d']
         )
 
         # Track gradient norms here
@@ -263,6 +273,7 @@ class Integrator(BaseIntegrator):
             q_I=outputs["qI"],
             q_bg=outputs["qbg"],
             masks=outputs["masks"],
+            d= outputs['d']
         )
 
         # Log metrics
