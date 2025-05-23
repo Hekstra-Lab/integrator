@@ -58,7 +58,7 @@ class Loss2(torch.nn.Module):
         # Background prior
         p_bg_name="gamma",
         p_bg_params={"concentration": 1.0, "rate": 1.0},
-        p_bg_scale=0.0001,
+        p_bg_weight=0.0001,
         # Intensity prior
         use_center_focused_prior=True,
         prior_shape=(3, 21, 21),
@@ -76,7 +76,7 @@ class Loss2(torch.nn.Module):
         super().__init__()
         self.register_buffer("eps", torch.tensor(eps))
         self.register_buffer("beta", torch.tensor(beta))
-        self.register_buffer("p_bg_scale", torch.tensor(p_bg_scale))
+        self.register_buffer("p_bg_weight", torch.tensor(p_bg_weight))
         self.register_buffer("p_p_scale", torch.tensor(p_p_scale))
         # self.register_buffer("p_I_scale", p_I_scale)
         self.p_I_weight = p_I_weight
@@ -224,7 +224,7 @@ class Loss2(torch.nn.Module):
 
         # calculate background and intensity kl divergence
         kl_bg = self.compute_kl(q_bg, p_bg)
-        kl_terms += kl_bg * self.p_bg_scale
+        kl_terms += kl_bg * self.p_bg_weight
 
         kl_p = self.compute_kl(q_p, p_p)
         kl_terms += kl_p * self.p_p_scale
@@ -268,7 +268,7 @@ class Loss2(torch.nn.Module):
             total_loss,
             neg_ll_batch.mean(),
             kl_terms.mean(),
-            (kl_bg * self.p_bg_scale).mean(),
+            (kl_bg * self.p_bg_weight).mean(),
             kl_I.mean() * self.p_I_weight,
             (kl_p * self.p_p_scale).mean(),
         )
