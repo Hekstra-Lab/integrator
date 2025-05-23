@@ -92,12 +92,10 @@ class ShoeboxDataModule(BaseDataModule):
 
         # print("all_dead", all_dead.sum())
 
-        #filter out samples with all dead pixels
+        # filter out samples with all dead pixels
         counts = counts[~all_dead]
         masks = masks[~all_dead]
-        stats = stats[~all_dead]
         reference = reference[~all_dead]
-
 
         # Apply cutoff before standardization to ensure we only process needed data
         if self.cutoff is not None:
