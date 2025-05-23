@@ -39,7 +39,7 @@ class ShoeboxDataModule(BaseDataModule):
         persistent_workers=True,
         shoebox_file_names={
             "counts": "counts.pt",
-            "metadata": "metadata.pt",
+            #"metadata": "metadata.pt",
             "masks": "masks.pt",
             "stats": "stats.pt",
             "reference": "reference.pt",
@@ -74,10 +74,10 @@ class ShoeboxDataModule(BaseDataModule):
         counts = torch.load(
             os.path.join(self.data_dir, self.shoebox_file_names["counts"])
         )
-        metadata = torch.load(
-            os.path.join(self.data_dir, self.shoebox_file_names["metadata"])
-        ).type(torch.float32)
-
+#        metadata = torch.load(
+#            os.path.join(self.data_dir, self.shoebox_file_names["metadata"])
+#        ).type(torch.float32)
+#
         masks = torch.load(
             os.path.join(self.data_dir, self.shoebox_file_names["masks"])
         )
@@ -93,7 +93,7 @@ class ShoeboxDataModule(BaseDataModule):
             # Make sure we're checking the first column of reference against cutoff
             # Ensure reference has the right shape before filtering
             if reference.dim() > 1:
-                selection = reference[:, 0] < self.cutoff
+                selection = reference[:, 13] < self.cutoff
             else:
                 selection = reference < self.cutoff
 
@@ -101,9 +101,9 @@ class ShoeboxDataModule(BaseDataModule):
             counts = counts[selection]
             masks = masks[selection]
             reference = reference[selection]
-            if self.use_metadata is not None:
-                metadata = metadata[selection]
-
+#            if self.use_metadata is not None:
+#                metadata = metadata[selection]
+#
         # Standardize counts after filtering
         if self.standardized_counts is not None:
             standardized_counts = torch.load(
@@ -134,19 +134,20 @@ class ShoeboxDataModule(BaseDataModule):
                     )
 
         # Create the full dataset based on whether metadata is present
-        if self.use_metadata is not None:
-            self.full_dataset = TensorDataset(
-                counts,
-                standardized_counts,
-                metadata,
-                masks,
-                reference,
-            )
-        else:
-            self.full_dataset = TensorDataset(
-                counts, standardized_counts, masks, reference
-            )
-
+#        if self.use_metadata is not None:
+#            self.full_dataset = TensorDataset(
+#                counts,
+#                standardized_counts,
+#                metadata,
+#                masks,
+#                reference,
+#            )
+#        else:
+#            self.full_dataset = TensorDataset(
+#                counts, standardized_counts, masks, reference
+#            )
+        self.full_dataset = TensorDataset(
+            counts, standardized_counts, masks, reference)
         # If single_sample_index is specified, use only that sample
         if self.single_sample_index is not None:
             self.full_dataset = Subset(self.full_dataset, [self.single_sample_index])

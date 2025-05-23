@@ -60,7 +60,7 @@ class Integrator(BaseIntegrator):
         #self.bg_encoder = MLPMetadataEncoder(feature_dim=1323, output_dims=64, depth=5)
         #self.encoder3 = MLPMetadataEncoder(feature_dim=11, output_dims=64, depth=5)
         #self.bg_encoder = NormFreeNet(d_in = 1323, out_dim=64,dropout_rate=0.1)
-        self.bg_encoder = ShoeboxEncoder(in_channels=1,conv1_out_channels=8,conv2_out_channels=16)
+        self.bg_encoder = ShoeboxEncoder(in_channels=1,conv1_out_channels=64,conv2_out_channels=128)
         self.renyi_scale = renyi_scale
         B = torch.distributions.Normal(0, 1).sample((32, 10))
         self.register_buffer("B", B, persistent=True)
@@ -110,40 +110,42 @@ class Integrator(BaseIntegrator):
 
             return intensities
 
-    def forward(self, counts, shoebox, metadata, masks, reference):
+    #def forward(self, counts, shoebox, metadata, masks, reference):
+    def forward(self, counts, shoebox, masks, reference):
         # Unpack batch
         counts = torch.clamp(counts, min=0) * masks
         device = counts.device
 
-        num_valid_pixels = masks.sum(1)
-        total_photons = (counts).sum(1)
-        mean_photons = total_photons / num_valid_pixels
-        max_photons = counts.max(1)[0]
-        std_photons = torch.sqrt(
-            (1 / (num_valid_pixels - 1))
-            * (((counts - mean_photons.unsqueeze(1)) ** 2) * masks).sum(1)
-        )
-        q1 = torch.quantile(counts, 0.9999, dim=1)
-        q2 = torch.quantile(counts, 0.999, dim=1)
-        q3 = torch.quantile(counts, 0.9, dim=1)
-        q4 = torch.quantile(counts, 0.50, dim=1)
-        q5 = torch.quantile(counts, 0.25, dim=1)
-
-        vals = torch.stack(
-            [
-                torch.log1p(total_photons),
-                torch.log1p(mean_photons),
-                torch.log1p(max_photons),
-                torch.log1p(std_photons),
-                torch.log1p(q1),
-                torch.log1p(q2),
-                torch.log1p(q3),
-                torch.log1p(q4),
-                torch.log1p(q5),
-                std_photons / mean_photons,
-                reference[:,-2]
-            ]
-        ).transpose(1, 0)
+#        num_valid_pixels = masks.sum(1)
+#        total_photons = (counts).sum(1)
+#        mean_photons = total_photons / num_valid_pixels
+#        max_photons = counts.max(1)[0]
+#        std_photons = torch.sqrt(
+#            (1 / (num_valid_pixels - 1))
+#            * (((counts - mean_photons.unsqueeze(1)) ** 2) * masks).sum(1)
+#        )
+#        q1 = torch.quantile(counts, 0.9999, dim=1)
+#        q2 = torch.quantile(counts, 0.999, dim=1)
+#        q3 = torch.quantile(counts, 0.9, dim=1)
+#        q4 = torch.quantile(counts, 0.50, dim=1)
+#        q5 = torch.quantile(counts, 0.25, dim=1)
+#
+#        vals = torch.stack(
+#            [
+#                torch.log1p(total_photons),
+#                torch.log1p(mean_photons),
+#                torch.log1p(max_photons),
+#                torch.log1p(std_photons),
+#                torch.log1p(q1),
+#                torch.log1p(q2),
+#                torch.log1p(q3),
+#                torch.log1p(q4),
+#                torch.log1p(q5),
+#                std_photons / mean_photons,
+#                reference[:,-2]
+#            ]
+#        ).transpose(1, 0)
+#
 #
 #        #encoding_dim = 256
 #        encoding_dim = 64
@@ -163,12 +165,14 @@ class Integrator(BaseIntegrator):
         rep2 = self.bg_encoder(shoebox.reshape(shoebox.shape[0], 1, 3, 21, 21), masks)
         #rep2 = self.bg_encoder(shoebox)
         #rep2 = self.bg_encoder(torch.log1p(counts))
-        rep3 = self.encoder3(vals)
+        #rep3 = self.encoder3(vals)
         # bgrep = self.bg_encoder(shoebox)
 
-        qbg = self.qbg(rep2,metarep=rep3)
+        #qbg = self.qbg(rep2,metarep=rep3)
+        qbg = self.qbg(rep2)
         qp = self.qp(rep)
-        qI = self.qI(rep2, metarep=rep3)
+        #qI = self.qI(rep2, metarep=rep3)
+        qI = self.qI(rep2)
         #qI = self.qI(rep2)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
@@ -211,8 +215,8 @@ class Integrator(BaseIntegrator):
         }
 
     def training_step(self, batch, batch_idx):
-        counts, shoebox, metadata, masks, reference = batch
-        outputs = self(counts, shoebox, metadata, masks, reference)
+        counts, shoebox,  masks, reference = batch
+        outputs = self(counts, shoebox,  masks, reference)
 
         # Calculate loss
         (loss, neg_ll, kl, kl_bg, kl_I, kl_p) = self.loss_fn(
@@ -222,7 +226,6 @@ class Integrator(BaseIntegrator):
             q_I=outputs["qI"],
             q_bg=outputs["qbg"],
             masks=outputs["masks"],
-            d= outputs['d']
         )
 
         # Track gradient norms here
@@ -256,8 +259,8 @@ class Integrator(BaseIntegrator):
 
     def validation_step(self, batch, batch_idx):
         # Unpack batch
-        counts, shoebox, metadata, masks, reference = batch
-        outputs = self(counts, shoebox, metadata, masks, reference)
+        counts, shoebox, masks, reference = batch
+        outputs = self(counts, shoebox,  masks, reference)
 
         (
             loss,
@@ -273,7 +276,6 @@ class Integrator(BaseIntegrator):
             q_I=outputs["qI"],
             q_bg=outputs["qbg"],
             masks=outputs["masks"],
-            d= outputs['d']
         )
 
         # Log metrics
@@ -288,8 +290,8 @@ class Integrator(BaseIntegrator):
         return outputs
 
     def predict_step(self, batch, batch_idx):
-        counts, shoebox, metadata, masks, reference = batch
-        outputs = self(counts, shoebox, metadata, masks, reference)
+        counts, shoebox,  masks, reference = batch
+        outputs = self(counts, shoebox,  masks, reference)
 
         intensities = self.calculate_intensities(
             counts=outputs["counts"],
@@ -358,7 +360,7 @@ class IntegratorFourierFeatures(BaseIntegrator):
         self.loss_fn = loss
         self.max_iterations = max_iterations
         self.intensity_encoder = encoder2
-        self.linear = Linear(64 * 2, 64)
+        #self.linear = Linear(64 * 2, 64)
         self.renyi_scale = renyi_scale
         B = torch.distributions.Normal(0, ff_scale).sample((num_fourier_features, 3))
         self.register_buffer("B", B, persistent=True)
