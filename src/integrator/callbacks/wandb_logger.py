@@ -830,8 +830,11 @@ class UNetPlotter(Callback):
 # %%
 # NOTE: for dirichlet model
 class Plotter(Callback):
-    def __init__(self, num_profiles=5, plot_every_n_epochs=5, d_vectors=None):
+    def __init__(self, num_profiles=5, plot_every_n_epochs=5,d=3,h=21,w=21 d_vectors=None):
         super().__init__()
+        self.d = d
+        self.h = h
+        self.w = w
         self.train_predictions = {}
         self.val_predictions = {}
         self.num_profiles = num_profiles
@@ -919,9 +922,9 @@ class Plotter(Callback):
                 f"Selected {self.num_profiles} reflection IDs to track: {self.tracked_refl_ids}"
             )
 
-        profile_images = profile_preds.reshape(-1, 3, 21, 21)[..., 1, :, :]
-        count_images = count_preds.reshape(-1, 3, 21, 21)[..., 1, :, :]
-        rate_images = rates.mean(1).reshape(-1, 3, 21, 21)[..., 1, :, :]
+        profile_images = profile_preds.reshape(-1, self.d, self.h, self.w)[..., 1, :, :]
+        count_images = count_preds.reshape(-1, self.d, self.h, self.w)[..., 1, :, :]
+        rate_images = rates.mean(1).reshape(-1, self.d, self.h, self.w)[..., 1, :, :]
         bg_mean = qbg_preds.mean
         bg_var = qbg_preds.variance
         dials_I_prf_value = dials_I

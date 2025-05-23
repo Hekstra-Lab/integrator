@@ -61,7 +61,6 @@ class Loss2(torch.nn.Module):
         p_bg_weight=0.0001,
         # Intensity prior
         use_center_focused_prior=True,
-        prior_shape=(3, 21, 21),
         prior_base_alpha=0.1,
         prior_center_alpha=50.0,
         prior_decay_factor=0.4,
@@ -101,10 +100,10 @@ class Loss2(torch.nn.Module):
         self._register_distribution_params(p_I_name, p_I_params, prefix="p_I_")
 
         # Number of elements in the profile
-        self.profile_size = prior_shape[0] * prior_shape[1] * prior_shape[2]
+        self.profile_size = shape[0] * shape[1] * shape[2]
 
         # Number of elements in the profile
-        self.profile_size = prior_shape[0] * prior_shape[1] * prior_shape[2]
+        self.profile_size = shape[0] * shape[1] * shape[2]
         self.use_robust = use_robust
 
         # Handle profile prior (p_p) - special handling for Dirichlet
@@ -120,7 +119,7 @@ class Loss2(torch.nn.Module):
         self.register_buffer("dirichlet_concentration", alpha_vector)
 
         # Store shape for profile reshaping
-        self.prior_shape = prior_shape
+        self.prior_shape = shape
 
     def compute_kl(self, q_dist, p_dist):
         """Compute KL divergence between distributions, with fallback sampling if needed."""

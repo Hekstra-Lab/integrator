@@ -9,8 +9,9 @@ class DirichletProfile(torch.nn.Module):
     Dirichlet profile model
     """
 
-    def __init__(self, dmodel=None, num_components=3 * 21 * 21):
+    def __init__(self, dmodel=None, input_shape=(3, 21, 21)):
         super().__init__()
+        self.num_components = input_shape[0] * input_shape[1] * input_shape[2]
         if dmodel is not None:
             self.alpha_layer = Linear(dmodel, num_components)
         self.dmodel = dmodel

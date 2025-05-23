@@ -35,6 +35,9 @@ class Integrator(BaseIntegrator):
         max_iterations=4,
         profile_threshold=0.001,
         renyi_scale=0.00,
+        d = 3
+        h = 21,
+        w = 21,
     ):
         super().__init__()
         # Save hyperparameters
@@ -71,6 +74,9 @@ class Integrator(BaseIntegrator):
         self.renyi_scale = renyi_scale
         B = torch.distributions.Normal(0, 1).sample((32, 10))
         self.register_buffer("B", B, persistent=True)
+        self.d = d
+        self.h = h
+        self.w = w
 
     def calculate_intensities(self, counts, qbg, qp, masks):
         with torch.no_grad():
@@ -167,9 +173,9 @@ class Integrator(BaseIntegrator):
         #        intensity_encoding = torch.concat((sin_encoding, cos_encoding), dim=1)
         #
         #
-        rep = self.encoder(shoebox.reshape(shoebox.shape[0], 1, 3, 21, 21), masks)
+        rep = self.encoder(shoebox.reshape(shoebox.shape[0], 1, self.d, self.h, self.w), masks)
         # rep2 = self.bg_encoder(intensity_encoding)
-        rep2 = self.bg_encoder(shoebox.reshape(shoebox.shape[0], 1, 3, 21, 21), masks)
+        rep2 = self.bg_encoder(shoebox.reshape(shoebox.shape[0], 1, self.d, self.h, self.w), masks)
         # rep2 = self.bg_encoder(shoebox)
         # rep2 = self.bg_encoder(torch.log1p(counts))
         # rep3 = self.encoder3(vals)
