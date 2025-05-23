@@ -305,6 +305,9 @@ def create_integrator(config):
             learning_rate=config["integrator"]["learning_rate"],
             profile_threshold=config["integrator"]["profile_threshold"],
             renyi_scale=config["integrator"]["renyi_scale"],
+            d=config["integrator"]["d"],
+            h=config["integrator"]["h"],
+            w=config["integrator"]["w"],
         )
         return integrator
 
