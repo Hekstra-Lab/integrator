@@ -89,8 +89,10 @@ class Loss2(torch.nn.Module):
         self.p_I_params = p_I_params
         if prior_tensor is not None:
             self.concentration = torch.load(prior_tensor, weights_only=False)
-            self.concentration[self.concentration > 2] *= 40
-            self.concentration /= self.concentration.sum()
+            self.concentration[
+                self.concentration > torch.quantile(self.concentration, 0.99)
+            ] *= 40
+            self.concentration /= self.concentration.max()
         else:
             self.concentration = (
                 torch.ones(shape[0] * shape[1] * shape[2]) * p_p_params["concentration"]
