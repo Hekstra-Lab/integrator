@@ -109,7 +109,7 @@ class Loss2(torch.nn.Module):
         # Handle profile prior (p_p) - special handling for Dirichlet
         # Create center-focused Dirichlet prior
         alpha_vector = create_center_focused_dirichlet_prior(
-            shape=prior_shape,
+            shape=shape,
             base_alpha=prior_base_alpha,
             center_alpha=prior_center_alpha,
             decay_factor=prior_decay_factor,

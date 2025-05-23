@@ -133,7 +133,6 @@ class MVNLoss(torch.nn.Module):
 
         # KL for background
         kl_bg = self.compute_kl(q_bg, p_bg)
-        # kl_bg = kl_bg.expand(batch_size) if kl_bg.dim() == 0 else kl_bg
         kl_terms += kl_bg * self.p_bg_scale
 
         # Optional regularization for profile
@@ -303,7 +302,6 @@ class LRMVNLoss(torch.nn.Module):
 
         # calculate background and intensity kl divergence
         kl_bg = torch.distributions.kl.kl_divergence(q_bg, p_bg)
-        kl_bg = kl_bg.sum(-1)
         kl_terms += kl_bg * self.p_bg_w
 
         kl_p_p_mean = torch.distributions.kl.kl_divergence(q_p_mean, p_p_mean)

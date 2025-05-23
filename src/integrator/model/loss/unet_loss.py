@@ -14,10 +14,12 @@ def create_center_focused_dirichlet_prior(
     channels, height, width = shape
     alpha_3d = np.ones(shape) * base_alpha
 
+    # center indices
     center_c = channels // 2
     center_h = height // 2
     center_w = width // 2
 
+    # loop over voxels
     for c in range(channels):
         for h in range(height):
             for w in range(width):
@@ -236,11 +238,361 @@ class UnetLoss(torch.nn.Module):
         )
 
 
-if __name__ == "__main__":
-    plt.imshow(
-        torch.distributions.dirichlet.Dirichlet(
-            create_center_focused_dirichlet_prior(peak_percentage=0.08)
-        ).concentration.reshape(3, 21, 21)[1]
-    )
-    plt.colorbar()
-    plt.show()
+# def create_center_spike_dirichlet_prior(
+# shape=(3, 21, 21),
+# outer_alpha: float = 5.0,  # large α → near‐uniform outside
+# center_alpha: float = 0.05,  # small α → very spiky at exact center
+# peak_radius: float = 0.1,  # fraction of max‐distance defining the “influence” zone
+# decay: float = 1.0,  # power‐law exponent for the fall-off
+# ):
+# """
+# Returns a torch vector of length prod(shape) to be used as a Dirichlet α‐vector,
+# with α=center_alpha at the center voxel, rising to α=outer_alpha at distance>=peak_radius.
+# """
+# # 1) create a grid of normalized distances in [0,1]
+# C, H, W = shape
+# # center indices
+# cc, ch, cw = (np.array(shape) - 1) / 2.0
+# # coordinates
+# zs = np.arange(C)[:, None, None]
+# ys = np.arange(H)[None, :, None]
+# xs = np.arange(W)[None, None, :]
+# # normalized distances along each axis
+# dz = (zs - cc) / (C / 2)
+# dy = (ys - ch) / (H / 2)
+# dx = (xs - cw) / (W / 2)
+# # euclidean distance normalized to [0,1]
+# dist = np.sqrt(dx**2 + dy**2 + dz**2) / np.sqrt(3)
+
+# # 2) build α‐map: start at outer_alpha everywhere
+# alpha_3d = np.full(shape, outer_alpha, dtype=np.float32)
+
+# # 3) inside the “peak” radius, interpolate down to center_alpha
+# mask = dist <= peak_radius
+# scaled = dist[mask] / peak_radius  # in [0,1]
+# # α(dist) = center_alpha + (outer_alpha - center_alpha) * scaled**decay
+# alpha_3d[mask] = center_alpha + (outer_alpha - center_alpha) * (scaled**decay)
+
+# # 4) return as a flat torch tensor
+# return torch.tensor(alpha_3d.flatten(), dtype=torch.float32)
+
+
+# if __name__ == "__main__":
+# plt.imshow(
+# torch.distributions.dirichlet.Dirichlet(create_center_focused_dirichlet_prior())
+# .rsample()
+# .reshape(3, 21, 21)[1]
+# )
+
+# plt.imshow(
+# torch.distributions.Dirichlet((torch.ones(1323) * (1 / 1323))).mode.reshape(
+# 3, 21, 21
+# )[1]
+# )
+
+# def create_centered_dirichlet_prior(
+# shape=(3,21,21),
+# K: float = 50.0,       # total concentration
+# sigma_frac: float = 0.25 # controls how quickly weights fall off from center
+# ):
+# """
+# Returns a torch tensor of length prod(shape) to use as Dirichlet α-vector,
+# such that the implied prior mean peaks at the center of the volume and
+# the total concentration is K.
+# """
+# C, H, W = shape
+# # --- 1) compute a Gaussian-shaped weight map w ---
+# # grid of coordinates centered at zero
+# zs = np.linspace(-1,1,C)[:,None,None]
+# ys = np.linspace(-1,1,H)[None,:,None]
+# xs = np.linspace(-1,1,W)[None,None,:]
+# # squared distance from center
+# r2 = zs**2 + ys**2 + xs**2
+# # Gaussian profile
+# w = np.exp(-r2 / (2*(sigma_frac**2)))
+# # normalize so sum(w)=1
+# w = w / w.sum()
+
+# # --- 2) build α = K * w, then flatten to a vector ---
+# alpha = (K * w).astype(np.float32)
+# return torch.from_numpy(alpha.flatten())
+
+# def box_cutoff_dirichlet(
+# shape=(3,21,21),
+# K: float = 50.0,
+# half_widths=(3.0, 6.0, 6.0),  # (L_z, L_y, L_x) in voxels
+# epsilon: float = 1e-4        # small floor off‐box
+# ):
+# d,h,w = shape
+# Lz, Ly, Lx = half_widths
+
+# # --- your same grid ---
+# zc = torch.arange(d).float() - (d-1)/2
+# yc = torch.arange(h).float() - (h-1)/2
+# xc = torch.arange(w).float() - (w-1)/2
+
+# Z = zc.view(d,1,1).expand(d,h,w)
+# Y = yc.view(1,h,1).expand(d,h,w)
+# X = xc.view(1,1,w).expand(d,h,w)
+
+# pos = torch.stack([X,Y,Z], dim=-1).view(-1,3)  # (N,3)
+# x, y, z = pos[:,0], pos[:,1], pos[:,2]
+
+# # --- mask inside the box ---
+# mask = ((z.abs() <= Lz) &
+# (y.abs() <= Ly) &
+# (x.abs() <= Lx)).float()  # (N,)
+
+# # --- floor off‐box, then normalize ---
+# w_tilde = mask + epsilon * (1 - mask)
+# w = w_tilde / w_tilde.sum()
+
+# alpha = K * w
+# return alpha
+
+# # %%
+# d = 3
+# h = 21
+# w = 21
+
+
+# # Create centered coordinate grid
+# z_coords = torch.arange(d).float() - (d - 1) / 2
+# y_coords = torch.arange(h).float() - (h - 1) / 2
+# x_coords = torch.arange(w).float() - (w - 1) / 2
+
+# z_coords = z_coords.view(d, 1, 1).expand(d, h, w)
+# y_coords = y_coords.view(1, h, 1).expand(d, h, w)
+# x_coords = x_coords.view(1, 1, w).expand(d, h, w)
+# pixel_positions = torch.stack([x_coords, y_coords, z_coords], dim=-1)
+# pixel_positions = pixel_positions.view(-1, 3)
+
+# def shift_origin(
+# pixel_positions: torch.Tensor,
+# shape: tuple[int,int,int],
+# new_origin_idx_zyx: tuple[float,float,float]
+# ) -> torch.Tensor:
+# """
+# Given:
+# - pixel_positions: (d*h*w, 3) tensor of (x,y,z) coords zeroed at the CENTER voxel
+# - shape = (d, h, w)
+# - new_origin_idx_zyx = (i_z0, i_y0, i_x0) in voxel‐index units
+# Returns:
+# - shifted_positions: same shape, but now zeroed at new_origin_idx_zyx
+# """
+# d, h, w = shape
+# i_z0, i_y0, i_x0 = new_origin_idx_zyx
+
+# # 1) compute Δ = (i_x0 - (w-1)/2,  i_y0 - (h-1)/2,  i_z0 - (d-1)/2)
+# delta = torch.tensor([
+# i_x0 - (w - 1) / 2,
+# i_y0 - (h - 1) / 2,
+# i_z0 - (d - 1) / 2,
+# ], dtype=pixel_positions.dtype, device=pixel_positions.device)
+
+# # 2) subtract it from every (x,y,z)
+# shifted = pixel_positions - delta  # now (0,0,0) lives at new_origin_idx_zyx
+# return shifted
+
+# # shifted = shift_origin(pixel_positions, (d,h,w), (0.0,0.,0))
+# shifted = pixel_positions - torch.ones_like(pixel_positions) * torch.tensor([0.0,0.0, 0.0])
+
+# # %%
+
+# plt.imshow(torch.zeros(21,21),cmap='gray_r')
+# plt.grid(True, linestyle='-', linewidth=1.0,color='black')
+# plt.xticks([])
+# plt.yticks([])
+# plt.show()
+
+
+# # %%
+# cov = torch.distributions.Wishart(
+# df=10,
+# scale_tril=torch.eye(3),
+# ).sample()
+
+# torch.distributions.LowRankMultivariateNormal(
+# loc=torch.zeros(3),
+# cov_factor=torch.eye(3),
+# cov_diag=torch.ones(3),
+# )
+
+# log_prob = torch.distributions.MultivariateNormal(
+# loc= torch.tensor([0.0, 0.0, 0.0]),
+# covariance_matrix= torch.eye(3)*8,
+# )
+# # %%
+
+# log_prob = torch.distributions.LowRankMultivariateNormal(
+# loc=torch.zeros(3),
+# cov_factor=torch.eye(3)*torch.tensor([0.2, 0.20, 0.05]),
+# cov_diag=torch.ones(3)*3,
+# ).log_prob(pixel_positions)
+
+# log_probs_ = log_prob - log_prob.max(dim=-1,keepdim=True)[0]
+# profile = torch.exp(log_probs_).reshape(d,h,w)
+
+
+# plt.imshow(profile[1])
+# # plt.colorbar()
+# plt.xticks([])
+# plt.yticks([])
+# # plt.title("Profile")
+# plt.savefig(
+# "/Users/luis/Downloads/profile_mvn7.png",
+# dpi=300,
+# bbox_inches="tight",
+# transparent=True,
+# )
+
+# plt.show()
+
+# # %%
+
+# plt.imshow((shifted - torch.zeros_like(pixel_positions)).pow(2).sum(-1).sqrt().reshape(d,h,w)[1])
+
+# plt.show()
+
+# # %%
+
+# torch.(1,1,0)
+
+# plt.imshow((pixel_positions  - torch.zeros_like(pixel_positions)).pow(2).sum(-1).sqrt().reshape(d,h,w)[1])
+
+# plt.show()
+
+
+# plt.imshow(pixel_positions[:,3].reshape(3, 21, 21)[1].abs())
+# plt.colorbar()
+# plt.xticks([])
+# plt.yticks([])
+# plt.show()
+
+# # %%
+# alpha = create_center_spike_dirichlet_prior(
+# outer_alpha=1.0,
+# center_alpha=1e-7,
+# decay=20.0,
+# peak_radius=0.2,
+# ).reshape(
+# 3, 21, 21
+# )
+
+# plt.imshow(
+# create_center_spike_dirichlet_prior(
+# outer_alpha=1.0,
+# center_alpha=1e-7,
+# decay=20.0,
+# peak_radius=0.2,
+# ).reshape(
+# 3, 21, 21
+# )[1]
+# )
+
+# # %%
+
+# def gaussian_centered_via_grid(
+# shape=(3,21,21),
+# K: float = 50.0,
+# sigma: float = 3.0  # in voxels
+# ):
+# d,h,w = shape
+# zc = torch.arange(d).float() - (d-1)/2
+# yc = torch.arange(h).float() - (h-1)/2
+# xc = torch.arange(w).float() - (w-1)/2
+
+# Z = zc.view(d,1,1).expand(d,h,w)
+# Y = yc.view(1,h,1).expand(d,h,w)
+# X = xc.view(1,1,w).expand(d,h,w)
+
+# # pixel positions
+# pos = torch.stack([X,Y,Z], dim=-1).view(-1,3)  # (N,3)
+
+# # squared distance from center
+# r2 = (pos**2).sum(dim=1)  # (N,)k
+
+# # gaussian
+# w_tilde = torch.exp(-r2 / (2*sigma*sigma))  # (N,)
+# w = w_tilde / w_tilde.sum()                # normalize
+
+# alpha = K * w                              # (N,)
+# return alpha  # ready for torch.distributions.Dirichlet(alpha)
+
+# def gaussian_sharpened_dirichlet(
+# shape=(3,21,21),
+# K: float = 50.0,
+# sigma: float = 3.0,
+# p: float = 5.0     # exponent for sharpening
+# ):
+# # 1) same grid‐based Gaussian weights
+# d,h,w = shape
+# zs = torch.arange(d).float() - (d-1)/2
+# ys = torch.arange(h).float() - (h-1)/2
+# xs = torch.arange(w).float() - (w-1)/2
+# Z = zs.view(d,1,1).expand(d,h,w)
+# Y = ys.view(1,h,1).expand(d,h,w)
+# X = xs.view(1,1,w).expand(d,h,w)
+# pos = torch.stack([X,Y,Z], dim=-1).view(-1,3)
+# r2 = (pos**2).sum(dim=1)
+# w_unnorm = torch.exp(-r2/(2*sigma**2))
+# # 2) sharpen
+# w_sharp = w_unnorm ** p
+# # 3) normalize
+# w = w_sharp / w_sharp.sum()
+# # 4) alphas
+# return K * w
+
+
+# # %%
+# # alpha = create_centered_dirichlet_prior(K=1,sigma_frac=0.12)
+# # alpha = box_cutoff_dirichlet(half_widths=(3.0, 3.0, 5.0), K=1.0)
+# # alpha = gaussian_centered_via_grid(sigma=1.0,k=100)
+
+# decay = 1
+# peak_percentage = 0.01
+# alpha = create_center_focused_dirichlet_prior(base_alpha=.01,center_alpha=20,decay_factor=decay,peak_percentage=peak_percentage)
+
+# plt.imshow(
+# torch.distributions.dirichlet.Dirichlet(alpha)
+# .sample()
+# .reshape(3, 21, 21)[1]
+# )
+# plt.colorbar()
+# plt.xticks([])
+# plt.yticks([])
+# plt.savefig(
+# f"/Users/luis/Downloads/dirichlet_alpha_{peak_percentage}_mean.png",
+# dpi=300,
+# bbox_inches="tight",
+# transparent=True,
+# )
+# plt.show()
+
+# # %%
+# alph = 1.0
+
+# dirichlet = torch.distributions.dirichlet.Dirichlet(torch.ones(21*21)*alph)
+# sample = dirichlet.rsample().reshape(21, 21)
+
+# plt.imshow(
+# # sample
+# dirichlet.mean.reshape(21, 21),
+# )
+# plt.xticks([])
+# plt.yticks([])
+# plt.colorbar()
+# # plt.title(f'alpha: {alph}\nmean: {dirichlet.mean[0] :.2e}\n    var: {dirichlet.variance[0] :.2e}')
+# plt.title(f'α: {alph}\n𝔼(Dir(α)')
+# #transparent background
+# plt.savefig(
+# f"/Users/luis/Downloads/dirichlet_alpha_{alph}_mean.png",
+# dpi=300,
+# bbox_inches="tight",
+# transparent=True,
+# # bbox_inches="tight",
+# )
+# plt.show()
+
+# # %%
+# torch.distributions.dirichlet.Dirichlet(torch.ones(21*21)*1).variance
