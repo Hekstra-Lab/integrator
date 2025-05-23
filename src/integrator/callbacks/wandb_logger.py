@@ -922,9 +922,9 @@ class Plotter(Callback):
                 f"Selected {self.num_profiles} reflection IDs to track: {self.tracked_refl_ids}"
             )
 
-        profile_images = profile_preds.reshape(-1, self.d, self.h, self.w)[..., 1, :, :]
-        count_images = count_preds.reshape(-1, self.d, self.h, self.w)[..., 1, :, :]
-        rate_images = rates.mean(1).reshape(-1, self.d, self.h, self.w)[..., 1, :, :]
+        profile_images = profile_preds.reshape(-1, self.d, self.h, self.w)[..., (self.d - 1)//2, :, :]
+        count_images = count_preds.reshape(-1, self.d, self.h, self.w)[..., (self.d -1)//2, :, :]
+        rate_images = rates.mean(1).reshape(-1, self.d, self.h, self.w)[..., (self.d -1)//2, :, :]
         bg_mean = qbg_preds.mean
         bg_var = qbg_preds.variance
         dials_I_prf_value = dials_I
@@ -991,7 +991,7 @@ class Plotter(Callback):
             # Row 1: Input counts
             im0 = axes[0, i].imshow(counts_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13)
             axes[0, i].set_title(
-                f"reflection ID: {refl_id}\n DIALS I_prf: {self.tracked_predictions['dials_I_prf_value'][refl_id]:.2f}\nDIALS var: {self.tracked_predictions['dials_I_prf_var'][refl_id]:.2f}\nDIALS bg mean: {self.tracked_predictions['dials_bg_mean'][refl_id]:.2f}"
+                    f"reflection ID: {refl_id}\n DIALS I_prf: {self.tracked_predictions['dials_I_prf_value'][refl_id]:.2f}\nDIALS var: {self.tracked_predictions['dials_I_prf_var'][refl_id]:.2f}\n DIALS std: {np.sqrt(self.tracked_predictions['dials_I_prf_var'][refl_id]):.2f}\n DIALS bg mean: {self.tracked_predictions['dials_bg_mean'][refl_id]:.2f}"
             )
             axes[0, i].set_ylabel("raw image", labelpad=5)
             # Turn off axes but keep the labels
@@ -1013,7 +1013,7 @@ class Plotter(Callback):
             # Row 3: Rates (same scale as row 1)
             im2 = axes[2, i].imshow(rates_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13)
             axes[2, i].set_title(
-                f"Bg: {float(self.tracked_predictions['qbg'][refl_id]):.2f}\n I: {self.tracked_predictions['intensity_mean'][refl_id]:.2f}\n I_var: {self.tracked_predictions['intensity_var'][refl_id]:.2f}"
+                    f"Bg: {float(self.tracked_predictions['qbg'][refl_id]):.2f}\n I: {self.tracked_predictions['intensity_mean'][refl_id]:.2f}\n I_var: {self.tracked_predictions['intensity_var'][refl_id]:.2f}=n I_std: {np.sqrt(self.tracked_predictions['intensity_var'][refl_id]):.2f}\n"
             )
 
             axes[2, i].set_ylabel("rate = I*pij + Bg", labelpad=5)
