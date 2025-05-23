@@ -68,16 +68,17 @@ class Loss2(torch.nn.Module):
         prior_peak_percentage=0.026,
         p_I_name="gamma",
         p_I_params={"concentration": 1.0, "rate": 1.0},
-        p_I_weight=.001,
+        p_I_weight=0.001,
         prior_tensor=None,
         use_robust=False,
+        shape=(3, 21, 21),
     ):
         super().__init__()
         self.register_buffer("eps", torch.tensor(eps))
         self.register_buffer("beta", torch.tensor(beta))
         self.register_buffer("p_bg_scale", torch.tensor(p_bg_scale))
         self.register_buffer("p_p_scale", torch.tensor(p_p_scale))
-        #self.register_buffer("p_I_scale", p_I_scale)
+        # self.register_buffer("p_I_scale", p_I_scale)
         self.p_I_weight = p_I_weight
 
         # Store distribution names and params
@@ -92,7 +93,9 @@ class Loss2(torch.nn.Module):
             self.concentration[self.concentration > 2] *= 40
             self.concentration /= self.concentration.sum()
         else:
-            self.concentration = torch.ones(1323) * p_p_params["concentration"]
+            self.concentration = (
+                torch.ones(shape[0] * shape[1] * shape[2]) * p_p_params["concentration"]
+            )
 
         self._register_distribution_params(p_bg_name, p_bg_params, prefix="p_bg_")
         self._register_distribution_params(p_I_name, p_I_params, prefix="p_I_")
@@ -217,7 +220,7 @@ class Loss2(torch.nn.Module):
         kl_terms = torch.zeros(batch_size, device=device)
 
         kl_I = self.compute_kl(q_I, p_I)
-        kl_terms += (kl_I * self.p_I_weight)
+        kl_terms += kl_I * self.p_I_weight
 
         # calculate background and intensity kl divergence
         kl_bg = self.compute_kl(q_bg, p_bg)
