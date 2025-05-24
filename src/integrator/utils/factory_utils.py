@@ -289,14 +289,19 @@ def create_integrator(config):
             **config["components"]["loss"]["params"],
         )
 
-        encoder = create_module(
-            "encoder",
-            config["components"]["encoder"]["name"],
-            **config["components"]["encoder"]["params"],
+        intensity_encoder = create_module(
+            "intensity_encoder",
+            config["components"]["intensity_encoder"]["name"],
+            **config["components"]["intensity_encoder"]["params"],
         )
-
+        profile_encoder = create_module(
+            "profile_encoder",
+            config["components"]["profile_encoder"]["name"],
+            **config["components"]["profile_encoder"]["params"],
+        )
         integrator = integrator_class(
-            encoder=encoder,
+            intensity_encoder=intensity_encoder,
+            profile_encoder=profile_encoder,
             qbg=background_distribution,
             qp=profile,
             qI=intensity_distribution,

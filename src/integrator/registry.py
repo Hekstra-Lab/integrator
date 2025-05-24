@@ -26,6 +26,12 @@ REGISTRY = {
         "normfree_3d": NormFreeConv3D,
         "mlp_metadata_encoder": MLPMetadataEncoder,
     },
+    "profile_encoder": {
+        "shoebox_encoder": ShoeboxEncoder,
+    },
+    "intensity_encoder": {
+        "shoebox_encoder": ShoeboxEncoder,
+    },
     "decoder": {
         "default_decoder": Decoder,
         "mvn_decoder": MVNDecoder,

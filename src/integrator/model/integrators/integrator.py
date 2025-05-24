@@ -25,7 +25,8 @@ from lightning.pytorch.utilities import grad_norm
 class Integrator(BaseIntegrator):
     def __init__(
         self,
-        encoder,
+        intensity_encoder,
+        profile_encoder,
         loss,
         qbg,
         qp,
@@ -35,12 +36,15 @@ class Integrator(BaseIntegrator):
         max_iterations=4,
         profile_threshold=0.001,
         renyi_scale=0.00,
-        d = 3
-        h = 21,
-        w = 21,
+        d=3,
+        h=21,
+        w=21,
     ):
         super().__init__()
         # Save hyperparameters
+        self.d = d
+        self.h = h
+        self.w = w
         self.save_hyperparameters(
             ignore=[
                 "image_encoder",
@@ -54,29 +58,16 @@ class Integrator(BaseIntegrator):
         self.mc_samples = mc_samples
 
         # Model components
-        self.encoder = encoder
+        self.intensity_encoder = intensity_encoder
+        self.profile_encoder = profile_encoder
         self.qp = qp
         self.qI = qI
         self.qbg = qbg
         self.automatic_optimization = True
         self.loss_fn = loss
         self.max_iterations = max_iterations
-        # self.bg_encoder = MLPMetadataEncoder(feature_dim=240, output_dims=64)
-        # self.encoder3 = MLPMetadataEncoder(feature_dim=60, output_dims=64,depth=4)
         self.encoder3 = nn.Linear(11, 64)
-        # self.bg_encoder = MLPMetadataEncoder(feature_dim=60, output_dims=64,depth=4)
-        # self.bg_encoder = MLPMetadataEncoder(feature_dim=1323, output_dims=64, depth=5)
-        # self.encoder3 = MLPMetadataEncoder(feature_dim=11, output_dims=64, depth=5)
-        # self.bg_encoder = NormFreeNet(d_in = 1323, out_dim=64,dropout_rate=0.1)
-        self.bg_encoder = ShoeboxEncoder(
-            in_channels=1, conv1_out_channels=64, conv2_out_channels=128
-        )
         self.renyi_scale = renyi_scale
-        B = torch.distributions.Normal(0, 1).sample((32, 10))
-        self.register_buffer("B", B, persistent=True)
-        self.d = d
-        self.h = h
-        self.w = w
 
     def calculate_intensities(self, counts, qbg, qp, masks):
         with torch.no_grad():
@@ -84,7 +75,6 @@ class Integrator(BaseIntegrator):
             zbg = (
                 qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
             )  # [B,S,1]
-            # zp = qp.rsample([self.mc_samples]).permute(1, 0, 2) #
             zp = qp.mean.unsqueeze(1)  # [B,1,P]
 
             vi = zbg + 1e-6
@@ -173,19 +163,17 @@ class Integrator(BaseIntegrator):
         #        intensity_encoding = torch.concat((sin_encoding, cos_encoding), dim=1)
         #
         #
-        rep = self.encoder(shoebox.reshape(shoebox.shape[0], 1, self.d, self.h, self.w), masks)
-        # rep2 = self.bg_encoder(intensity_encoding)
-        rep2 = self.bg_encoder(shoebox.reshape(shoebox.shape[0], 1, self.d, self.h, self.w), masks)
-        # rep2 = self.bg_encoder(shoebox)
-        # rep2 = self.bg_encoder(torch.log1p(counts))
-        # rep3 = self.encoder3(vals)
-        # bgrep = self.bg_encoder(shoebox)
-
+        profile_rep = self.profile_encoder(
+            shoebox.reshape(shoebox.shape[0], 1, self.d, self.h, self.w), masks
+        )
+        intensity_rep = self.intensity_encoder(
+            shoebox.reshape(shoebox.shape[0], 1, self.d, self.h, self.w), masks
+        )
         # qbg = self.qbg(rep2,metarep=rep3)
-        qbg = self.qbg(rep2)
-        qp = self.qp(rep)
+        qbg = self.qbg(intensity_rep)
+        qp = self.qp(profile_rep)
         # qI = self.qI(rep2, metarep=rep3)
-        qI = self.qI(rep2)
+        qI = self.qI(intensity_rep)
         # qI = self.qI(rep2)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)

@@ -7,7 +7,7 @@ class ShoeboxEncoder(nn.Module):
     def __init__(
         self,
         input_shape=(3, 21, 21),  # (D,H,W)
-        in_channels=21,
+        in_channels=1,
         out_dim=64,
         conv1_out_channels=16,
         conv1_kernel=(1, 3, 3),
