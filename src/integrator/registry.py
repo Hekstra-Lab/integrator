@@ -31,6 +31,7 @@ REGISTRY = {
     },
     "intensity_encoder": {
         "shoebox_encoder": ShoeboxEncoder,
+        "intensity_encoder": IntensityEncoder,
     },
     "decoder": {
         "default_decoder": Decoder,
