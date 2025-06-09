@@ -56,3 +56,10 @@ if __name__ == "__main__":
     metarep = torch.randn(10, 64)
     model = NormalDistribution(dmodel=64, use_metarep=True)
     normal = model(representation, metarep)
+
+
+rate = torch.randn(10, 100, 1323)
+std = rate.std(dim=1, keepdim=True)
+
+
+torch.distributions.Normal(rate, std).log_prob(torch.randn(10, 100, 1323))

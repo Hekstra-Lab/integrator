@@ -1,14 +1,15 @@
-from integrator.registry import REGISTRY, ARGUMENT_RESOLVER
-from copy import deepcopy
-import torch
-import gc
 import argparse
-import pytorch_lightning as pl
-import yaml
+import gc
 import glob
 import re
-from integrator.callbacks import PredWriter
 from pathlib import Path
+
+import pytorch_lightning as pl
+import torch
+import yaml
+
+from integrator.callbacks import PredWriter
+from integrator.registry import ARGUMENT_RESOLVER, REGISTRY
 
 
 def create_module(module_type, module_name, **kwargs):
@@ -52,7 +53,7 @@ def create_prior(dist_name, dist_params):
             concentration = torch.tensor(dist_params["concentration_vector"])
         else:
             raise ValueError(
-                f"Missing concentration parameters for Dirichlet distribution"
+                "Missing concentration parameters for Dirichlet distribution"
             )
 
         return torch.distributions.dirichlet.Dirichlet(concentration)
@@ -80,7 +81,7 @@ def create_loss(config):
 # %%
 def load_config(config_path):
     """utility function to load a yaml config file"""
-    with open(config_path, "r") as f:
+    with open(config_path) as f:
         return yaml.safe_load(f)
 
 
@@ -221,68 +222,7 @@ def create_integrator(config):
         )
         return integrator
 
-    elif integrator_name in {"integrator5"}:
-        loss = create_module(
-            "loss",
-            config["components"]["loss"]["name"],
-            **config["components"]["loss"]["params"],
-        )
-
-        encoder = create_module(
-            "encoder",
-            config["components"]["encoder"]["name"],
-            **config["components"]["encoder"]["params"],
-        )
-        integrator = integrator_class(
-            encoder=encoder,
-            loss=loss,
-            qbg=background_distribution,
-            qp=profile,
-            qI=intensity_distribution,
-            mc_samples=config["integrator"]["mc_samples"],
-            learning_rate=config["integrator"]["learning_rate"],
-            profile_threshold=config["integrator"]["profile_threshold"],
-            renyi_scale=config["integrator"]["renyi_scale"],
-            num_fourier_features=config["integrator"]["num_fourier_features"],
-            ff_scale=config["integrator"]["ff_scale"],
-        )
-        return integrator
-
-    elif integrator_name in {"integrator2", "integrator5"}:
-        loss = create_module(
-            "loss",
-            config["components"]["loss"]["name"],
-            **config["components"]["loss"]["params"],
-        )
-
-        encoder = create_module(
-            "encoder",
-            config["components"]["encoder"]["name"],
-            **config["components"]["encoder"]["params"],
-        )
-        encoder2 = create_module(
-            "image_encoder",
-            config["components"]["encoder"]["name"],
-            **config["components"]["encoder"]["params"],
-        )
-
-        integrator = integrator_class(
-            encoder=encoder,
-            encoder2=encoder2,
-            loss=loss,
-            qbg=background_distribution,
-            qp=profile,
-            qI=intensity_distribution,
-            mc_samples=config["integrator"]["mc_samples"],
-            learning_rate=config["integrator"]["learning_rate"],
-            profile_threshold=config["integrator"]["profile_threshold"],
-            renyi_scale=config["integrator"]["renyi_scale"],
-            num_fourier_features=config["integrator"]["num_fourier_features"],
-            ff_scale=config["integrator"]["ff_scale"],
-        )
-        return integrator
-
-    elif integrator_name in {"integrator", "integrator3", "integrator4"}:
+    elif integrator_name in {"integrator", "integrator2"}:
         loss = create_module(
             "loss",
             config["components"]["loss"]["name"],

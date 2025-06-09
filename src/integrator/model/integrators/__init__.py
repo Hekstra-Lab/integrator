@@ -1,11 +1,5 @@
 from .base_integrator import BaseIntegrator
-from .default_integrator import DefaultIntegrator,IntegratorMLP
-from .mvn_integrator import MVNIntegrator, LRMVNIntegrator
+from .default_integrator import DefaultIntegrator, IntegratorMLP
+from .integrator import Integrator, IntegratorBinaryEncoding, IntegratorFourierFeatures
+from .mvn_integrator import LRMVNIntegrator, MVNIntegrator
 from .unet_integrator import MLPIntegrator
-from .integrator import (
-    Integrator,
-    IntegratorFourierFeatures,
-    IntegratorLog1p,
-    IntegratorLog1p2,
-    IntegratorFFLog1p,
-)

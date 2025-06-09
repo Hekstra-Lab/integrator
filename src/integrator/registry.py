@@ -1,11 +1,32 @@
-from .model.encoders import *
-from .model.decoders import *
-from .model.profiles import *
-from .model.loss import *
-from .model.integrators import *
-from .model.distribution import *
-from .data_loaders import *
 import torch
+
+from .data_loaders import ShoeboxDataModule, ShoeboxDataModule2
+from .model.decoders import Decoder, MVNDecoder
+from .model.distribution import (
+    GammaDistribution,
+    HalfNormalDistribution,
+    LogNormalDistribution,
+    NormalDistribution,
+)
+from .model.encoders import (
+    CNNResNet2,
+    IntensityEncoder,
+    MLPImageEncoder,
+    MLPMetadataEncoder,
+    NormFreeConv3D,
+    NormFreeNet,
+    ShoeboxEncoder,
+)
+from .model.integrators import (
+    DefaultIntegrator,
+    Integrator,
+    IntegratorBinaryEncoding,
+    LRMVNIntegrator,
+    MLPIntegrator,
+    MVNIntegrator,
+)
+from .model.loss import Loss, Loss2, LRMVNLoss, MVNLoss
+from .model.profiles import DirichletProfile, MVNProfile
 
 REGISTRY = {
     "metadata_encoder": {
@@ -53,11 +74,7 @@ REGISTRY = {
         "mlp_integrator": MLPIntegrator,
         "lrmvn_integrator": LRMVNIntegrator,
         "integrator": Integrator,
-        "integrator2": IntegratorFourierFeatures,
-        "integrator3": IntegratorLog1p,
-        "integrator4": IntegratorLog1p2,
-        "integrator5": IntegratorFFLog1p,
-        "integrator6": IntegratorMLP,
+        "integrator2": IntegratorBinaryEncoding,
     },
     "q_I": {
         "gamma": GammaDistribution,
@@ -98,4 +115,3 @@ ARGUMENT_RESOLVER = {
         },
     },
 }
-# %%

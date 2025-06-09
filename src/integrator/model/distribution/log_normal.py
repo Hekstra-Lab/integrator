@@ -1,5 +1,6 @@
 from integrator.model.distribution import BaseDistribution
 from integrator.layers import Linear, Constraint
+from torch.distributions import Distribution
 from torch.distributions import LogNormal
 import torch
 
@@ -9,10 +10,12 @@ class LogNormalDistribution(BaseDistribution):
         self,
         dmodel,
         constraint=Constraint(),
-        out_features=2,
-        use_metarep=False,
+        out_features: int = 2,
+        use_metarep: bool = False,
     ):
-        super().__init__(q=LogNormal)
+        super().__init__(
+            q=LogNormal,
+        )
         self.use_metarep = use_metarep
 
         self.constraint = constraint
@@ -52,9 +55,15 @@ class LogNormalDistribution(BaseDistribution):
 
 
 if __name__ == "__main__":
+    # generate a batch of 10 representation vectors
     representation = torch.randn(10, 64)
     metarep = torch.randn(10, 64)
-    model = LogNormalDistribution(dmodel=64, use_metarep=True)
-    lognormal = model(representation, metarep)
-    lognormal.rsample([100])
 
+    # initialize a LogNormalDistribution object
+    model = LogNormalDistribution(dmodel=64, use_metarep=True)
+
+    # get the parameterized torch.distributions.LogNormal object
+    lognormal = model(representation, metarep)
+
+    # sample from the distribution
+    lognormal.rsample([100])
