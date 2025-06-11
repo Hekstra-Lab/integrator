@@ -21,6 +21,7 @@ from .model.integrators import (
     DefaultIntegrator,
     Integrator,
     IntegratorBinaryEncoding,
+    IntegratorPositionalEncoding,
     LRMVNIntegrator,
     MLPIntegrator,
     MVNIntegrator,
@@ -75,6 +76,7 @@ REGISTRY = {
         "lrmvn_integrator": LRMVNIntegrator,
         "integrator": Integrator,
         "integrator2": IntegratorBinaryEncoding,
+        "integrator3": IntegratorPositionalEncoding,
     },
     "q_I": {
         "gamma": GammaDistribution,

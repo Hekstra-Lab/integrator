@@ -222,7 +222,7 @@ def create_integrator(config):
         )
         return integrator
 
-    elif integrator_name in {"integrator", "integrator2"}:
+    elif integrator_name in {"integrator", "integrator2", "integrator3"}:
         loss = create_module(
             "loss",
             config["components"]["loss"]["name"],
@@ -248,7 +248,6 @@ def create_integrator(config):
             loss=loss,
             mc_samples=config["integrator"]["mc_samples"],
             learning_rate=config["integrator"]["learning_rate"],
-            profile_threshold=config["integrator"]["profile_threshold"],
             renyi_scale=config["integrator"]["renyi_scale"],
             d=config["integrator"]["d"],
             h=config["integrator"]["h"],
