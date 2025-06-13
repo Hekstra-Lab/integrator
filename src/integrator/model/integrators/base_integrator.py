@@ -25,6 +25,7 @@ class BaseIntegrator(pl.LightningModule, ABC):
             ("avg_nll", float),
         ]
         self.train_df = plr.DataFrame(schema=self.schema)
+        self.val_df = plr.DataFrame(schema=self.schema)
 
     @abstractmethod
     def forward(self, *args, **kwargs):
@@ -46,7 +47,7 @@ class BaseIntegrator(pl.LightningModule, ABC):
         self.log("avg_nll", avg_nll)
 
         # create epoch dataframe
-        epoch_df = plr.Dataframe(
+        epoch_df = plr.DataFrame(
             {
                 "epoch": self.current_epoch,
                 "avg_loss": avg_train_loss,
