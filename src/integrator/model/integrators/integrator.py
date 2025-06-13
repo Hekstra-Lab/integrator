@@ -1,5 +1,6 @@
 import math
 
+import polars as plr
 import torch
 import torch.nn as nn
 from lightning.pytorch.utilities import grad_norm
