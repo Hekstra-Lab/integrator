@@ -289,8 +289,8 @@ class Integrator(BaseIntegrator):
         self.log("val_loss", neg_ll.mean())
 
         self.val_loss.append(loss.mean())
-        self.train_kl.append(kl.mean())
-        self.train_nll.append(neg_ll.mean())
+        self.val_kl.append(kl.mean())
+        self.val_nll.append(neg_ll.mean())
 
         return outputs
 
