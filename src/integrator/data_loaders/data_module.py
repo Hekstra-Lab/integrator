@@ -88,7 +88,7 @@ class ShoeboxDataModule(BaseDataModule):
             os.path.join(self.data_dir, self.shoebox_file_names["reference"])
         )
 
-        all_dead = masks.sum(-1) == 0
+        all_dead = masks.sum(-1) < 10
 
         # print("all_dead", all_dead.sum())
 
@@ -124,7 +124,10 @@ class ShoeboxDataModule(BaseDataModule):
                 standardized_counts = standardized_counts[selection]
         else:
             if counts.dim() == 2:
-                standardized_counts = (counts * masks) - stats[0] / stats[1].sqrt()
+                #standardized_counts = (counts * masks) - stats[0] / stats[1].sqrt()
+                ans = 2*torch.sqrt(counts + (3.0/8.0))
+                standardized_counts = ((ans - stats[1])/stats[1].sqrt()) * masks
+
             else:
                 standardized_counts = (counts[..., -1] * masks) - stats[0] / stats[
                     1
