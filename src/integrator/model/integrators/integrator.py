@@ -883,6 +883,33 @@ class SinusoidalPositionalEncoding(nn.Module):
         return x + self.pe[:, :seq_len]
 
 
+class BinaryPositionalEncoding(nn.Module):
+    def __init__(self, bit_depth: int = 20):
+        super().__init__()
+        self.bit_depth = bit_depth
+        # Create k = 2^(-0), 2^(-1), 2^(-2), ... = [1, 0.5, 0.25, 0.125, ...]
+        k = 2.0 ** (-torch.arange(bit_depth, dtype=torch.float32))
+        self.register_buffer("k", k)
+    
+    def forward(self, counts: torch.Tensor) -> torch.Tensor:
+        """
+        counts: tensor of photon counts of shape (..., )
+        Returns: (..., 2*bit_depth) with binary-style positional encoding
+        """
+        # Add dimension for broadcasting: (..., 1) * (bit_depth,) -> (..., bit_depth)
+        scaled_counts = counts.unsqueeze(-1) * self.k  # (..., bit_depth)
+        
+        # Apply sin and cos
+        sin_part = torch.sin(math.pi * scaled_counts)  # (..., bit_depth)
+        cos_part = torch.cos(math.pi * scaled_counts)  # (..., bit_depth)
+        
+        # Concatenate along last dimension
+        out = torch.cat([sin_part, cos_part], dim=-1)  # (..., 2*bit_depth)
+        
+        return out
+
+
+
 # -
 class IntegratorPositionalEncoding(BaseIntegrator):
     """
@@ -946,10 +973,8 @@ class IntegratorPositionalEncoding(BaseIntegrator):
         self.automatic_optimization = True
         self.loss_fn = loss
         self.max_iterations = max_iterations
-        self.encoder3 = nn.Linear(1, 20, bias=False)
         self.renyi_scale = renyi_scale
-        self.pos_encoder = SinusoidalPositionalEncoding(d_model=20)
-        self.layer_norm = nn.LayerNorm(20)
+        self.pos_encoder = BinaryPositionalEncoding()
 
     def calculate_intensities(self, counts, qbg, qp, masks):
         with torch.no_grad():
@@ -1002,22 +1027,24 @@ class IntegratorPositionalEncoding(BaseIntegrator):
         device = counts.device
 
         # shoebox = int_to_20bit_binary(counts.type(torch.int32))
-        shoebox = self.encoder3(shoebox.unsqueeze(-1))
-        shoebox = shoebox * math.sqrt(20)
-        shoebox = self.pos_encoder(shoebox)
-        shoebox = self.layer_norm(shoebox)
+        pos_encoding = self.pos_encoder(shoebox)
 
         if shoebox.dim() == 2:
             num_channels = 1
         elif shoebox.dim() == 3:
             num_channels = shoebox.shape[-1]
 
+        if pos_encoding.dim() == 2:
+            num_channels_2 = 1
+        elif pos_encoding.dim() == 3:
+            num_channels_2 = pos_encoding.shape[-1]
+
         profile_rep = self.profile_encoder(
             shoebox.reshape(shoebox.shape[0], num_channels, self.d, self.h, self.w),
             masks,
         )
         intensity_rep = self.intensity_encoder(
-            shoebox.reshape(shoebox.shape[0], num_channels, self.d, self.h, self.w),
+            pos_encoding.reshape(pos_encoding.shape[0], num_channels_2, self.d, self.h, self.w),
             masks,
         )
         # qbg = self.qbg(rep2,metarep=rep3)
