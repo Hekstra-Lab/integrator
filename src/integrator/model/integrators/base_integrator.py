@@ -38,15 +38,20 @@ class BaseIntegrator(pl.LightningModule, ABC):
         # calculate epoch averages
         avg_train_loss = sum(self.train_loss) / len(self.train_loss)
         avg_kl = sum(self.train_kl) / len(self.train_kl)
+        avg_nll = sum(self.train_nll) / len(self.train_nll)
 
         # log averages to weights & biases
-        self.log("train_loss", avg_loss)
+        self.log("train_loss", avg_train_loss)
+        self.log("avg_kl", avg_kl)
+        self.log("avg_nll", avg_nll)
 
         # create epoch dataframe
         epoch_df = plr.Dataframe(
             {
                 "epoch": self.current_epoch,
                 "avg_loss": avg_train_loss,
+                "avg_kl": avg_kl,
+                "avg_nll": avg_nll,
             }
         )
 
@@ -54,4 +59,5 @@ class BaseIntegrator(pl.LightningModule, ABC):
         self.train_df = plr.concat([self.train_df, epoch_df])
         # clear all lists
         self.train_loss = []
-        self.val_loss = []
+        self.train_kl = []
+        self.train_nll = []
