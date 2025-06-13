@@ -1,6 +1,5 @@
 import math
 
-import polars as plr
 import torch
 import torch.nn as nn
 from lightning.pytorch.utilities import grad_norm
@@ -289,15 +288,9 @@ class Integrator(BaseIntegrator):
         self.log("Val: KL prf", kl_p.mean())
         self.log("val_loss", neg_ll.mean())
 
-        epoch_df = plr.DataFrame(
-            {
-                "epoch": self.current_epoch,
-                "avg_loss": loss.mean(),
-                "avg_kl": kl.mean(),
-                "avg_nll": neg_ll.mean(),
-            }
-        )
-        self.val_df = plr.concat([self.val_df, epoch_df])
+        self.val_loss.append(loss.mean())
+        self.train_kl.append(kl.mean())
+        self.train_nll.append(neg_ll.mean())
 
         return outputs
 

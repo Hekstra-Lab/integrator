@@ -16,6 +16,8 @@ class BaseIntegrator(pl.LightningModule, ABC):
 
         # lists to track avg validation metrics
         self.val_loss = []
+        self.val_kl = []
+        self.val_nll = []
 
         # dataframes to keep track of val/train epoch metrics
         self.schema = [
@@ -62,3 +64,26 @@ class BaseIntegrator(pl.LightningModule, ABC):
         self.train_loss = []
         self.train_kl = []
         self.train_nll = []
+
+    def on_validation_epoch_end(self):
+        avg_val_loss = sum(self.val_loss) / len(self.val_loss)
+        avg_kl = sum(self.val_kl) / len(self.val_kl)
+        avg_nll = sum(self.val_nll) / len(self.val_nll)
+
+        self.log("validation_loss", avg_val_loss)
+        self.log("validation_avg_kl", avg_kl)
+        self.log("validation_avg_nll", avg_nll)
+
+        epoch_df = plr.DataFrame(
+            {
+                "epoch": self.current_epoch,
+                "avg_loss": avg_val_loss,
+                "avg_kl": avg_kl,
+                "avg_nll": avg_nll,
+            }
+        )
+        self.val_df = plr.concat([self.val_df, epoch_df])
+
+        self.val_loss = []
+        self.avg_kl = []
+        self.val_nll = []
