@@ -254,6 +254,8 @@ class Integrator(BaseIntegrator):
         self.log("Max(qbg.mean)", outputs["qbg"].mean.max())
         self.log("Mean(qbg.variance)", outputs["qbg"].variance.mean())
         self.train_loss.append(loss.mean())
+        self.train_kl.append(kl.mean())
+        self.train_nll.append(neg_ll.mean())
         return loss.mean() + renyi_loss.sum()
 
     def validation_step(self, batch, batch_idx):
@@ -890,7 +892,7 @@ class BinaryPositionalEncoding(nn.Module):
         # Create k = 2^(-0), 2^(-1), 2^(-2), ... = [1, 0.5, 0.25, 0.125, ...]
         k = 2.0 ** (-torch.arange(bit_depth, dtype=torch.float32))
         self.register_buffer("k", k)
-    
+
     def forward(self, counts: torch.Tensor) -> torch.Tensor:
         """
         counts: tensor of photon counts of shape (..., )
@@ -898,16 +900,15 @@ class BinaryPositionalEncoding(nn.Module):
         """
         # Add dimension for broadcasting: (..., 1) * (bit_depth,) -> (..., bit_depth)
         scaled_counts = counts.unsqueeze(-1) * self.k  # (..., bit_depth)
-        
+
         # Apply sin and cos
         sin_part = torch.sin(math.pi * scaled_counts)  # (..., bit_depth)
         cos_part = torch.cos(math.pi * scaled_counts)  # (..., bit_depth)
-        
+
         # Concatenate along last dimension
         out = torch.cat([sin_part, cos_part], dim=-1)  # (..., 2*bit_depth)
-        
-        return out
 
+        return out
 
 
 # -
@@ -1044,7 +1045,9 @@ class IntegratorPositionalEncoding(BaseIntegrator):
             masks,
         )
         intensity_rep = self.intensity_encoder(
-            pos_encoding.reshape(pos_encoding.shape[0], num_channels_2, self.d, self.h, self.w),
+            pos_encoding.reshape(
+                pos_encoding.shape[0], num_channels_2, self.d, self.h, self.w
+            ),
             masks,
         )
         # qbg = self.qbg(rep2,metarep=rep3)
