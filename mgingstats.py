@@ -980,6 +980,21 @@ if __name__ == "__main__":
     ref_cc_weighted = (ref_obs * ref_cchalf).sum() / ref_obs.sum()
 
     ## NOTE: Code to plot metrics vs validation loss
+
+    # train metrics
+    train_df = pd.read_csv(list(path.glob("**/avg_train_metrics.csv"))[0])
+    train_avg_loss = train_df["avg_loss"].to_numpy()
+    train_avg_kl = train_df["avg_kl"].to_numpy()
+    train_avg_nll = train_df["avg_nll"].to_numpy()
+    train_epochs = train_df["epoch"].to_numpy()
+
+    # val metrics
+    val_df = pd.read_csv(list(path.glob("**/avg_val_metrics.csv"))[0])
+    val_avg_loss = val_df["avg_loss"].to_numpy()
+    val_avg_kl = val_df["avg_kl"].to_numpy()
+    val_avg_nll = val_df["avg_nll"].to_numpy()
+    val_epochs = val_df["epoch"].to_numpy()
+
     fig, axes = plt.subplots(2, 2, figsize=(20, 10))
 
     x_axis = np.arange(len(epochs))
@@ -1006,13 +1021,20 @@ if __name__ == "__main__":
     axes[0, 0].set_xticks(x_axis, epochs.to_list(), rotation=70)
     axes[0, 0].legend()
 
-    axes[0, 1].plot(x_axis, val_loss, color="black", label="normed val loss")
-    axes[0, 1].set_title(
-        f"Val loss vs Epoch\np_prf_scale: {p_prf_scale}\np_I_scale: {p_I_weight}\np_bg_weight: {p_bg_weight}"
+    axes[0, 1].plot(train_epochs, train_avg_loss, color="black", label="train_loss")
+    axes[0, 1].plot(
+        train_epochs, train_avg_nll, color="black", label="train_nll", linestyle="--"
     )
+    axes[0, 1].plot(val_epochs, val_avg_loss, color="red", label="val_loss")
+    axes[0, 1].plot(
+        val_epochs, val_avg_nll, color="red", label="val_nll", linestyle="--"
+    )
+    axes[0, 1].set_title("Val loss vs Epoch")
     axes[0, 1].set_xlabel("epoch")
     axes[0, 1].set_ylabel("loss")
-    axes[0, 1].set_xticks(x_axis, epochs.to_list(), rotation=70)
+    axes[0, 1].set_xticks(val_epochs[1:], epochs, rotation=70)
+    axes[0, 1].set_ylim(ymin=1200, ymax=1800)
+    axes[0, 1].legend(loc="upper right")
     axes[0, 1].grid()
 
     axes[1, 0].plot(x_axis, vals, color="black", label="Model")
