@@ -1087,6 +1087,8 @@ if __name__ == "__main__":
     nn_preds = (np.concatenate(best_preds["intensity_mean"]),)
 
     plt.clf()
+
+    plt.figure(figsize=(20, 12))
     plt.scatter(nn_preds, temp["intensity.sum.value"], color="black", s=5.0, alpha=0.2)
 
     plt.grid()
@@ -1112,6 +1114,7 @@ if __name__ == "__main__":
 
     # -
     plt.clf()
+    plt.figure(figsize=(20, 12))
     plt.scatter(nn_preds, temp["intensity.prf.value"], color="black", s=5.0, alpha=0.2)
 
     plt.grid()
@@ -1145,6 +1148,7 @@ if __name__ == "__main__":
     nn_background = np.concatenate(best_preds["qbg"])
 
     plt.clf()
+    plt.figure(figsize=(20, 12))
     plt.scatter(nn_background, temp["background.mean"], s=5.0, alpha=0.2, color="black")
     plt.plot([0, 10], [0, 10], "r", alpha=0.3)
     plt.ylim(0, 10)
