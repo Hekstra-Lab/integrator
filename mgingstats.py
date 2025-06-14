@@ -1008,7 +1008,7 @@ if __name__ == "__main__":
 
     axes[0, 1].plot(x_axis, val_loss, color="black", label="normed val loss")
     axes[0, 1].set_title(
-        "Val loss vs Epoch\np_prf_scale: {p_prf_scale}\np_I_scale: {p_I_weight}\np_bg_weight: {p_bg_weight}"
+        f"Val loss vs Epoch\np_prf_scale: {p_prf_scale}\np_I_scale: {p_I_weight}\np_bg_weight: {p_bg_weight}"
     )
     axes[0, 1].set_xlabel("epoch")
     axes[0, 1].set_ylabel("loss")
@@ -1103,6 +1103,7 @@ if __name__ == "__main__":
     )
     plt.ylabel("DIALS I_sum", fontsize=26)
     plt.xlabel("I_NN", fontsize=26)
+    plt.tight_layout()
     plt.savefig(
         f"{path.as_posix()}/corr_plot_sum_vs_nn_p_prf_{p_prf_scale}_{id}.png", dpi=600
     )
@@ -1127,6 +1128,7 @@ if __name__ == "__main__":
     )
     plt.ylabel("DIALS I_prf", fontsize=26)
     plt.xlabel("I_NN", fontsize=26)
+    plt.tight_layout()
     plt.savefig(
         f"{path.as_posix()}/corr_plot_prf_vs_nn_p_prf_{p_prf_scale}_{id}.png", dpi=600
     )
@@ -1141,6 +1143,7 @@ if __name__ == "__main__":
 
     # -
     nn_background = np.concatenate(best_preds["qbg"])
+
     plt.clf()
     plt.scatter(nn_background, temp["background.mean"], s=5.0, alpha=0.2, color="black")
     plt.plot([0, 10], [0, 10], "r", alpha=0.3)
@@ -1155,6 +1158,7 @@ if __name__ == "__main__":
         fontsize=30,
     )
     plt.grid()
+    plt.tight_layout()
     plt.savefig(f"{path.as_posix()}/corr_plot_bg_p_prf_{p_prf_scale}_{id}.png", dpi=600)
     wandb.log({"Correlation plot: DIALS bg vs NN": wandb.Image(plt.gcf())})
 
