@@ -294,6 +294,11 @@ class Integrator(BaseIntegrator):
 
         return outputs
 
+    def configure_optimizers(self):
+        return torch.optim.Adam(
+            self.parameters(), lr=self.learning_rate, weight_decay=1e-8
+        )
+
     def predict_step(self, batch, batch_idx):
         counts, shoebox, masks, reference = batch
         outputs = self(counts, shoebox, masks, reference)
