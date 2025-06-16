@@ -81,6 +81,7 @@ class Integrator(BaseIntegrator):
         d: int = 3,
         h: int = 21,
         w: int = 21,
+        weight_decay=1e-8,
     ):
         super().__init__()
         # Save hyperparameters
@@ -110,6 +111,7 @@ class Integrator(BaseIntegrator):
         self.max_iterations = max_iterations
         self.encoder3 = nn.Linear(11, 64)
         self.renyi_scale = renyi_scale
+        self.weight_decay = weight_decay
 
     def calculate_intensities(self, counts, qbg, qp, masks):
         with torch.no_grad():
@@ -296,7 +298,7 @@ class Integrator(BaseIntegrator):
 
     def configure_optimizers(self):
         return torch.optim.Adam(
-            self.parameters(), lr=self.learning_rate, weight_decay=1e-8
+            self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay
         )
 
     def predict_step(self, batch, batch_idx):

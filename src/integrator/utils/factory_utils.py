@@ -252,6 +252,7 @@ def create_integrator(config):
             d=config["integrator"]["d"],
             h=config["integrator"]["h"],
             w=config["integrator"]["w"],
+            weight_decay=config["integrator"]["weight_decay"],
         )
         return integrator
 
