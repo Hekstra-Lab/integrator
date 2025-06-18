@@ -33,33 +33,37 @@ def run_phenix(phenix_env, mtz_file, phenix_eff, paired_ref_eff, paired_model_ef
     Path(phenix_dir).mkdir(parents=True, exist_ok=True)
 
     # Create the paired refinement directory
-    paired_dir = phenix_dir + "/paired_ref"
-    Path(paired_dir).mkdir(parents=True, exist_ok=True)
+    paired_ref_dir = phenix_dir + "/paired_ref"
+    Path(paired_ref_dir).mkdir(parents=True, exist_ok=True)
+
+    paired_model_dir = phenix_dir + "/paired_model"
+    Path(paired_model_dir).mkdir(parents=True, exist_ok=True)
 
     # Construct the phenix.refine command with proper escaping
     refine_command = f"phenix.refine {Path(phenix_eff).resolve()} {Path(mtz_file).resolve()} overwrite=true"
 
     refined_mtz_out = phenix_dir + "/refine_001.mtz"
-    updated_paired_model_eff = paired_dir  + "/updated_paired_model.eff"
+    updated_paired_model_eff = paired_model_dir + "/updated_paired_model.eff"
 
     update_phenix_eff(paired_model_eff, updated_paired_model_eff, refined_mtz_out)
 
     # Paired refinement commands
     # the reference always uses the same mtz, but needs new pdb
-    # NOTE: Define pdb_file
     paired_ref_command = (
         f"phenix.refine {Path(paired_ref_eff).resolve()} ../*[0-9].pdb overwrite=true"
     )
 
     # the model always uses the same pdb but needs new mtz
-    paired_model_command = f"phenix.refine {Path(updated_paired_model_eff).resolve()} ../*[0-9].mtz overwrite=true"
+    paired_model_command = (
+        f"phenix.refine {Path(updated_paired_model_eff).resolve()}  overwrite=true"
+    )
 
     # Construct the find_peaks command
     peaks_command = (
         "rs.find_peaks *[0-9].mtz *[0-9].pdb -f ANOM -p PANOM -z 5.0 -o peaks.csv"
     )
 
-    full_command = f"source {phenix_env} && cd {phenix_dir} && {refine_command} && {peaks_command} && cd {paired_dir} && {paired_ref_command} && {paired_model_command} "
+    full_command = f"source {phenix_env} && cd {phenix_dir} && {refine_command} && {peaks_command} && cd {paired_ref_dir} && {paired_ref_command} && {paired_model_command} "
 
     try:
         # Use subprocess.run instead of Popen for better error handling
