@@ -191,4 +191,12 @@ if __name__ == "__main__":
     refl_file = refl_file_paths[file_index]
 
     # Process the single reflection file
-    process_single_refl(refl_file, expt_file, dials_env, phenix_env, phenix_eff)
+    process_single_refl(
+        refl_file,
+        expt_file,
+        dials_env,
+        phenix_env,
+        phenix_eff,
+        paired_ref_eff,
+        paired_model_eff,
+    )
