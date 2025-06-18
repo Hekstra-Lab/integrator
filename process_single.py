@@ -63,7 +63,7 @@ def run_phenix(phenix_env, mtz_file, phenix_eff, paired_ref_eff, paired_model_ef
         "rs.find_peaks *[0-9].mtz *[0-9].pdb -f ANOM -p PANOM -z 5.0 -o peaks.csv"
     )
 
-    full_command = f"source {phenix_env} && cd {phenix_dir} && {refine_command} && {peaks_command} && cd {paired_ref_dir} && {paired_ref_command} && {paired_model_command} "
+    full_command = f"source {phenix_env} && cd {phenix_dir} && {refine_command} && {peaks_command} && cd {paired_ref_dir} && {paired_ref_command} && cd {paired_model_dir} && {paired_model_command} "
 
     try:
         # Use subprocess.run instead of Popen for better error handling
