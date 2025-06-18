@@ -39,8 +39,8 @@ def run_phenix(phenix_env, mtz_file, phenix_eff, paired_ref_eff, paired_model_ef
     # Construct the phenix.refine command with proper escaping
     refine_command = f"phenix.refine {Path(phenix_eff).resolve()} {Path(mtz_file).resolve()} overwrite=true"
 
-    refined_mtz_out = phenix_dir / "refine_001.mtz"
-    updated_paired_model_eff = paired_dir / "updated_paired_model.eff"
+    refined_mtz_out = phenix_dir + "/refine_001.mtz"
+    updated_paired_model_eff = paired_dir  + "/updated_paired_model.eff"
 
     update_phenix_eff(paired_model_eff, updated_paired_model_eff, refined_mtz_out)
 
