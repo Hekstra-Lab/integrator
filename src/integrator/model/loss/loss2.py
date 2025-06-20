@@ -1,12 +1,5 @@
-import torch
 import numpy as np
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.nn as nn
-import torch.nn.functional as F
 import torch
-from torch.distributions import Dirichlet, Gamma, LogNormal
-from integrator.model.encoders import MLPImageEncoder, MLPMetadataEncoder
 
 
 def create_center_focused_dirichlet_prior(
@@ -149,7 +142,8 @@ class Loss2(torch.nn.Module):
             self.register_buffer(f"{prefix}rate", torch.tensor(params["rate"]))
         elif name == "half_normal":
             self.register_buffer(f"{prefix}scale", torch.tensor(params["scale"]))
-
+        elif name == "half_cauchy":
+            self.register_buffer(f"{prefix}scale", torch.tensor(params["scale"]))
         elif name == "normal":
             self.register_buffer(f"{prefix}loc", torch.tensor(params["loc"]))
             self.register_buffer(f"{prefix}scale", torch.tensor(params["scale"]))
@@ -175,6 +169,8 @@ class Loss2(torch.nn.Module):
         elif name == "half_normal":
             scale = getattr(self, f"{params_prefix}scale").to(device)
             return torch.distributions.half_normal.HalfNormal(scale=scale)
+        elif name == "half_cauchy":
+            scale = getattr(self, f"{params_prefix}scale").to(device)
 
         elif name == "beta":
             concentration1 = getattr(self, f"{params_prefix}concentration1").to(device)
