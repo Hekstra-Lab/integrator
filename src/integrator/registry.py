@@ -3,6 +3,7 @@ import torch
 from .data_loaders import ShoeboxDataModule, ShoeboxDataModule2
 from .model.decoders import Decoder, MVNDecoder
 from .model.distribution import (
+    FoldedNormalDistribution,
     GammaDistribution,
     HalfNormalDistribution,
     LogNormalDistribution,
@@ -82,6 +83,7 @@ REGISTRY = {
         "gamma": GammaDistribution,
         "log_normal": LogNormalDistribution,
         "normal": NormalDistribution,
+        "folded_normal": FoldedNormalDistribution,
     },
     "q_bg": {
         "gamma": GammaDistribution,
@@ -111,6 +113,9 @@ ARGUMENT_RESOLVER = {
             "gamma": torch.distributions.gamma.Gamma,
             "log_normal": torch.distributions.log_normal.LogNormal,
             "normal": torch.distributions.normal.Normal,
+            "exponential": torch.distributions.exponential.Exponential,
+            "half_normal": torch.distributions.half_normal.HalfNormal,
+            "half_cauchy": torch.distributions.half_cauchy.HalfCauchy,
         },
         "p_p": {
             "laplace": torch.distributions.laplace.Laplace,
