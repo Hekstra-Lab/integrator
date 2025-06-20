@@ -171,7 +171,7 @@ class Loss2(torch.nn.Module):
             return torch.distributions.half_normal.HalfNormal(scale=scale)
         elif name == "half_cauchy":
             scale = getattr(self, f"{params_prefix}scale").to(device)
-
+            return torch.distributions.half_cauchy.HalfCauchy(scale=scale)
         elif name == "beta":
             concentration1 = getattr(self, f"{params_prefix}concentration1").to(device)
             concentration0 = getattr(self, f"{params_prefix}concentration0").to(device)
@@ -188,8 +188,6 @@ class Loss2(torch.nn.Module):
                 return torch.distributions.dirichlet.Dirichlet(
                     self.dirichlet_concentration.to(device)
                 )
-
-        # Default case: return None or provided default
         return default_return
 
     def forward(
