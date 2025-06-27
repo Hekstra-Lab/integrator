@@ -17,9 +17,7 @@ plugins:
   - mkdocstrings:
       handlers:
         python: 
-          options:
-            docstring_style: google
-            paths: [src]
+          paths: [src]
 
 markdown_extensions:
   - pymdownx.arithmatex:
