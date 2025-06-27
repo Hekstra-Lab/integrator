@@ -14,7 +14,12 @@ theme:
 plugins: 
   - search
   - mermaid2
-  - mkdocstrings
+  - mkdocstrings:
+      handlers:
+        python: 
+          options:
+            docstring_style: google
+            paths: [src]
 
 markdown_extensions:
   - pymdownx.arithmatex:
