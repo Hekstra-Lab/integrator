@@ -1,9 +1,10 @@
 site_name: Integrator
 site_url: https://hekstra-lab.github.io/integrator/
 nav: 
-    - Home: index.md
-    - References:
-        - Distributions: references.md
+    - Model:
+        - Encoders: ./Model/encoders.md
+        - Profiles: ./Model/profiles.md
+        - Distributions: ./Model/references.md
 theme: 
   name: material
   palette:
@@ -17,7 +18,7 @@ plugins:
   - mkdocstrings:
       handlers:
         python: 
-          paths: [src]
+          paths: ["src"]
 
 markdown_extensions:
   - pymdownx.arithmatex:
