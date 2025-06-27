@@ -1,4 +1,5 @@
 site_name: Integrator
+site_url: https://hekstra-lab.github.io/integrator/
 theme: 
   name: material
   palette:
