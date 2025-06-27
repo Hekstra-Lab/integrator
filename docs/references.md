@@ -1,1 +1,1 @@
-::: src.integrator.model.distribution.folded_normal.FoldedNormalDistribution
+::: integrator.model.distribution.FoldedNormalDistribution
