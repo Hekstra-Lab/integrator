@@ -12,6 +12,7 @@ theme:
 plugins: 
   - search
   - mermaid2
+  - mkdocstrings
 
 markdown_extensions:
   - pymdownx.arithmatex:
