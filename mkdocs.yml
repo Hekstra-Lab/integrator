@@ -2,6 +2,8 @@ site_name: Integrator
 site_url: https://hekstra-lab.github.io/integrator/
 nav: 
     - Home: index.md
+    - References:
+        - Distributions: references.md
 theme: 
   name: material
   palette:
