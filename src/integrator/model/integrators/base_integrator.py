@@ -279,7 +279,7 @@ class BaseIntegrator(pl.LightningModule, ABC):
         return {
             "intensity_mean": outputs["intensity_mean"],  # qI.mean
             "intensity_var": outputs["intensity_var"],  # qI.variance
-            "refl_ids": outputs["refl_ids"],
+            "refl_ids": outputs["refl_ids"].int().tolist(),
             "dials_I_sum_var": outputs["dials_I_sum_var"],
             "dials_I_prf_value": outputs["dials_I_prf_value"],
             "dials_I_prf_var": outputs["dials_I_prf_var"],

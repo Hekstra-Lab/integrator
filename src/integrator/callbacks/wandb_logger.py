@@ -1,13 +1,97 @@
-import wandb
 import sys
 import traceback
-from mpl_toolkits.axes_grid1 import make_axes_locatable
+
 import matplotlib.pyplot as plt
-from pytorch_lightning.callbacks import Callback
-import torch
 import numpy as np
-import plotly.express as px
 import pandas as pd
+import plotly.express as px
+import torch
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from pytorch_lightning.callbacks import Callback
+
+import wandb
+
+
+def create_comparison_grid(
+    num_profiles,
+    refl_ids,
+    pred_dict,
+    cmap="cividis",
+):
+    if not refl_ids:
+        return None
+
+    # Create figure with proper subplot layout
+    fig, axes = plt.subplots(3, num_profiles, figsize=(5 * num_profiles, 8))
+
+    # Plot each column
+    for i, refl_id in enumerate(refl_ids):
+        id_str = str(refl_id)
+        # Get data for this column
+        counts_data = pred_dict[id_str]["counts"]
+        profile_data = pred_dict[id_str]["profile"]
+        rates_data = pred_dict[id_str]["rates"]
+        bg_value = pred_dict[id_str]["qbg"]
+        intensity_value = pred_dict[id_str]["intensity_mean"]
+
+        vmin_13 = min(counts_data.min().item(), rates_data.min().item())
+        vmax_13 = max(counts_data.max().item(), rates_data.max().item())
+
+        # Row 1: Input counts
+        im0 = axes[0, i].imshow(counts_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13)
+        axes[0, i].set_title(
+            f"reflection ID: {id_str}\n DIALS I_prf: {pred_dict[id_str]['dials_I_prf_var']:.2f}\nDIALS var: {pred_dict[id_str]['dials_I_prf_var']:.2f}\n DIALS std: {np.sqrt(pred_dict[id_str]['dials_I_prf_var']):.2f}\n DIALS bg mean: {pred_dict[id_str]['dials_bg_mean']:.2f}"
+        )
+        axes[0, i].set_ylabel("raw image", labelpad=5)
+        # Turn off axes but keep the labels
+        axes[0, i].tick_params(
+            left=False, bottom=False, labelleft=False, labelbottom=False
+        )
+
+        # Row 2: Profile prediction (with its own scale)
+        im1 = axes[1, i].imshow(profile_data, cmap=cmap)
+        axes[1, i].set_title(
+            f"x_c: {pred_dict[id_str]['x_c']:.2f} y_c: {pred_dict[id_str]['y_c']:.2f} z_c: {pred_dict[id_str]['z_c']:.2f}"
+        )
+        axes[1, i].set_ylabel("profile", labelpad=5)
+
+        axes[1, i].tick_params(
+            left=False, bottom=False, labelleft=False, labelbottom=False
+        )
+
+        # Row 3: Rates (same scale as row 1)
+        im2 = axes[2, i].imshow(rates_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13)
+        axes[2, i].set_title(
+            f"Bg: {float(pred_dict[id_str]['qbg']):.2f}\n I: {pred_dict[id_str]['intensity_mean']:.2f}\n I_var: {pred_dict[id_str]['intensity_var']:.2f}=n I_std: {np.sqrt(pred_dict[id_str]['intensity_var']):.2f}\n"
+        )
+
+        axes[2, i].set_ylabel("rate = I*pij + Bg", labelpad=5)
+        axes[2, i].tick_params(
+            left=False, bottom=False, labelleft=False, labelbottom=False
+        )
+
+        # Add colorbars
+        # First row colorbar (same as third row)
+        divider0 = make_axes_locatable(axes[0, i])
+        cax0 = divider0.append_axes("right", size="5%", pad=0.05)
+        cbar0 = plt.colorbar(im0, cax=cax0)
+        cbar0.ax.tick_params(labelsize=8)
+
+        # Second row colorbar (independent)
+        divider1 = make_axes_locatable(axes[1, i])
+        cax1 = divider1.append_axes("right", size="5%", pad=0.05)
+        cbar1 = plt.colorbar(im1, cax=cax1)
+        cbar1.ax.tick_params(labelsize=8)
+
+        # Third row colorbar (same as first row)
+        divider2 = make_axes_locatable(axes[2, i])
+        cax2 = divider2.append_axes("right", size="5%", pad=0.05)
+        cbar2 = plt.colorbar(im2, cax=cax2)
+        cbar2.ax.tick_params(labelsize=8)
+
+    plt.tight_layout()
+
+    return fig
 
 
 class IntensityPlotter(Callback):
@@ -82,9 +166,9 @@ class IntensityPlotter(Callback):
                 self.tracked_predictions["rates"][ref_id] = rate_images[idx].cpu()
                 self.tracked_predictions["qbg"][ref_id] = bg_mean[idx].cpu()
                 self.tracked_predictions["qI"][ref_id] = qI_mean[idx].cpu()
-                self.tracked_predictions["dials_I_prf_value"][
-                    ref_id
-                ] = dials_I_prf_value[idx]
+                self.tracked_predictions["dials_I_prf_value"][ref_id] = (
+                    dials_I_prf_value[idx]
+                )
 
     def create_comparison_grid(
         self,
@@ -95,7 +179,6 @@ class IntensityPlotter(Callback):
 
         # Import needed for colorbar positioning
         from mpl_toolkits.axes_grid1 import make_axes_locatable
-        import numpy as np
 
         # Create figure with proper subplot layout
         fig, axes = plt.subplots(
@@ -394,9 +477,9 @@ class UNetPlotter(Callback):
                     idx
                 ].cpu()
                 self.tracked_predictions["qbg_var"][ref_id] = bg_var[idx].cpu()
-                self.tracked_predictions["dials_I_prf_value"][
-                    ref_id
-                ] = dials_I_prf_value[idx]
+                self.tracked_predictions["dials_I_prf_value"][ref_id] = (
+                    dials_I_prf_value[idx]
+                )
                 self.tracked_predictions["dials_I_prf_var"][ref_id] = dials_I_var[idx]
                 self.tracked_predictions["dials_bg_mean"][ref_id] = dials_bg_mean[
                     idx
@@ -828,9 +911,16 @@ class UNetPlotter(Callback):
 
 
 # %%
-# NOTE: for dirichlet model
 class Plotter(Callback):
-    def __init__(self, num_profiles=5, plot_every_n_epochs=5,d=3,h=21,w=21 d_vectors=None):
+    def __init__(
+        self,
+        num_profiles=5,
+        plot_every_n_epochs=5,
+        d=3,
+        h=21,
+        w=21,
+        d_vectors=None,
+    ):
         super().__init__()
         self.d = d
         self.h = h
@@ -839,59 +929,15 @@ class Plotter(Callback):
         self.val_predictions = {}
         self.num_profiles = num_profiles
         self.tracked_refl_ids = None
+        self.tracked_refl_ids_val = None
         self.all_seen_ids = set()
-        self.tracked_predictions = {
-            "profile": {},
-            "counts": {},
-            "qbg": {},
-            "rates": {},
-            "qI": {},
-            "dials_I_prf_value": {},
-        }
+        self.all_seen_ids_val = set()
         self.epoch_predictions = None
         self.plot_every_n_epochs = plot_every_n_epochs
         self.current_epoch = 0
         self.d_vectors = d_vectors
-
-    def on_train_epoch_start(self, trainer, pl_module):
-        self.epoch_predictions = {
-            "profile": [],
-            "counts": [],
-            "refl_ids": [],
-            "intensity_mean": [],
-            "intensity_var": [],
-            "dials_I_prf_value": [],
-            "dials_I_prf_var": [],
-            "qbg": [],
-            "rates": [],
-            "x_c": [],
-            "y_c": [],
-            "z_c": [],
-            "dials_bg_mean": [],
-            "dials_bg_sum_value": [],
-            "d": [],
-            "renyi_entropy": [],
-        }
-
-        self.tracked_predictions = {
-            "profile": {},
-            "counts": {},
-            "qbg": {},
-            "rates": {},
-            "intensity_mean": {},
-            "intensity_var": {},
-            "qbg_var": {},
-            "dials_I_prf_value": {},
-            "dials_I_prf_var": {},
-            "metadata": {},
-            "x_c": {},
-            "y_c": {},
-            "z_c": {},
-            "dials_bg_mean": {},
-            "dials_bg_sum_value": {},
-            "d": {},
-            "renyi_entropy": {},
-        }
+        self.validation_tracked_predictions = dict()
+        self.tracked_predictions = dict()
 
     def update_tracked_predictions(
         self,
@@ -912,19 +958,25 @@ class Plotter(Callback):
         d,
         renyi_entropy,
     ):
-        current_refl_ids = refl_ids.cpu().numpy()
+        current_refl_ids = refl_ids
 
         # Update all seen IDs and set tracked IDs if not set
-        self.all_seen_ids.update(current_refl_ids)
+        # this will only happen once
         if self.tracked_refl_ids is None:
-            self.tracked_refl_ids = sorted(list(self.all_seen_ids))[: self.num_profiles]
+            self.tracked_refl_ids = current_refl_ids[: self.num_profiles]
             print(
                 f"Selected {self.num_profiles} reflection IDs to track: {self.tracked_refl_ids}"
             )
 
-        profile_images = profile_preds.reshape(-1, self.d, self.h, self.w)[..., (self.d - 1)//2, :, :]
-        count_images = count_preds.reshape(-1, self.d, self.h, self.w)[..., (self.d -1)//2, :, :]
-        rate_images = rates.mean(1).reshape(-1, self.d, self.h, self.w)[..., (self.d -1)//2, :, :]
+        profile_images = profile_preds.reshape(-1, self.d, self.h, self.w)[
+            ..., (self.d - 1) // 2, :, :
+        ]
+        count_images = count_preds.reshape(-1, self.d, self.h, self.w)[
+            ..., (self.d - 1) // 2, :, :
+        ]
+        rate_images = rates.mean(1).reshape(-1, self.d, self.h, self.w)[
+            ..., (self.d - 1) // 2, :, :
+        ]
         bg_mean = qbg_preds.mean
         bg_var = qbg_preds.variance
         dials_I_prf_value = dials_I
@@ -932,35 +984,29 @@ class Plotter(Callback):
         y_c = y_c
 
         for ref_id in self.tracked_refl_ids:
-            matches = np.where(current_refl_ids == ref_id)[0]
+            id_str = str(ref_id)
+            matches = np.where(np.array(current_refl_ids) == ref_id)[0]
+
             if len(matches) > 0:
                 idx = matches[0]
 
-                self.tracked_predictions["profile"][ref_id] = profile_images[idx].cpu()
-                self.tracked_predictions["counts"][ref_id] = count_images[idx].cpu()
-                self.tracked_predictions["rates"][ref_id] = rate_images[idx].cpu()
-                self.tracked_predictions["qbg"][ref_id] = bg_mean[idx].cpu()
-                self.tracked_predictions["intensity_mean"][ref_id] = intensity_mean[
-                    idx
-                ].cpu()
-                self.tracked_predictions["intensity_var"][ref_id] = intensity_var[
-                    idx
-                ].cpu()
-                self.tracked_predictions["qbg_var"][ref_id] = bg_var[idx].cpu()
-                self.tracked_predictions["dials_I_prf_value"][
-                    ref_id
-                ] = dials_I_prf_value[idx]
-                self.tracked_predictions["dials_I_prf_var"][ref_id] = dials_I_var[idx]
-                self.tracked_predictions["dials_bg_mean"][ref_id] = dials_bg_mean[
-                    idx
-                ].cpu()
-                self.tracked_predictions["x_c"][ref_id] = x_c[idx].cpu()
-                self.tracked_predictions["y_c"][ref_id] = y_c[idx].cpu()
-                self.tracked_predictions["z_c"][ref_id] = z_c[idx].cpu()
-                self.tracked_predictions["d"][ref_id] = d[idx].cpu()
-                self.tracked_predictions["renyi_entropy"][ref_id] = renyi_entropy[
-                    idx
-                ].cpu()
+                self.tracked_predictions[id_str] = {
+                    "profile": profile_images[idx].cpu(),
+                    "counts": count_images[idx].cpu(),
+                    "rates": rate_images[idx].cpu(),
+                    "qbg": bg_mean[idx].cpu(),
+                    "intensity_mean": intensity_mean[idx].cpu(),
+                    "intensity_var": intensity_var[idx].cpu(),
+                    "bg_var": bg_var[idx].cpu(),
+                    "dials_I_prf_value": dials_I_prf_value[idx],
+                    "dials_I_prf_var": dials_I_var[idx],
+                    "dials_bg_mean": dials_bg_mean[idx].cpu(),
+                    "x_c": x_c[idx].cpu(),
+                    "y_c": y_c[idx].cpu(),
+                    "z_c": z_c[idx].cpu(),
+                    "d": d[idx].cpu(),
+                    "renyi_entropy": renyi_entropy[idx].cpu(),
+                }
 
         torch.cuda.empty_cache()
 
@@ -977,13 +1023,13 @@ class Plotter(Callback):
         )
 
         # Plot each column
+
         for i, refl_id in enumerate(self.tracked_refl_ids):
+            id_str = str(refl_id)
             # Get data for this column
-            counts_data = self.tracked_predictions["counts"][refl_id]
-            profile_data = self.tracked_predictions["profile"][refl_id]
-            rates_data = self.tracked_predictions["rates"][refl_id]
-            bg_value = self.tracked_predictions["qbg"][refl_id]
-            intensity_value = self.tracked_predictions["intensity_mean"][refl_id]
+            counts_data = self.tracked_predictions[id_str]["counts"]
+            profile_data = self.tracked_predictions[id_str]["profile"]
+            rates_data = self.tracked_predictions[id_str]["rates"]
 
             vmin_13 = min(counts_data.min().item(), rates_data.min().item())
             vmax_13 = max(counts_data.max().item(), rates_data.max().item())
@@ -991,7 +1037,7 @@ class Plotter(Callback):
             # Row 1: Input counts
             im0 = axes[0, i].imshow(counts_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13)
             axes[0, i].set_title(
-                    f"reflection ID: {refl_id}\n DIALS I_prf: {self.tracked_predictions['dials_I_prf_value'][refl_id]:.2f}\nDIALS var: {self.tracked_predictions['dials_I_prf_var'][refl_id]:.2f}\n DIALS std: {np.sqrt(self.tracked_predictions['dials_I_prf_var'][refl_id]):.2f}\n DIALS bg mean: {self.tracked_predictions['dials_bg_mean'][refl_id]:.2f}"
+                f"reflection ID: {id_str}\n DIALS I_prf: {self.tracked_predictions[id_str]['dials_I_prf_value']:.2f}\nDIALS var: {self.tracked_predictions[id_str]['dials_I_prf_var']:.2f}\n DIALS std: {np.sqrt(self.tracked_predictions[id_str]['dials_I_prf_var']):.2f}\n DIALS bg mean: {self.tracked_predictions[id_str]['dials_bg_mean']:.2f}"
             )
             axes[0, i].set_ylabel("raw image", labelpad=5)
             # Turn off axes but keep the labels
@@ -1002,7 +1048,7 @@ class Plotter(Callback):
             # Row 2: Profile prediction (with its own scale)
             im1 = axes[1, i].imshow(profile_data, cmap=cmap)
             axes[1, i].set_title(
-                f"x_c: {self.tracked_predictions['x_c'][refl_id]:.2f} y_c: {self.tracked_predictions['y_c'][refl_id]:.2f} z_c: {self.tracked_predictions['z_c'][refl_id]:.2f}"
+                f"x_c: {self.tracked_predictions[id_str]['x_c']:.2f} y_c: {self.tracked_predictions[id_str]['y_c']:.2f} z_c: {self.tracked_predictions[id_str]['z_c']:.2f}"
             )
             axes[1, i].set_ylabel("profile", labelpad=5)
 
@@ -1013,7 +1059,7 @@ class Plotter(Callback):
             # Row 3: Rates (same scale as row 1)
             im2 = axes[2, i].imshow(rates_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13)
             axes[2, i].set_title(
-                    f"Bg: {float(self.tracked_predictions['qbg'][refl_id]):.2f}\n I: {self.tracked_predictions['intensity_mean'][refl_id]:.2f}\n I_var: {self.tracked_predictions['intensity_var'][refl_id]:.2f}=n I_std: {np.sqrt(self.tracked_predictions['intensity_var'][refl_id]):.2f}\n"
+                f"Bg: {float(self.tracked_predictions[id_str]['qbg']):.2f}\n I: {self.tracked_predictions[id_str]['intensity_mean']:.2f}\n I_var: {self.tracked_predictions[id_str]['intensity_var']:.2f}=n I_std: {np.sqrt(self.tracked_predictions[id_str]['intensity_var']):.2f}\n"
             )
 
             axes[2, i].set_ylabel("rate = I*pij + Bg", labelpad=5)
@@ -1048,7 +1094,7 @@ class Plotter(Callback):
         with torch.no_grad():
             # 1) Forward pass (no intensities yet)
             shoebox, dials, masks, counts = batch
-            base_output = pl_module(shoebox, dials, masks,  counts)
+            base_output = pl_module(shoebox, dials, masks, counts)
 
             # 2) Call calculate_intensities
             intensities = pl_module.calculate_intensities(
@@ -1319,6 +1365,7 @@ class Plotter(Callback):
 
                 # Only create and log comparison grid on specified epochs
                 if self.current_epoch % self.plot_every_n_epochs == 0:
+                    print("tracked_preds:", self.tracked_predictions.keys())
                     comparison_fig = self.create_comparison_grid()
 
                     if comparison_fig is not None:
@@ -1346,18 +1393,24 @@ class Plotter(Callback):
 
         with torch.no_grad():
             shoebox, dials, masks, counts = batch
-            base_output = pl_module(shoebox, dials, masks,  counts)
+            base_output = pl_module(shoebox, dials, masks, counts)
 
-            # Store only minimal data needed for metrics
+            renyi_entropy = -torch.log(base_output["qp"].mean.pow(2).sum(-1))
+
             self.val_predictions = {}
             for key in [
                 "intensity_mean",
                 "intensity_var",
                 "dials_I_prf_value",
-                "kabsch_sum_mean",
-                "kabsch_sum_var",
-                "profile_masking_mean",
-                "profile_masking_var",
+                "dials_I_prf_var",
+                "profile",
+                "qbg",
+                "x_c",
+                "y_c",
+                "z_c",
+                "dials_bg_mean",
+                "dials_bg_sum_value",
+                "d",
             ]:
                 if key in base_output:
                     if hasattr(base_output[key], "sample"):
@@ -1367,8 +1420,217 @@ class Plotter(Callback):
                 elif key in base_output:
                     self.val_predictions[key] = base_output[key].detach().cpu()
 
+            self.all_seen_ids.update(base_output["refl_ids"])
+            if self.tracked_refl_ids_val is None:
+                self.tracked_refl_ids_val = list(self.all_seen_ids)[: self.num_profiles]
+
+            profile_images = base_output["profile"].reshape(
+                -1,
+                self.d,
+                self.h,
+                self.w,
+            )[..., (self.d - 1) // 2, :, :]
+            count_images = base_output["counts"].reshape(-1, self.d, self.h, self.w)[
+                ..., (self.d - 1) // 2, :, :
+            ]
+            rate_images = (
+                base_output["rates"]
+                .mean(1)
+                .reshape(-1, self.d, self.h, self.w)[..., (self.d - 1) // 2, :, :]
+            )
+            bg_mean = base_output["qbg"].mean
+            bg_var = base_output["qbg"].variance
+            dials_I_prf_value = base_output["dials_I_prf_value"]
+            x_c = base_output["x_c"]
+            y_c = base_output["y_c"]
+
+            current_refl_ids = base_output["refl_ids"]
+
+            for ref_id in self.tracked_refl_ids_val:
+                id_str = str(ref_id)
+                matches = np.where(np.array(current_refl_ids) == ref_id)[0]
+                if len(matches) > 0:
+                    idx = matches[0]
+
+                    self.validation_tracked_predictions[id_str] = {
+                        "profile": profile_images[idx].cpu(),
+                        "counts": count_images[idx].cpu(),
+                        "rates": rate_images[idx].cpu(),
+                        "bg_mean": bg_mean[idx].cpu(),
+                        "intensity_mean": base_output["intensity_mean"][idx].cpu(),
+                        "intensity_var": base_output["intensity_var"][idx].cpu(),
+                        "qbg": base_output["qbg"].variance[idx].cpu(),
+                        "dials_I_prf_value": base_output["dials_I_prf_value"][idx],
+                        "dials_I_prf_var": base_output["dials_I_prf_var"][idx],
+                        "dials_bg_mean": base_output["dials_bg_mean"][idx].cpu(),
+                        "x_c": base_output["x_c"][idx].cpu(),
+                        "y_c": base_output["y_c"][idx].cpu(),
+                        "z_c": base_output["z_c"][idx].cpu(),
+                        "d": base_output["d"][idx].cpu(),
+                        "renyi_entropy": renyi_entropy[idx].cpu(),
+                    }
+
             # Clean up
             del base_output
+            torch.cuda.empty_cache()
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        if self.val_predictions:
+            try:
+                data = []
+
+                I_flat = self.val_predictions["intensity_mean"].flatten() + 1e-8
+
+                I_var_flat = self.val_predictions["intensity_var"].flatten() + 1e-8
+
+                dials_flat = self.val_predictions["dials_I_prf_value"].flatten() + 1e-8
+                dials_var_flat = (
+                    self.val_predictions["dials_I_prf_var"].flatten() + 1e-8
+                )
+                dials_bg_flat = self.val_predictions["dials_bg_mean"].flatten() + 1e-8
+                qbg_flat = self.val_predictions["qbg"].flatten() + 1e-8
+
+                renyi_entropy_flat = -torch.log(
+                    self.val_predictions["profile"].pow(2).sum(-1)
+                )
+
+                x_c_flat = self.val_predictions["x_c"].flatten()
+                y_c_flat = self.val_predictions["y_c"].flatten()
+                z_c_flat = self.val_predictions["z_c"].flatten()
+                d_flat = 1 / self.val_predictions["d"].flatten().pow(2)
+                d_ = self.val_predictions["d"]
+
+                # Create data points with safe log transform
+                for i in range(len(I_flat)):
+                    try:
+                        data.append(
+                            [
+                                float(torch.log(I_flat[i])),
+                                float(torch.log(I_var_flat[i])),
+                                float(torch.log(dials_flat[i])),
+                                float(torch.log(dials_var_flat[i])),
+                                dials_bg_flat[i],
+                                qbg_flat[i],
+                                renyi_entropy_flat[i],
+                                x_c_flat[i],
+                                y_c_flat[i],
+                                d_flat[i],
+                                d_[i],
+                            ]
+                        )
+                    except Exception as e:
+                        print("Caught exception in on_train_epoch_end!")
+                        print("Type of exception:", type(e))
+                        print("Exception object:", e)
+                        traceback.print_exc(file=sys.stdout)
+
+                df = pd.DataFrame(
+                    data,
+                    columns=[
+                        "val: mean(qI)",
+                        "val: var(qI)",
+                        "DIALS intensity.prf.value",
+                        "DIALS intensity.prf.variance",
+                        "DIALS background.mean",
+                        "val: mean(qbg)",
+                        "val: Renyi entropy",
+                        "x_c",
+                        "y_c",
+                        "d",
+                        "d_",
+                    ],
+                )
+
+                # Create table
+                table = wandb.Table(dataframe=df)
+
+                # Calculate correlation coefficients
+                corr_I = (
+                    torch.corrcoef(torch.vstack([I_flat, dials_flat]))[0, 1]
+                    if len(I_flat) > 1
+                    else 0
+                )
+
+                renyi_vs_d = px.scatter(
+                    df,
+                    x="d",
+                    y="val: Renyi entropy",
+                    hover_data=["val: mean(qI)", "DIALS intensity.prf.value"],
+                )
+
+                layout_updates = {
+                    "xaxis_title": "Resolution (Å)",
+                    "showlegend": False,
+                    "hovermode": "closest",
+                    "plot_bgcolor": "white",
+                    "xaxis": dict(
+                        showgrid=True,
+                        gridcolor="lightgrey",
+                        tickmode="array",
+                        ticktext=[
+                            f"{d:.1f}"
+                            for d in np.linspace(df["d_"].min(), df["d_"].max(), 6)
+                        ],
+                        tickvals=1
+                        / np.linspace(df["d_"].min(), df["d_"].max(), 6) ** 2,
+                        tickangle=90,
+                    ),
+                    "yaxis": dict(showgrid=True, gridcolor="lightgrey"),
+                }
+                renyi_vs_d.update_layout(**layout_updates)
+
+                corr_bg = (
+                    torch.corrcoef(torch.vstack([dials_bg_flat, dials_flat]))[0, 1]
+                    if len(dials_bg_flat) > 1
+                    else 0
+                )
+
+                # Create log dictionary
+                log_dict = {
+                    "Val: qI vs DIALS I prf": wandb.plot.scatter(
+                        table, "val: mean(qI)", "DIALS intensity.prf.value"
+                    ),
+                    "Val: Renyi entropy vs d": wandb.Html(renyi_vs_d.to_html()),
+                    "Val: Bg vs DIALS bg": wandb.plot.scatter(
+                        table, "val: mean(qbg)", "DIALS background.mean"
+                    ),
+                    "Val: Correlation Coefficient qI": corr_I,
+                    "Val: Correlation Coefficient bg": corr_bg,
+                    "Val: Max mean(I)": torch.max(I_flat),
+                    "Val: Mean mean(I)": torch.mean(I_flat),
+                    "Val: Mean var(I) ": torch.mean(I_var_flat),
+                    "Val: Min var(I)": torch.min(I_var_flat),
+                    "Val: Max var(I)": torch.max(I_var_flat),
+                }
+
+                # Add mean background if available
+                if "qbg" in self.train_predictions:
+                    log_dict["mean(qbg.mean)"] = torch.mean(self.val_predictions["qbg"])
+                    log_dict["min(qbg.mean)"] = torch.min(self.val_predictions["qbg"])
+                    log_dict["max(qbg.mean)"] = torch.max(self.val_predictions["qbg"])
+                # code to plot comparison grids
+
+                # Only create and log comparison grid on specified epochs
+                comparison_fig = create_comparison_grid(
+                    num_profiles=self.num_profiles,
+                    refl_ids=self.tracked_refl_ids_val,
+                    pred_dict=self.validation_tracked_predictions,
+                )
+
+                log_dict["Val: Tracked Profiles"] = wandb.Image(comparison_fig)
+                plt.close(comparison_fig)
+
+                # Log metrics
+                wandb.log(log_dict)
+
+            except Exception as e:
+                print("Caught exception in on_val_epoch_end!")
+                print("Type of exception:", type(e))
+                print("Exception object:", e)
+                traceback.print_exc(file=sys.stdout)
+
+            # Clear memory
+            self.val_predictions = {}
             torch.cuda.empty_cache()
 
 
@@ -1488,9 +1750,9 @@ class Plotter2(Callback):
                     idx
                 ].cpu()
                 self.tracked_predictions["qbg_var"][ref_id] = bg_var[idx].cpu()
-                self.tracked_predictions["dials_I_prf_value"][
-                    ref_id
-                ] = dials_I_prf_value[idx]
+                self.tracked_predictions["dials_I_prf_value"][ref_id] = (
+                    dials_I_prf_value[idx]
+                )
                 self.tracked_predictions["dials_I_prf_var"][ref_id] = dials_I_var[idx]
                 self.tracked_predictions["dials_bg_mean"][ref_id] = dials_bg_mean[
                     idx
@@ -1886,9 +2148,8 @@ class Plotter2(Callback):
         # Only track the last validation batch to save memory
 
         with torch.no_grad():
-
             counts, masks, reference = batch
-            base_output = pl_module(counts,masks,reference)
+            base_output = pl_module(counts, masks, reference)
 
             # Store only minimal data needed for metrics
             self.val_predictions = {}
@@ -1998,9 +2259,9 @@ class MVNPlotter(Callback):
                 self.tracked_predictions["intensity_mean"][ref_id] = intensity_mean[idx]
                 # self.tracked_predictions["qI_var"][ref_id] = qI_var[idx].cpu()
                 self.tracked_predictions["qbg_var"][ref_id] = bg_var[idx].cpu()
-                self.tracked_predictions["dials_I_prf_value"][
-                    ref_id
-                ] = dials_I_prf_value[idx]
+                self.tracked_predictions["dials_I_prf_value"][ref_id] = (
+                    dials_I_prf_value[idx]
+                )
 
         torch.cuda.empty_cache()
 
@@ -2187,7 +2448,7 @@ class MVNPlotter(Callback):
                                 float(simpson_flat[i]),
                             ]
                         )
-                    except Exception as e:
+                    except Exception:
                         # Skip any problematic data points
                         pass
 
@@ -2443,8 +2704,8 @@ class IntegratedPlotter(Callback):
         if not self.tracked_refl_ids:
             return None
 
-        from mpl_toolkits.axes_grid1 import make_axes_locatable
         import matplotlib.pyplot as plt
+        from mpl_toolkits.axes_grid1 import make_axes_locatable
 
         fig, axes = plt.subplots(
             3, self.num_profiles, figsize=(5 * self.num_profiles, 8)

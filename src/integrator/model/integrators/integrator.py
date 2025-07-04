@@ -139,7 +139,7 @@ class Integrator(BaseIntegrator):
             "dials_I_sum_var": reference[:, 7],
             "dials_I_prf_value": reference[:, 8],
             "dials_I_prf_var": reference[:, 9],
-            "refl_ids": reference[:, -1],
+            "refl_ids": reference[:, -1].int().tolist(),
             "profile": qp.mean,
             "zp": zp,
             "x_c": reference[:, 0],
