@@ -14,17 +14,12 @@ from .model.encoders import (
     IntensityEncoder,
     MLPImageEncoder,
     MLPMetadataEncoder,
-    NormFreeConv3D,
-    NormFreeNet,
     ShoeboxEncoder,
 )
 from .model.integrators import (
     DefaultIntegrator,
     Integrator,
-    IntegratorBinaryEncoding,
-    IntegratorPositionalEncoding,
     LRMVNIntegrator,
-    MLPIntegrator,
     MVNIntegrator,
 )
 from .model.loss import Loss, Loss2, LRMVNLoss, MVNLoss
@@ -35,18 +30,13 @@ REGISTRY = {
         "mlp_metadata_encoder": MLPMetadataEncoder,
     },
     "encoder": {
-        "cnn_3d": CNNResNet2,
         "mlp_image_encoder": MLPImageEncoder,
         "shoebox_encoder": ShoeboxEncoder,
-        "normfree_mlp": NormFreeNet,
-        "normfree_3d": NormFreeConv3D,
     },
     "image_encoder": {
         "cnn_3d": CNNResNet2,
         "mlp_image_encoder": MLPImageEncoder,
         "shoebox_encoder": ShoeboxEncoder,
-        "normfree_mlp": NormFreeNet,
-        "normfree_3d": NormFreeConv3D,
         "mlp_metadata_encoder": MLPMetadataEncoder,
     },
     "profile_encoder": {
@@ -73,11 +63,8 @@ REGISTRY = {
     "integrator": {
         "default_integrator": DefaultIntegrator,
         "mvn_integrator": MVNIntegrator,
-        "mlp_integrator": MLPIntegrator,
         "lrmvn_integrator": LRMVNIntegrator,
         "integrator": Integrator,
-        "integrator2": IntegratorBinaryEncoding,
-        "integrator3": IntegratorPositionalEncoding,
     },
     "q_I": {
         "gamma": GammaDistribution,
@@ -89,6 +76,7 @@ REGISTRY = {
         "gamma": GammaDistribution,
         "half_normal": HalfNormalDistribution,
         "log_normal": LogNormalDistribution,
+        "folded_normal": FoldedNormalDistribution,
     },
     "data_loader": {
         "default": ShoeboxDataModule,

@@ -1,12 +1,12 @@
 import torch
-import torch.nn.functional as F
 import torch.nn as nn
+import torch.nn.functional as F
 
 
-class ShoeboxEncoder(nn.Module):
+class ShoeboxEncoder(torch.nn.Module):
     def __init__(
         self,
-        input_shape=(3, 21, 21),  # (D,H,W)
+        input_shape=(3, 21, 21),
         in_channels=1,
         out_dim=64,
         conv1_out_channels=16,
@@ -20,6 +20,22 @@ class ShoeboxEncoder(nn.Module):
         conv2_padding=(0, 0, 0),
         norm2_num_groups=4,
     ):
+        """
+        Args:
+            input_shape ():
+            in_channels ():
+            out_dim ():
+            conv1_out_channels ():
+            conv1_kernel ():
+            conv1_padding ():
+            norm1_num_groups ():
+            pool_kernel ():
+            pool_stride ():
+            conv2_out_channels ():
+            conv2_kernel ():
+            conv2_padding ():
+            norm2_num_groups ():
+        """
         super().__init__()
 
         self.conv1 = nn.Conv3d(
@@ -57,6 +73,14 @@ class ShoeboxEncoder(nn.Module):
             return x.numel()
 
     def forward(self, x, mask=None):
+        """
+        Args:
+            x (torch.tensor):
+            mask (torch.tensor):
+
+        Returns:
+
+        """
         x = F.relu(self.norm1(self.conv1(x)))
         x = self.pool(x)
         x = F.relu(self.norm2(self.conv2(x)))
@@ -64,7 +88,7 @@ class ShoeboxEncoder(nn.Module):
         return F.relu(self.fc(x))
 
 
-class IntensityEncoder(nn.Module):
+class IntensityEncoder(torch.nn.Module):
     def __init__(
         self,
         input_shape=(3, 21, 21),  # (D,H,W)
@@ -96,7 +120,7 @@ class IntensityEncoder(nn.Module):
         self.norm1 = nn.GroupNorm(norm1_num_groups, conv1_out_channels)
 
         # Pooling layer
-        self.pool = nn.MaxPool3d(
+        self.pool = nn.AvgPool3d(
             kernel_size=pool_kernel, stride=pool_stride, ceil_mode=True
         )
 
@@ -120,7 +144,7 @@ class IntensityEncoder(nn.Module):
             1
         )  # Output: (batch, channels, 1, 1, 1)
 
-        self.fc = nn.Linear(conv3_out_channels, out_dim)
+        self.fc = nn.Linear(conv2_out_channels, out_dim)
 
     def forward(self, x, mask=None):
         # First conv + norm + activation

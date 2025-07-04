@@ -44,16 +44,12 @@ class Loss2(torch.nn.Module):
         self,
         beta=1.0,
         eps=1e-5,
-        # Profile prior
-        p_p_name=None,  # Type: "dirichlet", "beta", or None
-        p_p_params=None,  # Parameters for the distribution
-        p_p_scale=0.0001,
-        # Background prior
+        p_p_name=None,
+        p_p_params=None,
+        p_p_weight=0.0001,
         p_bg_name="gamma",
         p_bg_params={"concentration": 1.0, "rate": 1.0},
         p_bg_weight=0.0001,
-        # Intensity prior
-        use_center_focused_prior=True,
         prior_base_alpha=0.1,
         prior_center_alpha=50.0,
         prior_decay_factor=0.4,
@@ -69,7 +65,7 @@ class Loss2(torch.nn.Module):
         self.register_buffer("eps", torch.tensor(eps))
         self.register_buffer("beta", torch.tensor(beta))
         self.register_buffer("p_bg_weight", torch.tensor(p_bg_weight))
-        self.register_buffer("p_p_scale", torch.tensor(p_p_scale))
+        self.register_buffer("p_p_weight", torch.tensor(p_p_weight))
         # self.register_buffer("p_I_scale", p_I_scale)
         self.p_I_weight = p_I_weight
 
@@ -222,29 +218,11 @@ class Loss2(torch.nn.Module):
         kl_terms += kl_bg * self.p_bg_weight
 
         kl_p = self.compute_kl(q_p, p_p)
-        kl_terms += kl_p * self.p_p_scale
+        kl_terms += kl_p * self.p_p_weight
 
-        if self.use_robust:
-            counts_unsqueezed = counts.unsqueeze(1)
-            rates = rate + self.eps
-
-            dispersion = torch.tensor(1.0, device=device)
-
-            logits = torch.log(rates) - torch.log(dispersion + self.eps)
-
-            nb_dist = torch.distributions.NegativeBinomial(
-                total_count=dispersion,
-                logits=logits,
-            )
-
-            counts_expanded = counts.unsqueeze(1)
-            log_prob = nb_dist.log_prob(counts_expanded)
-
-        else:
-            # Use Poisson for small counts
-            log_prob = torch.distributions.Poisson(rate + self.eps).log_prob(
-                counts.unsqueeze(1)
-            )
+        log_prob = torch.distributions.Poisson(rate + self.eps).log_prob(
+            counts.unsqueeze(1)
+        )
 
         ll_mean = torch.mean(log_prob, dim=1) * masks.squeeze(-1)
 
@@ -265,5 +243,5 @@ class Loss2(torch.nn.Module):
             kl_terms.mean(),
             (kl_bg * self.p_bg_weight).mean(),
             kl_I.mean() * self.p_I_weight,
-            (kl_p * self.p_p_scale).mean(),
+            (kl_p * self.p_p_weight).mean(),
         )

@@ -1,8 +1,30 @@
-import torch
 import os
-from pytorch_lightning.callbacks import BasePredictionWriter
 from pathlib import Path
-from pytorch_lightning.callbacks import Callback
+
+import polars as plr
+import torch
+from pytorch_lightning.callbacks import BasePredictionWriter, Callback
+
+
+def assign_labels(dataset, save_dir: str):
+    train_id_df = plr.DataFrame(schema=[("train_ids", int)])
+    val_id_df = plr.DataFrame(schema=[("val_ids", int)])
+
+    with torch.no_grad():
+        for batch in dataset.train_dataloader():
+            _, _, _, reference = batch
+            train_ids = plr.DataFrame({"train_ids": (reference[:, -1].int()).tolist()})
+            train_id_df = plr.concat([train_id_df, train_ids])
+
+        for batch in dataset.val_dataloader():
+            _, _, _, reference = batch
+            val_ids = plr.DataFrame({"val_ids": (reference[:, -1].int()).tolist()})
+            val_id_df = plr.concat([val_id_df, val_ids])
+
+    train_id_df.write_csv(save_dir + "/train_labels.csv")
+    print(f"train labels saved to {save_dir + '/train_labels.csv'}")
+    val_id_df.write_csv(save_dir + "/val_labels.csv")
+    print(f"val labels saved to {save_dir + '/val_labels.csv'}")
 
 
 class IntensityPlotter(Callback):

@@ -192,7 +192,7 @@ def create_integrator(config):
             dmodel=config["global"]["dmodel"],
             loss=loss,
             mc_samples=config["integrator"]["mc_samples"],
-            learning_rate=config["integrator"]["learning_rate"],
+            lr=config["integrator"]["learning_rate"],
             profile_threshold=config["integrator"]["profile_threshold"],
             use_metarep=config["integrator"]["use_metarep"],
             use_metaonly=config["integrator"]["use_metaonly"],
@@ -245,9 +245,9 @@ def create_integrator(config):
             qbg=background_distribution,
             qp=profile,
             qI=intensity_distribution,
-            loss=loss,
+            loss_fn=loss,
             mc_samples=config["integrator"]["mc_samples"],
-            learning_rate=config["integrator"]["learning_rate"],
+            lr=config["integrator"]["learning_rate"],
             renyi_scale=config["integrator"]["renyi_scale"],
             d=config["integrator"]["d"],
             h=config["integrator"]["h"],
@@ -647,3 +647,6 @@ def predict_from_checkpoints(config, trainer, pred_integrator, data, version_dir
         del pred_writer
         torch.cuda.empty_cache()
         gc.collect()
+
+
+# assign train/val labels

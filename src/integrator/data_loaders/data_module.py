@@ -1,15 +1,17 @@
-import torch
 import os
-import pytorch_lightning as pl
-from torch.utils.data import DataLoader, random_split, Subset, TensorDataset
+
+import torch
+from torch.utils.data import DataLoader, Subset, TensorDataset, random_split
+
 from integrator.data_loaders import BaseDataModule
 
 
 class ShoeboxDataModule(BaseDataModule):
     """
+
     Attributes:
-        data_dir: Path to the directory containing the data
-        batch_size: Batch size for the data loaders
+        data_dir:
+        batch_size:
         val_split:
         test_split:
         include_test:
@@ -18,9 +20,14 @@ class ShoeboxDataModule(BaseDataModule):
         num_workers:
         cutoff:
         full_dataset:
+        use_metadata:
+        shoebox_file_names:
         H:
         W:
         Z:
+        standardized_counts:
+        get_dxyz:
+        anscombe: Boolean indicating whether to use Anscome transformation
         full_dataset:
     """
 
@@ -69,6 +76,7 @@ class ShoeboxDataModule(BaseDataModule):
         self.Z = Z
         self.standardized_counts = shoebox_file_names["standardized_counts"]
         self.get_dxyz = get_dxyz
+        self.anscombe = False
 
     def setup(self, stage=None):
         counts = torch.load(
@@ -124,9 +132,11 @@ class ShoeboxDataModule(BaseDataModule):
                 standardized_counts = standardized_counts[selection]
         else:
             if counts.dim() == 2:
-                #standardized_counts = (counts * masks) - stats[0] / stats[1].sqrt()
-                ans = 2*torch.sqrt(counts + (3.0/8.0))
-                standardized_counts = ((ans - stats[1])/stats[1].sqrt()) * masks
+                if self.anscombe:
+                    standardized_counts = (counts * masks) - stats[0] / stats[1].sqrt()
+                else:
+                    ans = 2 * torch.sqrt(counts + (3.0 / 8.0))
+                    standardized_counts = ((ans - stats[1]) / stats[1].sqrt()) * masks
 
             else:
                 standardized_counts = (counts[..., -1] * masks) - stats[0] / stats[
@@ -220,7 +230,6 @@ class ShoeboxDataModule(BaseDataModule):
             return None
 
     def predict_dataloader(self):
-        # Use the full dataset for prediction
         return DataLoader(
             self.full_dataset,
             batch_size=self.batch_size,
@@ -341,7 +350,6 @@ class ShoeboxDataModule2(BaseDataModule):
             shuffle=True,
             num_workers=self.num_workers,
             pin_memory=True,
-            # prefetch_factor=0,
         )
 
     def val_dataloader(self):
@@ -351,7 +359,6 @@ class ShoeboxDataModule2(BaseDataModule):
             shuffle=False,
             num_workers=self.num_workers,
             pin_memory=True,
-            # prefetch_factor=2,
         )
 
     def test_dataloader(self):
@@ -362,13 +369,11 @@ class ShoeboxDataModule2(BaseDataModule):
                 shuffle=False,
                 num_workers=self.num_workers,
                 pin_memory=True,
-                # prefetch_factor=2,
             )
         else:
             return None
 
     def predict_dataloader(self):
-        # Use the full dataset for prediction
         return DataLoader(
             self.full_dataset,
             batch_size=self.batch_size,
