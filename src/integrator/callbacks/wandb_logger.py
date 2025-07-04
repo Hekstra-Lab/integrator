@@ -49,9 +49,10 @@ def create_comparison_grid(
         # Row 1: Input counts
         im0 = axes[0, i].imshow(counts_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13)
         axes[0, i].set_title(
-            f"""reflection ID: {id_str}\n
-            DIALS I_prf: {pred_dict[id_str]["dials_I_prf_var"]:.2f}\n
-            DIALS var: {pred_dict[id_str]["dials_I_prf_var"]:.2f}\n
+            f"""
+            reflection ID: {id_str}
+            DIALS I_prf: {pred_dict[id_str]["dials_I_prf_value"]:.2f}
+            DIALS var: {pred_dict[id_str]["dials_I_prf_var"]:.2f}
             DIALS bg mean: {pred_dict[id_str]["dials_bg_mean"]:.2f}"""
         )
         axes[0, i].set_ylabel("raw image", labelpad=5)
@@ -67,9 +68,11 @@ def create_comparison_grid(
         # row 2: predicted profile
         im1 = axes[1, i].imshow(profile_data, cmap=cmap)
         axes[1, i].set_title(
-            f""""x_c: {pred_dict[id_str]["x_c"]:.2f}\n
-            y_c: {pred_dict[id_str]["y_c"]:.2f}\n
-            z_c: {pred_dict[id_str]["z_c"]:.2f}"""
+            f"""
+            x_c: {pred_dict[id_str]["x_c"]:.2f}
+            y_c: {pred_dict[id_str]["y_c"]:.2f}
+            z_c: {pred_dict[id_str]["z_c"]:.2f}
+            """
         )
         axes[1, i].set_ylabel(
             "profile",
@@ -85,10 +88,11 @@ def create_comparison_grid(
         # row 3: Rates (same scale as row 1)
         im2 = axes[2, i].imshow(rates_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13)
         axes[2, i].set_title(
-            f"""Bg: {float(pred_dict[id_str]["bg_mean"]):.2f}\n
-            I: {pred_dict[id_str]["intensity_mean"]:.2f}\n
-            I_var: {pred_dict[id_str]["intensity_var"]:.2f}\n
-            I_std: {np.sqrt(pred_dict[id_str]["intensity_var"]):.2f}\n"""
+            f"""
+            Bg: {float(pred_dict[id_str]["bg_mean"]):.2f}
+            I: {pred_dict[id_str]["intensity_mean"]:.2f}
+            I_var: {pred_dict[id_str]["intensity_var"]:.2f}
+            I_std: {np.sqrt(pred_dict[id_str]["intensity_var"]):.2f}"""
         )
 
         axes[2, i].set_ylabel(
