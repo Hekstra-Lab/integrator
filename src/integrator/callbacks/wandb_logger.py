@@ -40,7 +40,7 @@ def create_comparison_grid(
         # Row 1: Input counts
         im0 = axes[0, i].imshow(counts_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13)
         axes[0, i].set_title(
-            f"reflection ID: {id_str}\n DIALS I_prf: {pred_dict[id_str]['dials_I_prf_var']:.2f}\nDIALS var: {pred_dict[id_str]['dials_I_prf_var']:.2f}\n DIALS std: {np.sqrt(pred_dict[id_str]['dials_I_prf_var']):.2f}\n DIALS bg mean: {pred_dict[id_str]['dials_bg_mean']:.2f}"
+            f"reflection ID: {id_str}\n DIALS I_prf: {pred_dict[id_str]['dials_I_prf_var']:.2f}\nDIALS var: {pred_dict[id_str]['dials_I_prf_var']:.2f}\n DIALS bg mean: {pred_dict[id_str]['dials_bg_mean']:.2f}"
         )
         axes[0, i].set_ylabel("raw image", labelpad=5)
         # Turn off axes but keep the labels
@@ -1037,7 +1037,7 @@ class Plotter(Callback):
             # Row 1: Input counts
             im0 = axes[0, i].imshow(counts_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13)
             axes[0, i].set_title(
-                f"reflection ID: {id_str}\n DIALS I_prf: {self.tracked_predictions[id_str]['dials_I_prf_value']:.2f}\nDIALS var: {self.tracked_predictions[id_str]['dials_I_prf_var']:.2f}\n DIALS std: {np.sqrt(self.tracked_predictions[id_str]['dials_I_prf_var']):.2f}\n DIALS bg mean: {self.tracked_predictions[id_str]['dials_bg_mean']:.2f}"
+                f"reflection ID: {id_str}\n DIALS I_prf: {self.tracked_predictions[id_str]['dials_I_prf_value']:.2f}\nDIALS var: {self.tracked_predictions[id_str]['dials_I_prf_var']:.2f}\nDIALS bg mean: {self.tracked_predictions[id_str]['dials_bg_mean']:.2f}"
             )
             axes[0, i].set_ylabel("raw image", labelpad=5)
             # Turn off axes but keep the labels
