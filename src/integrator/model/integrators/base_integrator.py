@@ -269,13 +269,6 @@ class BaseIntegrator(pl.LightningModule, ABC):
         counts, shoebox, masks, reference = batch
         outputs = self(counts, shoebox, masks, reference)
 
-        intensities = self.calculate_intensities(
-            counts=outputs["counts"],
-            qbg=outputs["qbg"],
-            qp=outputs["qp"],
-            masks=outputs["masks"],
-        )
-
         return {
             "intensity_mean": outputs["intensity_mean"],  # qI.mean
             "intensity_var": outputs["intensity_var"],  # qI.variance
@@ -285,10 +278,6 @@ class BaseIntegrator(pl.LightningModule, ABC):
             "dials_I_prf_var": outputs["dials_I_prf_var"],
             "qbg": outputs["qbg"].mean,
             "qbg_scale": outputs["qbg"].scale,  # halfnormal param
-            "profile_masking_mean": intensities["profile_masking_mean"],
-            "profile_masking_var": intensities["profile_masking_var"],
-            "kabsch_sum_mean": intensities["kabsch_sum_mean"],
-            "kabsch_sum_var": intensities["kabsch_sum_var"],
             "x_c": outputs["x_c"],
             "y_c": outputs["y_c"],
             "z_c": outputs["z_c"],

@@ -10,7 +10,6 @@ from .model.distribution import (
     NormalDistribution,
 )
 from .model.encoders import (
-    CNNResNet2,
     IntensityEncoder,
     MLPImageEncoder,
     MLPMetadataEncoder,
@@ -20,7 +19,6 @@ from .model.integrators import (
     DefaultIntegrator,
     Integrator,
     LRMVNIntegrator,
-    MVNIntegrator,
 )
 from .model.loss import Loss, Loss2, LRMVNLoss, MVNLoss
 from .model.profiles import DirichletProfile, MVNProfile
@@ -34,7 +32,6 @@ REGISTRY = {
         "shoebox_encoder": ShoeboxEncoder,
     },
     "image_encoder": {
-        "cnn_3d": CNNResNet2,
         "mlp_image_encoder": MLPImageEncoder,
         "shoebox_encoder": ShoeboxEncoder,
         "mlp_metadata_encoder": MLPMetadataEncoder,
@@ -62,7 +59,6 @@ REGISTRY = {
     },
     "integrator": {
         "default_integrator": DefaultIntegrator,
-        "mvn_integrator": MVNIntegrator,
         "lrmvn_integrator": LRMVNIntegrator,
         "integrator": Integrator,
     },
@@ -96,11 +92,12 @@ ARGUMENT_RESOLVER = {
         "p_bg": {
             "gamma": torch.distributions.gamma.Gamma,
             "half_normal": torch.distributions.half_normal.HalfNormal,
+            "half_cauchy": torch.distributions.half_cauchy.HalfCauchy,
+            "exponential": torch.distributions.exponential.Exponential,
         },
         "p_I": {
             "gamma": torch.distributions.gamma.Gamma,
             "log_normal": torch.distributions.log_normal.LogNormal,
-            "normal": torch.distributions.normal.Normal,
             "exponential": torch.distributions.exponential.Exponential,
             "half_normal": torch.distributions.half_normal.HalfNormal,
             "half_cauchy": torch.distributions.half_cauchy.HalfCauchy,
