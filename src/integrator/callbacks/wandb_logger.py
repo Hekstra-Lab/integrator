@@ -13,7 +13,7 @@ import wandb
 
 
 def create_comparison_grid(
-    num_profiles,
+    n_profiles,
     refl_ids,
     pred_dict,
     cmap="cividis",
@@ -21,7 +21,7 @@ def create_comparison_grid(
     """
 
     Args:
-        num_profiles (int): number of shoeboxes to plot
+        n_profiles (int): number of shoeboxes to plot
         refl_ids (list): list of tracked shoebox ids
         pred_dict (dict): dictionary of tracked shoeboxes
         cmap (str): string name of color map
@@ -33,7 +33,7 @@ def create_comparison_grid(
         return None
 
     # Create figure with proper subplot layout
-    fig, axes = plt.subplots(3, num_profiles, figsize=(5 * num_profiles, 8))
+    fig, axes = plt.subplots(3, n_profiles, figsize=(5 * n_profiles, 8))
 
     # Plot each column
     for i, refl_id in enumerate(refl_ids):
@@ -49,11 +49,10 @@ def create_comparison_grid(
         # Row 1: Input counts
         im0 = axes[0, i].imshow(counts_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13)
         axes[0, i].set_title(
-            f"""
-            reflection ID: {id_str}
-            DIALS I_prf: {pred_dict[id_str]["dials_I_prf_value"]:.2f}
-            DIALS var: {pred_dict[id_str]["dials_I_prf_var"]:.2f}
-            DIALS bg mean: {pred_dict[id_str]["dials_bg_mean"]:.2f}"""
+            f"reflection ID: {id_str}\n"
+            f"DIALS I_prf: {pred_dict[id_str]['dials_I_prf_value']:.2f}\n"
+            f"DIALS var: {pred_dict[id_str]['dials_I_prf_var']:.2f}\n"
+            f"DIALS bg mean: {pred_dict[id_str]['dials_bg_mean']:.2f}"
         )
         axes[0, i].set_ylabel("raw image", labelpad=5)
 
@@ -68,11 +67,9 @@ def create_comparison_grid(
         # row 2: predicted profile
         im1 = axes[1, i].imshow(profile_data, cmap=cmap)
         axes[1, i].set_title(
-            f"""
-            x_c: {pred_dict[id_str]["x_c"]:.2f}
-            y_c: {pred_dict[id_str]["y_c"]:.2f}
-            z_c: {pred_dict[id_str]["z_c"]:.2f}
-            """
+            f"x_c: {pred_dict[id_str]['x_c']:.2f}\n"
+            f"y_c: {pred_dict[id_str]['y_c']:.2f}\n"
+            f"z_c: {pred_dict[id_str]['z_c']:.2f}"
         )
         axes[1, i].set_ylabel(
             "profile",
@@ -88,11 +85,10 @@ def create_comparison_grid(
         # row 3: Rates (same scale as row 1)
         im2 = axes[2, i].imshow(rates_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13)
         axes[2, i].set_title(
-            f"""
-            Bg: {float(pred_dict[id_str]["bg_mean"]):.2f}
-            I: {pred_dict[id_str]["intensity_mean"]:.2f}
-            I_var: {pred_dict[id_str]["intensity_var"]:.2f}
-            I_std: {np.sqrt(pred_dict[id_str]["intensity_var"]):.2f}"""
+            f"Bg: {float(pred_dict[id_str]['bg_mean']):.2f}\n"
+            f"I: {pred_dict[id_str]['intensity_mean']:.2f}\n"
+            f"I_var: {pred_dict[id_str]['intensity_var']:.2f}\n"
+            f"I_std: {np.sqrt(pred_dict[id_str]['intensity_var']):.2f}"
         )
 
         axes[2, i].set_ylabel(
@@ -134,7 +130,7 @@ def create_comparison_grid(
 class Plotter(Callback):
     def __init__(
         self,
-        num_profiles=5,
+        n_profiles=5,
         plot_every_n_epochs=5,
         d=3,
         h=21,
@@ -147,7 +143,7 @@ class Plotter(Callback):
         self.w = w
         self.train_predictions = {}
         self.val_predictions = {}
-        self.num_profiles = num_profiles
+        self.n_profiles = n_profiles
         self.tracked_refl_ids = None
         self.tracked_refl_ids_val = None
         self.all_seen_ids = set()
@@ -183,9 +179,9 @@ class Plotter(Callback):
         # Update all seen IDs and set tracked IDs if not set
         # this will only happen once
         if self.tracked_refl_ids is None:
-            self.tracked_refl_ids = current_refl_ids[: self.num_profiles]
+            self.tracked_refl_ids = current_refl_ids[: self.n_profiles]
             print(
-                f"Selected {self.num_profiles} reflection IDs to track: {self.tracked_refl_ids}"
+                f"Selected {self.n_profiles} refl_ids to track: {self.tracked_refl_ids}"
             )
 
         profile_images = profile_preds.reshape(-1, self.d, self.h, self.w)[
@@ -299,9 +295,9 @@ class Plotter(Callback):
                 # Create data for scatter plots
                 data = []
 
-                I_flat = self.train_predictions["intensity_mean"].flatten() + 1e-8
+                i_flat = self.train_predictions["intensity_mean"].flatten() + 1e-8
 
-                I_var_flat = self.train_predictions["intensity_var"].flatten() + 1e-8
+                i_var_flat = self.train_predictions["intensity_var"].flatten() + 1e-8
 
                 dials_flat = (
                     self.train_predictions["dials_I_prf_value"].flatten() + 1e-8
@@ -323,12 +319,12 @@ class Plotter(Callback):
                 d_ = self.train_predictions["d"]
 
                 # Create data points with safe log transform
-                for i in range(len(I_flat)):
+                for i in range(len(i_flat)):
                     try:
                         data.append(
                             [
-                                float(torch.log(I_flat[i])),
-                                float(torch.log(I_var_flat[i])),
+                                float(torch.log(i_flat[i])),
+                                float(torch.log(i_var_flat[i])),
                                 float(torch.log(dials_flat[i])),
                                 float(torch.log(dials_var_flat[i])),
                                 dials_bg_flat[i],
@@ -368,8 +364,8 @@ class Plotter(Callback):
 
                 # Calculate correlation coefficients
                 corr_I = (
-                    torch.corrcoef(torch.vstack([I_flat, dials_flat]))[0, 1]
-                    if len(I_flat) > 1
+                    torch.corrcoef(torch.vstack([i_flat, dials_flat]))[0, 1]
+                    if len(i_flat) > 1
                     else 0
                 )
 
@@ -419,11 +415,11 @@ class Plotter(Callback):
                     ),
                     "Correlation Coefficient: qI": corr_I,
                     "Correlation Coefficient: bg": corr_bg,
-                    "Max mean(I)": torch.max(I_flat),
-                    "Mean mean(I)": torch.mean(I_flat),
-                    "Mean var(I) ": torch.mean(I_var_flat),
-                    "Min var(I)": torch.min(I_var_flat),
-                    "Max var(I)": torch.max(I_var_flat),
+                    "Max mean(I)": torch.max(i_flat),
+                    "Mean mean(I)": torch.mean(i_flat),
+                    "Mean var(I) ": torch.mean(i_var_flat),
+                    "Min var(I)": torch.min(i_var_flat),
+                    "Max var(I)": torch.max(i_var_flat),
                 }
 
                 log_dict["mean(qbg.mean)"] = torch.mean(self.train_predictions["qbg"])
@@ -433,7 +429,7 @@ class Plotter(Callback):
                 # plot every n user-specified epochs
                 if self.current_epoch % self.plot_every_n_epochs == 0:
                     comparison_fig = create_comparison_grid(
-                        num_profiles=self.num_profiles,
+                        n_profiles=self.n_profiles,
                         refl_ids=self.tracked_refl_ids,
                         pred_dict=self.tracked_predictions,
                     )
@@ -459,8 +455,6 @@ class Plotter(Callback):
         self.current_epoch += 1
 
     def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
-        # Only track the last validation batch to save memory
-
         with torch.no_grad():
             shoebox, dials, masks, counts = batch
             base_output = pl_module(shoebox, dials, masks, counts)
@@ -492,7 +486,7 @@ class Plotter(Callback):
 
             self.all_seen_ids.update(base_output["refl_ids"])
             if self.tracked_refl_ids_val is None:
-                self.tracked_refl_ids_val = list(self.all_seen_ids)[: self.num_profiles]
+                self.tracked_refl_ids_val = list(self.all_seen_ids)[: self.n_profiles]
 
             profile_images = base_output["profile"].reshape(
                 -1,
@@ -509,11 +503,6 @@ class Plotter(Callback):
                 .reshape(-1, self.d, self.h, self.w)[..., (self.d - 1) // 2, :, :]
             )
             bg_mean = base_output["qbg"].mean
-            bg_var = base_output["qbg"].variance
-            dials_I_prf_value = base_output["dials_I_prf_value"]
-            x_c = base_output["x_c"]
-            y_c = base_output["y_c"]
-
             current_refl_ids = base_output["refl_ids"]
 
             for ref_id in self.tracked_refl_ids_val:
@@ -549,9 +538,9 @@ class Plotter(Callback):
             try:
                 data = []
 
-                I_flat = self.val_predictions["intensity_mean"].flatten() + 1e-8
+                i_flat = self.val_predictions["intensity_mean"].flatten() + 1e-8
 
-                I_var_flat = self.val_predictions["intensity_var"].flatten() + 1e-8
+                i_var_flat = self.val_predictions["intensity_var"].flatten() + 1e-8
 
                 dials_flat = self.val_predictions["dials_I_prf_value"].flatten() + 1e-8
                 dials_var_flat = (
@@ -571,12 +560,12 @@ class Plotter(Callback):
                 d_ = self.val_predictions["d"]
 
                 # Create data points with safe log transform
-                for i in range(len(I_flat)):
+                for i in range(len(i_flat)):
                     try:
                         data.append(
                             [
-                                float(torch.log(I_flat[i])),
-                                float(torch.log(I_var_flat[i])),
+                                float(torch.log(i_flat[i])),
+                                float(torch.log(i_var_flat[i])),
                                 float(torch.log(dials_flat[i])),
                                 float(torch.log(dials_var_flat[i])),
                                 dials_bg_flat[i],
@@ -616,8 +605,8 @@ class Plotter(Callback):
 
                 # Calculate correlation coefficients
                 corr_I = (
-                    torch.corrcoef(torch.vstack([I_flat, dials_flat]))[0, 1]
-                    if len(I_flat) > 1
+                    torch.corrcoef(torch.vstack([i_flat, dials_flat]))[0, 1]
+                    if len(i_flat) > 1
                     else 0
                 )
 
@@ -666,11 +655,11 @@ class Plotter(Callback):
                     ),
                     "Val: Correlation Coefficient qI": corr_I,
                     "Val: Correlation Coefficient bg": corr_bg,
-                    "Val: Max mean(I)": torch.max(I_flat),
-                    "Val: Mean mean(I)": torch.mean(I_flat),
-                    "Val: Mean var(I) ": torch.mean(I_var_flat),
-                    "Val: Min var(I)": torch.min(I_var_flat),
-                    "Val: Max var(I)": torch.max(I_var_flat),
+                    "Val: Max mean(I)": torch.max(i_flat),
+                    "Val: Mean mean(I)": torch.mean(i_flat),
+                    "Val: Mean var(I) ": torch.mean(i_var_flat),
+                    "Val: Min var(I)": torch.min(i_var_flat),
+                    "Val: Max var(I)": torch.max(i_var_flat),
                     "val: mean(qbg.mean)": torch.mean(self.val_predictions["qbg"]),
                     "val: min(qbg.mean)": torch.min(self.val_predictions["qbg"]),
                     "val: max(qbg.mean)": torch.max(self.val_predictions["qbg"]),
@@ -678,7 +667,7 @@ class Plotter(Callback):
 
                 # plot input shoebox and predicted profile
                 comparison_fig = create_comparison_grid(
-                    num_profiles=self.num_profiles,
+                    n_profiles=self.n_profiles,
                     refl_ids=self.tracked_refl_ids_val,
                     pred_dict=self.validation_tracked_predictions,
                 )
