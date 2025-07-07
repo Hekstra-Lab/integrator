@@ -12,8 +12,8 @@ class BaseIntegrator(pl.LightningModule, ABC):
         self,
         qbg: Any,
         qp: Any,
-        qI: Any,
-        loss_fn: Any,
+        qi: Any,
+        loss: Any,
         d: int = 3,
         h: int = 21,
         w: int = 21,
@@ -27,17 +27,18 @@ class BaseIntegrator(pl.LightningModule, ABC):
         super().__init__()
         self.qbg = qbg
         self.qp = qp
-        self.qI = qI
+        self.qi = qi
         self.d = d
         self.h = h
         self.w = w
-        self.loss_fn = loss_fn
+        self.loss = loss
         self.renyi_scale = renyi_scale
 
         # lists to track avg traning metrics
         self.train_loss = []
         self.train_kl = []
         self.train_nll = []
+
         # lists to track avg validation metrics
         self.val_loss = []
         self.val_kl = []
@@ -128,6 +129,7 @@ class BaseIntegrator(pl.LightningModule, ABC):
 
         # udpate training dataframe
         self.train_df = plr.concat([self.train_df, epoch_df])
+
         # clear all lists
         self.train_loss = []
         self.train_kl = []
@@ -169,16 +171,14 @@ class BaseIntegrator(pl.LightningModule, ABC):
         outputs = self(counts, shoebox, masks, reference)
 
         # Calculate loss
-        (loss, neg_ll, kl, kl_bg, kl_I, kl_p) = self.loss_fn(
+        (loss, neg_ll, kl, kl_bg, kl_i, kl_p) = self.loss(
             rate=outputs["rates"],
             counts=outputs["counts"],
             q_p=outputs["qp"],
-            q_I=outputs["qI"],
+            q_i=outputs["qi"],
             q_bg=outputs["qbg"],
             masks=outputs["masks"],
         )
-
-        # Track gradient norms here
 
         renyi_loss = (
             (-torch.log(outputs["qp"].rsample([100]).permute(1, 0, 2).pow(2).sum(-1)))
@@ -192,11 +192,11 @@ class BaseIntegrator(pl.LightningModule, ABC):
         self.log("Train: NLL", neg_ll.mean())
         self.log("Train: KL", kl.mean())
         self.log("Train: KL Bg", kl_bg.mean())
-        self.log("Train: KL I", kl_I.mean())
+        self.log("Train: KL I", kl_i.mean())
         self.log("Train: KL Prf", kl_p.mean())
-        self.log("Mean(qI.mean)", outputs["qI"].mean.mean())
-        self.log("Min(qI.mean)", outputs["qI"].mean.min())
-        self.log("Max(qI.mean)", outputs["qI"].mean.max())
+        self.log("Mean(qi.mean)", outputs["qi"].mean.mean())
+        self.log("Min(qi.mean)", outputs["qi"].mean.min())
+        self.log("Max(qi.mean)", outputs["qi"].mean.max())
         self.log("Mean(qbg.mean)", outputs["qbg"].mean.mean())
         self.log("Min(qbg.mean)", outputs["qbg"].mean.min())
         self.log("Max(qbg.mean)", outputs["qbg"].mean.max())
@@ -230,13 +230,13 @@ class BaseIntegrator(pl.LightningModule, ABC):
             neg_ll,
             kl,
             kl_bg,
-            kl_I,
+            kl_i,
             kl_p,
-        ) = self.loss_fn(
+        ) = self.loss(
             rate=outputs["rates"],
             counts=outputs["counts"],
             q_p=outputs["qp"],
-            q_I=outputs["qI"],
+            q_i=outputs["qi"],
             q_bg=outputs["qbg"],
             masks=outputs["masks"],
         )
@@ -246,7 +246,7 @@ class BaseIntegrator(pl.LightningModule, ABC):
         self.log("Val: NLL", neg_ll.mean())
         self.log("Val: KL", kl.mean())
         self.log("Val: KL bg", kl_bg.mean())
-        self.log("Val: KL I", kl_I.mean())
+        self.log("Val: KL I", kl_i.mean())
         self.log("Val: KL prf", kl_p.mean())
         self.log("val_loss", neg_ll.mean())
 
@@ -270,13 +270,13 @@ class BaseIntegrator(pl.LightningModule, ABC):
         outputs = self(counts, shoebox, masks, reference)
 
         return {
-            "intensity_mean": outputs["intensity_mean"],  # qI.mean
-            "intensity_var": outputs["intensity_var"],  # qI.variance
-            "refl_ids": outputs["refl_ids"].int().tolist(),
+            "intensity_mean": outputs["intensity_mean"],  # qi.mean
+            "intensity_var": outputs["intensity_var"],  # qi.variance
+            "refl_ids": outputs["refl_ids"],
             "dials_I_sum_var": outputs["dials_I_sum_var"],
             "dials_I_prf_value": outputs["dials_I_prf_value"],
             "dials_I_prf_var": outputs["dials_I_prf_var"],
-            "qbg": outputs["qbg"].mean,
+            "qbg": outputs["qbg"],
             "qbg_scale": outputs["qbg"].scale,  # halfnormal param
             "x_c": outputs["x_c"],
             "y_c": outputs["y_c"],

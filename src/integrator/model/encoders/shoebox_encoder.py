@@ -120,7 +120,7 @@ class IntensityEncoder(torch.nn.Module):
         self.norm1 = nn.GroupNorm(norm1_num_groups, conv1_out_channels)
 
         # Pooling layer
-        self.pool = nn.AvgPool3d(
+        self.pool = nn.MaxPool3d(
             kernel_size=pool_kernel, stride=pool_stride, ceil_mode=True
         )
 
@@ -144,7 +144,7 @@ class IntensityEncoder(torch.nn.Module):
             1
         )  # Output: (batch, channels, 1, 1, 1)
 
-        self.fc = nn.Linear(conv2_out_channels, out_dim)
+        self.fc = nn.Linear(conv3_out_channels, out_dim)
 
     def forward(self, x, mask=None):
         # First conv + norm + activation

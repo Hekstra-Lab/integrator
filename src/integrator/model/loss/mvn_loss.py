@@ -116,7 +116,7 @@ class MVNLoss(torch.nn.Module):
             log_p = p_dist.log_prob(samples)
             return (log_q - log_p).mean(dim=0)
 
-    def forward(self, rate, counts, profile, q_I, q_bg, masks):
+    def forward(self, rate, counts, profile, q_i, q_bg, masks):
         device = rate.device
         batch_size = rate.shape[0]
         p_I = None
@@ -172,7 +172,7 @@ class MVNLoss(torch.nn.Module):
             neg_ll_batch.mean(),
             kl_terms.mean(),
             kl_bg.mean(),
-            # kl_I.mean() if p_I is not None else torch.tensor(0.0, device=device),
+            # kl_i.mean() if p_I is not None else torch.tensor(0.0, device=device),
             torch.tensor(0.0, device=device),
             profile_reg.mean()
             if profile_reg.sum() > 0
@@ -189,14 +189,14 @@ class LRMVNLoss(torch.nn.Module):
         p_bg_params={"scale": 1.0},
         p_I_name="gamma",
         p_I_params={"concentration": 1.0, "rate": 1.0},
-        p_p_mean={"loc": 0.0, "scale": 5.0},
-        p_p_diag={"scale": 0.3},
-        p_p_factor={"loc": 0.0, "scale": 0.5},
+        p_prf_mean={"loc": 0.0, "scale": 5.0},
+        p_prf_diag={"scale": 0.3},
+        p_prf_factor={"loc": 0.0, "scale": 0.5},
         p_bg_w=0.0001,
         p_I_w=0.00001,
-        p_p_mean_w=0.001,
-        p_p_factor_w=0.001,
-        p_p_diag_w=0.001,
+        p_prf_mean_w=0.001,
+        p_prf_factor_w=0.001,
+        p_prf_diag_w=0.001,
         prior_shape=(3, 21, 21),
     ):
         super().__init__()
@@ -205,16 +205,16 @@ class LRMVNLoss(torch.nn.Module):
         self.register_buffer("beta", torch.tensor(beta))
         self.register_buffer("p_bg_w", torch.tensor(p_bg_w))
         self.register_buffer("p_bg_w", torch.tensor(p_bg_params["scale"]))
-        self.register_buffer("p_p_mean_w", torch.tensor(p_p_mean_w))
-        self.register_buffer("p_p_factor_w", torch.tensor(p_p_factor_w))
-        self.register_buffer("p_p_diag_w", torch.tensor(p_p_diag_w))
+        self.register_buffer("p_prf_mean_w", torch.tensor(p_prf_mean_w))
+        self.register_buffer("p_prf_factor_w", torch.tensor(p_prf_factor_w))
+        self.register_buffer("p_prf_diag_w", torch.tensor(p_prf_diag_w))
 
         self._register_distribution_params(p_I_name, p_I_params, prefix="p_I_")
         self.register_buffer("p_I_w", torch.tensor(p_I_w))
 
-        self.p_p_mean = p_p_mean
-        self.p_p_diag = p_p_diag
-        self.p_p_factor = p_p_factor
+        self.p_prf_mean = p_prf_mean
+        self.p_prf_diag = p_prf_diag
+        self.p_prf_factor = p_prf_factor
 
         # Store distribution names and params
         self.p_bg_name = p_bg_name
@@ -266,7 +266,7 @@ class LRMVNLoss(torch.nn.Module):
             kl_estimate = (log_q - log_p).mean(dim=0)
             return kl_estimate.sum(dim=-1)
 
-    def forward(self, rate, counts, q_bg, q_I, masks, q_p_mean, q_p_diag, q_p_factor):
+    def forward(self, rate, counts, q_bg, q_i, masks, q_p_mean, q_p_diag, q_p_factor):
         device = rate.device
         batch_size = rate.shape[0]
         self.current_batch_size = batch_size
@@ -280,38 +280,38 @@ class LRMVNLoss(torch.nn.Module):
 
         p_I = self.get_prior(self.p_I_name, "p_I_", device)
 
-        p_p_mean = torch.distributions.normal.Normal(
-            loc=torch.tensor(self.p_p_mean["loc"], device=device),
-            scale=torch.tensor(self.p_p_mean["scale"], device=device),
+        p_prf_mean = torch.distributions.normal.Normal(
+            loc=torch.tensor(self.p_prf_mean["loc"], device=device),
+            scale=torch.tensor(self.p_prf_mean["scale"], device=device),
         )
 
-        p_p_diag = torch.distributions.half_normal.HalfNormal(
-            scale=torch.tensor(self.p_p_diag["scale"], device=device)
+        p_prf_diag = torch.distributions.half_normal.HalfNormal(
+            scale=torch.tensor(self.p_prf_diag["scale"], device=device)
         )
 
-        p_p_factor = torch.distributions.normal.Normal(
-            loc=torch.tensor(self.p_p_factor["loc"], device=device).view(1, 3, 1),
-            scale=torch.tensor(self.p_p_factor["scale"], device=device).view(1, 3, 1),
+        p_prf_factor = torch.distributions.normal.Normal(
+            loc=torch.tensor(self.p_prf_factor["loc"], device=device).view(1, 3, 1),
+            scale=torch.tensor(self.p_prf_factor["scale"], device=device).view(1, 3, 1),
         )
 
         # calculate kl terms
         kl_terms = torch.zeros(batch_size, device=device)
 
-        kl_I = self.compute_kl(q_I, p_I)
-        kl_terms += kl_I * self.p_I_w
+        kl_i = self.compute_kl(q_i, p_I)
+        kl_terms += kl_i * self.p_I_w
 
         # calculate background and intensity kl divergence
         kl_bg = torch.distributions.kl.kl_divergence(q_bg, p_bg)
         kl_terms += kl_bg * self.p_bg_w
 
-        kl_p_p_mean = torch.distributions.kl.kl_divergence(q_p_mean, p_p_mean)
-        kl_terms += kl_p_p_mean.sum() * self.p_p_mean_w
+        kl_p_prf_mean = torch.distributions.kl.kl_divergence(q_p_mean, p_prf_mean)
+        kl_terms += kl_p_prf_mean.sum() * self.p_prf_mean_w
 
-        kl_p_p_diag = torch.distributions.kl.kl_divergence(q_p_diag, p_p_diag)
-        kl_terms += kl_p_p_diag.sum() * self.p_p_diag_w
+        kl_p_prf_diag = torch.distributions.kl.kl_divergence(q_p_diag, p_prf_diag)
+        kl_terms += kl_p_prf_diag.sum() * self.p_prf_diag_w
 
-        kl_p_factor = torch.distributions.kl.kl_divergence(q_p_factor, p_p_factor)
-        kl_terms += kl_p_factor.sum() * self.p_p_factor_w
+        kl_p_factor = torch.distributions.kl.kl_divergence(q_p_factor, p_prf_factor)
+        kl_terms += kl_p_factor.sum() * self.p_prf_factor_w
 
         ll = torch.distributions.Poisson(rate + self.eps).log_prob(
             counts.unsqueeze(1)
@@ -333,8 +333,8 @@ class LRMVNLoss(torch.nn.Module):
             neg_ll_batch.mean(),
             kl_terms.mean(),
             kl_bg.mean() * self.p_bg_w,
-            kl_I.mean() * self.p_I_w,
-            kl_p_p_mean.mean() * self.p_p_mean_w,
-            kl_p_p_diag.mean() * self.p_p_diag_w,
-            kl_p_factor.mean() * self.p_p_factor_w,
+            kl_i.mean() * self.p_I_w,
+            kl_p_prf_mean.mean() * self.p_prf_mean_w,
+            kl_p_prf_diag.mean() * self.p_prf_diag_w,
+            kl_p_factor.mean() * self.p_prf_factor_w,
         )

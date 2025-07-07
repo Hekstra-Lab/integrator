@@ -1,16 +1,34 @@
-site_name: Integrator
+site_name: integrator
 site_url: https://hekstra-lab.github.io/integrator/
+repo_url: https://github.com/Hekstra-Lab/integrator
+repo_name: Hekstra-Lab/integrator
 nav: 
+    - Overview: index.md
+    - Getting started: 
+        - Installation: ./getting-started/installation.md
+        - Quickstart: ./getting-started/quickstart.md
+        - Configuration: ./getting-started/configuration.md
+    - Examples: ./examples/example.md
     - Model:
+        - Integrator: ./Model/integrator.md
         - Encoders: ./Model/encoders.md
-        - Profiles: ./Model/profiles.md
-        - Distributions: ./Model/references.md
+        - Distributions:
+            - Intensity and Background Distributions: ./Model/distributions/intensity_and_background_distributions.md
+            - Profile Distributions: ./Model/distributions/profile_distributions.md
 theme: 
   name: material
   palette:
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
       primary: black
+  features: 
+    - content.code.copy
+    - content.code.annotate
+  font: 
+    text: Metropolis
+  #logo: ./assets/intgrater.png
+  icon: 
+    repo: fontawesome/brands/github
 
 plugins: 
   - search
@@ -19,10 +37,22 @@ plugins:
       handlers:
         python: 
           paths: ["src"]
+          options: 
+            docstring_style: google
+            merge_init_into_class: true
 
 markdown_extensions:
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
   - pymdownx.arithmatex:
       generic: true
+  - toc: 
+      toc_depth: 6
 
 extra_javascript:
   - javascripts/mathjax.js

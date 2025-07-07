@@ -1,7 +1,8 @@
-from integrator.model.distribution import BaseDistribution
 import torch
-from integrator.layers import Linear, Constraint
 from torch.distributions import Gamma
+
+from integrator.layers import Constraint, Linear
+from integrator.model.distributions import BaseDistribution
 
 
 class GammaDistribution(BaseDistribution):

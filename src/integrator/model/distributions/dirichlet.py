@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from integrator.layers import Linear
 
 
-class DirichletProfile(torch.nn.Module):
+class DirichletDistribution(torch.nn.Module):
     def __init__(self, dmodel=None, input_shape=(3, 21, 21)):
         """
 

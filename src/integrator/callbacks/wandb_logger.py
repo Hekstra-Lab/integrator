@@ -126,7 +126,7 @@ def create_comparison_grid(
     return fig
 
 
-# %%
+# -
 class Plotter(Callback):
     def __init__(
         self,
@@ -141,126 +141,92 @@ class Plotter(Callback):
         self.d = d
         self.h = h
         self.w = w
-        self.train_predictions = {}
-        self.val_predictions = {}
+        self.preds_train = {}
+        self.preds_val = {}
         self.n_profiles = n_profiles
-        self.tracked_refl_ids = None
-        self.tracked_refl_ids_val = None
-        self.all_seen_ids = set()
-        self.all_seen_ids_val = set()
-        self.epoch_predictions = None
+        self.tracked_ids_train = None
+        self.tracked_ids_val = None
+        self.epoch_preds = None
         self.plot_every_n_epochs = plot_every_n_epochs
         self.current_epoch = 0
         self.d_vectors = d_vectors
-        self.validation_tracked_predictions = dict()
-        self.tracked_predictions = dict()
+        self.tracked_shoeboxes_val = dict()
+        self.tracked_shoeboxes_train = dict()
 
-    def update_tracked_predictions(
+    def update_tracked_shoeboxes(
         self,
-        profile_preds,
-        qbg_preds,
-        rates,
-        count_preds,
-        refl_ids,
-        dials_I,
-        dials_I_var,
-        intensity_mean,
-        intensity_var,
-        x_c,
-        y_c,
-        z_c,
-        dials_bg_mean,
-        dials_bg_sum_value,
-        d,
+        preds,
         renyi_entropy,
+        tracked_ids,
+        tracked_shoeboxes,
     ):
-        current_refl_ids = refl_ids
+        current_refl_ids = preds["refl_ids"]
 
-        # Update all seen IDs and set tracked IDs if not set
-        # this will only happen once
-        if self.tracked_refl_ids is None:
-            self.tracked_refl_ids = current_refl_ids[: self.n_profiles]
-            print(
-                f"Selected {self.n_profiles} refl_ids to track: {self.tracked_refl_ids}"
-            )
+        if tracked_ids is None:
+            tracked_ids = current_refl_ids[: self.n_profiles]
+            print(f"Selected {self.n_profiles} refl_ids to track: {tracked_ids}")
 
-        profile_images = profile_preds.reshape(-1, self.d, self.h, self.w)[
+        profile_images = preds["profile"].reshape(-1, self.d, self.h, self.w)[
             ..., (self.d - 1) // 2, :, :
         ]
-        count_images = count_preds.reshape(-1, self.d, self.h, self.w)[
+        count_images = preds["counts"].reshape(-1, self.d, self.h, self.w)[
             ..., (self.d - 1) // 2, :, :
         ]
-        rate_images = rates.mean(1).reshape(-1, self.d, self.h, self.w)[
-            ..., (self.d - 1) // 2, :, :
-        ]
-        bg_mean = qbg_preds.mean
-        bg_var = qbg_preds.variance
-        dials_I_prf_value = dials_I
-        x_c = x_c
-        y_c = y_c
+        rate_images = (
+            preds["rates"]
+            .mean(1)
+            .reshape(-1, self.d, self.h, self.w)[..., (self.d - 1) // 2, :, :]
+        )
 
-        for ref_id in self.tracked_refl_ids:
+        for ref_id in tracked_ids:
             id_str = str(ref_id)
             matches = np.where(np.array(current_refl_ids) == ref_id)[0]
 
             if len(matches) > 0:
                 idx = matches[0]
 
-                self.tracked_predictions[id_str] = {
+                tracked_shoeboxes[id_str] = {
                     "profile": profile_images[idx].cpu(),
                     "counts": count_images[idx].cpu(),
                     "rates": rate_images[idx].cpu(),
-                    "bg_mean": bg_mean[idx].cpu(),
-                    "intensity_mean": intensity_mean[idx].cpu(),
-                    "intensity_var": intensity_var[idx].cpu(),
-                    "bg_var": bg_var[idx].cpu(),
-                    "dials_I_prf_value": dials_I_prf_value[idx],
-                    "dials_I_prf_var": dials_I_var[idx],
-                    "dials_bg_mean": dials_bg_mean[idx].cpu(),
-                    "x_c": x_c[idx].cpu(),
-                    "y_c": y_c[idx].cpu(),
-                    "z_c": z_c[idx].cpu(),
-                    "d": d[idx].cpu(),
+                    "bg_mean": preds["qbg"].mean[idx].cpu(),
+                    "bg_var": preds["qbg"].variance[idx].cpu(),
+                    "intensity_mean": preds["intensity_mean"][idx].cpu(),
+                    "intensity_var": preds["intensity_var"][idx].cpu(),
+                    "dials_I_prf_value": preds["dials_I_prf_value"][idx],
+                    "dials_I_prf_var": preds["dials_I_prf_var"][idx],
+                    "dials_bg_mean": preds["dials_bg_mean"][idx].cpu(),
+                    "x_c": preds["x_c"][idx].cpu(),
+                    "y_c": preds["y_c"][idx].cpu(),
+                    "z_c": preds["z_c"][idx].cpu(),
+                    "d": preds["d"][idx].cpu(),
                     "renyi_entropy": renyi_entropy[idx].cpu(),
                 }
 
         torch.cuda.empty_cache()
+        return tracked_ids, tracked_shoeboxes
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         with torch.no_grad():
-            # 1) Forward pass (no intensities yet)
+            # get forward outputs
             shoebox, dials, masks, counts = batch
             base_output = pl_module(shoebox, dials, masks, counts)
 
+            # additional metrics to log
             renyi_entropy = -torch.log(base_output["qp"].mean.pow(2).sum(-1))
 
-            predictions = {
-                **base_output,
-            }
-
             if self.current_epoch % self.plot_every_n_epochs == 0:
-                self.update_tracked_predictions(
-                    # predictions["qp"].mean,
-                    predictions["profile"],
-                    predictions["qbg"],
-                    predictions["rates"],
-                    predictions["counts"],
-                    predictions["refl_ids"],
-                    predictions["dials_I_prf_value"],
-                    predictions["dials_I_prf_var"],
-                    predictions["intensity_mean"],
-                    predictions["intensity_var"],
-                    predictions["x_c"],
-                    predictions["y_c"],
-                    predictions["z_c"],
-                    predictions["dials_bg_mean"],
-                    predictions["dials_bg_sum_value"],
-                    predictions["d"],
-                    renyi_entropy,
+                self.tracked_ids_train, self.tracked_shoeboxes_train = (
+                    self.update_tracked_shoeboxes(
+                        base_output,
+                        renyi_entropy,
+                        self.tracked_ids_train,
+                        self.tracked_shoeboxes_train,
+                    )
                 )
 
             # Create CPU tensor versions to avoid keeping GPU memory
-            self.train_predictions = {}
+            self.preds_train = {}
             for key in [
                 "intensity_mean",
                 "intensity_var",
@@ -275,48 +241,42 @@ class Plotter(Callback):
                 "dials_bg_sum_value",
                 "d",
             ]:
-                if key in predictions:
+                if key in base_output:
                     if key == "profile":
-                        self.train_predictions[key] = predictions[key].detach().cpu()
-                    elif hasattr(predictions[key], "sample"):
-                        self.train_predictions[key] = (
-                            predictions[key].mean.detach().cpu()
-                        )
+                        self.preds_train[key] = base_output[key].detach().cpu()
+                    elif hasattr(base_output[key], "sample"):
+                        self.preds_train[key] = base_output[key].mean.detach().cpu()
                     else:
-                        self.train_predictions[key] = predictions[key].detach().cpu()
+                        self.preds_train[key] = base_output[key].detach().cpu()
 
             # Clean up
-            del base_output, predictions
+            del base_output
             torch.cuda.empty_cache()
 
     def on_train_epoch_end(self, trainer, pl_module):
-        if self.train_predictions:
+        if self.preds_train:
             try:
                 # Create data for scatter plots
                 data = []
 
-                i_flat = self.train_predictions["intensity_mean"].flatten() + 1e-8
+                i_flat = self.preds_train["intensity_mean"].flatten() + 1e-8
 
-                i_var_flat = self.train_predictions["intensity_var"].flatten() + 1e-8
+                i_var_flat = self.preds_train["intensity_var"].flatten() + 1e-8
 
-                dials_flat = (
-                    self.train_predictions["dials_I_prf_value"].flatten() + 1e-8
-                )
-                dials_var_flat = (
-                    self.train_predictions["dials_I_prf_var"].flatten() + 1e-8
-                )
-                dials_bg_flat = self.train_predictions["dials_bg_mean"].flatten() + 1e-8
-                qbg_flat = self.train_predictions["qbg"].flatten() + 1e-8
+                dials_flat = self.preds_train["dials_I_prf_value"].flatten() + 1e-8
+                dials_var_flat = self.preds_train["dials_I_prf_var"].flatten() + 1e-8
+                dials_bg_flat = self.preds_train["dials_bg_mean"].flatten() + 1e-8
+                qbg_flat = self.preds_train["qbg"].flatten() + 1e-8
 
                 renyi_entropy_flat = -torch.log(
-                    self.train_predictions["profile"].pow(2).sum(-1)
+                    self.preds_train["profile"].pow(2).sum(-1)
                 )
 
-                x_c_flat = self.train_predictions["x_c"].flatten()
-                y_c_flat = self.train_predictions["y_c"].flatten()
-                z_c_flat = self.train_predictions["z_c"].flatten()
-                d_flat = 1 / self.train_predictions["d"].flatten().pow(2)
-                d_ = self.train_predictions["d"]
+                x_c_flat = self.preds_train["x_c"].flatten()
+                y_c_flat = self.preds_train["y_c"].flatten()
+                z_c_flat = self.preds_train["z_c"].flatten()
+                d_flat = 1 / self.preds_train["d"].flatten().pow(2)
+                d_ = self.preds_train["d"]
 
                 # Create data points with safe log transform
                 for i in range(len(i_flat)):
@@ -406,14 +366,14 @@ class Plotter(Callback):
 
                 # Create log dictionary
                 log_dict = {
-                    "Train: qI vs DIALS I prf": wandb.plot.scatter(
+                    "Train: qi vs DIALS I prf": wandb.plot.scatter(
                         table, "mean(qI)", "DIALS intensity.prf.value"
                     ),
                     "Renyi entropy vs d": wandb.Html(renyi_vs_d.to_html()),
                     "Train: Bg vs DIALS bg": wandb.plot.scatter(
                         table, "mean(qbg)", "DIALS background.mean"
                     ),
-                    "Correlation Coefficient: qI": corr_I,
+                    "Correlation Coefficient: qi": corr_I,
                     "Correlation Coefficient: bg": corr_bg,
                     "Max mean(I)": torch.max(i_flat),
                     "Mean mean(I)": torch.mean(i_flat),
@@ -422,16 +382,16 @@ class Plotter(Callback):
                     "Max var(I)": torch.max(i_var_flat),
                 }
 
-                log_dict["mean(qbg.mean)"] = torch.mean(self.train_predictions["qbg"])
-                log_dict["min(qbg.mean)"] = torch.min(self.train_predictions["qbg"])
-                log_dict["max(qbg.mean)"] = torch.max(self.train_predictions["qbg"])
+                log_dict["mean(qbg.mean)"] = torch.mean(self.preds_train["qbg"])
+                log_dict["min(qbg.mean)"] = torch.min(self.preds_train["qbg"])
+                log_dict["max(qbg.mean)"] = torch.max(self.preds_train["qbg"])
 
                 # plot every n user-specified epochs
                 if self.current_epoch % self.plot_every_n_epochs == 0:
                     comparison_fig = create_comparison_grid(
                         n_profiles=self.n_profiles,
-                        refl_ids=self.tracked_refl_ids,
-                        pred_dict=self.tracked_predictions,
+                        refl_ids=self.tracked_ids_train,
+                        pred_dict=self.tracked_shoeboxes_train,
                     )
 
                     if comparison_fig is not None:
@@ -448,7 +408,7 @@ class Plotter(Callback):
                 traceback.print_exc(file=sys.stdout)
 
             # Clear memory
-            self.train_predictions = {}
+            self.preds_train = {}
             torch.cuda.empty_cache()
 
         # Increment epoch counter
@@ -456,12 +416,24 @@ class Plotter(Callback):
 
     def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         with torch.no_grad():
+            # get forward outputs
             shoebox, dials, masks, counts = batch
             base_output = pl_module(shoebox, dials, masks, counts)
 
+            # additional metrics to log
             renyi_entropy = -torch.log(base_output["qp"].mean.pow(2).sum(-1))
 
-            self.val_predictions = {}
+            # updated tracked shoeboxes
+            self.tracked_ids_val, self.tracked_shoeboxes_val = (
+                self.update_tracked_shoeboxes(
+                    base_output,
+                    renyi_entropy,
+                    tracked_ids=self.tracked_ids_val,
+                    tracked_shoeboxes=self.tracked_shoeboxes_val,
+                )
+            )
+
+            self.preds_val = {}
             for key in [
                 "intensity_mean",
                 "intensity_var",
@@ -478,86 +450,39 @@ class Plotter(Callback):
             ]:
                 if key in base_output:
                     if hasattr(base_output[key], "sample"):
-                        self.val_predictions[key] = base_output[key].mean.detach().cpu()
+                        self.preds_val[key] = base_output[key].mean.detach().cpu()
                     else:
-                        self.val_predictions[key] = base_output[key].detach().cpu()
+                        self.preds_val[key] = base_output[key].detach().cpu()
                 elif key in base_output:
-                    self.val_predictions[key] = base_output[key].detach().cpu()
-
-            self.all_seen_ids.update(base_output["refl_ids"])
-            if self.tracked_refl_ids_val is None:
-                self.tracked_refl_ids_val = list(self.all_seen_ids)[: self.n_profiles]
-
-            profile_images = base_output["profile"].reshape(
-                -1,
-                self.d,
-                self.h,
-                self.w,
-            )[..., (self.d - 1) // 2, :, :]
-            count_images = base_output["counts"].reshape(-1, self.d, self.h, self.w)[
-                ..., (self.d - 1) // 2, :, :
-            ]
-            rate_images = (
-                base_output["rates"]
-                .mean(1)
-                .reshape(-1, self.d, self.h, self.w)[..., (self.d - 1) // 2, :, :]
-            )
-            bg_mean = base_output["qbg"].mean
-            current_refl_ids = base_output["refl_ids"]
-
-            for ref_id in self.tracked_refl_ids_val:
-                id_str = str(ref_id)
-                matches = np.where(np.array(current_refl_ids) == ref_id)[0]
-                if len(matches) > 0:
-                    idx = matches[0]
-
-                    self.validation_tracked_predictions[id_str] = {
-                        "profile": profile_images[idx].cpu(),
-                        "counts": count_images[idx].cpu(),
-                        "rates": rate_images[idx].cpu(),
-                        "bg_mean": bg_mean[idx].cpu(),
-                        "bg_var": base_output["qbg"].variance[idx].cpu(),
-                        "intensity_mean": base_output["intensity_mean"][idx].cpu(),
-                        "intensity_var": base_output["intensity_var"][idx].cpu(),
-                        "dials_I_prf_value": base_output["dials_I_prf_value"][idx],
-                        "dials_I_prf_var": base_output["dials_I_prf_var"][idx],
-                        "dials_bg_mean": base_output["dials_bg_mean"][idx].cpu(),
-                        "x_c": base_output["x_c"][idx].cpu(),
-                        "y_c": base_output["y_c"][idx].cpu(),
-                        "z_c": base_output["z_c"][idx].cpu(),
-                        "d": base_output["d"][idx].cpu(),
-                        "renyi_entropy": renyi_entropy[idx].cpu(),
-                    }
+                    self.preds_val[key] = base_output[key].detach().cpu()
 
             # Clean up
             del base_output
             torch.cuda.empty_cache()
 
     def on_validation_epoch_end(self, trainer, pl_module):
-        if self.val_predictions:
+        if self.preds_val:
             try:
                 data = []
 
-                i_flat = self.val_predictions["intensity_mean"].flatten() + 1e-8
+                i_flat = self.preds_val["intensity_mean"].flatten() + 1e-8
 
-                i_var_flat = self.val_predictions["intensity_var"].flatten() + 1e-8
+                i_var_flat = self.preds_val["intensity_var"].flatten() + 1e-8
 
-                dials_flat = self.val_predictions["dials_I_prf_value"].flatten() + 1e-8
-                dials_var_flat = (
-                    self.val_predictions["dials_I_prf_var"].flatten() + 1e-8
-                )
-                dials_bg_flat = self.val_predictions["dials_bg_mean"].flatten() + 1e-8
-                qbg_flat = self.val_predictions["qbg"].flatten() + 1e-8
+                dials_flat = self.preds_val["dials_I_prf_value"].flatten() + 1e-8
+                dials_var_flat = self.preds_val["dials_I_prf_var"].flatten() + 1e-8
+                dials_bg_flat = self.preds_val["dials_bg_mean"].flatten() + 1e-8
+                qbg_flat = self.preds_val["qbg"].flatten() + 1e-8
 
                 renyi_entropy_flat = -torch.log(
-                    self.val_predictions["profile"].pow(2).sum(-1)
+                    self.preds_val["profile"].pow(2).sum(-1)
                 )
 
-                x_c_flat = self.val_predictions["x_c"].flatten()
-                y_c_flat = self.val_predictions["y_c"].flatten()
-                z_c_flat = self.val_predictions["z_c"].flatten()
-                d_flat = 1 / self.val_predictions["d"].flatten().pow(2)
-                d_ = self.val_predictions["d"]
+                x_c_flat = self.preds_val["x_c"].flatten()
+                y_c_flat = self.preds_val["y_c"].flatten()
+                z_c_flat = self.preds_val["z_c"].flatten()
+                d_flat = 1 / self.preds_val["d"].flatten().pow(2)
+                d_ = self.preds_val["d"]
 
                 # Create data points with safe log transform
                 for i in range(len(i_flat)):
@@ -646,30 +571,30 @@ class Plotter(Callback):
 
                 # Create log dictionary
                 log_dict = {
-                    "Val: qI vs DIALS I prf": wandb.plot.scatter(
+                    "Val: qi vs DIALS I prf": wandb.plot.scatter(
                         table, "val: mean(qI)", "DIALS intensity.prf.value"
                     ),
                     "Val: Renyi entropy vs d": wandb.Html(renyi_vs_d.to_html()),
                     "Val: Bg vs DIALS bg": wandb.plot.scatter(
                         table, "val: mean(qbg)", "DIALS background.mean"
                     ),
-                    "Val: Correlation Coefficient qI": corr_I,
+                    "Val: Correlation Coefficient qi": corr_I,
                     "Val: Correlation Coefficient bg": corr_bg,
                     "Val: Max mean(I)": torch.max(i_flat),
                     "Val: Mean mean(I)": torch.mean(i_flat),
                     "Val: Mean var(I) ": torch.mean(i_var_flat),
                     "Val: Min var(I)": torch.min(i_var_flat),
                     "Val: Max var(I)": torch.max(i_var_flat),
-                    "val: mean(qbg.mean)": torch.mean(self.val_predictions["qbg"]),
-                    "val: min(qbg.mean)": torch.min(self.val_predictions["qbg"]),
-                    "val: max(qbg.mean)": torch.max(self.val_predictions["qbg"]),
+                    "val: mean(qbg.mean)": torch.mean(self.preds_val["qbg"]),
+                    "val: min(qbg.mean)": torch.min(self.preds_val["qbg"]),
+                    "val: max(qbg.mean)": torch.max(self.preds_val["qbg"]),
                 }
 
                 # plot input shoebox and predicted profile
                 comparison_fig = create_comparison_grid(
                     n_profiles=self.n_profiles,
-                    refl_ids=self.tracked_refl_ids_val,
-                    pred_dict=self.validation_tracked_predictions,
+                    refl_ids=self.tracked_ids_val,
+                    pred_dict=self.tracked_shoeboxes_val,
                 )
 
                 log_dict["Val: Tracked Profiles"] = wandb.Image(comparison_fig)
@@ -685,11 +610,11 @@ class Plotter(Callback):
                 traceback.print_exc(file=sys.stdout)
 
             # Clear memory
-            self.val_predictions = {}
+            self.preds_val = {}
             torch.cuda.empty_cache()
 
 
-# %%
+# -
 class Plotter2(Callback):
     def __init__(self, num_profiles=5, plot_every_n_epochs=5, d_vectors=None):
         super().__init__()
@@ -703,7 +628,7 @@ class Plotter2(Callback):
             "counts": {},
             "qbg": {},
             "rates": {},
-            "qI": {},
+            "qi": {},
             "dials_I_prf_value": {},
         }
         self.epoch_predictions = None
@@ -1141,7 +1066,7 @@ class Plotter2(Callback):
 
                 # Create log dictionary
                 log_dict = {
-                    "Train: qI vs DIALS I prf": wandb.plot.scatter(
+                    "Train: qi vs DIALS I prf": wandb.plot.scatter(
                         table, "mean(qI)", "DIALS intensity.prf.value"
                     ),
                     "Train: Profile Masking vs DIALS I prf": wandb.plot.scatter(
@@ -1157,7 +1082,7 @@ class Plotter2(Callback):
                     "Train: Bg vs DIALS bg": wandb.plot.scatter(
                         table, "mean(qbg)", "DIALS background.mean"
                     ),
-                    "Correlation Coefficient: qI": corr_I,
+                    "Correlation Coefficient: qi": corr_I,
                     "Correlation Coefficient: profile masking": corr_masked,
                     "Correlation Coefficient: bg": corr_bg,
                     "Max mean(I)": torch.max(I_flat),
@@ -1230,7 +1155,7 @@ class Plotter2(Callback):
             torch.cuda.empty_cache()
 
 
-# %%
+# -
 class MVNPlotter(Callback):
     def __init__(self, num_profiles=5, plot_every_n_epochs=5, d_vectors=None):
         super().__init__()
@@ -1299,7 +1224,7 @@ class MVNPlotter(Callback):
         rate_images = rates.mean(1).reshape(-1, 3, 21, 21)[..., 1, :, :]
         bg_mean = qbg_preds.mean
         bg_var = qbg_preds.variance
-        # qI_var = qI.variance
+        # qI_var = qi.variance
         dials_I_prf_value = dials_I
 
         for ref_id in self.tracked_refl_ids:
@@ -1312,7 +1237,7 @@ class MVNPlotter(Callback):
                 self.tracked_predictions["rates"][ref_id] = rate_images[idx].cpu()
                 self.tracked_predictions["qbg"][ref_id] = bg_mean[idx].cpu()
                 self.tracked_predictions["intensity_mean"][ref_id] = intensity_mean[idx]
-                # self.tracked_predictions["qI_var"][ref_id] = qI_var[idx].cpu()
+                # self.tracked_predictions["qI_var"][ref_id] = qi_var[idx].cpu()
                 self.tracked_predictions["qbg_var"][ref_id] = bg_var[idx].cpu()
                 self.tracked_predictions["dials_I_prf_value"][ref_id] = (
                     dials_I_prf_value[idx]
@@ -1521,7 +1446,7 @@ class MVNPlotter(Callback):
                 )
 
                 # Calculate correlation coefficients safely
-                corr_qI = (
+                corr_qi = (
                     torch.corrcoef(torch.vstack([qI_flat, dials_flat]))[0, 1]
                     if len(qI_flat) > 1
                     else 0
@@ -1548,11 +1473,11 @@ class MVNPlotter(Callback):
                     "train_thresholded_vs_prf": wandb.plot.scatter(
                         table, "thresholded_mean", "dials_I_prf_value"
                     ),
-                    "corrcoef_qI": corr_qI,
+                    "corrcoef_qi": corr_qi,
                     "corrcoef_weighted": corr_weighted,
                     "corrcoef_masked": corr_masked,
-                    "max_qI": torch.max(qI_flat),
-                    "mean_qI": torch.mean(qI_flat),
+                    "max_qi": torch.max(qI_flat),
+                    "mean_qi": torch.mean(qI_flat),
                     # "mean_qI_var": torch.mean(qI_var_flat),
                     # "min_qI_var": torch.min(qI_var_flat),
                     # "max_qI_var": torch.max(qI_var_flat),

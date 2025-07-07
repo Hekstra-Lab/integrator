@@ -1,12 +1,14 @@
-import torch
 from abc import ABC, abstractmethod
-from integrator.layers import Linear, Constraint
+from typing import Any
+
+import torch
 
 
 class BaseDistribution(torch.nn.Module, ABC):
+    @abstractmethod
     def __init__(
         self,
-        q,
+        q: torch.distributions.Distribution | Any,
     ):
         super().__init__()
         self.q = q

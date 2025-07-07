@@ -1,11 +1,12 @@
-from dials.array_family import flex
-from pathlib import Path
-import torch
-import json
-import polars as plr
-import numpy as np
 import glob
+import json
 import os
+from pathlib import Path
+
+import numpy as np
+import polars as plr
+import torch
+from dials.array_family import flex
 
 
 def reflection_file_writer(
@@ -84,39 +85,6 @@ def reflection_file_writer(
             weighted_refl = Path(pred_dir + "/reflections/weighted_.refl")
             file_dict["refl_files"].append(weighted_refl.resolve().as_posix())
 
-            # temp["intensity.sum.value"] = flex.double(qI_mean_list)
-            # temp["intensity.sum.variance"] = flex.double(qI_variance_list)
-            # temp["intensity.prf.value"] = flex.double(weighted_sum_mean)
-            # temp["intensity.prf.variance"] = flex.double(weighted_sum_var)
-            # temp.as_file(pred_dir + "/reflections/weighted_posterior_.refl")
-            # weighted_posterior_refl = Path(
-            # pred_dir + "/reflections/weighted_posterior_.refl"
-            # )
-            # file_dict["refl_files"].append(weighted_posterior_refl.resolve().as_posix())
-
-            # temp["intensity.sum.value"] = flex.double(weighted_sum_mean)
-            # temp["intensity.sum.variance"] = flex.double(qI_variance_list)
-            # temp["intensity.prf.value"] = flex.double(qI_mean_list)
-            # temp["intensity.prf.variance"] = flex.double(weighted_sum_var)
-            # temp.as_file(pred_dir + "/reflections/posterior_weighted_.refl")
-            # posterior_weighted_refl = Path(
-            # pred_dir + "/reflections/posterior_weighted_.refl"
-            # )
-            # file_dict["refl_files"].append(posterior_weighted_refl.resolve().as_posix())
-
-            # temp["intensity.sum.value"] = flex.double(qI_mean_list)
-            # temp["intensity.sum.variance"] = flex.double(thresholded_var)
-            # temp["intensity.prf.value"] = flex.double(qI_mean_list)
-            # temp["intensity.prf.variance"] = flex.double(thresholded_var)
-            # temp.as_file(pred_dir + "/reflections/posterior_weighted_var_.refl")
-            # posterior_weighted_var_refl = Path(
-            # pred_dir + "/reflections/posterior_weighted_var_.refl"
-            # )
-            # file_dict["refl_files"].append(
-            # posterior_weighted_var_refl.resolve().as_posix()
-            # )
-
-        # write the paths to a json file
         # refl_file_path = Path(weighted_refl.parents[2] / "paths.json")
         with open(f"paths_{job_id}.json", "w") as f:
             json.dump(file_dict, f, indent=4)

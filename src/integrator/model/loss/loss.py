@@ -81,9 +81,9 @@ class Loss(torch.nn.Module):
         beta=1.0,
         eps=1e-5,
         # Profile prior
-        p_p_name=None,  # Type: "dirichlet", "beta", or None
-        p_p_params=None,  # Parameters for the distribution
-        p_p_scale=0.0001,
+        p_prf_name=None,  # Type: "dirichlet", "beta", or None
+        p_prf_params=None,  # Parameters for the distribution
+        p_prf_scale=0.0001,
         # Background prior
         p_bg_name="gamma",
         p_bg_params={"concentration": 1.0, "rate": 1.0},
@@ -111,21 +111,21 @@ class Loss(torch.nn.Module):
         self.register_buffer("beta", torch.tensor(beta))
         self.register_buffer("p_I_scale", torch.tensor(p_I_scale))
         self.register_buffer("p_bg_scale", torch.tensor(p_bg_scale))
-        self.register_buffer("p_p_scale", torch.tensor(p_p_scale))
+        self.register_buffer("p_prf_scale", torch.tensor(p_prf_scale))
 
         # Store distribution names and params
         self.p_I_name = p_I_name
         self.p_I_params = p_I_params
         self.p_bg_name = p_bg_name
         self.p_bg_params = p_bg_params
-        self.p_p_name = p_p_name
-        self.p_p_params = p_p_params
+        self.p_prf_name = p_prf_name
+        self.p_prf_params = p_prf_params
         if prior_tensor is not None:
             self.concentration = torch.load(prior_tensor, weights_only=False)
             self.concentration[self.concentration > 2] *= 40
             self.concentration /= self.concentration.sum()
         else:
-            self.concentration = torch.ones(1323) * p_p_params["concentration"]
+            self.concentration = torch.ones(1323) * p_prf_params["concentration"]
 
         # Register parameters for I and bg distributions
         self._register_distribution_params(p_I_name, p_I_params, prefix="p_I_")
@@ -134,13 +134,13 @@ class Loss(torch.nn.Module):
         # Number of elements in the profile
         self.profile_size = prior_shape[0] * prior_shape[1] * prior_shape[2]
 
-        # Handle profile prior (p_p) - special handling for Dirichlet
-        if p_p_name == "dirichlet":
+        # Handle profile prior (p_prf) - special handling for Dirichlet
+        if p_prf_name == "dirichlet":
             # Check if concentration is provided
-            if p_p_params and "concentration" in p_p_params:
+            if p_prf_params and "concentration" in p_prf_params:
                 # If concentration is provided, create uniform Dirichlet with that concentration
                 alpha_vector = (
-                    torch.ones(self.profile_size) * p_p_params["concentration"]
+                    torch.ones(self.profile_size) * p_prf_params["concentration"]
                 )
                 self.register_buffer("dirichlet_concentration", alpha_vector)
             elif use_center_focused_prior:
@@ -157,9 +157,9 @@ class Loss(torch.nn.Module):
                 # Default uniform Dirichlet with concentration=1.0
                 alpha_vector = torch.ones(self.profile_size)
                 self.register_buffer("dirichlet_concentration", alpha_vector)
-        elif p_p_name is not None:
+        elif p_prf_name is not None:
             # Register parameters for other distribution types
-            self._register_distribution_params(p_p_name, p_p_params, prefix="p_p_")
+            self._register_distribution_params(p_prf_name, p_prf_params, prefix="p_prf_")
 
         # Optional regularization parameters
         self.simpson_scale = simpson_scale
@@ -298,7 +298,7 @@ class Loss(torch.nn.Module):
         # Default case: something unexpected, return broadcasted tensor
         return tensor.expand(batch_size).to(device)
 
-    def forward(self, rate, counts, q_p, q_I, q_bg, dead_pixel_mask):
+    def forward(self, rate, counts, q_p, q_i, q_bg, dead_pixel_mask):
         # Get device and batch size
         device = rate.device
         batch_size = rate.shape[0]
@@ -310,7 +310,7 @@ class Loss(torch.nn.Module):
         # Create distributions on the correct device
         p_I = self.get_prior(self.p_I_name, "p_I_", device)
         p_bg = self.get_prior(self.p_bg_name, "p_bg_", device)
-        p_p = torch.distributions.dirichlet.Dirichlet(self.concentration.to(device))
+        p_prf = torch.distributions.dirichlet.Dirichlet(self.concentration.to(device))
 
         # Calculate log likelihood
         ll = torch.distributions.Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
@@ -320,15 +320,15 @@ class Loss(torch.nn.Module):
         kl_p = torch.tensor(0.0, device=device)  # Default value
 
         # Only calculate profile KL if we have both distributions
-        kl_p = self.compute_kl(q_p, p_p)
-        kl_terms += kl_p * self.p_p_scale
+        kl_p = self.compute_kl(q_p, p_prf)
+        kl_terms += kl_p * self.p_prf_scale
 
         # Calculate background and intensity KL divergence
         kl_bg = self.compute_kl(q_bg, p_bg)
         kl_terms += kl_bg * self.p_bg_scale
 
-        kl_I = self.compute_kl(q_I, p_I)
-        kl_terms += kl_I * self.p_I_scale
+        kl_i = self.compute_kl(q_i, p_I)
+        kl_terms += kl_i * self.p_I_scale
 
         # Initialize regularization terms
         profile_simpson_batch = torch.zeros(batch_size, device=device)
@@ -379,8 +379,8 @@ class Loss(torch.nn.Module):
             neg_ll_batch.mean(),
             kl_terms.mean(),
             kl_bg.mean(),
-            kl_I.mean(),
-            kl_p.mean() if p_p is not None else torch.tensor(0.0, device=device),
+            kl_i.mean(),
+            kl_p.mean() if p_prf is not None else torch.tensor(0.0, device=device),
             tv_loss_batch.mean(),
             profile_simpson_batch.mean(),
             entropy_loss_batch.mean(),

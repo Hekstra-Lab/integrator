@@ -1,240 +1,8 @@
 import torch
 import torch.nn.functional as F
-import torch.nn as nn
-from integrator.model.integrators import BaseIntegrator
-from integrator.model.decoders import MVNDecoder
+
 from integrator.layers import Linear
-
-
-class MVNIntegrator(BaseIntegrator):
-    def __init__(
-        self,
-        image_encoder,
-        metadata_encoder,
-        q_bg,
-        q_I,
-        decoder,
-        profile_model,
-        dmodel,
-        loss,
-        mc_samples=100,
-        learning_rate=1e-3,
-        profile_threshold=0.001,
-    ):
-        super().__init__()
-        # Save all constructor arguments except module instances
-        self.save_hyperparameters(
-            ignore=[
-                "image_encoder",
-                "mlp_encoder",
-                "q_bg",
-                "q_I",
-                "profile_model",
-                "loss",
-            ]
-        )
-        self.learning_rate = learning_rate
-
-        # Model components
-        self.image_encoder = image_encoder
-        self.metadata_encoder = metadata_encoder
-        self.profile_model = profile_model
-
-        # Additional layers
-        self.fc_representation = Linear(dmodel * 2, dmodel)
-        self.decoder = decoder
-
-        # Loss function
-        self.loss_fn = loss
-        self.background_distribution = q_bg
-        self.intensity_distribution = q_I
-        self.norm = nn.LayerNorm(dmodel)
-        self.mc_samples = mc_samples
-        self.profile_threshold = profile_threshold
-        self.automatic_optimization = True
-
-    def calculate_intensities(self, counts, qbg, profile, dead_pixel_mask):
-        with torch.no_grad():
-            counts = counts * dead_pixel_mask
-            batch_counts = counts.unsqueeze(1)  # [batch_size x 1 x pixels]
-
-            # Sample background (still variational)
-            batch_bg_samples = (qbg.rsample([self.mc_samples]).unsqueeze(-1)).permute(
-                1, 0, 2
-            )  # [batch_size x mc_samples x pixels]
-
-            # Expand profile to match MC samples dimension for background
-            batch_size = profile.shape[0]
-            batch_profile = profile.unsqueeze(1).expand(-1, self.mc_samples, -1)
-
-            # Apply dead pixel mask
-            batch_profile = batch_profile * dead_pixel_mask.unsqueeze(1)
-
-            # Calculate weighted sum intensity
-            weighted_sum_intensity = (batch_counts - batch_bg_samples) * batch_profile
-            weighted_sum_intensity_sum = weighted_sum_intensity.sum(-1)
-
-            # Calculate squared profile sum (for normalization)
-            summed_squared_prf = torch.norm(batch_profile, p=2, dim=-1).pow(2)
-            division = weighted_sum_intensity_sum / (summed_squared_prf + 1e-10)
-
-            # Mean and variance across MC samples
-            weighted_sum_mean = division.mean(-1)
-            weighted_sum_var = division.var(-1)
-
-            # Create profile masks for thresholded intensity
-            profile_masks = batch_profile > self.profile_threshold
-
-            # Count number of pixels used in thresholded calculation
-            N_used = profile_masks.sum(-1).float()  # [batch_size × mc_samples]
-
-            # Calculate masked counts
-            masked_counts = batch_counts * profile_masks
-
-            # Calculate thresholded intensity
-            thresholded_intensity = (
-                masked_counts - batch_bg_samples * profile_masks
-            ).sum(-1)
-
-            # Mean and variance of thresholded intensity
-            thresholded_mean = thresholded_intensity.mean(-1)
-
-            centered_thresh = thresholded_intensity - thresholded_mean.unsqueeze(-1)
-            thresholded_var = (centered_thresh**2).sum(-1) / (N_used.mean(-1) + 1e-6)
-
-            intensities = {
-                "thresholded_mean": thresholded_mean,
-                "thresholded_var": thresholded_var,
-                "weighted_sum_mean": weighted_sum_mean,
-                "weighted_sum_var": weighted_sum_var,
-            }
-
-            return intensities
-
-        # def forward(self, shoebox, dials, masks, metadata,counts,samples):
-
-    def forward(self, shoebox, dials, masks, metadata, counts):
-        # Original forward pass
-        counts = torch.clamp(counts, min=0)
-        coords = metadata[..., :3]
-
-        batch_size, num_pixels, features = shoebox.shape
-
-        # Get representations and distributions
-        shoebox_representation = self.image_encoder(shoebox, masks)
-        meta_representation = self.metadata_encoder(metadata)
-
-        representation = torch.cat([shoebox_representation, meta_representation], dim=1)
-        representation = self.fc_representation(representation)
-        representation = self.norm(representation)
-
-        qbg = self.background_distribution(representation)
-        profile = self.profile_model(representation)
-
-        if self.intensity_distribution is not None:
-            qI = self.intensity_distribution(representation)
-            rate = self.decoder(qI, qbg, profile)
-        else:
-            qI = None
-            rate, intensity_mean, intensity_variance = self.decoder(
-                qbg, profile, counts, masks
-            )
-
-        return {
-            "rates": rate,
-            "counts": counts,
-            "masks": masks,
-            "qbg": qbg,
-            # "qI": qI,
-            "intensity_mean": intensity_mean if qI is None else None,
-            "intensity_var": intensity_variance if qI is None else None,
-            "dials_I_sum_value": dials[:, 0],
-            "dials_I_sum_var": dials[:, 1],
-            "dials_I_prf_value": dials[:, 2],
-            "dials_I_prf_var": dials[:, 3],
-            "refl_ids": dials[:, 4],
-            "profile": profile,
-        }
-
-    def training_step(self, batch, batch_idx):
-        # shoebox, dials, masks, metadata,counts,samples = batch
-        shoebox, dials, masks, metadata, counts = batch
-        outputs = self(shoebox, dials, masks, metadata, counts)
-
-        # neg_ll, kl = self.loss_fn(
-        (
-            loss,
-            neg_ll,
-            kl_terms,
-            kl_bg,
-            kl_I,
-            prof_reg,
-        ) = self.loss_fn(
-            outputs["rates"],
-            outputs["counts"],
-            outputs["profile"],
-            None,
-            # outputs["qI"],
-            outputs["qbg"],
-            outputs["masks"],
-        )
-
-        torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
-
-        # Log metrics
-        self.log("train_loss", loss.mean())
-        self.log("train_nll", neg_ll.mean())
-        self.log("train_kl", kl_terms.mean())
-        self.log("kl_bg", kl_bg)
-        self.log("kl_I", kl_I)
-
-        return loss.mean()
-
-    def validation_step(self, batch, batch_idx):
-        shoebox, dials, masks, metadata, counts = batch
-        outputs = self(shoebox, dials, masks, metadata, counts)
-
-        # Calculate validation metrics
-        loss, neg_ll, kl_terms, kl_bg, kl_I, prof_reg = self.loss_fn(
-            outputs["rates"],
-            outputs["counts"],
-            outputs["profile"],
-            # outputs["qI"],
-            None,
-            outputs["qbg"],
-            outputs["masks"],
-        )
-
-        # Log metrics
-        self.log("val_loss", loss.mean())
-        self.log("val_nll", neg_ll.mean())
-        self.log("val_kl", kl_terms.mean())
-        self.log("val_kl_bg", kl_bg)
-        self.log("val_kl_I", kl_I)
-
-        # Return the complete outputs dictionary
-        return outputs
-
-    def predict_step(self, batch, batch_idx):
-        shoebox, dials, masks, metadata, counts = batch
-        outputs = self(shoebox, dials, masks, metadata, counts)
-        intensities = self.calculate_intensities(
-            outputs["counts"], outputs["qbg"], outputs["profile"], outputs["masks"]
-        )
-        return {
-            "qI_mean": outputs["qI"].mean,
-            "qI_variance": outputs["qI"].variance,
-            "weighted_sum_mean": intensities["weighted_sum_mean"],
-            "weighted_sum_var": intensities["weighted_sum_var"],
-            "thresholded_mean": intensities["thresholded_mean"],
-            "thresholded_var": intensities["thresholded_var"],
-            "refl_ids": outputs["refl_ids"],
-            "intensity_mean": outputs["intensity_mean"],
-            "intensity_var": outputs["intensity_var"],
-        }
-
-    def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+from integrator.model.integrators import BaseIntegrator
 
 
 class LRMVNIntegrator(BaseIntegrator):
@@ -245,7 +13,7 @@ class LRMVNIntegrator(BaseIntegrator):
         loss,
         qbg,
         qp,
-        qI,
+        qi,
         mc_samples=100,
         learning_rate=1e-3,
         max_iterations=4,
@@ -258,7 +26,7 @@ class LRMVNIntegrator(BaseIntegrator):
         self.dmodel = dmodel
         self.learning_rate = learning_rate
         self.mc_samples = mc_samples
-        self.qI = qI
+        self.qi = qi
         self.qbg = qbg
         self.automatic_optimization = True
         self.loss_fn = loss
@@ -375,7 +143,7 @@ class LRMVNIntegrator(BaseIntegrator):
         if self.use_metaonly:
             rep = self.metadata_encoder(metadata)
         else:
-            rep = self.encoder(shoebox.reshape(shoebox.shape[0],1,3,21,21), masks)
+            rep = self.encoder(shoebox.reshape(shoebox.shape[0], 1, 3, 21, 21), masks)
 
         mean = self.mean_layer(rep).unsqueeze(-1)
         std = F.softplus(self.std_layer(rep)).unsqueeze(-1)
@@ -434,17 +202,17 @@ class LRMVNIntegrator(BaseIntegrator):
         qbg = self.qbg(rep)
 
         if self.use_metarep:
-            qI = self.qI(rep, meta_rep)
+            qi = self.qI(rep, meta_rep)
         else:
             qbg = self.qbg(rep)
-            qI = self.qI(rep)
+            qi = self.qI(rep)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
-        zI = qI.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
-        intensity_mean = qI.mean  # [batch_size]
-        intensity_var = qI.variance  # [batch_size]
+        intensity_mean = qi.mean  # [batch_size]
+        intensity_var = qi.variance  # [batch_size]
 
         rate = zI * zp + zbg  # [batch_size, mc_samples, pixels]
 
@@ -455,7 +223,7 @@ class LRMVNIntegrator(BaseIntegrator):
             "qbg": qbg,
             "qp": avg_profile,
             "qp_mean": qp_mean,
-            "qI": qI,
+            "qi": qi,
             "intensity_mean": intensity_mean,
             "intensity_var": intensity_var,
             "dials_I_sum_value": reference[:, 6],
@@ -492,7 +260,7 @@ class LRMVNIntegrator(BaseIntegrator):
             neg_ll,
             kl,
             kl_bg,
-            kl_I,
+            kl_i,
             kl_p_mean,
             kl_p_diag,
             kl_p_factor,
@@ -502,7 +270,7 @@ class LRMVNIntegrator(BaseIntegrator):
             # q_p=outputs["qp"],
             q_bg=outputs["qbg"],
             masks=outputs["masks"],
-            q_I=outputs["qI"],
+            q_i=outputs["qi"],
             q_p_mean=outputs["qp_mean"],
             q_p_diag=outputs["qp_diag"],
             q_p_factor=outputs["qp_factor"],
@@ -516,13 +284,13 @@ class LRMVNIntegrator(BaseIntegrator):
         self.log("Train: nll", neg_ll.mean())
         self.log("Train: kl", kl.mean())
         self.log("Train: kl_bg", kl_bg.mean())
-        self.log("Train: kl_I", kl_I.mean())
+        self.log("Train: kl_i", kl_i.mean())
         self.log("Train: kl_p_mean", kl_p_mean.mean())
         self.log("Train: kl_p_factor", kl_p_factor.mean())
         self.log("Train: kl_p_diag", kl_p_diag.mean())
-        # self.log("Mean(qI.mean)", outputs["qI"].mean.mean())
-        # self.log("Min(qI.mean)", outputs["qI"].mean.min())
-        # self.log("Max(qI.mean)", outputs["qI"].mean.max())
+        # self.log("Mean(qi.mean)", outputs["qi"].mean.mean())
+        # self.log("Min(qi.mean)", outputs["qi"].mean.min())
+        # self.log("Max(qi.mean)", outputs["qi"].mean.max())
         # self.log("Mean(qp.mean)", outputs["qp_mean"].mean.mean())
         # self.log("Min(qp.mean)", outputs["qp_mean"].mean.min())
         # self.log("Max(qp.mean)", outputs["qp_mean"].mean.max())
@@ -539,10 +307,10 @@ class LRMVNIntegrator(BaseIntegrator):
         # self.log("Min(qbg.mean)", outputs["qbg"].mean.min())
         # self.log("Max(qbg.mean)", outputs["qbg"].mean.max())
         # self.log("Mean(qbg.variance)", outputs["qbg"].variance.mean())
-        # self.log("Mean(qI.variance)", outputs["qI"].variance.mean())
-        # self.log("Mean(qI.mean)", outputs["qI"].mean.mean())
-        # self.log("Max(qI.variance)", outputs["qI"].variance.max())
-        # self.log("Min(qI.variance)", outputs["qI"].variance.min())
+        # self.log("Mean(qi.variance)", outputs["qi"].variance.mean())
+        # self.log("Mean(qi.mean)", outputs["qi"].mean.mean())
+        # self.log("Max(qi.variance)", outputs["qi"].variance.max())
+        # self.log("Min(qi.variance)", outputs["qi"].variance.min())
 
         return loss.mean()
 
@@ -557,7 +325,7 @@ class LRMVNIntegrator(BaseIntegrator):
             neg_ll,
             kl,
             kl_bg,
-            kl_I,
+            kl_i,
             kl_p_mean,
             kl_p_diag,
             kl_p_factor,
@@ -566,7 +334,7 @@ class LRMVNIntegrator(BaseIntegrator):
             counts=outputs["counts"],
             q_bg=outputs["qbg"],
             masks=outputs["masks"],
-            q_I=outputs["qI"],
+            q_i=outputs["qi"],
             q_p_mean=outputs["qp_mean"],
             q_p_diag=outputs["qp_diag"],
             q_p_factor=outputs["qp_factor"],
@@ -577,7 +345,7 @@ class LRMVNIntegrator(BaseIntegrator):
         self.log("Val: NLL", neg_ll.mean())
         self.log("Val: KL", kl.mean())
         self.log("Val: KL bg", kl_bg.mean())
-        self.log("Val: KL I", kl_I.mean())
+        self.log("Val: KL I", kl_i.mean())
         self.log("Val: KL p_mean", kl_p_mean.mean())
         self.log("Val: KL p_factor", kl_p_factor.mean())
         self.log("Val: KL p_diag", kl_p_diag.mean())

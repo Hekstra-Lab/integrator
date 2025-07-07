@@ -1,6 +1,6 @@
 import torch
-from integrator.layers import Linear, Constraint
-from torch.distributions import HalfNormal
+
+from integrator.layers import Constraint, Linear
 
 
 class HalfNormalDistribution(torch.nn.Module):

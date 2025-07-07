@@ -1,18 +1,28 @@
-from integrator.model.distribution import BaseDistribution
-from integrator.layers import Linear, Constraint
-from torch.distributions import Normal
 import torch
+from torch.distributions import LogNormal
+
+from integrator.layers import Constraint, Linear
+from integrator.model.distributions import BaseDistribution
 
 
-class NormalDistribution(BaseDistribution):
+class LogNormalDistribution(BaseDistribution):
     def __init__(
         self,
         dmodel,
         constraint=Constraint(),
-        out_features=2,
-        use_metarep=False,
+        out_features: int = 2,
+        use_metarep: bool = False,
     ):
-        super().__init__(q=Normal)
+        """
+        Args:
+            dmodel (int):
+            constraint ():
+            out_features (int):
+            use_metarep (bool): Boolean indicating if metadata is being used
+        """
+        super().__init__(
+            q=LogNormal,
+        )
         self.use_metarep = use_metarep
 
         self.constraint = constraint
@@ -34,32 +44,50 @@ class NormalDistribution(BaseDistribution):
             )
 
     def distribution(self, loc, scale):
+        """
+        Args:
+            loc ():
+            scale ():
+
+        Returns:
+
+        """
         scale = self.constraint(scale)
         return self.q(loc=loc.flatten(), scale=scale.flatten())
 
     def forward(self, representation, metarep=None):
+        """
+
+        Args:
+            representation ():
+            metarep ():
+
+        Returns:
+
+        """
         if self.use_metarep:
             assert metarep is not None, "metarep required when use_metarep=True"
             params1 = self.fc1(representation)
             combined_rep = torch.cat([representation, metarep], dim=1)
             params2 = self.fc2(combined_rep)
-            normal = self.distribution(params1, params2)
+            lognormal = self.distribution(params1, params2)
 
         else:
             params = self.fc(representation)
-            normal = self.distribution(params[..., 0], params[..., 1])
-        return normal
+            lognormal = self.distribution(params[..., 0], params[..., 1])
+        return lognormal
 
 
 if __name__ == "__main__":
+    # generate a batch of 10 representation vectors
     representation = torch.randn(10, 64)
     metarep = torch.randn(10, 64)
-    model = NormalDistribution(dmodel=64, use_metarep=True)
-    normal = model(representation, metarep)
 
+    # initialize a LogNormalDistribution object
+    model = LogNormalDistribution(dmodel=64, use_metarep=True)
 
-rate = torch.randn(10, 100, 1323)
-std = rate.std(dim=1, keepdim=True)
+    # get the parameterized torch.distributions.LogNormal object
+    lognormal = model(representation, metarep)
 
-
-torch.distributions.Normal(rate, std).log_prob(torch.randn(10, 100, 1323))
+    # sample from the distribution
+    lognormal.rsample([100])

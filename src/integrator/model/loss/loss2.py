@@ -44,19 +44,19 @@ class Loss2(torch.nn.Module):
         self,
         beta=1.0,
         eps=1e-5,
-        p_p_name=None,
-        p_p_params=None,
-        p_p_weight=0.0001,
-        p_bg_name="gamma",
-        p_bg_params={"concentration": 1.0, "rate": 1.0},
-        p_bg_weight=0.0001,
+        pprf_name=None,
+        pprf_params=None,
+        pprf_weight=0.0001,
+        pbg_name="gamma",
+        pbg_params={"concentration": 1.0, "rate": 1.0},
+        pbg_weight=0.0001,
         prior_base_alpha=0.1,
         prior_center_alpha=50.0,
         prior_decay_factor=0.4,
         prior_peak_percentage=0.026,
-        p_I_name="gamma",
-        p_I_params={"concentration": 1.0, "rate": 1.0},
-        p_I_weight=0.001,
+        pi_name="gamma",
+        pi_params={"concentration": 1.0, "rate": 1.0},
+        pi_weight=0.001,
         prior_tensor=None,
         use_robust=False,
         shape=(3, 21, 21),
@@ -64,18 +64,18 @@ class Loss2(torch.nn.Module):
         super().__init__()
         self.register_buffer("eps", torch.tensor(eps))
         self.register_buffer("beta", torch.tensor(beta))
-        self.register_buffer("p_bg_weight", torch.tensor(p_bg_weight))
-        self.register_buffer("p_p_weight", torch.tensor(p_p_weight))
-        # self.register_buffer("p_I_scale", p_I_scale)
-        self.p_I_weight = p_I_weight
+        self.register_buffer("pbg_weight", torch.tensor(pbg_weight))
+        self.register_buffer("pprf_weight", torch.tensor(pprf_weight))
+        # self.register_buffer("pi_scale", pi_scale)
+        self.pi_weight = pi_weight
 
         # Store distribution names and params
-        self.p_p_name = p_p_name
-        self.p_p_params = p_p_params
-        self.p_bg_name = p_bg_name
-        self.p_bg_params = p_bg_params
-        self.p_I_name = p_I_name
-        self.p_I_params = p_I_params
+        self.pprf_name = pprf_name
+        self.pprf_params = pprf_params
+        self.pbg_name = pbg_name
+        self.pbg_params = pbg_params
+        self.pi_name = pi_name
+        self.pi_params = pi_params
         if prior_tensor is not None:
             self.concentration = torch.load(prior_tensor, weights_only=False)
             self.concentration[
@@ -84,11 +84,12 @@ class Loss2(torch.nn.Module):
             self.concentration /= self.concentration.max()
         else:
             self.concentration = (
-                torch.ones(shape[0] * shape[1] * shape[2]) * p_p_params["concentration"]
+                torch.ones(shape[0] * shape[1] * shape[2])
+                * pprf_params["concentration"]
             )
 
-        self._register_distribution_params(p_bg_name, p_bg_params, prefix="p_bg_")
-        self._register_distribution_params(p_I_name, p_I_params, prefix="p_I_")
+        self._register_distribution_params(pbg_name, pbg_params, prefix="pbg_")
+        self._register_distribution_params(pi_name, pi_params, prefix="pi_")
 
         # Number of elements in the profile
         self.profile_size = shape[0] * shape[1] * shape[2]
@@ -97,7 +98,7 @@ class Loss2(torch.nn.Module):
         self.profile_size = shape[0] * shape[1] * shape[2]
         self.use_robust = use_robust
 
-        # Handle profile prior (p_p) - special handling for Dirichlet
+        # Handle profile prior (pprf) - special handling for Dirichlet
         # Create center-focused Dirichlet prior
         alpha_vector = create_center_focused_dirichlet_prior(
             shape=shape,
@@ -112,14 +113,14 @@ class Loss2(torch.nn.Module):
         # Store shape for profile reshaping
         self.prior_shape = shape
 
-    def compute_kl(self, q_dist, p_dist):
+    def compute_kl(self, q_dist, pdist):
         """Compute KL divergence between distributions, with fallback sampling if needed."""
         try:
-            return torch.distributions.kl.kl_divergence(q_dist, p_dist)
+            return torch.distributions.kl.kl_divergence(q_dist, pdist)
         except NotImplementedError:
             samples = q_dist.rsample([100])
             log_q = q_dist.log_prob(samples)
-            log_p = p_dist.log_prob(samples)
+            log_p = pdist.log_prob(samples)
             return (log_q - log_p).mean(dim=0)
 
     def _register_distribution_params(self, name, params, prefix):
@@ -191,7 +192,7 @@ class Loss2(torch.nn.Module):
         rate,
         counts,
         q_p,
-        q_I,
+        q_i,
         q_bg,
         masks,
     ):
@@ -203,22 +204,22 @@ class Loss2(torch.nn.Module):
         counts = counts.to(device)
         masks = masks.to(device)
 
-        p_p = torch.distributions.dirichlet.Dirichlet(self.concentration.to(device))
-        p_bg = self.get_prior(self.p_bg_name, "p_bg_", device)
-        p_I = self.get_prior(self.p_I_name, "p_I_", device)
+        pprf = torch.distributions.dirichlet.Dirichlet(self.concentration.to(device))
+        pbg = self.get_prior(self.pbg_name, "pbg_", device)
+        pi = self.get_prior(self.pi_name, "pi_", device)
 
         # calculate kl terms
         kl_terms = torch.zeros(batch_size, device=device)
 
-        kl_I = self.compute_kl(q_I, p_I)
-        kl_terms += kl_I * self.p_I_weight
+        kl_i = self.compute_kl(q_i, pi)
+        kl_terms += kl_i * self.pi_weight
 
         # calculate background and intensity kl divergence
-        kl_bg = self.compute_kl(q_bg, p_bg)
-        kl_terms += kl_bg * self.p_bg_weight
+        kl_bg = self.compute_kl(q_bg, pbg)
+        kl_terms += kl_bg * self.pbg_weight
 
-        kl_p = self.compute_kl(q_p, p_p)
-        kl_terms += kl_p * self.p_p_weight
+        kl_p = self.compute_kl(q_p, pprf)
+        kl_terms += kl_p * self.pprf_weight
 
         log_prob = torch.distributions.Poisson(rate + self.eps).log_prob(
             counts.unsqueeze(1)
@@ -241,7 +242,7 @@ class Loss2(torch.nn.Module):
             total_loss,
             neg_ll_batch.mean(),
             kl_terms.mean(),
-            (kl_bg * self.p_bg_weight).mean(),
-            kl_I.mean() * self.p_I_weight,
-            (kl_p * self.p_p_weight).mean(),
+            (kl_bg * self.pbg_weight).mean(),
+            kl_i.mean() * self.pi_weight,
+            (kl_p * self.pprf_weight).mean(),
         )

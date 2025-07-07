@@ -1,55 +1,30 @@
 import torch
 
 from .data_loaders import ShoeboxDataModule, ShoeboxDataModule2
-from .model.decoders import Decoder, MVNDecoder
-from .model.distribution import (
+from .model.distributions import (
+    DirichletDistribution,
     FoldedNormalDistribution,
     GammaDistribution,
     HalfNormalDistribution,
     LogNormalDistribution,
+    MVNDistribution,
     NormalDistribution,
 )
 from .model.encoders import (
     IntensityEncoder,
-    MLPImageEncoder,
     MLPMetadataEncoder,
     ShoeboxEncoder,
 )
-from .model.integrators import (
-    DefaultIntegrator,
-    Integrator,
-    LRMVNIntegrator,
-)
+from .model.integrators import Integrator, LRMVNIntegrator, Model2
 from .model.loss import Loss, Loss2, LRMVNLoss, MVNLoss
-from .model.profiles import DirichletProfile, MVNProfile
 
 REGISTRY = {
-    "metadata_encoder": {
+    "metadata_encoders": {
         "mlp_metadata_encoder": MLPMetadataEncoder,
     },
-    "encoder": {
-        "mlp_image_encoder": MLPImageEncoder,
-        "shoebox_encoder": ShoeboxEncoder,
-    },
-    "image_encoder": {
-        "mlp_image_encoder": MLPImageEncoder,
-        "shoebox_encoder": ShoeboxEncoder,
-        "mlp_metadata_encoder": MLPMetadataEncoder,
-    },
-    "profile_encoder": {
-        "shoebox_encoder": ShoeboxEncoder,
-    },
-    "intensity_encoder": {
+    "shoebox_encoders": {
         "shoebox_encoder": ShoeboxEncoder,
         "intensity_encoder": IntensityEncoder,
-    },
-    "decoder": {
-        "default_decoder": Decoder,
-        "mvn_decoder": MVNDecoder,
-    },
-    "profile": {
-        "dirichlet": DirichletProfile,
-        "mvn": MVNProfile,
     },
     "loss": {
         "elbo": Loss,
@@ -58,17 +33,21 @@ REGISTRY = {
         "loss2": Loss2,
     },
     "integrator": {
-        "default_integrator": DefaultIntegrator,
         "lrmvn_integrator": LRMVNIntegrator,
         "integrator": Integrator,
+        "model2": Model2,
     },
-    "q_I": {
+    "qi": {
         "gamma": GammaDistribution,
         "log_normal": LogNormalDistribution,
         "normal": NormalDistribution,
         "folded_normal": FoldedNormalDistribution,
     },
-    "q_bg": {
+    "qp": {
+        "dirichlet": DirichletDistribution,
+        "mvn": MVNDistribution,
+    },
+    "qbg": {
         "gamma": GammaDistribution,
         "half_normal": HalfNormalDistribution,
         "log_normal": LogNormalDistribution,
@@ -102,7 +81,7 @@ ARGUMENT_RESOLVER = {
             "half_normal": torch.distributions.half_normal.HalfNormal,
             "half_cauchy": torch.distributions.half_cauchy.HalfCauchy,
         },
-        "p_p": {
+        "p_prf": {
             "laplace": torch.distributions.laplace.Laplace,
         },
     },

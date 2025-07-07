@@ -1,21 +1,18 @@
-from integrator.model.distribution import BaseDistribution
+from integrator.model.distributions import BaseDistribution
 from integrator.layers import Linear, Constraint
-from torch.distributions import Distribution
-from torch.distributions import LogNormal
+from torch.distributions import Normal
 import torch
 
 
-class LogNormalDistribution(BaseDistribution):
+class NormalDistribution(BaseDistribution):
     def __init__(
         self,
         dmodel,
         constraint=Constraint(),
-        out_features: int = 2,
-        use_metarep: bool = False,
+        out_features=2,
+        use_metarep=False,
     ):
-        super().__init__(
-            q=LogNormal,
-        )
+        super().__init__(q=Normal)
         self.use_metarep = use_metarep
 
         self.constraint = constraint
@@ -46,24 +43,23 @@ class LogNormalDistribution(BaseDistribution):
             params1 = self.fc1(representation)
             combined_rep = torch.cat([representation, metarep], dim=1)
             params2 = self.fc2(combined_rep)
-            lognormal = self.distribution(params1, params2)
+            normal = self.distribution(params1, params2)
 
         else:
             params = self.fc(representation)
-            lognormal = self.distribution(params[..., 0], params[..., 1])
-        return lognormal
+            normal = self.distribution(params[..., 0], params[..., 1])
+        return normal
 
 
 if __name__ == "__main__":
-    # generate a batch of 10 representation vectors
     representation = torch.randn(10, 64)
     metarep = torch.randn(10, 64)
+    model = NormalDistribution(dmodel=64, use_metarep=True)
+    normal = model(representation, metarep)
 
-    # initialize a LogNormalDistribution object
-    model = LogNormalDistribution(dmodel=64, use_metarep=True)
 
-    # get the parameterized torch.distributions.LogNormal object
-    lognormal = model(representation, metarep)
+rate = torch.randn(10, 100, 1323)
+std = rate.std(dim=1, keepdim=True)
 
-    # sample from the distribution
-    lognormal.rsample([100])
+
+torch.distributions.Normal(rate, std).log_prob(torch.randn(10, 100, 1323))

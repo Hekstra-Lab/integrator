@@ -1,14 +1,7 @@
-from math import pi, sqrt
-
 import torch
 import torch.nn.functional as F
-from torch import Tensor
-from torch.distributions import Normal, constraints
-from torch.distributions.transformed_distribution import TransformedDistribution
 from torch import distributions as dist
-from torch.distributions.transforms import AbsTransform
 
-from integrator.layers import Constraint, Linear
 
 class NormalIRSample(torch.autograd.Function):
     @staticmethod
@@ -164,34 +157,16 @@ class FoldedNormal(dist.Distribution):
         return self._irsample(self.loc, self.scale, samples, dFdmu, dFdsigma, q)
 
 
-class tempFoldedNormalDistribution(torch.nn.Module):
-    def __init__(
-        self,
-        dmodel,
-        constraint=Constraint(),
-        out_features: int = 2,
-        use_metarep: bool = False,
-    ):
-        super().__init__()
-        self.use_metarep = use_metarep
-        self.out_features = out_features
-        self.constraint = constraint
-        self.dmodel = dmodel
-        self.fc = Linear(dmodel, self.out_features)
-        self.q = FoldedNormal
-
-    def distribution(self, loc, scale):
-        scale = self.constraint(scale)
-        return self.q(loc=loc, scale=scale)
-
-    def forward(self, representation):
-        params = self.fc(representation)
-        loc = params[..., 0]
-        scale = params[..., 1]
-        return self.distribution(loc, scale)
-
-
 class FoldedNormalDistribution(torch.nn.Module):
+    """
+    Attributes:
+        fc:
+        transform:
+        I_max:
+        eps:
+        beta:
+    """
+
     def __init__(
         self,
         dmodel,
