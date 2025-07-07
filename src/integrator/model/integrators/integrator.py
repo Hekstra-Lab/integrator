@@ -91,7 +91,7 @@ class Integrator(BaseIntegrator):
 
         qbg = self.qbg(intensity_rep)
         qp = self.qp(profile_rep)
-        qi = self.qI(intensity_rep)
+        qi = self.qi(intensity_rep)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
         zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
@@ -108,7 +108,7 @@ class Integrator(BaseIntegrator):
             "qp_mean": qp.mean,
             "qi": qi,
             "intensity_mean": qi.mean,
-            "intensity_var": qi.var,
+            "intensity_var": qi.variance,
             "dials_I_sum_value": reference[:, 6],
             "dials_I_sum_var": reference[:, 7],
             "dials_I_prf_value": reference[:, 8],
@@ -219,7 +219,7 @@ class Model2(BaseIntegrator):
         # build distributions
         qbg = self.qbg(intensity_rep)
         qp = self.qp(profile_rep)
-        qi = self.qI(intensity_rep)
+        qi = self.qi(intensity_rep)
 
         # estimate rate
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)

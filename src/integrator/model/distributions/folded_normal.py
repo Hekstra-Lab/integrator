@@ -1,6 +1,15 @@
 import torch
+from math import pi, sqrt
 import torch.nn.functional as F
 from torch import distributions as dist
+from torch.distributions.transformed_distribution import TransformedDistribution
+from torch import distributions as dist
+from torch.distributions.transforms import AbsTransform
+from torch.distributions import Normal, constraints
+from torch import Tensor
+
+
+
 
 
 class NormalIRSample(torch.autograd.Function):
@@ -20,7 +29,7 @@ class NormalIRSample(torch.autograd.Function):
         return grad_output * dzdmu, grad_output * dzdsig, None, None, None, None
 
 
-class FoldedNormal(dist.Distribution):
+class tempFoldedNormal(dist.Distribution):
     """
     Folded Normal distribution class
 
@@ -155,6 +164,51 @@ class FoldedNormal(dist.Distribution):
         dFdmu = self.dcdfdmu(samples)
         dFdsigma = self.dcdfdsigma(samples)
         return self._irsample(self.loc, self.scale, samples, dFdmu, dFdsigma, q)
+
+class FoldedNormal(TransformedDistribution):
+    arg_constraints = {"loc": constraints.real, "scale": constraints.positive}
+    support = constraints.nonnegative
+    has_rsample = True
+
+    def __init__(self, loc, scale, validate_args=None):
+        base_dist = Normal(loc, scale, validate_args=validate_args)
+        super().__init__(base_dist, AbsTransform(), validate_args=validate_args)
+
+    def log_prob(self, value):
+        if self._validate_args:
+            self._validate_sample(value)
+        n = self.base_dist
+        return torch.logaddexp(n.log_prob(value), n.log_prob(-value))
+
+    @property
+    def loc(self) -> Tensor:
+        return self.base_dist.loc
+
+    @property
+    def scale(self) -> Tensor:
+        return self.base_dist.scale
+
+    @property
+    def mean(self):
+        loc, scale = self.base_dist.loc, self.base_dist.scale
+        a = loc / scale
+        return scale * sqrt(2 / pi) * torch.exp(-0.5 * a**2) + loc * (
+            1 - 2 * torch.distributions.Normal(0.0, 1.0).cdf(-a)
+        )
+
+    @property
+    def variance(self):
+        loc, scale = self.base_dist.loc, self.base_dist.scale
+        return loc**2 + scale**2 - self.mean**2
+
+    def cdf(self, value):
+        if self._validate_args:
+            self._validate_sample(value)
+        rt2 = torch.sqrt(torch.tensor(2.0))
+        a = (value + self.loc) / (self.scale * rt2)
+        b = (value - self.loc) / (self.scale * rt2)
+        return 0.5 * (torch.erf(a) + torch.erf(b))
+
 
 
 class FoldedNormalDistribution(torch.nn.Module):
