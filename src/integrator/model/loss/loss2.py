@@ -91,11 +91,9 @@ class Loss2(torch.nn.Module):
         self._register_distribution_params(pbg_name, pbg_params, prefix="pbg_")
         self._register_distribution_params(pi_name, pi_params, prefix="pi_")
 
-        # Number of elements in the profile
         self.profile_size = shape[0] * shape[1] * shape[2]
 
         # Number of elements in the profile
-        self.profile_size = shape[0] * shape[1] * shape[2]
         self.use_robust = use_robust
 
         # Handle profile prior (pprf) - special handling for Dirichlet
@@ -229,7 +227,7 @@ class Loss2(torch.nn.Module):
 
         # Calculate negative log likelihood
         neg_ll_batch = (-ll_mean).sum(1)
-        neg_ll_batch = neg_ll_batch
+        # neg_ll_batch = neg_ll_batch
 
         # combine all loss terms
         batch_loss = neg_ll_batch + kl_terms

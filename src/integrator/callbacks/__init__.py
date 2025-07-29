@@ -3,4 +3,5 @@ from .wandb_logger import (
     MVNPlotter,
     Plotter,
     Plotter2,
+    PlotterLD,
 )

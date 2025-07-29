@@ -68,7 +68,7 @@ def create_data_loader(config):
     data_loader_name = config["data_loader"]["name"]
     data_loader_class = REGISTRY["data_loader"][data_loader_name]
 
-    if data_loader_name in {"default", "shoebox_data_module"}:
+    if data_loader_name in {"default", "shoebox_data_module", "shoebox_data_module_2d"}:
         data_module = data_loader_class(
             data_dir=config["data_loader"]["params"]["data_dir"],
             batch_size=config["data_loader"]["params"]["batch_size"],

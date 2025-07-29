@@ -272,10 +272,14 @@ class BaseIntegrator(pl.LightningModule, ABC):
         return {
             "intensity_mean": outputs["intensity_mean"],  # qi.mean
             "intensity_var": outputs["intensity_var"],  # qi.variance
-            "refl_ids": outputs["refl_ids"],
+            # "refl_ids": outputs["refl_ids"],
+            "refl_ids": torch.tensor(outputs["dials_I_prf_value"]),
+            "dials_I_sum_value": outputs["dials_I_sum_value"],
             "dials_I_sum_var": outputs["dials_I_sum_var"],
             "dials_I_prf_value": outputs["dials_I_prf_value"],
             "dials_I_prf_var": outputs["dials_I_prf_var"],
+            "dials_bg_mean": outputs["dials_bg_mean"],
+            "qbg_mean": outputs["qbg"].mean,
             "qbg": outputs["qbg"],
             "qbg_scale": outputs["qbg"].scale,  # halfnormal param
             "x_c": outputs["x_c"],
@@ -286,3 +290,4 @@ class BaseIntegrator(pl.LightningModule, ABC):
 
 if __name__ == "__main__":
     pass
+# -

@@ -13,7 +13,12 @@ class DirichletDistribution(torch.nn.Module):
             input_shape (tuple): Tuple of integers specifying the depth, height, and width of the input shoebox
         """
         super().__init__()
-        self.num_components = input_shape[0] * input_shape[1] * input_shape[2]
+
+        if len(input_shape) == 3:
+            self.num_components = input_shape[0] * input_shape[1] * input_shape[2]
+        elif len(input_shape) == 2:
+            self.num_components = input_shape[0] * input_shape[1]
+
         if dmodel is not None:
             self.alpha_layer = Linear(dmodel, self.num_components)
         self.dmodel = dmodel
@@ -36,4 +41,4 @@ class DirichletDistribution(torch.nn.Module):
 
 if __name__ == "__main__":
     rep = torch.rand(10, 64)
-    dirichlet = DirichletProfile(dmodel=64)
+    dirichlet = DirichletDistribution(dmodel=64, input_shape=(21, 21))

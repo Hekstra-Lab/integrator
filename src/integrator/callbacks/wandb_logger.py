@@ -12,6 +12,7 @@ from pytorch_lightning.callbacks import Callback
 import wandb
 
 
+# TODO: handle 2d shoeboxes
 def create_comparison_grid(
     n_profiles,
     refl_ids,
@@ -124,6 +125,421 @@ def create_comparison_grid(
     plt.tight_layout()
 
     return fig
+
+
+# -
+class PlotterLD(Callback):
+    def __init__(
+        self,
+        n_profiles=5,
+        plot_every_n_epochs=5,
+        d=3,
+        h=21,
+        w=21,
+        d_vectors=None,
+    ):
+        super().__init__()
+        self.d = d
+        self.h = h
+        self.w = w
+        self.preds_train = {}
+        self.preds_val = {}
+        self.n_profiles = n_profiles
+        self.tracked_ids_train = None
+        self.tracked_ids_val = None
+        self.epoch_preds = None
+        self.plot_every_n_epochs = plot_every_n_epochs
+        self.current_epoch = 0
+        self.d_vectors = d_vectors
+        self.tracked_shoeboxes_val = dict()
+        self.tracked_shoeboxes_train = dict()
+
+    def update_tracked_shoeboxes(
+        self,
+        preds,
+        renyi_entropy,
+        tracked_ids,
+        tracked_shoeboxes,
+    ):
+        current_refl_ids = preds["refl_ids"]
+
+        if tracked_ids is None:
+            tracked_ids = current_refl_ids[: self.n_profiles]
+            print(f"Selected {self.n_profiles} refl_ids to track: {tracked_ids}")
+
+        profile_images = preds["profile"].reshape(-1, self.d, self.h, self.w)[
+            ..., (self.d - 1) // 2, :, :
+        ]
+        count_images = preds["counts"].reshape(-1, self.d, self.h, self.w)[
+            ..., (self.d - 1) // 2, :, :
+        ]
+        rate_images = (
+            preds["rates"]
+            .mean(1)
+            .reshape(-1, self.d, self.h, self.w)[..., (self.d - 1) // 2, :, :]
+        )
+
+        for ref_id in tracked_ids:
+            id_str = str(ref_id)
+            matches = np.where(np.array(current_refl_ids) == ref_id)[0]
+
+            if len(matches) > 0:
+                idx = matches[0]
+
+                tracked_shoeboxes[id_str] = {
+                    "profile": profile_images[idx].cpu(),
+                    "counts": count_images[idx].cpu(),
+                    "rates": rate_images[idx].cpu(),
+                    "bg_mean": preds["qbg"].mean[idx].cpu(),
+                    "bg_var": preds["qbg"].variance[idx].cpu(),
+                    "intensity_mean": preds["intensity_mean"][idx].cpu(),
+                    "intensity_var": preds["intensity_var"][idx].cpu(),
+                    "dials_I_prf_value": preds["dials_I_prf_value"][idx],
+                    "dials_I_prf_var": preds["dials_I_prf_var"][idx],
+                    "dials_bg_mean": preds["dials_bg_mean"][idx].cpu(),
+                    "x_c": preds["x_c"][idx].cpu(),
+                    "y_c": preds["y_c"][idx].cpu(),
+                    "z_c": preds["z_c"][idx].cpu(),
+                    "renyi_entropy": renyi_entropy[idx].cpu(),
+                }
+
+        torch.cuda.empty_cache()
+        return tracked_ids, tracked_shoeboxes
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        with torch.no_grad():
+            # get forward outputs
+            shoebox, dials, masks, counts = batch
+            base_output = pl_module(shoebox, dials, masks, counts)
+
+            # additional metrics to log
+            renyi_entropy = -torch.log(base_output["qp"].mean.pow(2).sum(-1))
+
+            if self.current_epoch % self.plot_every_n_epochs == 0:
+                self.tracked_ids_train, self.tracked_shoeboxes_train = (
+                    self.update_tracked_shoeboxes(
+                        base_output,
+                        renyi_entropy,
+                        self.tracked_ids_train,
+                        self.tracked_shoeboxes_train,
+                    )
+                )
+
+            # Create CPU tensor versions to avoid keeping GPU memory
+            self.preds_train = {}
+            for key in [
+                "intensity_mean",
+                "intensity_var",
+                "dials_I_prf_value",
+                "dials_I_prf_var",
+                "profile",
+                "qbg",
+                "x_c",
+                "y_c",
+                "z_c",
+                "dials_bg_mean",
+                "dials_bg_sum_value",
+            ]:
+                if key in base_output:
+                    if key == "profile":
+                        self.preds_train[key] = base_output[key].detach().cpu()
+                    elif hasattr(base_output[key], "sample"):
+                        self.preds_train[key] = base_output[key].mean.detach().cpu()
+                    else:
+                        self.preds_train[key] = base_output[key].detach().cpu()
+
+            # Clean up
+            del base_output
+            torch.cuda.empty_cache()
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        if self.preds_train:
+            try:
+                # Create data for scatter plots
+                data = []
+
+                i_flat = self.preds_train["intensity_mean"].flatten() + 1e-8
+
+                i_var_flat = self.preds_train["intensity_var"].flatten() + 1e-8
+
+                dials_flat = self.preds_train["dials_I_prf_value"].flatten() + 1e-8
+                dials_var_flat = self.preds_train["dials_I_prf_var"].flatten() + 1e-8
+                dials_bg_flat = self.preds_train["dials_bg_mean"].flatten() + 1e-8
+                qbg_flat = self.preds_train["qbg"].flatten() + 1e-8
+
+                renyi_entropy_flat = -torch.log(
+                    self.preds_train["profile"].pow(2).sum(-1)
+                )
+
+                x_c_flat = self.preds_train["x_c"].flatten()
+                y_c_flat = self.preds_train["y_c"].flatten()
+                z_c_flat = self.preds_train["z_c"].flatten()
+
+                # Create data points with safe log transform
+                for i in range(len(i_flat)):
+                    try:
+                        data.append(
+                            [
+                                float(torch.log(i_flat[i])),
+                                float(torch.log(i_var_flat[i])),
+                                float(torch.log(dials_flat[i])),
+                                float(torch.log(dials_var_flat[i])),
+                                dials_bg_flat[i],
+                                qbg_flat[i],
+                                renyi_entropy_flat[i],
+                                x_c_flat[i],
+                                y_c_flat[i],
+                            ]
+                        )
+                    except Exception as e:
+                        print("Caught exception in on_train_epoch_end!")
+                        print("Type of exception:", type(e))
+                        print("Exception object:", e)
+                        traceback.print_exc(file=sys.stdout)
+
+                df = pd.DataFrame(
+                    data,
+                    columns=[
+                        "mean(qI)",
+                        "var(qI)",
+                        "DIALS intensity.prf.value",
+                        "DIALS intensity.prf.variance",
+                        "DIALS background.mean",
+                        "mean(qbg)",
+                        "Renyi entropy",
+                        "x_c",
+                        "y_c",
+                    ],
+                )
+
+                # Create table
+                table = wandb.Table(dataframe=df)
+
+                # Calculate correlation coefficients
+                corr_I = (
+                    torch.corrcoef(torch.vstack([i_flat, dials_flat]))[0, 1]
+                    if len(i_flat) > 1
+                    else 0
+                )
+
+                # plot renyi entropy
+                corr_bg = (
+                    torch.corrcoef(torch.vstack([dials_bg_flat, dials_flat]))[0, 1]
+                    if len(dials_bg_flat) > 1
+                    else 0
+                )
+
+                # Create log dictionary
+                log_dict = {
+                    "Train: qi vs DIALS I prf": wandb.plot.scatter(
+                        table, "mean(qI)", "DIALS intensity.prf.value"
+                    ),
+                    "Train: Bg vs DIALS bg": wandb.plot.scatter(
+                        table, "mean(qbg)", "DIALS background.mean"
+                    ),
+                    "Correlation Coefficient: qi": corr_I,
+                    "Correlation Coefficient: bg": corr_bg,
+                    "Max mean(I)": torch.max(i_flat),
+                    "Mean mean(I)": torch.mean(i_flat),
+                    "Mean var(I) ": torch.mean(i_var_flat),
+                    "Min var(I)": torch.min(i_var_flat),
+                    "Max var(I)": torch.max(i_var_flat),
+                }
+
+                log_dict["mean(qbg.mean)"] = torch.mean(self.preds_train["qbg"])
+                log_dict["min(qbg.mean)"] = torch.min(self.preds_train["qbg"])
+                log_dict["max(qbg.mean)"] = torch.max(self.preds_train["qbg"])
+
+                # plot every n user-specified epochs
+                if self.current_epoch % self.plot_every_n_epochs == 0:
+                    comparison_fig = create_comparison_grid(
+                        n_profiles=self.n_profiles,
+                        refl_ids=self.tracked_ids_train,
+                        pred_dict=self.tracked_shoeboxes_train,
+                    )
+
+                    if comparison_fig is not None:
+                        log_dict["Tracked Profiles"] = wandb.Image(comparison_fig)
+                        plt.close(comparison_fig)
+
+                # Log metrics
+                wandb.log(log_dict)
+
+            except Exception as e:
+                print("Caught exception in on_train_epoch_end!")
+                print("Type of exception:", type(e))
+                print("Exception object:", e)
+                traceback.print_exc(file=sys.stdout)
+
+            # Clear memory
+            self.preds_train = {}
+            torch.cuda.empty_cache()
+
+        # Increment epoch counter
+        self.current_epoch += 1
+
+    def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        with torch.no_grad():
+            # get forward outputs
+            shoebox, dials, masks, counts = batch
+            base_output = pl_module(shoebox, dials, masks, counts)
+
+            # additional metrics to log
+            renyi_entropy = -torch.log(base_output["qp"].mean.pow(2).sum(-1))
+
+            # updated tracked shoeboxes
+            self.tracked_ids_val, self.tracked_shoeboxes_val = (
+                self.update_tracked_shoeboxes(
+                    base_output,
+                    renyi_entropy,
+                    tracked_ids=self.tracked_ids_val,
+                    tracked_shoeboxes=self.tracked_shoeboxes_val,
+                )
+            )
+
+            self.preds_val = {}
+            for key in [
+                "intensity_mean",
+                "intensity_var",
+                "dials_I_prf_value",
+                "dials_I_prf_var",
+                "profile",
+                "qbg",
+                "x_c",
+                "y_c",
+                "z_c",
+                "dials_bg_mean",
+                "dials_bg_sum_value",
+            ]:
+                if key in base_output:
+                    if hasattr(base_output[key], "sample"):
+                        self.preds_val[key] = base_output[key].mean.detach().cpu()
+                    else:
+                        self.preds_val[key] = base_output[key].detach().cpu()
+                elif key in base_output:
+                    self.preds_val[key] = base_output[key].detach().cpu()
+
+            # Clean up
+            del base_output
+            torch.cuda.empty_cache()
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        if self.preds_val:
+            try:
+                data = []
+
+                i_flat = self.preds_val["intensity_mean"].flatten() + 1e-8
+
+                i_var_flat = self.preds_val["intensity_var"].flatten() + 1e-8
+
+                dials_flat = self.preds_val["dials_I_prf_value"].flatten() + 1e-8
+                dials_var_flat = self.preds_val["dials_I_prf_var"].flatten() + 1e-8
+                dials_bg_flat = self.preds_val["dials_bg_mean"].flatten() + 1e-8
+                qbg_flat = self.preds_val["qbg"].flatten() + 1e-8
+
+                renyi_entropy_flat = -torch.log(
+                    self.preds_val["profile"].pow(2).sum(-1)
+                )
+
+                x_c_flat = self.preds_val["x_c"].flatten()
+                y_c_flat = self.preds_val["y_c"].flatten()
+                z_c_flat = self.preds_val["z_c"].flatten()
+
+                # Create data points with safe log transform
+                for i in range(len(i_flat)):
+                    try:
+                        data.append(
+                            [
+                                float(torch.log(i_flat[i])),
+                                float(torch.log(i_var_flat[i])),
+                                float(torch.log(dials_flat[i])),
+                                float(torch.log(dials_var_flat[i])),
+                                dials_bg_flat[i],
+                                qbg_flat[i],
+                                renyi_entropy_flat[i],
+                                x_c_flat[i],
+                                y_c_flat[i],
+                            ]
+                        )
+                    except Exception as e:
+                        print("Caught exception in on_train_epoch_end!")
+                        print("Type of exception:", type(e))
+                        print("Exception object:", e)
+                        traceback.print_exc(file=sys.stdout)
+
+                df = pd.DataFrame(
+                    data,
+                    columns=[
+                        "val: mean(qI)",
+                        "val: var(qI)",
+                        "DIALS intensity.prf.value",
+                        "DIALS intensity.prf.variance",
+                        "DIALS background.mean",
+                        "val: mean(qbg)",
+                        "val: Renyi entropy",
+                        "x_c",
+                        "y_c",
+                    ],
+                )
+
+                # Create table
+                table = wandb.Table(dataframe=df)
+
+                # Calculate correlation coefficients
+                corr_I = (
+                    torch.corrcoef(torch.vstack([i_flat, dials_flat]))[0, 1]
+                    if len(i_flat) > 1
+                    else 0
+                )
+
+                corr_bg = (
+                    torch.corrcoef(torch.vstack([dials_bg_flat, dials_flat]))[0, 1]
+                    if len(dials_bg_flat) > 1
+                    else 0
+                )
+
+                # Create log dictionary
+                log_dict = {
+                    "Val: qi vs DIALS I prf": wandb.plot.scatter(
+                        table, "val: mean(qI)", "DIALS intensity.prf.value"
+                    ),
+                    "Val: Bg vs DIALS bg": wandb.plot.scatter(
+                        table, "val: mean(qbg)", "DIALS background.mean"
+                    ),
+                    "Val: Correlation Coefficient qi": corr_I,
+                    "Val: Correlation Coefficient bg": corr_bg,
+                    "Val: Max mean(I)": torch.max(i_flat),
+                    "Val: Mean mean(I)": torch.mean(i_flat),
+                    "Val: Mean var(I) ": torch.mean(i_var_flat),
+                    "Val: Min var(I)": torch.min(i_var_flat),
+                    "Val: Max var(I)": torch.max(i_var_flat),
+                    "val: mean(qbg.mean)": torch.mean(self.preds_val["qbg"]),
+                    "val: min(qbg.mean)": torch.min(self.preds_val["qbg"]),
+                    "val: max(qbg.mean)": torch.max(self.preds_val["qbg"]),
+                }
+
+                # plot input shoebox and predicted profile
+                comparison_fig = create_comparison_grid(
+                    n_profiles=self.n_profiles,
+                    refl_ids=self.tracked_ids_val,
+                    pred_dict=self.tracked_shoeboxes_val,
+                )
+
+                log_dict["Val: Tracked Profiles"] = wandb.Image(comparison_fig)
+                plt.close(comparison_fig)
+
+                # Log metrics
+                wandb.log(log_dict)
+
+            except Exception as e:
+                print("Caught exception in on_val_epoch_end")
+                print("Type of exception:", type(e))
+                print("Exception object:", e)
+                traceback.print_exc(file=sys.stdout)
+
+            # Clear memory
+            self.preds_val = {}
+            torch.cuda.empty_cache()
 
 
 # -

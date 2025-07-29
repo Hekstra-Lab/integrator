@@ -1,6 +1,6 @@
 import torch
 
-from .data_loaders import ShoeboxDataModule, ShoeboxDataModule2
+from .data_loaders import ShoeboxDataModule, ShoeboxDataModule2, ShoeboxDataModule2D
 from .model.distributions import (
     DirichletDistribution,
     FoldedNormalDistribution,
@@ -14,8 +14,9 @@ from .model.encoders import (
     IntensityEncoder,
     MLPMetadataEncoder,
     ShoeboxEncoder,
+    ShoeboxEncoder2D,
 )
-from .model.integrators import Integrator, LRMVNIntegrator, Model2
+from .model.integrators import Integrator, Integrator2D, LRMVNIntegrator, Model2
 from .model.loss import Loss, Loss2, LRMVNLoss, MVNLoss
 
 REGISTRY = {
@@ -25,6 +26,7 @@ REGISTRY = {
     "shoebox_encoders": {
         "shoebox_encoder": ShoeboxEncoder,
         "intensity_encoder": IntensityEncoder,
+        "shoebox_encoder_2d": ShoeboxEncoder2D,
     },
     "loss": {
         "elbo": Loss,
@@ -36,6 +38,7 @@ REGISTRY = {
         "lrmvn_integrator": LRMVNIntegrator,
         "integrator": Integrator,
         "model2": Model2,
+        "integrator_2d": Integrator2D,
     },
     "qi": {
         "gamma": GammaDistribution,
@@ -56,6 +59,7 @@ REGISTRY = {
     "data_loader": {
         "default": ShoeboxDataModule,
         "shoebox_data_module": ShoeboxDataModule2,
+        "shoebox_data_module_2d": ShoeboxDataModule2D,
     },
 }
 
