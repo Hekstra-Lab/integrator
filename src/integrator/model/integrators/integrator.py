@@ -295,6 +295,7 @@ class Integrator2D(BaseIntegrator):
         qp,
         qi,
         encoder1,
+        encoder2,
         loss,
         mc_samples: int = 100,
         lr: float = 1e-3,
@@ -348,6 +349,7 @@ class Integrator2D(BaseIntegrator):
 
         # Model components
         self.encoder1 = encoder1
+        self.encoder2 = encoder2
 
     # def forward(self, counts, shoebox, metadata, masks, reference):
     def forward(self, counts, shoebox, masks, reference):
@@ -369,9 +371,12 @@ class Integrator2D(BaseIntegrator):
             shoebox.reshape(shoebox.shape[0], 1, self.h, self.w), masks
         )
 
-        qbg = self.qbg(profile_rep)
+        intensity_rep = self.encoder2(
+            shoebox.reshape(shoebox.shape[0], 1, self.h, self.w), masks
+        )
+        qbg = self.qbg(intensity_rep)
         qp = self.qp(profile_rep)
-        qi = self.qi(profile_rep)
+        qi = self.qi(intensity_rep)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
         zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)

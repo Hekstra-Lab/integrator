@@ -12,6 +12,7 @@ from .model.distributions import (
 )
 from .model.encoders import (
     IntensityEncoder,
+    IntensityEncoder2D,
     MLPMetadataEncoder,
     ShoeboxEncoder,
     ShoeboxEncoder2D,
@@ -27,6 +28,7 @@ REGISTRY = {
         "shoebox_encoder": ShoeboxEncoder,
         "intensity_encoder": IntensityEncoder,
         "shoebox_encoder_2d": ShoeboxEncoder2D,
+        "intensity_encoder_2d": IntensityEncoder2D,
     },
     "loss": {
         "elbo": Loss,

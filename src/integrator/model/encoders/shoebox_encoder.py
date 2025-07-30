@@ -228,6 +228,71 @@ class ShoeboxEncoder2D(nn.Module):
         return F.relu(self.fc(x))
 
 
+class IntensityEncoder2D(nn.Module):
+    def __init__(
+        self,
+        input_shape=(21, 21),
+        in_channels=1,
+        out_dim=64,
+        conv1_out_channels=16,
+        conv1_kernel=(3, 3),
+        conv1_padding=(1, 1),
+        norm1_num_groups=4,
+        pool_kernel=(2, 2),
+        pool_stride=(2, 2),
+        conv2_out_channels=32,
+        conv2_kernel=(3, 3),
+        conv2_padding=(0, 0),
+        norm2_num_groups=4,
+        conv3_out_channels=64,
+        conv3_kernel=(3, 3),
+        conv3_padding=(1, 1),
+        norm3_num_groups=8,
+    ):
+        super().__init__()
+
+        self.conv1 = nn.Conv2d(
+            in_channels=in_channels,
+            out_channels=conv1_out_channels,
+            kernel_size=conv1_kernel,
+            padding=conv1_padding,
+        )
+        self.norm1 = nn.GroupNorm(norm1_num_groups, conv1_out_channels)
+
+        self.pool = nn.MaxPool2d(
+            kernel_size=pool_kernel, stride=pool_stride, ceil_mode=True
+        )
+
+        self.conv2 = nn.Conv2d(
+            in_channels=conv1_out_channels,
+            out_channels=conv2_out_channels,
+            kernel_size=conv2_kernel,
+            padding=conv2_padding,
+        )
+        self.norm2 = nn.GroupNorm(norm2_num_groups, conv2_out_channels)
+
+        self.conv3 = nn.Conv2d(
+            in_channels=conv2_out_channels,
+            out_channels=conv3_out_channels,
+            kernel_size=conv3_kernel,
+            padding=conv3_padding,
+        )
+        self.norm3 = nn.GroupNorm(norm3_num_groups, conv3_out_channels)
+
+        self.adaptive_pool = nn.AdaptiveAvgPool2d(1)  # Output: (batch, channels, 1, 1)
+
+        self.fc = nn.Linear(conv3_out_channels, out_dim)
+
+    def forward(self, x, mask=None):
+        x = F.relu(self.norm1(self.conv1(x)))
+        x = self.pool(x)
+        x = F.relu(self.norm2(self.conv2(x)))
+        x = F.relu(self.norm3(self.conv3(x)))
+        x = self.adaptive_pool(x)
+        x = x.squeeze(-1).squeeze(-1)  # From (B, C, 1, 1) to (B, C)
+        return F.relu(self.fc(x))
+
+
 if __name__ == "__main__":
     encoder_2d = ShoeboxEncoder2D()
 
