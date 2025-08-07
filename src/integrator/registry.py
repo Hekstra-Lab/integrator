@@ -17,18 +17,16 @@ from .model.encoders import (
     ShoeboxEncoder,
     ShoeboxEncoder2D,
 )
-from .model.integrators import Integrator, Integrator2D, LRMVNIntegrator, Model2
+from .model.integrators import Integrator, Integrator2D, LRMVNIntegrator, Model2, Model3
 from .model.loss import Loss, Loss2, LRMVNLoss, MVNLoss
 
 REGISTRY = {
-    "metadata_encoders": {
-        "mlp_metadata_encoder": MLPMetadataEncoder,
-    },
-    "shoebox_encoders": {
+    "encoders": {
         "shoebox_encoder": ShoeboxEncoder,
         "intensity_encoder": IntensityEncoder,
         "shoebox_encoder_2d": ShoeboxEncoder2D,
         "intensity_encoder_2d": IntensityEncoder2D,
+        "mlp_metadata_encoder": MLPMetadataEncoder,
     },
     "loss": {
         "elbo": Loss,
@@ -40,6 +38,7 @@ REGISTRY = {
         "lrmvn_integrator": LRMVNIntegrator,
         "integrator": Integrator,
         "model2": Model2,
+        "model3": Model3,
         "integrator_2d": Integrator2D,
     },
     "qi": {

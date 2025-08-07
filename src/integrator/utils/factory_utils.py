@@ -27,15 +27,14 @@ def create_integrator(config, checkpoint=None):
     modules = dict()
     integrator_class = REGISTRY["integrator"][config["integrator"]["name"]]
 
-    for component in config["components"].items():
-        if component[0].find("encoder") == -1:
-            module_type = component[0]
+    for k, v in config["components"].items():
+        # search for encoder key
+        if re.match(r"encoder\d", k):
+            module_type = "encoders"
         else:
-            module_type = "shoebox_encoders"
+            module_type = k
 
-        modules[component[0]] = create_module(
-            module_type, component[1]["name"], **component[1]["args"]
-        )
+        modules[k] = create_module(module_type, v["name"], **v["args"])
 
     if checkpoint is not None:
         integrator = integrator_class.load_from_checkpoint(

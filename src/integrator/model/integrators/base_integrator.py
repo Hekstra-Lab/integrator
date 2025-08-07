@@ -23,6 +23,21 @@ class BaseIntegrator(pl.LightningModule, ABC):
         mc_samples: int = 100,
         max_iterations: int = 4,
         renyi_scale: float = 0.00,
+        predict_keys=[
+            "intensity_mean",
+            "intensity_var",
+            "refl_ids",
+            "dials_I_sum_value",
+            "dials_I_sum_var",
+            "dials_I_prf_value",
+            "dials_I_prf_var",
+            "dials_bg_mean",
+            "qbg_mean",
+            "qbg_scale",
+            "x_c",
+            "y_c",
+            "z_c",
+        ],
     ):
         super().__init__()
         self.qbg = qbg
@@ -48,6 +63,7 @@ class BaseIntegrator(pl.LightningModule, ABC):
         self.weight_decay = weight_decay
         self.mc_samples = mc_samples
         self.max_iterations = max_iterations
+        self.predict_keys = predict_keys
 
         # dataframes to keep track of val/train epoch metrics
         self.schema = [
@@ -181,7 +197,15 @@ class BaseIntegrator(pl.LightningModule, ABC):
         )
 
         renyi_loss = (
-            (-torch.log(outputs["qp"].rsample([100]).permute(1, 0, 2).pow(2).sum(-1)))
+            (
+                -torch.log(
+                    outputs["qp"]
+                    .rsample([self.mc_samples])
+                    .permute(1, 0, 2)
+                    .pow(2)
+                    .sum(-1)
+                )
+            )
             .mean(1)
             .sum()
         ) * self.renyi_scale
@@ -268,26 +292,38 @@ class BaseIntegrator(pl.LightningModule, ABC):
         """
         counts, shoebox, masks, reference = batch
         outputs = self(counts, shoebox, masks, reference)
+        return {k: v for k, v in outputs.items() if k in self.predict_keys}
 
-        return {
-            "intensity_mean": outputs["intensity_mean"],  # qi.mean
-            "intensity_var": outputs["intensity_var"],  # qi.variance
-            # "refl_ids": outputs["refl_ids"],
-            "refl_ids": torch.tensor(outputs["dials_I_prf_value"]),
-            "dials_I_sum_value": outputs["dials_I_sum_value"],
-            "dials_I_sum_var": outputs["dials_I_sum_var"],
-            "dials_I_prf_value": outputs["dials_I_prf_value"],
-            "dials_I_prf_var": outputs["dials_I_prf_var"],
-            "dials_bg_mean": outputs["dials_bg_mean"],
-            "qbg_mean": outputs["qbg"].mean,
-            "qbg": outputs["qbg"],
-            "qbg_scale": outputs["qbg"].scale,  # halfnormal param
-            "x_c": outputs["x_c"],
-            "y_c": outputs["y_c"],
-            "z_c": outputs["z_c"],
-        }
+        # return {
+        #     "intensity_mean": outputs["intensity_mean"],  # qi.mean
+        #     "intensity_var": outputs["intensity_var"],  # qi.variance
+        #     # "refl_ids": outputs["refl_ids"],
+        #     "refl_ids": torch.tensor(outputs["dials_I_prf_value"]),
+        #     "dials_I_sum_value": outputs["dials_I_sum_value"],
+        #     "dials_I_sum_var": outputs["dials_I_sum_var"],
+        #     "dials_I_prf_value": outputs["dials_I_prf_value"],
+        #     "dials_I_prf_var": outputs["dials_I_prf_var"],
+        #     "dials_bg_mean": outputs["dials_bg_mean"],
+        #     "qbg_mean": outputs["qbg"].mean,
+        #     "qbg": outputs["qbg"],
+        #     "qbg_scale": outputs["qbg"].scale,  # halfnormal param
+        #     "x_c": outputs["x_c"],
+        #     "y_c": outputs["y_c"],
+        #     "z_c": outputs["z_c"],
+        # }
+        #
 
 
 if __name__ == "__main__":
     pass
-# -
+    # -
+    import torch
+
+    from integrator.utils import create_data_loader, load_config
+
+    concentration = torch.exp(torch.randn(10, (21 * 21 * 3)))
+    qp = torch.distributions.Dirichlet(concentration)
+
+    config = "/Users/luis/integratorv3/integrator/src/integrator/config/config.yaml"
+    config = load_config(config)
+    dataloader = create_data_loader(config)
