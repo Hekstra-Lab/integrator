@@ -132,38 +132,6 @@ class Integrator(BaseIntegrator):
             "avg_reynyi_entropy": avg_reynyi_entropy,
         }
 
-    def predict_step(self, batch, batch_idx):
-        """
-
-        Args:
-            batch ():
-            batch_idx ():
-
-        Returns:
-
-        """
-        counts, shoebox, masks, reference = batch
-        outputs = self(counts, shoebox, masks, reference)
-
-        return {
-            "intensity_mean": outputs["intensity_mean"],  # qi.mean
-            "intensity_var": outputs["intensity_var"],  # qi.variance
-            # "refl_ids": outputs["refl_ids"],
-            "refl_ids": torch.tensor(outputs["dials_I_prf_value"]),
-            "dials_I_sum_value": outputs["dials_I_sum_value"],
-            "dials_I_sum_var": outputs["dials_I_sum_var"],
-            "dials_I_prf_value": outputs["dials_I_prf_value"],
-            "dials_I_prf_var": outputs["dials_I_prf_var"],
-            "dials_bg_mean": outputs["dials_bg_mean"],
-            "qbg_mean": outputs["qbg"].mean,
-            "qbg": outputs["qbg"],
-            "qbg_scale": outputs["qbg"].scale,  # halfnormal param
-            "x_c": outputs["x_c"],
-            "y_c": outputs["y_c"],
-            "z_c": outputs["z_c"],
-            "d": outputs["d"],
-        }
-
 
 class Model2(BaseIntegrator):
     def __init__(
@@ -550,38 +518,6 @@ class Model3(BaseIntegrator):
             "dials_bg_sum_var": reference[:, 12],
             "d": reference[:, 13],
             "avg_reynyi_entropy": avg_reynyi_entropy,
-        }
-
-    def predict_step(self, batch, batch_idx):
-        """
-
-        Args:
-            batch ():
-            batch_idx ():
-
-        Returns:
-
-        """
-        counts, shoebox, masks, reference = batch
-        outputs = self(counts, shoebox, masks, reference)
-
-        return {
-            "intensity_mean": outputs["intensity_mean"],  # qi.mean
-            "intensity_var": outputs["intensity_var"],  # qi.variance
-            # "refl_ids": outputs["refl_ids"],
-            "refl_ids": torch.tensor(outputs["dials_I_prf_value"]),
-            "dials_I_sum_value": outputs["dials_I_sum_value"],
-            "dials_I_sum_var": outputs["dials_I_sum_var"],
-            "dials_I_prf_value": outputs["dials_I_prf_value"],
-            "dials_I_prf_var": outputs["dials_I_prf_var"],
-            "dials_bg_mean": outputs["dials_bg_mean"],
-            "qbg_mean": outputs["qbg"].mean,
-            "qbg": outputs["qbg"],
-            "qbg_scale": outputs["qbg"].scale,  # halfnormal param
-            "x_c": outputs["x_c"],
-            "y_c": outputs["y_c"],
-            "z_c": outputs["z_c"],
-            "d": outputs["d"],
         }
 
 
