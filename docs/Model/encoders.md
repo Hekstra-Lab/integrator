@@ -1,4 +1,4 @@
-::: integrator.model.encoders.encoder.ShoeboxEncoder
+::: integrator.model.encoders.encoders.ShoeboxEncoder
     options: 
       show_root_full_path: true
       show_root_heading: true
