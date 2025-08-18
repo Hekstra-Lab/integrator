@@ -339,13 +339,9 @@ class Integrator2D(BaseIntegrator):
         counts = torch.clamp(counts, min=0) * masks
         device = counts.device
 
-        profile_rep = self.encoder1(
-            shoebox.reshape(shoebox.shape[0], 1, self.h, self.w), masks
-        )
+        profile_rep = self.encoder1(shoebox.reshape(shoebox.shape[0], 1, self.h, self.w), masks)
 
-        intensity_rep = self.encoder2(
-            shoebox.reshape(shoebox.shape[0], 1, self.h, self.w), masks
-        )
+        intensity_rep = self.encoder2(shoebox.reshape(shoebox.shape[0], 1, self.h, self.w), masks)
         qbg = self.qbg(intensity_rep)
         qp = self.qp(profile_rep)
         qi = self.qi(intensity_rep)
@@ -526,9 +522,7 @@ if __name__ == "__main__":
 
     from integrator.utils import create_integrator, load_config
 
-    config = load_config(
-        "/Users/luis/integratorv3/integrator/src/integrator/config/model3.yaml"
-    )
+    config = load_config("/Users/luis/integratorv3/integrator/src/integrator/config/model3.yaml")
 
     integrator = create_integrator(config)
 
@@ -538,3 +532,5 @@ if __name__ == "__main__":
     reference = torch.randn(10, 14)
 
     integrator(counts, shoebox, masks, reference)
+
+    torch.optim.Adam(lr=0.001)

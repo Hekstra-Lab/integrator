@@ -60,6 +60,8 @@ class Loss2(torch.nn.Module):
         prior_tensor=None,
         use_robust=False,
         shape=(3, 21, 21),
+        quantile=0.99,
+        pprf_conc_factor=40,
     ):
         super().__init__()
         self.register_buffer("eps", torch.tensor(eps))
@@ -79,8 +81,8 @@ class Loss2(torch.nn.Module):
         if prior_tensor is not None:
             self.concentration = torch.load(prior_tensor, weights_only=False)
             self.concentration[
-                self.concentration > torch.quantile(self.concentration, 0.99)
-            ] *= 40
+                self.concentration > torch.quantile(self.concentration, quantile)
+            ] *= pprf_conc_factor
             self.concentration /= self.concentration.max()
         else:
             self.concentration = (
@@ -244,3 +246,48 @@ class Loss2(torch.nn.Module):
             kl_i.mean() * self.pi_weight,
             (kl_p * self.pprf_weight).mean(),
         )
+
+
+if __name__ == "__main__":
+    import torch
+    import torch.nn.functional as F
+
+    from integrator.model.distributions import (
+        DirichletDistribution,
+        FoldedNormalDistribution,
+    )
+    from integrator.model.encoders import IntensityEncoder2D, ShoeboxEncoder2D
+
+    # hyperparameters
+    mc_samples = 100
+
+    # encoders
+    sbox_encoder_2d = ShoeboxEncoder2D()
+    intensity_encoder_2d = IntensityEncoder2D()
+
+    # distributions
+    qbg_ = FoldedNormalDistribution(dmodel=64)
+    qi_ = FoldedNormalDistribution(dmodel=64)
+    qprf_ = DirichletDistribution(dmodel=64, input_shape=(21, 21))
+
+    # generate a random batch
+    batch = F.softplus(torch.randn(10, 21 * 21))
+    masks = torch.randint(2, (10, 21 * 21))
+
+    # encode batch
+    shoebox_rep = sbox_encoder_2d(batch.reshape(batch.shape[0], 1, 21, 21), masks)
+    intensity_rep = intensity_encoder_2d(
+        batch.reshape(batch.shape[0], 1, 21, 21), masks
+    )
+
+    # get distributinos
+    qbg = qbg_(intensity_rep)
+    qi = qi_(intensity_rep)
+    qprf = qprf_(shoebox_rep)
+
+    # get samples
+    zbg = qbg.rsample([mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+    zprf = qprf.rsample([mc_samples]).permute(1, 0, 2)
+    zi = qi.rsample([mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+
+    rate = zi * zprf + zbg  # [B,S,Pix]

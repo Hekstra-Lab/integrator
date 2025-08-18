@@ -96,7 +96,10 @@ class BaseIntegrator(pl.LightningModule, ABC):
             # profile masking
             zp = zp * masks.unsqueeze(1)  # profiles
             thresholds = torch.quantile(
-                zp, 0.99, dim=-1, keepdim=True
+                zp,
+                0.99,
+                dim=-1,
+                keepdim=True,
             )  # threshold values
             profile_mask = zp > thresholds
 
@@ -197,15 +200,7 @@ class BaseIntegrator(pl.LightningModule, ABC):
         )
 
         renyi_loss = (
-            (
-                -torch.log(
-                    outputs["qp"]
-                    .rsample([self.mc_samples])
-                    .permute(1, 0, 2)
-                    .pow(2)
-                    .sum(-1)
-                )
-            )
+            (-torch.log(outputs["qp"].rsample([self.mc_samples]).permute(1, 0, 2).pow(2).sum(-1)))
             .mean(1)
             .sum()
         ) * self.renyi_scale
@@ -231,9 +226,7 @@ class BaseIntegrator(pl.LightningModule, ABC):
         return loss.mean() + renyi_loss.sum()
 
     def configure_optimizers(self):
-        return torch.optim.Adam(
-            self.parameters(), lr=self.lr, weight_decay=self.weight_decay
-        )
+        return torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
 
     def validation_step(self, batch, batch_idx):
         """
