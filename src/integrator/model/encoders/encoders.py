@@ -45,9 +45,7 @@ class ShoeboxEncoder(torch.nn.Module):
             padding=conv1_padding,
         )
         self.norm1 = nn.GroupNorm(norm1_num_groups, conv1_out_channels)
-        self.pool = nn.MaxPool3d(
-            kernel_size=pool_kernel, stride=pool_stride, ceil_mode=True
-        )
+        self.pool = nn.MaxPool3d(kernel_size=pool_kernel, stride=pool_stride, ceil_mode=True)
         self.conv2 = nn.Conv3d(
             in_channels=conv1_out_channels,
             out_channels=conv2_out_channels,
@@ -120,9 +118,7 @@ class IntensityEncoder(torch.nn.Module):
         self.norm1 = nn.GroupNorm(norm1_num_groups, conv1_out_channels)
 
         # Pooling layer
-        self.pool = nn.MaxPool3d(
-            kernel_size=pool_kernel, stride=pool_stride, ceil_mode=True
-        )
+        self.pool = nn.MaxPool3d(kernel_size=pool_kernel, stride=pool_stride, ceil_mode=True)
 
         self.conv2 = nn.Conv3d(
             in_channels=conv1_out_channels,
@@ -140,9 +136,7 @@ class IntensityEncoder(torch.nn.Module):
         )
         self.norm3 = nn.GroupNorm(norm3_num_groups, conv3_out_channels)
 
-        self.adaptive_pool = nn.AdaptiveAvgPool3d(
-            1
-        )  # Output: (batch, channels, 1, 1, 1)
+        self.adaptive_pool = nn.AdaptiveAvgPool3d(1)  # Output: (batch, channels, 1, 1, 1)
 
         self.fc = nn.Linear(conv3_out_channels, out_dim)
 
@@ -194,9 +188,7 @@ class ShoeboxEncoder2D(nn.Module):
         )
         self.norm1 = nn.GroupNorm(norm1_num_groups, conv1_out_channels)
 
-        self.pool = nn.MaxPool2d(
-            kernel_size=pool_kernel, stride=pool_stride, ceil_mode=True
-        )
+        self.pool = nn.MaxPool2d(kernel_size=pool_kernel, stride=pool_stride, ceil_mode=True)
 
         self.conv2 = nn.Conv2d(
             in_channels=conv1_out_channels,
@@ -213,9 +205,7 @@ class ShoeboxEncoder2D(nn.Module):
 
     def _infer_flattened_size(self, input_shape, in_channels):
         with torch.no_grad():
-            dummy = torch.zeros(
-                1, in_channels, input_shape[0], input_shape[1]
-            )  # (B, C, H, W)
+            dummy = torch.zeros(1, in_channels, input_shape[0], input_shape[1])  # (B, C, H, W)
             x = self.pool(F.relu(self.norm1(self.conv1(dummy))))
             x = F.relu(self.norm2(self.conv2(x)))
             return x.numel()
@@ -259,9 +249,7 @@ class IntensityEncoder2D(nn.Module):
         )
         self.norm1 = nn.GroupNorm(norm1_num_groups, conv1_out_channels)
 
-        self.pool = nn.MaxPool2d(
-            kernel_size=pool_kernel, stride=pool_stride, ceil_mode=True
-        )
+        self.pool = nn.MaxPool2d(kernel_size=pool_kernel, stride=pool_stride, ceil_mode=True)
 
         self.conv2 = nn.Conv2d(
             in_channels=conv1_out_channels,
