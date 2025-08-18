@@ -224,7 +224,7 @@ class FoldedNormalDistribution(torch.nn.Module):
     def __init__(
         self,
         dmodel,
-        transform="relative",
+        transform="log",
         I_max=2**20 - 1,
         beta=1.0,
         eps=1e-6,

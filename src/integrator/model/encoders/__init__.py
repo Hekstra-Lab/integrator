@@ -1,5 +1,5 @@
 from .base_encoder import BaseEncoder
-from .encoder import (
+from .encoders import (
     IntensityEncoder,
     IntensityEncoder2D,
     ShoeboxEncoder,

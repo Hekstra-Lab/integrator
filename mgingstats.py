@@ -504,9 +504,9 @@ if __name__ == "__main__":
     path = Path(args.path)
 
     config = load_config(list(path.glob("**/config_copy.yaml"))[0])
-    p_prf_scale = config["components"]["loss"]["params"]["p_p_scale"]
-    p_I_weight = config["components"]["loss"]["params"]["p_I_weight"]
-    p_bg_weight = config["components"]["loss"]["params"]["p_bg_weight"]
+    p_prf_scale = config["components"]["loss"]["args"]["pprf_weight"]
+    p_I_weight = config["components"]["loss"]["args"]["pi_weight"]
+    p_bg_weight = config["components"]["loss"]["args"]["pbg_weight"]
 
     id = path.name.split("-")[-1]
 
@@ -517,7 +517,7 @@ if __name__ == "__main__":
     )
 
     # initialize wandb
-    run = wandb.init(project="data_analysis_v5", id=id)
+    run = wandb.init(project="data_analysis_v6", id=id)
 
     # function to normalize colorbar
     class CustomNorm(mpl.colors.Normalize):
@@ -687,8 +687,10 @@ if __name__ == "__main__":
     # NOTE: Code to get start/final r-free and r-work from phenix.logs
     pattern1 = re.compile(r"Start R-work")
     pattern2 = re.compile(r"Final R-work")
-    log_files = list(path.glob("**/refine*.log"))
+    log_files = list(path.glob("**/phenix_out/refine*.log"))
     log_files.insert(0, list(reference_path.glob("**/refine*.log"))[0])
+
+    print(log_files)
 
     # Search files
     matches_start = {}
@@ -725,12 +727,15 @@ if __name__ == "__main__":
     df_start_sorted = df_start.iloc[
         sorted(range(len(df_start)), key=lambda i: sort_key(df_start.index[i]))
     ]
+    print(df_start_sorted)
 
     df_final = pd.DataFrame(matches_final).transpose()
 
     df_final_sorted = df_final.iloc[
         sorted(range(len(df_final)), key=lambda i: sort_key(df_final.index[i]))
     ]
+
+    print(df_final)
 
     rgap = (
         df_final_sorted["r_free"].astype(np.float64)
@@ -744,6 +749,9 @@ if __name__ == "__main__":
 
     arr_start = df_start_sorted.astype(float).values
     arr_final = df_final_sorted.astype(float).values
+
+    print('arr_start:',arr_start)
+    print('arr_final:',arr_final)
 
     fill_colors = [["#f9f9f9", "#e6e6e6"][(i % 2)] for i in range(len(epochs))]
 
@@ -1167,7 +1175,7 @@ if __name__ == "__main__":
     )
 
     # -
-    nn_background = np.concatenate(best_preds["qbg"])
+    nn_background = np.concatenate(best_preds["qbg_mean"])
 
     plt.clf()
     plt.figure(figsize=(20, 12))
