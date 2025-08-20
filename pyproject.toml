@@ -1,0 +1,92 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "integrator"
+version = "0.1.0"
+description = "A package for integrating X-ray diffraction data with variational inference."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Luis Aldama", email = "luis_aldama@g.harvard.edu" },
+  { name = "Kevin Dalton", email = "kmdalton@slac.stanford.edu" },
+]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+
+dependencies = [
+  "matplotlib>=3.5",
+  "numpy>=1.21,<2.0",
+  "polars>=1.6.0",
+  "pytorch_lightning>=2.2,<3.0",
+  "rs_distributions==0.0.2",
+  "scipy>=1.11,<2.0",
+  "torch>=2.2,<3.0",
+]
+
+[project.optional-dependencies]
+dev = ['pytest','ruff','mypy','wandb>=0.17']
+
+
+[project.urls]
+Homepage = "https://github.com/Hekstra-Lab/integrator/tree/integrator_mvn"
+Repository = "https://github.com/Hekstra-Lab/integrator"
+
+# ----------------------------
+# Hatchling build config
+# ----------------------------
+# Your code uses a "src" layout. Point hatchling at the package folder.
+[tool.hatch.build.targets.wheel]
+packages = ["src/integrator"]
+
+include = [
+  "src/integrator/**/*.yaml",
+  "tests/configs/*.yaml",
+]
+
+# Source distribution: include your source tree and top-level files.
+[tool.hatch.build.targets.sdist]
+include = [
+  "src/**",
+  "tests/**",        # optional—include tests in the sdist if you want
+  "README.md",
+  "pyproject.toml",
+]
+
+# ----------------------------
+# Tool configs (same as before)
+# ----------------------------
+
+[tool.hatch.version]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-select = ["B","I","UP","F"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+[tool.mypy]
+python_version = "3.12"
+warn_unused_ignores = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[dependency-groups]
+dev = [
+    "ipython>=8.37.0",
+    "mypy>=1.17.1",
+    "pytest>=8.4.1",
+    "pytest-cov>=6.2.1",
+    "ruff>=0.12.9",
+]

@@ -1,5 +1,5 @@
 # src/integrator/layers/__init__.py
-from .linear import Linear, ResidualLayer, MLP
 from .constraint import Constraint
-from .standardize import Standardize
+from .linear import MLP, Linear, ResidualLayer
 from .pooling import MeanPool
+from .standardize import Standardize

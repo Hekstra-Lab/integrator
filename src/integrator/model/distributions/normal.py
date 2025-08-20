@@ -1,7 +1,8 @@
-from integrator.model.distributions import BaseDistribution
-from integrator.layers import Linear, Constraint
-from torch.distributions import Normal
 import torch
+from torch.distributions import Normal
+
+from integrator.layers import Constraint, Linear
+from integrator.model.distributions import BaseDistribution
 
 
 class NormalDistribution(BaseDistribution):

@@ -1,9 +1,9 @@
-import torch
 import os
-import numpy as np
+
 import matplotlib.pyplot as plt
+import numpy as np
+import torch
 from dials.array_family import flex
-import pickle
 
 
 # Class to perform analysis on the model output
@@ -27,13 +27,13 @@ class Plotter:
         xlabel="Network Sig(I)",
         display=True,
     ):
-        q_I_stddev = self.refl_tbl["intensity.sum.variance"].as_numpy_array()
+        q_i_stddev = self.refl_tbl["intensity.sum.variance"].as_numpy_array()
         dials_I_stddev = self.refl_tbl["intensity.prf.variance"].as_numpy_array()
 
         # plot variance
         plt.clf()
         plt.plot([0, 1e6], [0, 1e6], "r", alpha=0.3)
-        plt.scatter(q_I_stddev, dials_I_stddev, alpha=0.1, color="black")
+        plt.scatter(q_i_stddev, dials_I_stddev, alpha=0.1, color="black")
         plt.yscale("log")
         plt.xscale("log")
         plt.ylim(1, 1e6)
@@ -67,13 +67,13 @@ class Plotter:
         out_png_filename="intensity_comparison.png",
         display=True,
     ):
-        q_I_mean = self.refl_tbl["intensity.sum.value"].as_numpy_array()
+        q_i_mean = self.refl_tbl["intensity.sum.value"].as_numpy_array()
         dials_I = self.refl_tbl["intensity.prf.value"].as_numpy_array()
         # equality line
 
         plt.clf()
         plt.plot([0, 1e6], [0, 1e6], "r", alpha=0.3)
-        plt.scatter(q_I_mean, dials_I, alpha=0.1, color="black")
+        plt.scatter(q_i_mean, dials_I, alpha=0.1, color="black")
         plt.yscale("log")
         plt.xscale("log")
         plt.ylim(1, 1e6)
