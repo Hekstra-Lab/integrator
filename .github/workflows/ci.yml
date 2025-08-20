@@ -1,89 +1,52 @@
-name: Deploy MkDocs
+# .github/workflows/ci.yml
+name: CI
 on:
   push:
-    branches:
-      - master 
-      - main
+    branches: [main, master]
+  pull_request:
+
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Configure Git Credentials
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
       - uses: actions/setup-python@v5
-        with:
-          python-version: 3.x
-      - run: echo "cache_id=$(date --utc '+%V')" >> $GITHUB_ENV 
-      - uses: actions/cache@v4
-        with:
-          key: mkdocs-material-${{ env.cache_id }}
-          path: .cache 
-          restore-keys: |
-            mkdocs-material-
-      - run: pip install mkdocs-material
-      - run: pip install mkdocstrings-python
-      - run: pip install mkdocs-mermaid2-plugin
-      - run: mkdocs gh-deploy --force
+        with: { python-version: '3.12' }
 
-#name: Deploy gh-pages
-#on:
-  #push:
-    #branches:
-      #- master 
-      #- main
-#permissions:
-  #contents: write
-  #pages: write
-  #id-token: write
-#jobs:
-  #build_mkdocs:
-    #runs-on: ubuntu-latest
-    #steps:
-      #- uses: actions/checkout@v4
-      #- name: Configure Git Credentials
-        #run: |
-          #git config user.name github-actions[bot]
-          #git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-      #- uses: actions/setup-python@v5
-        #with:
-          #python-version: 3.x
-      #- run: echo "cache_id=$(date --utc '+%V')" >> $GITHUB_ENV 
-      #- uses: actions/cache@v4
-        #with:
-          #key: mkdocs-material-${{ env.cache_id }}
-          #path: .cache 
-          #restore-keys: |
-            #mkdocs-material-
-      #- run: pip install mkdocs-material
-      #- run: pip install mkdocs-mermaid2-plugin
-      #- run: mkdocs gh-deploy --config-file mkdocs.yml --force
- 
-  #deploy_mkdocs:
-    #needs: build_mkdocs
-    #environment:
-      #name: github-pages
-      #url: ${{ steps.deployment.outputs.page_url }}
-    #runs-on: ubuntu-latest
-    #steps:
-      #- name: Checkout
-        #uses: actions/checkout@v4
-        #with:
-          #ref: gh-pages
-      #- name: Configure Git Credentials
-        #run: |
-          #git config user.name github-actions[bot]
-          #git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-      #- name: Setup Pages
-        #uses: actions/configure-pages@v5
-      #- name: Upload artifact
-        #uses: actions/upload-pages-artifact@v3
-        #with:
-          #path: '.'
-      #- name: Deploy to GitHub Pages
-        #id: deployment
-        #uses: actions/deploy-pages@v4
+      - name: Install uv
+        run: pip install uv
+
+      - name: Cache uv
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          restore-keys: uv-${{ runner.os }}-
+
+      - name: Sync dev env
+        run: uv sync --dev
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      # - name: Types (mypy)
+      #   run: uv run mypy src/integrator
+
+      - name: Tests (pytest + coverage)
+        run: uv run pytest -q --cov=integrator --cov-report=term-missing
+
+      - name: Build (hatchling via build)
+        run: uv run python -m build
+
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*
