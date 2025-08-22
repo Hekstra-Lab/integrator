@@ -539,6 +539,8 @@ class Model3(BaseIntegrator):
             masks = masks
 
         counts = torch.clamp(counts, min=0) * masks
+        if reference is None:
+            print("")
         metadata = reference[:, [0, 1, 2, 13]]
 
         profile_rep = self.encoder1(
@@ -563,35 +565,39 @@ class Model3(BaseIntegrator):
         # calculate profile renyi entropy
         avg_reynyi_entropy = (-(zp.pow(2).sum(-1).log())).mean(-1)
 
-        return {
-            "rates": rate,
-            "counts": counts,
-            "masks": masks,
-            "qbg": qbg,
-            "qp": qp,
-            "qp_mean": qp.mean,
-            "qi": qi,
-            "intensity_mean": qi.mean,
-            "intensity_var": qi.variance,
-            "dials_I_sum_value": reference[:, 6],
-            "dials_I_sum_var": reference[:, 7],
-            "dials_I_prf_value": reference[:, 8],
-            "dials_I_prf_var": reference[:, 9],
-            "refl_ids": reference[:, -1].int().tolist(),
-            "profile": qp.mean,
-            "zp": zp,
-            "x_c": reference[:, 0],
-            "y_c": reference[:, 1],
-            "z_c": reference[:, 2],
-            "x_c_mm": reference[:, 3],
-            "y_c_mm": reference[:, 4],
-            "z_c_mm": reference[:, 5],
-            "dials_bg_mean": reference[:, 10],
-            "dials_bg_sum_value": reference[:, 11],
-            "dials_bg_sum_var": reference[:, 12],
-            "d": reference[:, 13],
-            "avg_reynyi_entropy": avg_reynyi_entropy,
-        }
+        out = get_outputs(locals())
+
+        return out
+        # return {
+        #     "rates": rate,
+        #     "counts": counts,
+        #     "masks": masks,
+        #     "qbg": qbg,
+        #     "qp": qp,
+        #     "qp_mean": qp.mean,
+        #     "qi": qi,
+        #     "intensity_mean": qi.mean,
+        #     "intensity_var": qi.variance,
+        #     "dials_I_sum_value": reference[:, 6],
+        #     "dials_I_sum_var": reference[:, 7],
+        #     "dials_I_prf_value": reference[:, 8],
+        #     "dials_I_prf_var": reference[:, 9],
+        #     "refl_ids": reference[:, -1].int().tolist(),
+        #     "profile": qp.mean,
+        #     "zp": zp,
+        #     "x_c": reference[:, 0],
+        #     "y_c": reference[:, 1],
+        #     "z_c": reference[:, 2],
+        #     "x_c_mm": reference[:, 3],
+        #     "y_c_mm": reference[:, 4],
+        #     "z_c_mm": reference[:, 5],
+        #     "dials_bg_mean": reference[:, 10],
+        #     "dials_bg_sum_value": reference[:, 11],
+        #     "dials_bg_sum_var": reference[:, 12],
+        #     "d": reference[:, 13],
+        #     "avg_reynyi_entropy": avg_reynyi_entropy,
+        # }
+        #
 
 
 if __name__ == "__main__":
