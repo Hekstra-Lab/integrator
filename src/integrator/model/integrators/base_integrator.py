@@ -198,7 +198,7 @@ class BaseIntegrator(pl.LightningModule, ABC):
         outputs = self(counts, shoebox, masks, reference)
 
         # Calculate loss
-        (loss, neg_ll, kl, kl_bg, kl_i, kl_p) = self.loss(
+        loss_dict = self.loss(
             rate=outputs["rates"],
             counts=outputs["counts"],
             q_p=outputs["qp"],
@@ -214,13 +214,11 @@ class BaseIntegrator(pl.LightningModule, ABC):
         ) * self.renyi_scale
         self.log("renyi_loss", renyi_loss)
 
-        # Log metrics
-        self.log("Train: -ELBO", loss.mean())
-        self.log("Train: NLL", neg_ll.mean())
-        self.log("Train: KL", kl.mean())
-        self.log("Train: KL Bg", kl_bg.mean())
-        self.log("Train: KL I", kl_i.mean())
-        self.log("Train: KL Prf", kl_p.mean())
+        for k, v in loss_dict.items():
+            key = f"train_{k}"
+            value = v.mean()
+            self.log(key, value)
+
         self.log("Mean(qi.mean)", outputs["qi"].mean.mean())
         self.log("Min(qi.mean)", outputs["qi"].mean.min())
         self.log("Max(qi.mean)", outputs["qi"].mean.max())
@@ -229,10 +227,11 @@ class BaseIntegrator(pl.LightningModule, ABC):
         self.log("Max(qbg.mean)", outputs["qbg"].mean.max())
         self.log("Mean(qbg.variance)", outputs["qbg"].variance.mean())
 
-        self.train_loss.append(loss.mean())
-        self.train_kl.append(kl.mean())
-        self.train_nll.append(neg_ll.mean())
-        return loss.mean() + renyi_loss.sum()
+        self.train_loss.append(loss_dict["total_loss"].mean())
+        self.train_kl.append(loss_dict["kl_mean"].mean())
+        self.train_nll.append(loss_dict["neg_ll_mean"].mean())
+
+        return loss_dict["total_loss"].mean() + renyi_loss.sum()
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
@@ -261,8 +260,9 @@ class BaseIntegrator(pl.LightningModule, ABC):
         )
 
         for k, v in loss_dict.items():
+            key = f"val_{k}"
             value = v.mean()
-            self.log(k, value)
+            self.log(key, value)
 
         self.val_loss.append(loss_dict["total_loss"].mean())
         self.val_kl.append(loss_dict["kl_mean"].mean())
