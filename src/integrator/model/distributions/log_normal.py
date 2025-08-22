@@ -1,31 +1,27 @@
 import torch
+from torch import Tensor
 from torch.distributions import LogNormal
 
-from integrator.layers import Constraint, Linear
-from integrator.model.distributions import BaseDistribution
+from integrator.layers import Linear
+from integrator.model.distributions import BaseDistribution, MetaData
 
 
-class LogNormalDistribution(BaseDistribution):
+class LogNormalDistribution(BaseDistribution[LogNormal]):
     def __init__(
         self,
-        dmodel,
-        constraint=Constraint(),
+        dmodel: int,
         out_features: int = 2,
         use_metarep: bool = False,
     ):
         """
-        Args:
-            dmodel (int):
-            constraint ():
-            out_features (int):
-            use_metarep (bool): Boolean indicating if metadata is being used
-        """
-        super().__init__(
-            q=LogNormal,
-        )
-        self.use_metarep = use_metarep
 
-        self.constraint = constraint
+        Args:
+            dmodel:
+            out_features:
+            use_metarep:
+        """
+        super().__init__()
+        self.use_metarep = use_metarep
 
         if self.use_metarep:
             # separate layers for params1 and params2
@@ -43,7 +39,7 @@ class LogNormalDistribution(BaseDistribution):
                 out_features=out_features,
             )
 
-    def distribution(self, loc, scale):
+    def distribution(self, loc, scale) -> LogNormal:
         """
         Args:
             loc ():
@@ -53,28 +49,29 @@ class LogNormalDistribution(BaseDistribution):
 
         """
         scale = self.constraint(scale)
-        return self.q(loc=loc.flatten(), scale=scale.flatten())
+        return LogNormal(loc=loc.flatten(), scale=scale.flatten())
 
-    def forward(self, representation, metarep=None):
+    def forward(self, x: Tensor, *, meta_data: MetaData | None = None) -> LogNormal:
         """
 
         Args:
-            representation ():
-            metarep ():
+            x: Tensor representation of the shoebox
+            meta_data: Additional Tensors besides the shoebox representation
 
         Returns:
 
         """
-        if self.use_metarep:
-            assert metarep is not None, "metarep required when use_metarep=True"
-            params1 = self.fc1(representation)
-            combined_rep = torch.cat([representation, metarep], dim=1)
+        if meta_data is not None and meta_data.metadata is not None:
+            x_metadata = meta_data.metadata
+            params1 = self.fc1(x)
+            combined_rep = torch.cat([x, x_metadata], dim=1)
             params2 = self.fc2(combined_rep)
             lognormal = self.distribution(params1, params2)
 
         else:
-            params = self.fc(representation)
+            params = self.fc(x)
             lognormal = self.distribution(params[..., 0], params[..., 1])
+
         return lognormal
 
 
@@ -84,10 +81,7 @@ if __name__ == "__main__":
     metarep = torch.randn(10, 64)
 
     # initialize a LogNormalDistribution object
-    model = LogNormalDistribution(dmodel=64, use_metarep=True)
+    lognormal = LogNormalDistribution(dmodel=64, use_metarep=True)
 
-    # get the parameterized torch.distributions.LogNormal object
-    lognormal = model(representation, metarep)
-
-    # sample from the distribution
-    lognormal.rsample([100])
+    # Use with metadata
+    q = lognormal(representation, meta_data=MetaData(metadata=metarep))

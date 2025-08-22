@@ -104,10 +104,7 @@ class FillScaleTriL(ComposeTransform):
     def __init__(self, diag_transform=None):
         if diag_transform is None:
             diag_transform = torch.distributions.ComposeTransform(
-                (
-                    SoftplusTransform(),
-                    AffineTransform(1e-5, 1.0),
-                )
+                ([SoftplusTransform(), AffineTransform(1e-5, 1.0)],)
             )
         super().__init__([FillTriL(), DiagTransform(diag_transform=diag_transform)])
         self.diag_transform = diag_transform
@@ -151,10 +148,6 @@ class MVNDistribution(torch.nn.Module):
         with torch.no_grad():
             # Invert ELU+1: bias = value - 1 for value > 0 (inverse of elu(x) + 1)
             init_scale = torch.tensor([1.0, 0.0, 0.0, 1.0, 0.0, 1.0])
-            init_scale_raw = (
-                init_scale - 1.0
-            )  # elu(x) + 1 = s  => x = s - 1 (since s > 0)
-            # self.scale_layer.bias.copy_(init_scale_raw)
             torch.nn.init.zeros_(
                 self.scale_layer.weight
             )  # prevents representation from influencing scale at init

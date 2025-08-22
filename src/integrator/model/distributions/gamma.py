@@ -1,24 +1,21 @@
 import torch
+from torch import Tensor
 from torch.distributions import Gamma
 
-from integrator.layers import Constraint, Linear
-from integrator.model.distributions import BaseDistribution
+from integrator.layers import Linear
+from integrator.model.distributions import BaseDistribution, MetaData
 
 
-class GammaDistribution(BaseDistribution):
+class GammaDistribution(BaseDistribution[Gamma]):
     def __init__(
         self,
-        dmodel,
-        constraint=Constraint(),
-        out_features=2,
-        use_metarep=False,
+        dmodel: int,
+        out_features: int = 2,
+        use_metarep: bool = False,
     ):
-        super().__init__(q=Gamma)
+        super().__init__()
 
         self.use_metarep = use_metarep
-        self.constraint = constraint
-        self.min_value = 1e-3
-        self.max_value = 100.0
 
         if self.use_metarep:
             # separate layers for params1 and params2
@@ -37,20 +34,29 @@ class GammaDistribution(BaseDistribution):
                 out_features=out_features,
             )
 
-    def distribution(self, concentration, rate):
+    def distribution(
+        self,
+        concentration: Tensor,
+        rate: Tensor,
+    ) -> Gamma:
         concentration = self.constraint(concentration)
         rate = self.constraint(rate)
-        return self.q(concentration.flatten(), rate.flatten())
+        return Gamma(concentration.flatten(), rate.flatten())
 
-    def forward(self, rep, metarep=None):
-        if self.use_metarep:
+    def forward(
+        self,
+        x: Tensor,
+        *,
+        meta_data: MetaData | None = None,
+    ) -> Gamma:
+        if meta_data is not None and meta_data.metadata is not None:
             assert metarep is not None, "metarep required when use_metarep=True"
-            params1 = self.fc1(rep)
-            combined_rep = torch.cat([rep, metarep], dim=1)
+            params1 = self.fc1(x)
+            combined_rep = torch.cat([x, meta_data.metadata], dim=1)
             params2 = self.fc2(combined_rep)
             gamma = self.distribution(params1, params2)
         else:
-            params = self.fc(rep)
+            params = self.fc(x)
             gamma = self.distribution(params[..., 0], params[..., 1])
 
         return gamma
@@ -62,5 +68,9 @@ if __name__ == "__main__":
     gamma_dist = GammaDistribution(dmodel)
     representation = torch.randn(10, dmodel)  # Example input
     metarep = torch.randn(10, dmodel * 2)  # Example metadata representation
-    qbg = gamma_dist(representation, metarep=metarep)
-    qbg.rsample([100]).shape  # Sample from the distribution
+
+    # use without metadata
+    qbg = gamma_dist(representation)
+
+    # use with metadata
+    qbg = gamma_dist(representation, meta_data=MetaData(metarep))

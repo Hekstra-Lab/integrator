@@ -1,13 +1,15 @@
 import torch
+from torch import Tensor
+from torch.distributions.half_normal import HalfNormal
 
-from integrator.layers import Constraint, Linear
+from integrator.layers import Linear
+from integrator.model.distributions import BaseDistribution, MetaData
 
 
-class HalfNormalDistribution(torch.nn.Module):
+class HalfNormalDistribution(BaseDistribution[HalfNormal]):
     def __init__(
         self,
         dmodel,
-        constraint=Constraint(),
         out_features=1,
     ):
         super().__init__()
@@ -15,7 +17,6 @@ class HalfNormalDistribution(torch.nn.Module):
             in_features=dmodel,
             out_features=out_features,
         )
-        self.constraint = constraint
         self.min_value = 1e-3
         self.max_value = 100.0
 
@@ -23,8 +24,10 @@ class HalfNormalDistribution(torch.nn.Module):
         scale = self.constraint(params + 1e-6)
         return torch.distributions.half_normal.HalfNormal(scale.flatten())
 
-    def forward(self, representation):
-        params = self.fc(representation)
+    def forward(self, x: Tensor, *, meta_data: MetaData | None = None) -> HalfNormal:
+        assert meta_data is None  #
+
+        params = self.fc(x)
         norm = self.distribution(params)
         return norm
 

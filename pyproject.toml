@@ -7,7 +7,7 @@ name = "integrator"
 version = "0.1.0"
 description = "A package for integrating X-ray diffraction data with variational inference."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [
   { name = "Luis Aldama", email = "luis_aldama@g.harvard.edu" },
   { name = "Kevin Dalton", email = "kmdalton@slac.stanford.edu" },
@@ -66,12 +66,26 @@ include = [
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-extend-select = ["B","I","UP","F"]
+extend-select = ["B","I","ARG","UP","F"]
+extend-exclude = [
+  "build",
+  "dist",
+  "scratch",
+  ".venv",
+  "**/__pycache__",
+  ".mypy_cache",
+  ".ruff_cache",
+]
 
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
 docstring-code-format = true
+
+
+[tool.ruff.lint]
+# Only ignore variables named "_".
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
 [tool.mypy]
 python_version = "3.12"
@@ -83,9 +97,17 @@ testpaths = ["tests"]
 addopts = "-q"
 
 [dependency-groups]
+docs = [
+  "mkdocs>=1.6",
+  "mkdocs-material>=9.5",
+  "mkdocstrings[python]>=0.25",
+  "mkdocs-mermaid2-plugin>=1.1",
+]
+
 dev = [
     "ipython>=8.37.0",
     "mypy>=1.17.1",
+    "plotly>=6.3.0",
     "pytest>=8.4.1",
     "pytest-cov>=6.2.1",
     "ruff>=0.12.9",

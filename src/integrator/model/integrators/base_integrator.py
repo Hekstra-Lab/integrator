@@ -4,6 +4,7 @@ from typing import Any
 import polars as plr
 import pytorch_lightning as pl
 import torch
+from torch import Tensor
 
 
 class BaseIntegrator(pl.LightningModule, ABC):
@@ -82,16 +83,17 @@ class BaseIntegrator(pl.LightningModule, ABC):
             zp = qp.mean.unsqueeze(1)
 
             vi = zbg + 1e-6
+            intensity = torch.tensor([0.0])
 
             # kabsch sum
-            for i in range(self.max_iterations):
+            for _ in range(self.max_iterations):
                 num = (counts.unsqueeze(1) - zbg) * zp * masks.unsqueeze(1) / vi
                 denom = zp.pow(2) / vi
-                I = num.sum(-1) / denom.sum(-1)  # [batch_size, mc_samples]
-                vi = (I.unsqueeze(-1) * zp) + zbg
+                intensity = num.sum(-1) / denom.sum(-1)  # [batch_size, mc_samples]
+                vi = (intensity.unsqueeze(-1) * zp) + zbg
                 vi = vi.mean(-1, keepdim=True)
-            kabsch_sum_mean = I.mean(-1)
-            kabsch_sum_var = I.var(-1)
+            kabsch_sum_mean = intensity.mean(-1)
+            kabsch_sum_var = intensity.var(-1)
 
             # profile masking
             zp = zp * masks.unsqueeze(1)  # profiles
@@ -121,9 +123,16 @@ class BaseIntegrator(pl.LightningModule, ABC):
             return intensities
 
     @abstractmethod
-    def forward(self, *args, **kwargs):
+    def forward(
+        self,
+        counts: Tensor,
+        shoebox: Tensor,
+        masks: Tensor,
+        reference: Tensor | None = None,
+    ) -> dict:
         "Forward method to be implemented by the subclass integrator"
-        pass
+        out = dict()
+        return out
 
     def on_train_epoch_end(self):
         # calculate epoch averages
@@ -177,7 +186,7 @@ class BaseIntegrator(pl.LightningModule, ABC):
         self.avg_kl = []
         self.val_nll = []
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch, _batch_idx):
         """
         Args:
             batch ():
@@ -228,7 +237,7 @@ class BaseIntegrator(pl.LightningModule, ABC):
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
 
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch, _batch_idx):
         """
 
         Args:
@@ -273,12 +282,11 @@ class BaseIntegrator(pl.LightningModule, ABC):
 
         return outputs
 
-    def predict_step(self, batch, batch_idx):
+    def predict_step(self, batch, _batch_idx):
         """
-
         Args:
             batch ():
-            batch_idx ():
+            _batch_idx ():
 
         Returns:
 

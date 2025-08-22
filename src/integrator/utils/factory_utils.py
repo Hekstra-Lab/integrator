@@ -161,7 +161,10 @@ def clean_from_memory(trainer, pred_writer, pred_integrator, checkpoint_callback
 
 def predict_from_checkpoints(config, trainer, pred_integrator, data, version_dir, path):
     for ckpt in glob.glob(path):
-        epoch = re.search(r"epoch=(\d+)", ckpt).group(0)
+        match = re.search(r"epoch=(\d+)", ckpt)
+        if match is None:
+            continue
+        epoch = match.group(1)
         epoch = epoch.replace("=", "_")
         ckpt_dir = version_dir + "/predictions/" + epoch
         Path(ckpt_dir).mkdir(parents=True, exist_ok=True)

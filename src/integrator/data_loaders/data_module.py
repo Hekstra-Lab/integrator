@@ -77,22 +77,14 @@ class ShoeboxDataModule2D(BaseDataModule):
         self.anscombe = False
 
     def setup(self, stage=None):
-        counts = torch.load(
-            os.path.join(self.data_dir, self.shoebox_file_names["counts"])
-        )
+        counts = torch.load(os.path.join(self.data_dir, self.shoebox_file_names["counts"]))
         #        metadata = torch.load(
         #            os.path.join(self.data_dir, self.shoebox_file_names["metadata"])
         #        ).type(torch.float32)
         #
-        masks = torch.load(
-            os.path.join(self.data_dir, self.shoebox_file_names["masks"])
-        )
-        stats = torch.load(
-            os.path.join(self.data_dir, self.shoebox_file_names["stats"])
-        )
-        reference = torch.load(
-            os.path.join(self.data_dir, self.shoebox_file_names["reference"])
-        )
+        masks = torch.load(os.path.join(self.data_dir, self.shoebox_file_names["masks"]))
+        stats = torch.load(os.path.join(self.data_dir, self.shoebox_file_names["stats"]))
+        reference = torch.load(os.path.join(self.data_dir, self.shoebox_file_names["reference"]))
 
         all_dead = masks.sum(-1) < 10
 
@@ -262,22 +254,14 @@ class ShoeboxDataModule(BaseDataModule):
         self.anscombe = False
 
     def setup(self, stage=None):
-        counts = torch.load(
-            os.path.join(self.data_dir, self.shoebox_file_names["counts"])
-        )
+        counts = torch.load(os.path.join(self.data_dir, self.shoebox_file_names["counts"]))
         #        metadata = torch.load(
         #            os.path.join(self.data_dir, self.shoebox_file_names["metadata"])
         #        ).type(torch.float32)
         #
-        masks = torch.load(
-            os.path.join(self.data_dir, self.shoebox_file_names["masks"])
-        )
-        stats = torch.load(
-            os.path.join(self.data_dir, self.shoebox_file_names["stats"])
-        )
-        reference = torch.load(
-            os.path.join(self.data_dir, self.shoebox_file_names["reference"])
-        )
+        masks = torch.load(os.path.join(self.data_dir, self.shoebox_file_names["masks"]))
+        stats = torch.load(os.path.join(self.data_dir, self.shoebox_file_names["stats"]))
+        reference = torch.load(os.path.join(self.data_dir, self.shoebox_file_names["reference"]))
 
         all_dead = masks.sum(-1) < 10
 
@@ -307,9 +291,7 @@ class ShoeboxDataModule(BaseDataModule):
         # Standardize counts after filtering
         if self.standardized_counts is not None:
             standardized_counts = torch.load(
-                os.path.join(
-                    self.data_dir, self.shoebox_file_names["standardized_counts"]
-                )
+                os.path.join(self.data_dir, self.shoebox_file_names["standardized_counts"])
             )
             if self.cutoff is not None:
                 standardized_counts = standardized_counts[selection]
@@ -322,21 +304,13 @@ class ShoeboxDataModule(BaseDataModule):
                     standardized_counts = ((ans - stats[1]) / stats[1].sqrt()) * masks
 
             else:
-                standardized_counts = (counts[..., -1] * masks) - stats[0] / stats[
-                    1
-                ].sqrt()
+                standardized_counts = (counts[..., -1] * masks) - stats[0] / stats[1].sqrt()
                 # Normalize first three channels of counts
                 # Only attempt this if counts has enough dimensions
                 if counts.dim() >= 3 and counts.size(-1) >= 3:
-                    counts[:, :, 0] = (
-                        2 * (counts[:, :, 0] / (counts[:, :, 0].max() + 1e-8)) - 1
-                    )
-                    counts[:, :, 1] = (
-                        2 * (counts[:, :, 1] / (counts[:, :, 1].max() + 1e-8)) - 1
-                    )
-                    counts[:, :, 2] = (
-                        2 * (counts[:, :, 2] / (counts[:, :, 2].max() + 1e-8)) - 1
-                    )
+                    counts[:, :, 0] = 2 * (counts[:, :, 0] / (counts[:, :, 0].max() + 1e-8)) - 1
+                    counts[:, :, 1] = 2 * (counts[:, :, 1] / (counts[:, :, 1].max() + 1e-8)) - 1
+                    counts[:, :, 2] = 2 * (counts[:, :, 2] / (counts[:, :, 2].max() + 1e-8)) - 1
 
         # Create the full dataset based on whether metadata is present
         #        if self.use_metadata is not None:
@@ -487,16 +461,10 @@ class ShoeboxDataModule2(BaseDataModule):
         self.get_dxyz = get_dxyz
 
     def setup(self, stage=None):
-        counts = torch.load(
-            os.path.join(self.data_dir, self.shoebox_file_names["counts"])
-        )
+        counts = torch.load(os.path.join(self.data_dir, self.shoebox_file_names["counts"]))
 
-        masks = torch.load(
-            os.path.join(self.data_dir, self.shoebox_file_names["masks"])
-        )
-        reference = torch.load(
-            os.path.join(self.data_dir, self.shoebox_file_names["reference"])
-        )
+        masks = torch.load(os.path.join(self.data_dir, self.shoebox_file_names["masks"]))
+        reference = torch.load(os.path.join(self.data_dir, self.shoebox_file_names["reference"]))
 
         self.full_dataset = TensorDataset(counts, masks, reference)
 

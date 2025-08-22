@@ -1,8 +1,6 @@
-import torch
-import os
-import pytorch_lightning as pl
-from torch.utils.data import DataLoader, random_split, Subset, TensorDataset
 from abc import ABC, abstractmethod
+
+import pytorch_lightning as pl
 
 
 class BaseDataModule(pl.LightningDataModule, ABC):

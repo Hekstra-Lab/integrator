@@ -12,12 +12,10 @@ class LRMVNIntegrator(BaseIntegrator):
         metadata_encoder,
         loss,
         qbg,
-        qp,
         qi,
         mc_samples=100,
         learning_rate=1e-3,
         max_iterations=4,
-        profile_threshold=0.001,
         dmodel=64,
         use_metarep=True,
         use_metaonly=False,
@@ -109,9 +107,7 @@ class LRMVNIntegrator(BaseIntegrator):
 
             # profile masking
             zp = zp * masks.unsqueeze(1)  # profiles
-            thresholds = torch.quantile(
-                zp, 0.99, dim=-1, keepdim=True
-            )  # threshold values
+            thresholds = torch.quantile(zp, 0.99, dim=-1, keepdim=True)  # threshold values
 
             profile_mask = zp > thresholds
 
@@ -174,21 +170,15 @@ class LRMVNIntegrator(BaseIntegrator):
 
         mean_samples = qp_mean.rsample([self.mc_samples]).squeeze(-1).permute(1, 0, 2)
         factor_samples = qp_factor.rsample([self.mc_samples]).permute(1, 0, 2, 3)
-        diag_samples = (
-            qp_diag.rsample([self.mc_samples]).squeeze(-1).permute(1, 0, 2) + 1e-6
+        diag_samples = qp_diag.rsample([self.mc_samples]).squeeze(-1).permute(1, 0, 2) + 1e-6
+
+        prof_dist = torch.distributions.lowrank_multivariate_normal.LowRankMultivariateNormal(
+            loc=mean_samples.view(batch_size, self.mc_samples, 1, 3),
+            cov_factor=factor_samples.view(batch_size, self.mc_samples, 1, 3, 1),
+            cov_diag=diag_samples.view(batch_size, self.mc_samples, 1, 3),
         )
 
-        prof_dist = (
-            torch.distributions.lowrank_multivariate_normal.LowRankMultivariateNormal(
-                loc=mean_samples.view(batch_size, self.mc_samples, 1, 3),
-                cov_factor=factor_samples.view(batch_size, self.mc_samples, 1, 3, 1),
-                cov_diag=diag_samples.view(batch_size, self.mc_samples, 1, 3),
-            )
-        )
-
-        log_probs = prof_dist.log_prob(
-            self.pixel_positions.expand(batch_size, 1, 1323, 3)
-        )
+        log_probs = prof_dist.log_prob(self.pixel_positions.expand(batch_size, 1, 1323, 3))
 
         log_probs_stable = log_probs - log_probs.max(dim=-1, keepdim=True)[0]
 

@@ -271,7 +271,7 @@ class IntensityEncoder2D(nn.Module):
 
         self.fc = nn.Linear(conv3_out_channels, out_dim)
 
-    def forward(self, x, mask=None):
+    def forward(self, x):
         x = F.relu(self.norm1(self.conv1(x)))
         x = self.pool(x)
         x = F.relu(self.norm2(self.conv2(x)))
