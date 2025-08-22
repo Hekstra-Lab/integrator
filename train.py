@@ -15,7 +15,6 @@ from integrator.callbacks import (
     PredWriter,
     assign_labels,
 )
-from integrator.model import *
 from integrator.utils import (
     clean_from_memory,
     create_data_loader,
@@ -168,7 +167,6 @@ if __name__ == "__main__":
     # Fit the model
     trainer.fit(
         integrator,
-        datamodule=data,
         train_dataloaders=data.train_dataloader(),
         val_dataloaders=data.val_dataloader(),
     )
