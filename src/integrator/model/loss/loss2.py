@@ -163,34 +163,36 @@ class Loss2(BaseLoss):
     ) -> Distribution:
         """Create a distribution on the specified device"""
 
-        param_map = {
-            "gamma": {
+        params = {}
+        if name == "gamma":
+            params = {
                 "concentration": getattr(self, f"{params_prefix}concentration").to(device),
                 "rate": getattr(self, f"{params_prefix}rate").to(device),
-            },
-            "log_normal": {
+            }
+        if name == "log_normal":
+            params = {
                 "loc": getattr(self, f"{params_prefix}loc").to(device),
                 "scale": getattr(self, f"{params_prefix}scale").to(device),
-            },
-            "half_normal": {"scale": getattr(self, f"{params_prefix}scale").to(device)},
-            "half_cauchy": {"scale": getattr(self, f"{params_prefix}scale").to(device)},
-            "exponential": {"rate": getattr(self, f"{params_prefix}rate").to(device)},
-            "dirichlet": {"concentration": self.dirichlet_concentration.to(device)},
-        }
+            }
+        if name == "half_normal":
+            params = {"scale": getattr(self, f"{params_prefix}scale").to(device)}
+        if name == "half_cauchy":
+            params = {"scale": getattr(self, f"{params_prefix}scale").to(device)}
+        if name == "exponential":
+            params = {"rate": getattr(self, f"{params_prefix}rate").to(device)}
+        if name == "dirichlet":
+            params = {"concentration": self.dirichlet_concentration.to(device)}
 
         distribution_map = {
-            "gamma": Gamma(
-                concentration=param_map["gamma"]["concentration"], rate=param_map["gamma"]["rate"]
-            ),
-            "log_normal": LogNormal(
-                loc=param_map["log_normal"]["loc"], scale=param_map["log_normal"]["scale"]
-            ),
-            "exponential": Exponential(rate=param_map["rate"]),
-            "dirichlet": Dirichlet(concentration=param_map["dirichlet"]["concentration"]),
-            "half_normal": HalfNormal(scale=param_map["half_normal"]["scale"]),
-            "half_cauchy": HalfCauchy(scale=param_map["half_cauchy"]["scale"]),
+            "gamma": Gamma,
+            "log_normal": LogNormal,
+            "exponential": Exponential,
+            "dirichlet": Dirichlet,
+            "half_normal": HalfNormal,
+            "half_cauchy": HalfCauchy,
         }
-        return distribution_map[name]
+
+        return distribution_map[name](**params)
 
     def forward(
         self,
