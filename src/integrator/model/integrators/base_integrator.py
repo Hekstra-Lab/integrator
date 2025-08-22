@@ -11,7 +11,6 @@ from integrator.model.loss import BaseLoss
 
 
 class BaseIntegrator(pl.LightningModule, ABC):
-    @abstractmethod
     def __init__(
         self,
         qbg: BaseDistribution,
@@ -229,6 +228,7 @@ class BaseIntegrator(pl.LightningModule, ABC):
         self.log("Min(qbg.mean)", outputs["qbg"].mean.min())
         self.log("Max(qbg.mean)", outputs["qbg"].mean.max())
         self.log("Mean(qbg.variance)", outputs["qbg"].variance.mean())
+
         self.train_loss.append(loss.mean())
         self.train_kl.append(kl.mean())
         self.train_nll.append(neg_ll.mean())
@@ -265,8 +265,8 @@ class BaseIntegrator(pl.LightningModule, ABC):
             self.log(k, value)
 
         self.val_loss.append(loss_dict["total_loss"].mean())
-        self.val_kl.append(loss_dict["kl"].mean())
-        self.val_nll.append(loss_dict["neg_ll"].mean())
+        self.val_kl.append(loss_dict["kl_mean"].mean())
+        self.val_nll.append(loss_dict["neg_ll_mean"].mean())
 
         return outputs
 
