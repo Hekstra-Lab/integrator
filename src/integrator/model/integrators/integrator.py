@@ -1,70 +1,87 @@
 import torch
 from torch import Tensor, nn
 
+from integrator.model.distributions import BaseDistribution
 from integrator.model.integrators import BaseIntegrator
+from integrator.model.loss import BaseLoss
 
 
-def get_outputs(vars: dict) -> dict:
-    out = dict()
+def get_outputs(vars: dict, data_dim: str) -> dict:
+    # default network outputs
+    out = {
+        "rates": vars["rate"],
+        "counts": vars["counts"],
+        "masks": vars["masks"],
+        "qbg": vars["qbg"],
+        "qp": vars["qp"],
+        "qp_mean": vars["qp"].mean,
+        "qi": vars["qi"],
+        "intensity_mean": vars["qi"].mean,
+        "intensity_var": vars["qi"].variance,
+        "profile": vars["qp"].mean,
+        "zp": vars["zp"],
+    }
+
     if vars["reference"] is not None:
         reference = vars["reference"]
-        out = {
-            "rates": vars["zI"] * vars["zp"] + vars["zbg"],
-            "counts": vars["counts"],
-            "masks": vars["masks"],
-            "qbg": vars["qbg"],
-            "qp": vars["qp"],
-            "qp_mean": vars["qp"].mean,
-            "qi": vars["qi"],
-            "intensity_mean": vars["qi"].mean,
-            "intensity_var": vars["qi"].variance,
-            "dials_I_sum_value": reference[:, 6],
-            "dials_I_sum_var": reference[:, 7],
-            "dials_I_prf_value": reference[:, 8],
-            "dials_I_prf_var": reference[:, 9],
-            "refl_ids": reference[:, -1].int().tolist(),
-            "profile": vars["qp"].mean,
-            "zp": vars["zp"],
-            "x_c": reference[:, 0],
-            "y_c": reference[:, 1],
-            "z_c": reference[:, 2],
-            "x_c_mm": reference[:, 3],
-            "y_c_mm": reference[:, 4],
-            "z_c_mm": reference[:, 5],
-            "dials_bg_mean": reference[:, 10],
-            "dials_bg_sum_value": reference[:, 11],
-            "dials_bg_sum_var": reference[:, 12],
-            "d": reference[:, 13],
-        }
-        return out
+
+        if data_dim == "3d":
+            ref_3d = {
+                "dials_I_sum_value": reference[:, 6],
+                "dials_I_sum_var": reference[:, 7],
+                "dials_I_prf_value": reference[:, 8],
+                "dials_I_prf_var": reference[:, 9],
+                "refl_ids": reference[:, -1].int().tolist(),
+                "x_c": reference[:, 0],
+                "y_c": reference[:, 1],
+                "z_c": reference[:, 2],
+                "x_c_mm": reference[:, 3],
+                "y_c_mm": reference[:, 4],
+                "z_c_mm": reference[:, 5],
+                "dials_bg_mean": reference[:, 10],
+                "dials_bg_sum_value": reference[:, 11],
+                "dials_bg_sum_var": reference[:, 12],
+                "d": reference[:, 13],
+            }
+            for k, v in ref_3d.items():
+                out[k] = v
+
+        elif data_dim == "2d":
+            ref_2d = {
+                "dials_I_sum_value": reference[:, 3],
+                "dials_I_sum_var": reference[:, 4],
+                "dials_I_prf_value": reference[:, 3],
+                "dials_I_prf_var": reference[:, 4],
+                "refl_ids": reference[:, -1].tolist(),
+                "x_c": reference[:, 9],
+                "y_c": reference[:, 10],
+                "z_c": reference[:, 11],
+                "dials_bg_mean": reference[:, 0],
+                "dials_bg_sum_value": reference[:, 0],
+                "dials_bg_sum_var": reference[:, 1],
+            }
+
+            for k, v in ref_2d.items():
+                out[k] = v
+
     elif vars["reference"] is None:
-        out = {
-            "rates": vars["zI"] * vars["zp"] + vars["zbg"],
-            "counts": vars["counts"],
-            "masks": vars["masks"],
-            "qbg": vars["qbg"],
-            "qp": vars["qp"],
-            "qp_mean": vars["qp"].mean,
-            "qi": vars["qi"],
-            "intensity_mean": vars["qi"].mean,
-            "intensity_var": vars["qi"].variance,
-            "profile": vars["qp"].mean,
-            "zp": vars["zp"],
-        }
+        return out
+
     else:
         print("Invalid output data")
+
     return out
 
 
 class Integrator(BaseIntegrator):
     def __init__(
         self,
-        qbg,
-        qp,
-        qi,
+        qbg: BaseDistribution,
+        qp: BaseDistribution,
+        qi: BaseDistribution,
         encoder1: nn.Module,
         encoder2: nn.Module,
-        loss: nn.Module,
+        loss: BaseLoss,
         mc_samples: int = 100,
         lr: float = 1e-3,
         max_iterations: int = 4,
@@ -105,6 +122,8 @@ class Integrator(BaseIntegrator):
             max_iterations=max_iterations,
             renyi_scale=renyi_scale,
         )
+
+        self.data_dim: str = "3d"
         # Save hyperparameters
         self.save_hyperparameters(
             ignore=[
@@ -158,50 +177,19 @@ class Integrator(BaseIntegrator):
 
         # calculate profile renyi entropy
         avg_reynyi_entropy = (-(zp.pow(2).sum(-1).log())).mean(-1)
-        out = get_outputs()
+        out = get_outputs(locals(), self.data_dim)
         return out
-
-        # return {
-        #     "rates": rate,
-        #     "counts": counts,
-        #     "masks": masks,
-        #     "qbg": qbg,
-        #     "qp": qp,
-        #     "qp_mean": qp.mean,
-        #     "qi": qi,
-        #     "intensity_mean": qi.mean,
-        #     "intensity_var": qi.variance,
-        #     "dials_I_sum_value": reference[:, 6],
-        #     "dials_I_sum_var": reference[:, 7],
-        #     "dials_I_prf_value": reference[:, 8],
-        #     "dials_I_prf_var": reference[:, 9],
-        #     "refl_ids": reference[:, -1].int().tolist(),
-        #     "profile": qp.mean,
-        #     "zp": zp,
-        #     "x_c": reference[:, 0],
-        #     "y_c": reference[:, 1],
-        #     "z_c": reference[:, 2],
-        #     "x_c_mm": reference[:, 3],
-        #     "y_c_mm": reference[:, 4],
-        #     "z_c_mm": reference[:, 5],
-        #     "dials_bg_mean": reference[:, 10],
-        #     "dials_bg_sum_value": reference[:, 11],
-        #     "dials_bg_sum_var": reference[:, 12],
-        #     "d": reference[:, 13],
-        #     "avg_reynyi_entropy": avg_reynyi_entropy,
-        # }
-        #
 
 
 class Model2(BaseIntegrator):
     def __init__(
         self,
-        qbg,
-        qp,
-        qi,
+        qbg: BaseDistribution,
+        qp: BaseDistribution,
+        qi: BaseDistribution,
         encoder: nn.Module,
         intensity_encoder: nn.Module,
-        loss: nn.Module,
+        loss: BaseLoss,
         mc_samples: int = 100,
         lr: float = 1e-3,
         max_iterations: int = 4,
@@ -252,11 +240,12 @@ class Model2(BaseIntegrator):
             ]
         )
 
+        self.data_dim: str = "3d"
+
         # Model components
         self.encoder1 = intensity_encoder
         self.encoder2 = encoder
 
-    # def forward(self, counts, shoebox, metadata, masks, reference):
     def forward(
         self,
         counts: Tensor,
@@ -295,38 +284,9 @@ class Model2(BaseIntegrator):
         zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
         zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
-        out = get_outputs(locals())
+        out = get_outputs(vars=locals(), data_dim=self.data_dim)
 
         return out
-        # return {
-        #     "rates": zI * zp + zbg,
-        #     "counts": counts,
-        #     "masks": masks,
-        #     "qbg": qbg,
-        #     "qp": qp,
-        #     "qp_mean": qp.mean,
-        #     "qi": qi,
-        #     "intensity_mean": qi.mean,
-        #     "intensity_var": qi.variance,
-        #     "dials_I_sum_value": reference[:, 6],
-        #     "dials_I_sum_var": reference[:, 7],
-        #     "dials_I_prf_value": reference[:, 8],
-        #     "dials_I_prf_var": reference[:, 9],
-        #     "refl_ids": reference[:, -1].int().tolist(),
-        #     "profile": qp.mean,
-        #     "zp": zp,
-        #     "x_c": reference[:, 0],
-        #     "y_c": reference[:, 1],
-        #     "z_c": reference[:, 2],
-        #     "x_c_mm": reference[:, 3],
-        #     "y_c_mm": reference[:, 4],
-        #     "z_c_mm": reference[:, 5],
-        #     "dials_bg_mean": reference[:, 10],
-        #     "dials_bg_sum_value": reference[:, 11],
-        #     "dials_bg_sum_var": reference[:, 12],
-        #     "d": reference[:, 13],
-        # }
-        #
 
 
 class Integrator2D(BaseIntegrator):
@@ -348,6 +308,7 @@ class Integrator2D(BaseIntegrator):
         weight_decay=1e-8,
     ):
         """
+        Integrator for 2D data
         Args:
             qbg ():
             qp ():
@@ -379,6 +340,7 @@ class Integrator2D(BaseIntegrator):
             renyi_scale=renyi_scale,
         )
         # Save hyperparameters
+        self.data_dim: str = "2d"
         self.save_hyperparameters(
             ignore=[
                 "image_encoder",
@@ -413,9 +375,9 @@ class Integrator2D(BaseIntegrator):
         # Unpack batch
         counts = torch.clamp(counts, min=0) * masks
 
-        profile_rep = self.encoder1(shoebox.reshape(shoebox.shape[0], 1, self.h, self.w), masks)
+        profile_rep = self.encoder1(shoebox.reshape(shoebox.shape[0], 1, self.h, self.w))
 
-        intensity_rep = self.encoder2(shoebox.reshape(shoebox.shape[0], 1, self.h, self.w), masks)
+        intensity_rep = self.encoder2(shoebox.reshape(shoebox.shape[0], 1, self.h, self.w))
         qbg = self.qbg(intensity_rep)
         qp = self.qp(profile_rep)
         qi = self.qi(intensity_rep)
@@ -424,40 +386,17 @@ class Integrator2D(BaseIntegrator):
         zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)  # [B,S,Pix]
         zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)  # [B,S,1]
         rate = zI * zp + zbg
-
-        return {
-            "rates": rate,
-            "counts": counts,
-            "masks": masks,
-            "qbg": qbg,
-            "qp": qp,
-            "qp_mean": qp.mean,
-            "qi": qi,
-            "intensity_mean": qi.mean,
-            "intensity_var": qi.variance,
-            "dials_I_sum_value": reference[:, 3],
-            "dials_I_sum_var": reference[:, 4],
-            "dials_I_prf_value": reference[:, 3],
-            "dials_I_prf_var": reference[:, 4],
-            "refl_ids": reference[:, -1].tolist(),
-            "profile": qp.mean,
-            "zp": zp,
-            "x_c": reference[:, 9],
-            "y_c": reference[:, 10],
-            "z_c": reference[:, 11],
-            # "x_c_mm": reference[:, 3],
-            # "y_c_mm": reference[:, 4],
-            # "z_c_mm": reference[:, 5],
-            "dials_bg_mean": reference[:, 0],
-            "dials_bg_sum_value": reference[:, 0],
-            "dials_bg_sum_var": reference[:, 1],
-            # "d": reference[:, 13]
-        }
+        out = get_outputs(
+            vars=locals(),
+            data_dim=self.data_dim,
+        )
+        return out
 
 
 # Including metadata
 class Model3(BaseIntegrator):
     """
+    Integrator for 3D shoeboxes
     Attributes:
         encoder1:
         encoder2:
@@ -514,6 +453,7 @@ class Model3(BaseIntegrator):
             renyi_scale=renyi_scale,
         )
         # Save hyperparameters
+        self.data_dim: str = "3d"
         self.save_hyperparameters(
             ignore=[
                 "image_encoder",
@@ -539,9 +479,12 @@ class Model3(BaseIntegrator):
             masks = masks
 
         counts = torch.clamp(counts, min=0) * masks
-        if reference is None:
-            print("")
-        metadata = reference[:, [0, 1, 2, 13]]
+
+        metadata = torch.tensor([0.0])
+        if reference is not None:
+            metadata = reference[:, [0, 1, 2, 13]]
+        else:
+            print("You must use a reference.pt with Model3!")
 
         profile_rep = self.encoder1(
             shoebox.reshape(shoebox.shape[0], 1, self.d, self.h, self.w), masks
@@ -565,45 +508,15 @@ class Model3(BaseIntegrator):
         # calculate profile renyi entropy
         avg_reynyi_entropy = (-(zp.pow(2).sum(-1).log())).mean(-1)
 
-        out = get_outputs(locals())
+        out = get_outputs(vars=locals(), data_dim=self.data_dim)
 
         return out
-        # return {
-        #     "rates": rate,
-        #     "counts": counts,
-        #     "masks": masks,
-        #     "qbg": qbg,
-        #     "qp": qp,
-        #     "qp_mean": qp.mean,
-        #     "qi": qi,
-        #     "intensity_mean": qi.mean,
-        #     "intensity_var": qi.variance,
-        #     "dials_I_sum_value": reference[:, 6],
-        #     "dials_I_sum_var": reference[:, 7],
-        #     "dials_I_prf_value": reference[:, 8],
-        #     "dials_I_prf_var": reference[:, 9],
-        #     "refl_ids": reference[:, -1].int().tolist(),
-        #     "profile": qp.mean,
-        #     "zp": zp,
-        #     "x_c": reference[:, 0],
-        #     "y_c": reference[:, 1],
-        #     "z_c": reference[:, 2],
-        #     "x_c_mm": reference[:, 3],
-        #     "y_c_mm": reference[:, 4],
-        #     "z_c_mm": reference[:, 5],
-        #     "dials_bg_mean": reference[:, 10],
-        #     "dials_bg_sum_value": reference[:, 11],
-        #     "dials_bg_sum_var": reference[:, 12],
-        #     "d": reference[:, 13],
-        #     "avg_reynyi_entropy": avg_reynyi_entropy,
-        # }
-        #
 
 
 if __name__ == "__main__":
     import torch
 
-    from integrator.utils import create_integrator, load_config
+    from integrator.utils import create_data_loader, create_integrator, load_config
     from utils import CONFIGS
 
     # load 3d model
@@ -618,4 +531,12 @@ if __name__ == "__main__":
 
     integrator(counts, shoebox, masks, reference)
 
-# -
+    # ld data
+    config = load_config(CONFIGS["ld"])
+    integrator = create_integrator(config)
+
+    data_loader = create_data_loader(config)
+
+    counts, shoebox, masks, reference = next(iter(data_loader.train_dataloader()))
+
+    out = integrator(counts, shoebox, masks, reference)

@@ -6,15 +6,18 @@ import pytorch_lightning as pl
 import torch
 from torch import Tensor
 
+from integrator.model.distributions import BaseDistribution
+from integrator.model.loss import BaseLoss
+
 
 class BaseIntegrator(pl.LightningModule, ABC):
     @abstractmethod
     def __init__(
         self,
-        qbg: Any,
-        qp: Any,
-        qi: Any,
-        loss: Any,
+        qbg: BaseDistribution,
+        qp: BaseDistribution,
+        qi: BaseDistribution,
+        loss: BaseLoss,
         d: int = 3,
         h: int = 21,
         w: int = 21,
@@ -24,7 +27,7 @@ class BaseIntegrator(pl.LightningModule, ABC):
         mc_samples: int = 100,
         max_iterations: int = 4,
         renyi_scale: float = 0.00,
-        predict_keys=[
+        predict_keys: tuple[str, ...] = (
             "intensity_mean",
             "intensity_var",
             "refl_ids",
@@ -38,7 +41,7 @@ class BaseIntegrator(pl.LightningModule, ABC):
             "x_c",
             "y_c",
             "z_c",
-        ],
+        ),
     ):
         super().__init__()
         self.qbg = qbg
@@ -129,10 +132,7 @@ class BaseIntegrator(pl.LightningModule, ABC):
         shoebox: Tensor,
         masks: Tensor,
         reference: Tensor | None = None,
-    ) -> dict:
-        "Forward method to be implemented by the subclass integrator"
-        out = dict()
-        return out
+    ) -> dict[str, Any]: ...
 
     def on_train_epoch_end(self):
         # calculate epoch averages
@@ -251,14 +251,7 @@ class BaseIntegrator(pl.LightningModule, ABC):
         counts, shoebox, masks, reference = batch
         outputs = self(counts, shoebox, masks, reference)
 
-        (
-            loss,
-            neg_ll,
-            kl,
-            kl_bg,
-            kl_i,
-            kl_p,
-        ) = self.loss(
+        loss_dict = self.loss(
             rate=outputs["rates"],
             counts=outputs["counts"],
             q_p=outputs["qp"],
@@ -267,18 +260,13 @@ class BaseIntegrator(pl.LightningModule, ABC):
             masks=outputs["masks"],
         )
 
-        # Log metrics
-        self.log("Val: -ELBO", loss.mean())
-        self.log("Val: NLL", neg_ll.mean())
-        self.log("Val: KL", kl.mean())
-        self.log("Val: KL bg", kl_bg.mean())
-        self.log("Val: KL I", kl_i.mean())
-        self.log("Val: KL prf", kl_p.mean())
-        self.log("val_loss", neg_ll.mean())
+        for k, v in loss_dict.items():
+            value = v.mean()
+            self.log(k, value)
 
-        self.val_loss.append(loss.mean())
-        self.val_kl.append(kl.mean())
-        self.val_nll.append(neg_ll.mean())
+        self.val_loss.append(loss_dict["total_loss"].mean())
+        self.val_kl.append(loss_dict["kl"].mean())
+        self.val_nll.append(loss_dict["neg_ll"].mean())
 
         return outputs
 
@@ -293,6 +281,7 @@ class BaseIntegrator(pl.LightningModule, ABC):
         """
         counts, shoebox, masks, reference = batch
         outputs = self(counts, shoebox, masks, reference)
+
         return {k: v for k, v in outputs.items() if k in self.predict_keys}
 
 

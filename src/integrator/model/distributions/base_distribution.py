@@ -13,7 +13,6 @@ class MetaData:
     metadata: Tensor | None = None
 
 
-# 2) Generic base for “distribution heads” that return a Distribution of type T.
 class BaseDistribution[T: Distribution](nn.Module):
     """Neural head that returns a Distribution of type T."""
 
@@ -43,6 +42,5 @@ class BaseDistribution[T: Distribution](nn.Module):
     def forward(self, x: Tensor, *, meta_data: MetaData | None = None) -> T:  # subclasses implement
         raise NotImplementedError
 
-    # Refine __call__ typing while preserving nn.Module hooks/autocast semantics.
     def __call__(self, x: Tensor, *, meta_data: MetaData | None = None) -> T:
         return cast(T, super().__call__(x, meta_data=meta_data))

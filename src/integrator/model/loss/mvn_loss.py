@@ -41,9 +41,7 @@ class MVNLoss(torch.nn.Module):
     def _register_distribution_params(self, name, params, prefix):
         """Register distribution parameters as buffers with appropriate prefixes"""
         if name == "gamma":
-            self.register_buffer(
-                f"{prefix}concentration", torch.tensor(params["concentration"])
-            )
+            self.register_buffer(f"{prefix}concentration", torch.tensor(params["concentration"]))
             self.register_buffer(f"{prefix}rate", torch.tensor(params["rate"]))
         elif name == "log_normal":
             self.register_buffer(f"{prefix}loc", torch.tensor(params["loc"]))
@@ -57,9 +55,7 @@ class MVNLoss(torch.nn.Module):
         if name == "gamma":
             concentration = getattr(self, f"{params_prefix}concentration").to(device)
             rate = getattr(self, f"{params_prefix}rate").to(device)
-            return torch.distributions.gamma.Gamma(
-                concentration=concentration, rate=rate
-            )
+            return torch.distributions.gamma.Gamma(concentration=concentration, rate=rate)
         elif name == "log_normal":
             loc = getattr(self, f"{params_prefix}loc").to(device)
             scale = getattr(self, f"{params_prefix}scale").to(device)
@@ -95,12 +91,8 @@ class MVNLoss(torch.nn.Module):
         profile_reshaped = profile.view(batch_size, 3, 21, 21)
 
         # Calculate gradient of profile
-        diff_y = torch.abs(
-            profile_reshaped[:, :, 1:, :] - profile_reshaped[:, :, :-1, :]
-        )
-        diff_x = torch.abs(
-            profile_reshaped[:, :, :, 1:] - profile_reshaped[:, :, :, :-1]
-        )
+        diff_y = torch.abs(profile_reshaped[:, :, 1:, :] - profile_reshaped[:, :, :-1, :])
+        diff_x = torch.abs(profile_reshaped[:, :, :, 1:] - profile_reshaped[:, :, :, :-1])
 
         # Penalize large gradients, encouraging smoothness
         smoothness_loss = diff_y.sum(dim=(1, 2, 3)) + diff_x.sum(dim=(1, 2, 3))
@@ -116,10 +108,9 @@ class MVNLoss(torch.nn.Module):
             log_p = p_dist.log_prob(samples)
             return (log_q - log_p).mean(dim=0)
 
-    def forward(self, rate, counts, profile, q_i, q_bg, masks):
+    def forward(self, rate, counts, profile, q_bg, masks):
         device = rate.device
         batch_size = rate.shape[0]
-        p_I = None
 
         # Ensure other components are on the correct device
         counts = counts.to(device)
@@ -155,8 +146,7 @@ class MVNLoss(torch.nn.Module):
 
         ll_mean = (
             (
-                torch.distributions.Poisson(rate).log_prob(counts.unsqueeze(1))
-                * masks.unsqueeze(1)
+                torch.distributions.Poisson(rate).log_prob(counts.unsqueeze(1)) * masks.unsqueeze(1)
             ).mean(1)
         ).sum(1) / masks.sum(1)
         # Calculate negative log likelihood
@@ -174,9 +164,7 @@ class MVNLoss(torch.nn.Module):
             kl_bg.mean(),
             # kl_i.mean() if p_I is not None else torch.tensor(0.0, device=device),
             torch.tensor(0.0, device=device),
-            profile_reg.mean()
-            if profile_reg.sum() > 0
-            else torch.tensor(0.0, device=device),
+            profile_reg.mean() if profile_reg.sum() > 0 else torch.tensor(0.0, device=device),
         )
 
 
@@ -230,9 +218,7 @@ class LRMVNLoss(torch.nn.Module):
         if name == "gamma":
             concentration = getattr(self, f"{params_prefix}concentration").to(device)
             rate = getattr(self, f"{params_prefix}rate").to(device)
-            return torch.distributions.gamma.Gamma(
-                concentration=concentration, rate=rate
-            )
+            return torch.distributions.gamma.Gamma(concentration=concentration, rate=rate)
         elif name == "log_normal":
             loc = getattr(self, f"{params_prefix}loc").to(device)
             scale = getattr(self, f"{params_prefix}scale").to(device)
@@ -245,9 +231,7 @@ class LRMVNLoss(torch.nn.Module):
     def _register_distribution_params(self, name, params, prefix):
         """Register distribution parameters as buffers with appropriate prefixes"""
         if name == "gamma":
-            self.register_buffer(
-                f"{prefix}concentration", torch.tensor(params["concentration"])
-            )
+            self.register_buffer(f"{prefix}concentration", torch.tensor(params["concentration"]))
             self.register_buffer(f"{prefix}rate", torch.tensor(params["rate"]))
         elif name == "log_normal":
             self.register_buffer(f"{prefix}loc", torch.tensor(params["loc"]))

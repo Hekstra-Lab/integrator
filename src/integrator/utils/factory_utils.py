@@ -9,6 +9,7 @@ import torch
 import yaml
 
 from integrator.callbacks import PredWriter
+from integrator.model.integrators import BaseIntegrator
 from integrator.registry import ARGUMENT_RESOLVER, REGISTRY
 
 
@@ -23,7 +24,7 @@ def create_module(module_type, module_name, **kwargs):
         ) from e
 
 
-def create_integrator(config, checkpoint=None):
+def create_integrator(config, checkpoint: None = None) -> BaseIntegrator:
     modules = dict()
     integrator_class = REGISTRY["integrator"][config["integrator"]["name"]]
 
@@ -86,14 +87,8 @@ def create_data_loader(config):
         raise ValueError(f"Unknown data loader name: {data_loader_name}")
 
 
-# TODO: Tod
-def create_trainer(
-    config,
-    data_module,
-    callbacks=None,
-    logger=None,
-):
-    trainer = pl.Trainer(
+def create_trainer(config, callbacks=None, logger=None):
+    return pl.Trainer(
         max_epochs=config["trainer"]["params"]["max_epochs"],
         accelerator=create_argument(
             "trainer", "accelerator", config["trainer"]["params"]["accelerator"]
@@ -104,14 +99,12 @@ def create_trainer(
         check_val_every_n_epoch=config["trainer"]["params"]["check_val_every_n_epoch"],
         log_every_n_steps=config["trainer"]["params"]["log_every_n_steps"],
         deterministic=config["trainer"]["params"]["deterministic"],
-        # callbacks=config["trainer"]["params"]["callbacks"],
         callbacks=callbacks,
         enable_checkpointing=config["trainer"]["params"]["enable_checkpointing"],
     )
-    trainer.datamodule = data_module
-    return trainer
 
 
+# later
 def parse_args():
     parser = argparse.ArgumentParser(description="Configuration for Integration Model")
     parser.add_argument(
@@ -207,9 +200,4 @@ def predict_from_checkpoints(config, trainer, pred_integrator, data, version_dir
 
 # assign train/val labels
 if __name__ == "__main__":
-    from integrator.utils.factory_utils import create_integrator, load_config
-    from src.utils import ROOT_DIR
-
-    config = load_config(ROOT_DIR + "/integrator/config/config2.yaml")
-
-    integrator = create_integrator(config)
+    pass

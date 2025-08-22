@@ -81,15 +81,6 @@ class MLP(nn.Module):
 
         self.model = nn.Sequential(*layers)
 
-        # Apply proper initialization
-        # self.apply(self._init_weights)
-
-    # def _init_weights(self, m):
-    # if isinstance(m, nn.Linear):
-    # nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
-    # if m.bias is not None:
-    # nn.init.zeros_(m.bias)
-
     def forward(self, x):
         # Process through the model
         x = self.model(x)

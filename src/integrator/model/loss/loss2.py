@@ -1,14 +1,26 @@
 import numpy as np
 import torch
+from torch import Tensor
+from torch.distributions import (
+    Dirichlet,
+    Distribution,
+    Exponential,
+    Gamma,
+    HalfCauchy,
+    HalfNormal,
+    LogNormal,
+)
+
+from integrator.model.loss import BaseLoss
 
 
 def create_center_focused_dirichlet_prior(
-    shape=(3, 21, 21),
-    base_alpha=0.1,  # outer region
-    center_alpha=100.0,  # high alpha at the center => center gets more mass
-    decay_factor=1,
-    peak_percentage=0.1,
-):
+    shape: tuple[int, ...] = (3, 21, 21),
+    base_alpha: float = 0.1,  # outer region
+    center_alpha: float = 100.0,  # high alpha at the center => center gets more mass
+    decay_factor: float = 1.0,
+    peak_percentage: float = 0.1,
+) -> Tensor:
     channels, height, width = shape
     alpha_3d = np.ones(shape) * base_alpha
 
@@ -39,35 +51,46 @@ def create_center_focused_dirichlet_prior(
     return alpha_vector
 
 
-class Loss2(torch.nn.Module):
+# TODO Remove mutable data structures
+class Loss2(BaseLoss):
     def __init__(
         self,
-        beta=1.0,
-        eps=1e-5,
-        pprf_name=None,
-        pprf_params=None,
-        pprf_weight=0.0001,
-        pbg_name="gamma",
-        pbg_params={"concentration": 1.0, "rate": 1.0},
-        pbg_weight=0.0001,
-        prior_base_alpha=0.1,
-        prior_center_alpha=50.0,
-        prior_decay_factor=0.4,
-        prior_peak_percentage=0.026,
-        pi_name="gamma",
-        pi_params={"concentration": 1.0, "rate": 1.0},
-        pi_weight=0.001,
-        prior_tensor=None,
-        use_robust=False,
-        shape=(3, 21, 21),
-        quantile=0.99,
-        pprf_conc_factor=40,
+        beta: float = 1.0,
+        eps: float = 1e-5,
+        pprf_name: str | None = None,
+        pprf_params: dict | None = None,
+        pprf_weight: float = 0.0001,
+        pbg_name: str = "gamma",
+        pbg_params: dict = {"concentration": 1.0, "rate": 1.0},
+        pbg_weight: float = 0.0001,
+        prior_base_alpha: float = 0.1,
+        prior_center_alpha: float = 50.0,
+        prior_decay_factor: float = 0.4,
+        prior_peak_percentage: float = 0.026,
+        pi_name: str = "gamma",
+        pi_params: dict = {"concentration": 1.0, "rate": 1.0},
+        pi_weight: float = 0.001,
+        prior_tensor: None = None,
+        use_robust: bool = False,
+        shape: tuple[int, ...] = (3, 21, 21),
+        quantile: float = 0.99,
+        pprf_conc_factor: int = 40,
+        mc_samples_kl: int = 100,
     ):
-        super().__init__()
+        super().__init__(
+            mc_samples=mc_samples_kl,
+        )
+
+        self.pbg_weight: Tensor
+        self.pprf_weight: Tensor
+        self.eps: Tensor
+
         self.register_buffer("eps", torch.tensor(eps))
         self.register_buffer("beta", torch.tensor(beta))
         self.register_buffer("pbg_weight", torch.tensor(pbg_weight))
+
         self.register_buffer("pprf_weight", torch.tensor(pprf_weight))
+
         # self.register_buffer("pi_scale", pi_scale)
         self.pi_weight = pi_weight
 
@@ -78,16 +101,16 @@ class Loss2(torch.nn.Module):
         self.pbg_params = pbg_params
         self.pi_name = pi_name
         self.pi_params = pi_params
-        if prior_tensor is not None:
+
+        if prior_tensor is not None and pprf_params is None:
             self.concentration = torch.load(prior_tensor, weights_only=False)
             self.concentration[
                 self.concentration > torch.quantile(self.concentration, quantile)
             ] *= pprf_conc_factor
             self.concentration /= self.concentration.max()
-        else:
+        elif pprf_params is not None:
             self.concentration = (
-                torch.ones(shape[0] * shape[1] * shape[2])
-                * pprf_params["concentration"]
+                torch.ones(shape[0] * shape[1] * shape[2]) * pprf_params["concentration"]
             )
 
         self._register_distribution_params(pbg_name, pbg_params, prefix="pbg_")
@@ -98,7 +121,6 @@ class Loss2(torch.nn.Module):
         # Number of elements in the profile
         self.use_robust = use_robust
 
-        # Handle profile prior (pprf) - special handling for Dirichlet
         # Create center-focused Dirichlet prior
         alpha_vector = create_center_focused_dirichlet_prior(
             shape=shape,
@@ -113,24 +135,12 @@ class Loss2(torch.nn.Module):
         # Store shape for profile reshaping
         self.prior_shape = shape
 
-    def compute_kl(self, q_dist, pdist):
-        """Compute KL divergence between distributions, with fallback sampling if needed."""
-        try:
-            return torch.distributions.kl.kl_divergence(q_dist, pdist)
-        except NotImplementedError:
-            samples = q_dist.rsample([100])
-            log_q = q_dist.log_prob(samples)
-            log_p = pdist.log_prob(samples)
-            return (log_q - log_p).mean(dim=0)
-
     def _register_distribution_params(self, name, params, prefix):
         """Register distribution parameters as buffers with appropriate prefixes"""
         if name is None or params is None:
             return
         if name == "gamma":
-            self.register_buffer(
-                f"{prefix}concentration", torch.tensor(params["concentration"])
-            )
+            self.register_buffer(f"{prefix}concentration", torch.tensor(params["concentration"]))
             self.register_buffer(f"{prefix}rate", torch.tensor(params["rate"]))
         elif name == "log_normal":
             self.register_buffer(f"{prefix}loc", torch.tensor(params["loc"]))
@@ -145,57 +155,52 @@ class Loss2(torch.nn.Module):
             self.register_buffer(f"{prefix}loc", torch.tensor(params["loc"]))
             self.register_buffer(f"{prefix}scale", torch.tensor(params["scale"]))
 
-    def get_prior(self, name, params_prefix, device, default_return=None):
+    def get_prior(
+        self,
+        name: str,
+        params_prefix: str,
+        device: torch.device,
+    ) -> Distribution:
         """Create a distribution on the specified device"""
-        if name is None:
-            return default_return
-        if name == "gamma":
-            concentration = getattr(self, f"{params_prefix}concentration").to(device)
-            rate = getattr(self, f"{params_prefix}rate").to(device)
-            return torch.distributions.gamma.Gamma(
-                concentration=concentration, rate=rate
-            )
-        elif name == "log_normal":
-            loc = getattr(self, f"{params_prefix}loc").to(device)
-            scale = getattr(self, f"{params_prefix}scale").to(device)
-            return torch.distributions.log_normal.LogNormal(loc=loc, scale=scale)
 
-        elif name == "exponential":
-            rate = getattr(self, f"{params_prefix}rate").to(device)
-            return torch.distributions.exponential.Exponential(rate=rate)
-        elif name == "half_normal":
-            scale = getattr(self, f"{params_prefix}scale").to(device)
-            return torch.distributions.half_normal.HalfNormal(scale=scale)
-        elif name == "half_cauchy":
-            scale = getattr(self, f"{params_prefix}scale").to(device)
-            return torch.distributions.half_cauchy.HalfCauchy(scale=scale)
-        elif name == "beta":
-            concentration1 = getattr(self, f"{params_prefix}concentration1").to(device)
-            concentration0 = getattr(self, f"{params_prefix}concentration0").to(device)
-            return torch.distributions.beta.Beta(
-                concentration1=concentration1, concentration0=concentration0
-            )
-        elif name == "laplace":
-            loc = getattr(self, f"{params_prefix}loc").to(device)
-            scale = getattr(self, f"{params_prefix}scale").to(device)
-            return torch.distributions.laplace.Laplace(loc=loc, scale=scale)
-        elif name == "dirichlet":
-            # For Dirichlet, use the dirichlet_concentration buffer
-            if hasattr(self, "dirichlet_concentration"):
-                return torch.distributions.dirichlet.Dirichlet(
-                    self.dirichlet_concentration.to(device)
-                )
-        return default_return
+        param_map = {
+            "gamma": {
+                "concentration": getattr(self, f"{params_prefix}concentration").to(device),
+                "rate": getattr(self, f"{params_prefix}rate").to(device),
+            },
+            "log_normal": {
+                "loc": getattr(self, f"{params_prefix}loc").to(device),
+                "scale": getattr(self, f"{params_prefix}scale").to(device),
+            },
+            "half_normal": {"scale": getattr(self, f"{params_prefix}scale").to(device)},
+            "half_cauchy": {"scale": getattr(self, f"{params_prefix}scale").to(device)},
+            "exponential": {"rate": getattr(self, f"{params_prefix}rate").to(device)},
+            "dirichlet": {"concentration": self.dirichlet_concentration.to(device)},
+        }
+
+        distribution_map = {
+            "gamma": Gamma(
+                concentration=param_map["gamma"]["concentration"], rate=param_map["gamma"]["rate"]
+            ),
+            "log_normal": LogNormal(
+                loc=param_map["log_normal"]["loc"], scale=param_map["log_normal"]["scale"]
+            ),
+            "exponential": Exponential(rate=param_map["rate"]),
+            "dirichlet": Dirichlet(concentration=param_map["dirichlet"]["concentration"]),
+            "half_normal": HalfNormal(scale=param_map["half_normal"]["scale"]),
+            "half_cauchy": HalfCauchy(scale=param_map["half_cauchy"]["scale"]),
+        }
+        return distribution_map[name]
 
     def forward(
         self,
-        rate,
-        counts,
-        q_p,
-        q_i,
-        q_bg,
-        masks,
-    ):
+        rate: Tensor,
+        counts: Tensor,
+        q_p: Distribution,
+        q_i: Distribution,
+        q_bg: Distribution,
+        masks: Tensor,
+    ) -> dict:
         # get device and batch size
         device = rate.device
         batch_size = rate.shape[0]
@@ -221,9 +226,7 @@ class Loss2(torch.nn.Module):
         kl_p = self.compute_kl(q_p, pprf)
         kl_terms += kl_p * self.pprf_weight
 
-        log_prob = torch.distributions.Poisson(rate + self.eps).log_prob(
-            counts.unsqueeze(1)
-        )
+        log_prob = torch.distributions.Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
 
         ll_mean = torch.mean(log_prob, dim=1) * masks.squeeze(-1)
 
@@ -238,14 +241,14 @@ class Loss2(torch.nn.Module):
         total_loss = batch_loss.mean()
 
         # return all components for monitoring
-        return (
-            total_loss,
-            neg_ll_batch.mean(),
-            kl_terms.mean(),
-            (kl_bg * self.pbg_weight).mean(),
-            kl_i.mean() * self.pi_weight,
-            (kl_p * self.pprf_weight).mean(),
-        )
+        return {
+            "total_loss": total_loss,
+            "neg_ll_mean": neg_ll_batch.mean(),
+            "kl_mean": kl_terms.mean(),
+            "kl_bg_mean": (kl_bg * self.pbg_weight).mean(),
+            "kl_i_mean": kl_i.mean() * self.pi_weight,
+            "kl_p": (kl_p * self.pprf_weight).mean(),
+        }
 
 
 if __name__ == "__main__":
@@ -276,9 +279,7 @@ if __name__ == "__main__":
 
     # encode batch
     shoebox_rep = sbox_encoder_2d(batch.reshape(batch.shape[0], 1, 21, 21), masks)
-    intensity_rep = intensity_encoder_2d(
-        batch.reshape(batch.shape[0], 1, 21, 21), masks
-    )
+    intensity_rep = intensity_encoder_2d(batch.reshape(batch.shape[0], 1, 21, 21), masks)
 
     # get distributinos
     qbg = qbg_(intensity_rep)
