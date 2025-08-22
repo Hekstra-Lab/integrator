@@ -1,67 +1,46 @@
-from integrator.callbacks import PredWriter, assign_labels
-import yaml
-import json
-from pytorch_lightning.callbacks import Callback
-import os
 import glob
-from integrator.utils import (
-    load_config,
-    create_integrator,
-    create_data_loader,
-    create_trainer,
-    parse_args,
-    override_config,
-    clean_from_memory,
-    predict_from_checkpoints,
-    reflection_file_writer,
-)
-from pytorch_lightning.callbacks import ModelCheckpoint
-from pathlib import Path
-import torch
-from integrator.model.encoders import ShoeboxEncoder
+import json
+import os
 import subprocess
+
+import torch
+import yaml
+from pytorch_lightning.callbacks import Callback, ModelCheckpoint
 
 # from lightning.pytorch.loggers import TensorBoardLogger
 from pytorch_lightning.loggers import WandbLogger
+
 from integrator.callbacks import (
-    MVNPlotter,
     Plotter,
-    Plotter2,
+    PredWriter,
+    assign_labels,
 )
 from integrator.model import *
-import lightning_fabric.utilities.cloud_io as cloud_io
+from integrator.utils import (
+    clean_from_memory,
+    create_data_loader,
+    create_integrator,
+    create_trainer,
+    load_config,
+    override_config,
+    parse_args,
+    predict_from_checkpoints,
+    reflection_file_writer,
+)
 
 torch.set_float32_matmul_precision("medium")
 
 
 if __name__ == "__main__":
-
     dials_env = "/n/hekstra_lab/people/aldama/software/dials-v3-16-1/dials_env.sh "
-    phenix_env = (
-        "/n/hekstra_lab/garden_backup/phenix-1.21/phenix-1.21.1-5286/phenix_env.sh"
-    )
+    phenix_env = "/n/hekstra_lab/garden_backup/phenix-1.21/phenix-1.21.1-5286/phenix_env.sh"
     expt_file = "/n/holylabs/LABS/hekstra_lab/Users/laldama/integratorv2/integrator/logs/DIALS_/CNNResNetSoftmax_08_045/integrated.expt"
-    pdb = (
-        "/n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/1dpx.pdb"
-    )
-
-    def flatten_config(config, parent_key="", sep="."):
-        """Flatten nested config dict for cleaner W&B logging"""
-        items = []
-        for k, v in config.items():
-            new_key = f"{parent_key}{sep}{k}" if parent_key else k
-            if isinstance(v, dict):
-                items.extend(flatten_config(v, new_key, sep=sep).items())
-            else:
-                items.append((new_key, v))
-        return dict(items)
+    pdb = "/n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/1dpx.pdb"
 
     def get_git_info():
         try:
             commit_hash = (
-                subprocess.check_output(
-                    ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL
-                )
+                subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL)
                 .decode("ascii")
                 .strip()
             )
@@ -73,9 +52,7 @@ if __name__ == "__main__":
                 .strip()
             )
             dirty = (
-                subprocess.check_output(
-                    ["git", "status", "--porcelain"], stderr=subprocess.DEVNULL
-                )
+                subprocess.check_output(["git", "status", "--porcelain"], stderr=subprocess.DEVNULL)
                 .decode("ascii")
                 .strip()
                 != ""
@@ -104,24 +81,20 @@ if __name__ == "__main__":
     # Create data loader
     data = create_data_loader(config)
 
-
     # Get gitinfo
 
     # Create callbacks
     pred_writer = PredWriter(
         output_dir=None,
-        write_interval=config["trainer"]["params"]["callbacks"]["pred_writer"][
-            "write_interval"
-        ],
+        write_interval=config["trainer"]["params"]["callbacks"]["pred_writer"]["write_interval"],
     )
 
     integrator_name = config["integrator"]["name"]
 
     logger = WandbLogger(
         project="integrator_2025-07",
-        name="Integrator_"
-        + integrator_name,
-        save_dir="/n/netscratch/hekstra_lab/Lab/laldama/lightning_logs"
+        name="Integrator_" + integrator_name,
+        save_dir="/n/netscratch/hekstra_lab/Lab/laldama/lightning_logs",
     )
 
     # assign labels to samples
@@ -130,9 +103,9 @@ if __name__ == "__main__":
     plotter = Plotter(
         n_profiles=10,
         plot_every_n_epochs=1,
-        d= config['logger']['d'],
-        h= config['logger']['h'],
-        w= config['logger']['w'],
+        d=config["logger"]["d"],
+        h=config["logger"]["h"],
+        w=config["logger"]["w"],
     )
 
     ## create checkpoint callback
@@ -150,7 +123,6 @@ if __name__ == "__main__":
     # Create trainer
     trainer = create_trainer(
         config,
-        data,
         callbacks=[
             pred_writer,
             checkpoint_callback,
@@ -183,41 +155,41 @@ if __name__ == "__main__":
     # Create integrator model
     integrator = create_integrator(config)
 
-    #checkpoint_path =  '/n/hekstra_lab/people/aldama/lightning_logs/wandb/run-20250504_125302-7tkfopqd/files/checkpoints/epoch=95-val_loss=0.00.ckpt'
+    # checkpoint_path =  '/n/hekstra_lab/people/aldama/lightning_logs/wandb/run-20250504_125302-7tkfopqd/files/checkpoints/epoch=95-val_loss=0.00.ckpt'
 
-    #checkpoint = torch.load(
+    # checkpoint = torch.load(
     #        checkpoint_path,
     #        weights_only=False
     #        )
-#
-#    integrator = create_integrator(config)
-#    integrator.load_state_dict(checkpoint['state_dict'])
+    #
+    #    integrator = create_integrator(config)
+    #    integrator.load_state_dict(checkpoint['state_dict'])
 
     # Fit the model
     trainer.fit(
         integrator,
+        datamodule=data,
         train_dataloaders=data.train_dataloader(),
         val_dataloaders=data.val_dataloader(),
     )
 
+    # pred_checkpoint = torch.load(
+    #         log_dirr + "/checkpoints/last.ckpt",
+    #         weights_only=False
+    #         )
 
-   # pred_checkpoint = torch.load(
-   #         log_dirr + "/checkpoints/last.ckpt",
-   #         weights_only=False
-   #         )
-
-   # integrator.load_state_dict(pred_checkpoint['state_dict'])
+    # integrator.load_state_dict(pred_checkpoint['state_dict'])
 
     # Predict
-#    trainer.predict(
-#        pred_integrator,
-#        return_predictions=False,
-#        dataloaders=data.predict_dataloader(),
-#    )
+    #    trainer.predict(
+    #        pred_integrator,
+    #        return_predictions=False,
+    #        dataloaders=data.predict_dataloader(),
+    #    )
 
     version_dir = log_dirr
-    integrator.train_df.write_csv(version_dir + '/avg_train_metrics.csv')
-    integrator.val_df.write_csv(version_dir + '/avg_val_metrics.csv')
+    integrator.train_df.write_csv(version_dir + "/avg_train_metrics.csv")
+    integrator.val_df.write_csv(version_dir + "/avg_val_metrics.csv")
     path = os.path.join(version_dir, "checkpoints", "epoch*.ckpt")
 
     # override to stop new version dirs from being created
@@ -227,8 +199,8 @@ if __name__ == "__main__":
     clean_from_memory(pred_writer, pred_writer, pred_writer, checkpoint_callback)
 
     save_config = os.path.join(log_dirr, "config_copy.yaml")
-    config['data_loader']['params']['batch_size'] = 1000
-    config['data_loader']['params']['subset_size'] = None
+    config["data_loader"]["params"]["batch_size"] = 1000
+    config["data_loader"]["params"]["subset_size"] = None
 
     with open(save_config, "w") as file:
         yaml.dump(config, file, default_flow_style=False)
@@ -254,10 +226,7 @@ if __name__ == "__main__":
     # Submit the script using sbatch
     try:
         result = subprocess.run(
-            ["sbatch", "run_parallel.sh"],
-            check=True,
-            capture_output=True,
-            text=True
+            ["sbatch", "run_parallel.sh"], check=True, capture_output=True, text=True
         )
         print("Submission successful!")
         print("STDOUT:", result.stdout)
