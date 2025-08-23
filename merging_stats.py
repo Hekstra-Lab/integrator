@@ -1,7 +1,7 @@
 #!/usr/bin/env python
-
 import argparse
 import itertools
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -75,9 +75,7 @@ class DataManager:
 
         if reference_path:
             self.reference_path = Path(reference_path)
-            self.reference_peaks = plr.read_csv(
-                self.reference_path / "peaks_reference.csv"
-            )
+            self.reference_peaks = plr.read_csv(self.reference_path / "peaks_reference.csv")
             self.reference_html = self.reference_path / "merged_reference.html"
             self.reference_data_dict = defaultdict(dict)
             headers, cleaned_array = parse_html(self.reference_html)
@@ -239,9 +237,7 @@ def plot_method(method, metrics=["cc_half", "cc_anom", "r_pim", "I_vs_sigI"]):
     axes = list(itertools.product(range(1, 3), range(1, 3)))
 
     # Create a consistent colormap
-    colors = (
-        px.colors.qualitative.Plotly
-    )  # Or any other colormap like px.colors.sequential.Viridis
+    colors = px.colors.qualitative.Plotly  # Or any other colormap like px.colors.sequential.Viridis
 
     # Track which epochs have been added to the legend
     added_to_legend = set()
@@ -264,9 +260,7 @@ def plot_method(method, metrics=["cc_half", "cc_anom", "r_pim", "I_vs_sigI"]):
                     y=y,
                     mode="lines+markers",
                     name=f"{epoch}",
-                    line=dict(
-                        color=colors[i % len(colors)]
-                    ),  # Consistent color per epoch
+                    line=dict(color=colors[i % len(colors)]),  # Consistent color per epoch
                     showlegend=showlegend,  # Only show in legend once
                 ),
                 row=ax[0],
@@ -286,9 +280,7 @@ def plot_method(method, metrics=["cc_half", "cc_anom", "r_pim", "I_vs_sigI"]):
                 y=y_ref,
                 mode="lines+markers",
                 name="DIALS",
-                line=dict(
-                    dash="dash", color="black"
-                ),  # Use a distinct style for reference
+                line=dict(dash="dash", color="black"),  # Use a distinct style for reference
                 showlegend="DIALS" not in added_to_legend,  # Only show in legend once
             ),
             row=ax[0],
@@ -300,9 +292,7 @@ def plot_method(method, metrics=["cc_half", "cc_anom", "r_pim", "I_vs_sigI"]):
 
         # Add axis labels for each subplot
         fig.update_xaxes(title_text="Resolution", row=ax[0], col=ax[1])
-        fig.update_yaxes(
-            title_text=data.metrics[metric]["display_name"], row=ax[0], col=ax[1]
-        )
+        fig.update_yaxes(title_text=data.metrics[metric]["display_name"], row=ax[0], col=ax[1])
 
     # Update overall layout
     fig.update_layout(
@@ -490,7 +480,7 @@ if __name__ == "__main__":
     argparser.add_argument(
         "--reference_path",
         type=str,
-        default="/n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/data/pass1_v2/ref_dials/"
+        default="/n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/data/pass1_v2/ref_dials/",
     )
     args = argparser.parse_args()
 
@@ -529,20 +519,15 @@ if __name__ == "__main__":
     profile_masking_tbl = method_figures["thresholded"]
     direct_method_tbl = method_figures["posterior"]
     kabsch_sum_tbl = method_figures["weighted"]
-    wandb.log(
-        {"Profile Making Anomalous Peaks": profile_masking_tbl}
-    )  # Log the table to W&B
-    wandb.log(
-        {"Direct Method Anomalous Peaks": direct_method_tbl}
-    )  # Log the table to W&B
+    wandb.log({"Profile Making Anomalous Peaks": profile_masking_tbl})  # Log the table to W&B
+    wandb.log({"Direct Method Anomalous Peaks": direct_method_tbl})  # Log the table to W&B
     wandb.log({"Kabsch Sum Anomalous Peaks": kabsch_sum_tbl})  # Log the table to W&B
 
-
-    import pandas
+    import pandas as pd
 
     # Get metrics for all epochs
     d = dict()
-    for h, e in zip(data.html_files, data.data_dict["posterior"].keys()):
+    for h, e in zip(data.html_files, data.data_dict["posterior"].keys(), strict=False):
         tbl = pd.read_html(h, header=0)[0]
         d[e] = {
             "Observations": tbl.loc[1].values[1:].astype(int),
@@ -553,7 +538,6 @@ if __name__ == "__main__":
             "CChalf": tbl.loc[9].values[1:].astype(float),
         }
 
-
     d_ref = {
         "Observations": pd.read_html(data.reference_html, header=0)[0]
         .loc[1]
@@ -563,24 +547,11 @@ if __name__ == "__main__":
         .loc[5]
         .values[1:]
         .astype(float),
-        "Rmerge": pd.read_html(data.reference_html, header=0)[0]
-        .loc[6]
-        .values[1:]
-        .astype(float),
-        "Rmeas": pd.read_html(data.reference_html, header=0)[0]
-        .loc[7]
-        .values[1:]
-        .astype(float),
-        "Rpim": pd.read_html(data.reference_html, header=0)[0]
-        .loc[8]
-        .values[1:]
-        .astype(float),
-        "CChalf": pd.read_html(data.reference_html, header=0)[0]
-        .loc[9]
-        .values[1:]
-        .astype(float),
+        "Rmerge": pd.read_html(data.reference_html, header=0)[0].loc[6].values[1:].astype(float),
+        "Rmeas": pd.read_html(data.reference_html, header=0)[0].loc[7].values[1:].astype(float),
+        "Rpim": pd.read_html(data.reference_html, header=0)[0].loc[8].values[1:].astype(float),
+        "CChalf": pd.read_html(data.reference_html, header=0)[0].loc[9].values[1:].astype(float),
     }
-
 
     # %%
     # NOTE: Function to plot tables across epoch
@@ -608,8 +579,7 @@ if __name__ == "__main__":
                 ),
                 cells=dict(
                     values=[epochs, arr[:, 0], arr[:, 1], arr[:, 2]],
-                    fill_color=[fill_colors]
-                    * 4,  # Apply same alternating pattern to all columns
+                    fill_color=[fill_colors] * 4,  # Apply same alternating pattern to all columns
                     align="center",
                     font=dict(size=12),
                 ),
@@ -619,7 +589,6 @@ if __name__ == "__main__":
         fig.update_layout(title_text=f"{metric} Over Epochs", title_x=0.5, width=700)
 
         return fig
-
 
     # plot and show figure
     fig = plot_table("Observations", d_ref)

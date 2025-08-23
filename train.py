@@ -98,9 +98,6 @@ if __name__ == "__main__":
 
     log_dirr = trainer.logger.experiment.dir
 
-    save_git_info = os.path.join(log_dirr, "git_info.txt")
-    logger.log_hyperparams(git_info)
-
     logger.log_hyperparams(config)
 
     with open(save_git_info, "w") as file:

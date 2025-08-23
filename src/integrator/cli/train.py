@@ -6,6 +6,7 @@ import typer
 import yaml
 
 from integrator.config.schema import Cfg
+from integrator.utils import clean_from_memory
 
 app = typer.Typer()
 
@@ -78,6 +79,8 @@ def train(
         save_dir="lightning_logs",
     )
 
+    logger.log_hyperparams(cfg.model_dump())
+
     # get logging directory
     logdir = logger.experiment.dir
 
@@ -129,3 +132,13 @@ def train(
         train_dataloaders=data.train_dataloader(),
         val_dataloaders=data.val_dataloader(),
     )
+
+    integrator.train_df.write_csv(logdir + "avg_train_metrics.csv")
+    integrator.val_df.write_csv(logdir + "avg_val_metrics.csv")
+    path = Path(logdir) / "checkpoints/epoch*.ckpt"
+
+    cfg.model_dump()["trainer"]["args"]["logger"] = False
+
+    clean_from_memory(pred_writer, pred_writer, pred_writer, checkpoint_callback)
+
+    pred_integrator = create_integrator(cfg.model_dump())
