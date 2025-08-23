@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+from torch import Tensor
 
 
 def create_center_focused_dirichlet_prior(
@@ -104,6 +105,12 @@ class Loss(torch.nn.Module):
         prior_tensor=None,
     ):
         super().__init__()
+
+        self.eps: Tensor
+        self.beta: Tensor
+        self.p_I_scale: Tensor
+        self.p_bg_scale: Tensor
+        self.p_prf_scale: Tensor
 
         self.register_buffer("eps", torch.tensor(eps))
         self.register_buffer("beta", torch.tensor(beta))
@@ -309,6 +316,7 @@ class Loss(torch.nn.Module):
 
         # Only calculate profile KL if we have both distributions
         kl_p = self.compute_kl(q_p, p_prf)
+
         kl_terms += kl_p * self.p_prf_scale
 
         # Calculate background and intensity KL divergence

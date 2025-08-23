@@ -1,5 +1,6 @@
-import torch
 import os
+
+import torch
 
 path = "/n/holylabs/LABS/hekstra_lab/Users/laldama/integratorv2/integrator/data/pass1/"
 

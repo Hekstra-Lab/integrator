@@ -1,7 +1,7 @@
-import torch
-import polars as plr
 import os
-from dials.array_family import flex
+
+import polars as plr
+import torch
 
 # This is the development script for writing outputs
 # The OutWriter object should take as input the path where the output.pt files live

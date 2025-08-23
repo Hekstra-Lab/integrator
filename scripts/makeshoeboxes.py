@@ -9,21 +9,16 @@
 #
 # dials.python make_shoeboxes.py predicted.refl imported.expt x=2 ny=2 nz=2
 
-from dials.util.options import flatten_reflections
-from dials.util.options import flatten_experiments
-from dials.util.options import flatten_experiments
-from dials.array_family import flex
-from dials.util import Sorry
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
-from dials.util.options import ArgumentParser
-from libtbx.phil import parse
-
-import matplotlib.pyplot as plt
-import seaborn as sns
 import gc
 
+import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
+import torch
+from dials.array_family import flex
+from dials.util import Sorry
+from dials.util.options import ArgumentParser, flatten_experiments, flatten_reflections
+from libtbx.phil import parse
 
 # %%
 
@@ -102,7 +97,7 @@ bbox = flex.int6(len(reflections))
 
 dx, dy = detector[0].get_image_size()
 
-for j, (_x, _y, _z) in enumerate(zip(x, y, z)):
+for j, (_x, _y, _z) in enumerate(zip(x, y, z, strict=False)):
     x0 = _x - params.nx
     x1 = _x + params.nx + 1
     y0 = _y - params.ny

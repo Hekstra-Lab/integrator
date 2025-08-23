@@ -1,5 +1,6 @@
-import yaml
 import os
+
+import yaml
 
 # Default Config
 default_config = {

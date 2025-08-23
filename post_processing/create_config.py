@@ -1,7 +1,6 @@
-import json
-import os
-from pathlib import Path
 import argparse
+import json
+from pathlib import Path
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="find reflection files")

@@ -4,7 +4,7 @@ import itertools
 import re
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -16,12 +16,12 @@ import polars as pl
 import polars as plr
 import seaborn as sns
 import torch
+import wandb
 from bs4 import BeautifulSoup
 from dials.array_family import flex
 from matplotlib.colors import Normalize, TwoSlopeNorm
 from plotly.subplots import make_subplots
 
-import wandb
 from integrator.utils import load_config
 
 
@@ -73,7 +73,7 @@ class DataManager:
         self.data_dict = defaultdict(lambda: defaultdict(dict))
         self.counting_methods = []
 
-        for h, c in zip(self.html_files, self.csv_files):
+        for h, c in zip(self.html_files, self.csv_files, strict=False):
             counting_method = h.parent.name.replace("dials_out_", "")
             if counting_method not in self.counting_methods:
                 self.counting_methods.append(counting_method)
@@ -273,7 +273,7 @@ def plot_method(method, metrics=["cc_half", "cc_anom", "r_pim", "I_vs_sigI"]):
     # Track which epochs have been added to the legend
     added_to_legend = set()
 
-    for ax, metric in zip(axes, metrics):
+    for ax, metric in zip(axes, metrics, strict=False):
         for i, epoch in enumerate(epochs):
             y = data.data_dict[method][epoch]["merging_stats"][
                 :, data.metrics[metric]["col_idx"]
@@ -349,10 +349,10 @@ def plot_method(method, metrics=["cc_half", "cc_anom", "r_pim", "I_vs_sigI"]):
 
 
 def create_peaks_tables(
-    data_dict: Dict[str, Dict[str, Dict[str, Any]]],
+    data_dict: dict[str, dict[str, dict[str, Any]]],
     reference_peaks: pl.DataFrame,
     peak_value_column: str = "peakz",
-) -> Dict[str, go.Figure]:
+) -> dict[str, go.Figure]:
     methods = list(data_dict.keys())
     method_figures = {}
 
@@ -460,7 +460,7 @@ def create_peaks_tables(
                         font=dict(color="black", size=14),
                     ),
                     cells=dict(
-                        values=list(map(list, zip(*table_data))),
+                        values=list(map(list, zip(*table_data, strict=False))),
                         line_color="darkslategray",
                         fill_color=[["white", "#F3F3F3"] * len(table_data)],
                         align="center",
@@ -536,7 +536,7 @@ if __name__ == "__main__":
     fig, axes = plt.subplots(2, 2, figsize=(20, 10))
     axes = axes.flatten()
 
-    for ax, metric in zip(axes, data.metrics.keys()):
+    for ax, metric in zip(axes, data.metrics.keys(), strict=False):
         # reference data
         ref_data = data.reference_data_dict["merging_stats"][
             :, data.metrics[metric]["col_idx"]
@@ -554,7 +554,7 @@ if __name__ == "__main__":
 
         # plot
         i = 0
-        for color, epoch in zip(cmap_list, data.data_dict["posterior"].items()):
+        for color, epoch in zip(cmap_list, data.data_dict["posterior"].items(), strict=False):
             arr = epoch[1]["merging_stats"][:, data.metrics[metric]["col_idx"]].astype(
                 np.float32
             )
@@ -598,7 +598,7 @@ if __name__ == "__main__":
 
     # Get metrics for all epochs
     d = dict()
-    for h, e in zip(data.html_files, data.data_dict["posterior"].keys()):
+    for h, e in zip(data.html_files, data.data_dict["posterior"].keys(), strict=False):
         tbl = pd.read_html(h, header=0)[0]
         d[e] = {
             "Observations": tbl.loc[1].values[1:].astype(int),
@@ -842,7 +842,7 @@ if __name__ == "__main__":
 
     seqids = [
         f"{str(str1)}\n{str2}"
-        for str1, str2 in zip(diffs[:, 1].to_list(), diffs[:, 0].to_list())
+        for str1, str2 in zip(diffs[:, 1].to_list(), diffs[:, 0].to_list(), strict=False)
     ]
 
     total_diff = [x[0][:, -1].sum() for x in dfs]
@@ -1074,7 +1074,7 @@ if __name__ == "__main__":
     cmap = sns.cubehelix_palette(start=0.5, rot=-0.55, dark=0, light=0.8, as_cmap=True)
     cmap_list = cmap(np.linspace(0.0, 1, epochs, retstep=2)[0])
 
-    for color, epoch in zip(cmap_list, data.data_dict["posterior"].keys()):
+    for color, epoch in zip(cmap_list, data.data_dict["posterior"].keys(), strict=False):
         cchalf = data.data_dict["posterior"][epoch]["merging_stats"][:, -2].astype(
             np.float64
         )

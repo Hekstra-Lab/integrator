@@ -6,10 +6,9 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import torch
+import wandb
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from pytorch_lightning.callbacks import Callback
-
-import wandb
 
 
 # TODO: handle 2d shoeboxes

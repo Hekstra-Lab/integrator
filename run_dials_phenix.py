@@ -1,7 +1,6 @@
-import subprocess
 import glob
+import subprocess
 from pathlib import Path
-
 
 # TODO: these should be passed as an argument
 dials_environment = "/Applications/dials-v3-16-1/dials_env.sh"
@@ -42,7 +41,7 @@ def run_phenix(phenix_env, mtz_file, pdb_file):
 
     command = " ".join(command)
     command += (
-        f";rs.find_peaks *[0-9].mtz *[0-9].pdb -f ANOM -p PANOM -z 5.0 -o peaks.csv"
+        ";rs.find_peaks *[0-9].mtz *[0-9].pdb -f ANOM -p PANOM -z 5.0 -o peaks.csv"
     )
 
     try:

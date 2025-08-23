@@ -7,7 +7,6 @@ from .model.distributions import (
     GammaDistribution,
     HalfNormalDistribution,
     LogNormalDistribution,
-    MVNDistribution,
     NormalDistribution,
 )
 from .model.encoders import (
@@ -17,8 +16,8 @@ from .model.encoders import (
     ShoeboxEncoder,
     ShoeboxEncoder2D,
 )
-from .model.integrators import Integrator, Integrator2D, LRMVNIntegrator, Model2, Model3
-from .model.loss import Loss, Loss2, LRMVNLoss, MVNLoss
+from .model.integrators import Integrator, Integrator2D, Model2, Model3
+from .model.loss import Loss, Loss2
 
 REGISTRY = {
     "encoders": {
@@ -30,12 +29,9 @@ REGISTRY = {
     },
     "loss": {
         "elbo": Loss,
-        "mvn_loss": MVNLoss,
-        "lrmvn_loss": LRMVNLoss,
         "loss2": Loss2,
     },
     "integrator": {
-        "lrmvn_integrator": LRMVNIntegrator,
         "integrator": Integrator,
         "model2": Model2,
         "model3": Model3,
@@ -49,7 +45,6 @@ REGISTRY = {
     },
     "qp": {
         "dirichlet": DirichletDistribution,
-        "mvn": MVNDistribution,
     },
     "qbg": {
         "gamma": GammaDistribution,
@@ -74,21 +69,19 @@ ARGUMENT_RESOLVER = {
     },
     "loss": {
         "p_bg": {
-            "gamma": torch.distributions.gamma.Gamma,
-            "half_normal": torch.distributions.half_normal.HalfNormal,
+            "exponential": torch.distributions.Exponential,
+            "gamma": torch.distributions.Gamma,
             "half_cauchy": torch.distributions.half_cauchy.HalfCauchy,
-            "exponential": torch.distributions.exponential.Exponential,
+            "half_normal": torch.distributions.half_normal.HalfNormal,
+            "log_normal": torch.distributions.LogNormal,
         },
         "p_I": {
-            "gamma": torch.distributions.gamma.Gamma,
-            "log_normal": torch.distributions.log_normal.LogNormal,
-            "exponential": torch.distributions.exponential.Exponential,
-            "half_normal": torch.distributions.half_normal.HalfNormal,
+            "exponential": torch.distributions.Exponential,
+            "gamma": torch.distributions.Gamma,
             "half_cauchy": torch.distributions.half_cauchy.HalfCauchy,
+            "half_normal": torch.distributions.half_normal.HalfNormal,
+            "log_normal": torch.distributions.LogNormal,
         },
-        "p_prf": {
-            "laplace": torch.distributions.laplace.Laplace,
-        },
+        "p_prf": {"dirichlet": torch.distributions.Dirichlet},
     },
 }
-

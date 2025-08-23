@@ -242,25 +242,3 @@ if __name__ == "__main__":
     updates.setdefault("trainer", {}).setdefault("args", {})["max_epochs"] = 100
 
     config3d.model_copy(update=updates).dict()["trainer"]
-
-    from pathlib import Path
-
-    def apply_cli_overrides(
-        cfg: Cfg,
-        *,
-        epochs: int | None = None,
-        batch_size: int | None = None,
-        data_path: Path | None = None,
-    ) -> Cfg:
-        if epochs is not None:
-            cfg.trainer.args.max_epochs = epochs
-
-        if batch_size is not None:
-            cfg.data_loader.params.batch_size = batch_size
-
-        if data_path is not None:
-            cfg.data_loader.params.data_dir = data_path
-            # If you want to rebase relative filenames under the new data_dir,
-            # rely on your validator in DataLoaderParams or re-run a validate step (next option).
-
-        return cfg

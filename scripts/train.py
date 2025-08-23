@@ -1,28 +1,28 @@
-import os
-import json
-import datetime
-import yaml
 import argparse
+import datetime
+import json
+import os
+
 import torch
+import yaml
 from pytorch_lightning import Trainer
-from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint, TQDMProgressBar
+from pytorch_lightning.loggers import TensorBoardLogger
+
 from integrator import ShoeboxDataModule
 from integrator.layers import Standardize
 from integrator.model import (
-    Integrator,
-    CNNResNet,
-    FcResNet,
-    MVNProfile,
-    SoftmaxProfile,
     BackgroundDistribution,
+    CNNResNet,
+    Decoder,
+    FcResNet,
+    Integrator,
     IntensityDistribution,
     Loss,
-    Decoder,
+    MVNProfile,
+    SoftmaxProfile,
 )
-from integrator.utils import OutWriter
-from integrator.utils import Plotter
-from integrator.utils.logger import init_tensorboard_logger
+from integrator.utils import OutWriter, Plotter
 
 # torch.set_float32_matmul_precision('high')
 
@@ -36,7 +36,7 @@ def get_experiment_counter(model_type, profile_type, base_dir="logs/outputs"):
     os.makedirs(base_dir, exist_ok=True)
 
     if os.path.exists(counter_file):
-        with open(counter_file, "r") as f:
+        with open(counter_file) as f:
             counters = json.load(f)
     else:
         counters = {}
@@ -77,7 +77,7 @@ def generate_experiment_dir(config, base_dir="logs/outputs"):
 
 
 def load_config(config_path):
-    with open(config_path, "r") as file:
+    with open(config_path) as file:
         config = yaml.safe_load(file)
 
     # Resolve paths

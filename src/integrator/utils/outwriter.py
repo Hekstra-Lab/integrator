@@ -1,6 +1,6 @@
-from dials.array_family import flex
-import polars as pl
 import numpy as np
+import polars as pl
+from dials.array_family import flex
 
 
 class OutWriter:

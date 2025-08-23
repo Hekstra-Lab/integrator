@@ -1,26 +1,21 @@
-from integrator.callbacks import PredWriter
-from dials.array_family import flex
-import numpy as np
-import torch
 import glob
+
+import numpy as np
+from dials.array_family import flex
+from pytorch_lightning.callbacks import ModelCheckpoint, RichProgressBar
+from pytorch_lightning.loggers import WandbLogger
+
+from integrator.callbacks import IntensityPlotter, PredWriter
 from integrator.utils import (
-    load_config,
+    clean_from_memory,
+    create_data_loader,
     create_integrator,
     create_integrator_from_checkpoint,
-    create_data_loader,
     create_trainer,
-    clean_from_memory,
+    load_config,
     predict_from_checkpoints,
     reflection_file_writer,
 )
-from integrator.callbacks import IntensityPlotter
-from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.loggers import WandbLogger
-import wandb
-import matplotlib.pyplot as plt
-from pytorch_lightning.callbacks import Callback
-from pytorch_lightning.callbacks import RichProgressBar
-import torchvision.transforms.functional as F
 
 # %%
 config = "./src/integrator/configs/dev_config.yaml"

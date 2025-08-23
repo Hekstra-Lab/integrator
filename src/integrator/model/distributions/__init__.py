@@ -4,7 +4,6 @@ from .folded_normal import FoldedNormalDistribution
 from .gamma import GammaDistribution
 from .half_normal import HalfNormalDistribution
 from .log_normal import LogNormalDistribution
-from .mvn import MVNDistribution
 from .normal import NormalDistribution
 
 __all__ = [
@@ -14,7 +13,6 @@ __all__ = [
     "GammaDistribution",
     "HalfNormalDistribution",
     "LogNormalDistribution",
-    "MVNDistribution",
     "NormalDistribution",
     "FoldedNormalDistribution",
 ]

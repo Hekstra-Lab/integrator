@@ -1,21 +1,20 @@
 #!/usr/bin/env python
 
-import numpy as np
-import polars as plr
-from pathlib import Path
-from collections import defaultdict
-import itertools
-import plotly.graph_objects as go
-import plotly.express as px
-from plotly.subplots import make_subplots
-import polars as pl
-from typing import Dict, Any
 import argparse
+import itertools
+from collections import defaultdict
+from pathlib import Path
+from typing import Any
 
 import matplotlib.pyplot as plt
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+import polars as pl
+import polars as plr
 import wandb
-import pandas as pd
 from bs4 import BeautifulSoup
+from plotly.subplots import make_subplots
 
 
 ########################################
@@ -23,7 +22,7 @@ from bs4 import BeautifulSoup
 ########################################
 def parse_html(file_path):
     """Parse the merged-*.html file for resolution shell statistics."""
-    with open(file_path, "r") as file:
+    with open(file_path) as file:
         soup = BeautifulSoup(file, "html.parser")
     table_div = soup.find("div", {"id": "collapse_merging_stats_1_03752"})
     if not table_div:
@@ -64,7 +63,7 @@ class DataManager:
         self.data_dict = defaultdict(lambda: defaultdict(dict))
         self.counting_methods = []
 
-        for h, c in zip(self.html_files, self.csv_files):
+        for h, c in zip(self.html_files, self.csv_files, strict=False):
             counting_method = h.parent.name.replace("dials_out_", "")
             if counting_method not in self.counting_methods:
                 self.counting_methods.append(counting_method)
@@ -247,7 +246,7 @@ def plot_method(method, metrics=["cc_half", "cc_anom", "r_pim", "I_vs_sigI"]):
     # Track which epochs have been added to the legend
     added_to_legend = set()
 
-    for ax, metric in zip(axes, metrics):
+    for ax, metric in zip(axes, metrics, strict=False):
         for i, epoch in enumerate(epochs):
             y = data.data_dict[method][epoch]["merging_stats"][
                 :, data.metrics[metric]["col_idx"]
@@ -323,10 +322,10 @@ def plot_method(method, metrics=["cc_half", "cc_anom", "r_pim", "I_vs_sigI"]):
 
 
 def create_peaks_tables(
-    data_dict: Dict[str, Dict[str, Dict[str, Any]]],
+    data_dict: dict[str, dict[str, dict[str, Any]]],
     reference_peaks: pl.DataFrame,
     peak_value_column: str = "peakz",
-) -> Dict[str, go.Figure]:
+) -> dict[str, go.Figure]:
     """
     Parameters:
     -----------
@@ -451,7 +450,7 @@ def create_peaks_tables(
                     ),
                     cells=dict(
                         values=list(
-                            map(list, zip(*table_data))
+                            map(list, zip(*table_data, strict=False))
                         ),  # Transpose for Plotly format
                         line_color="darkslategray",
                         fill_color=[["white", "#F3F3F3"] * len(table_data)],

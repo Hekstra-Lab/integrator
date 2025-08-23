@@ -1,9 +1,9 @@
-from dials.array_family import flex
 import gc
-from dials.util.options import ArgumentParser, flatten_experiments, flatten_reflections
-from dxtbx.model import Goniometer, Scan
-import torch
+
 import numpy as np
+import torch
+from dials.array_family import flex
+from dials.util.options import ArgumentParser, flatten_experiments, flatten_reflections
 from scipy.spatial import KDTree
 
 parser = ArgumentParser(read_experiments=True, read_reflections=True)
@@ -48,7 +48,7 @@ frame0, frame1 = 0, 1
 bbox = flex.int6(len(reflections))
 
 # construct bounding boxes around centroids
-for j, (_x, _y, _z) in enumerate(zip(x, y, z)):
+for j, (_x, _y, _z) in enumerate(zip(x, y, z, strict=False)):
     x0_full = _x - nx
     x1_full = _x + nx + 1
     y0_full = _y - ny

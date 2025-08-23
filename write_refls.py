@@ -1,36 +1,11 @@
-from integrator.callbacks import PredWriter
-import yaml
-import json
-from pytorch_lightning.callbacks import Callback
-import os
+# from lightning.pytorch.loggers import TensorBoardLogger
+import argparse
 import glob
+from pathlib import Path
+
 from integrator.utils import (
-    load_config,
-    create_integrator,
-    create_integrator_from_checkpoint,
-    create_data_loader,
-    create_trainer,
-    parse_args,
-    override_config,
-    clean_from_memory,
-    predict_from_checkpoints,
     reflection_file_writer,
 )
-from pytorch_lightning.callbacks import ModelCheckpoint
-from pathlib import Path
-import torch
-import subprocess
-
-# from lightning.pytorch.loggers import TensorBoardLogger
-from pytorch_lightning.loggers import WandbLogger
-from integrator.callbacks import (
-    IntensityPlotter,
-    MVNPlotter,
-    UNetPlotter,
-    IntegratedPlotter,
-)
-import argparse
-
 
 if __name__ == "__main__":
     # load data
