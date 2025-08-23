@@ -75,8 +75,8 @@ def train(
 
     # load wandb logger
     logger = WandbLogger(
-        project="integrator_local",
-        save_dir="lightning_logs",
+        project="integrator_updated",
+        save_dir="/n/netscratch/hekstra_lab/Lab/laldama/lightning_logs/",
     )
 
     logger.log_hyperparams(cfg.model_dump())
