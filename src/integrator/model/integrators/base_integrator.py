@@ -288,13 +288,8 @@ class BaseIntegrator(pl.LightningModule, ABC):
 if __name__ == "__main__":
     pass
     # -
-    import torch
 
-    from integrator.utils import create_data_loader, load_config
+    import torch
 
     concentration = torch.exp(torch.randn(10, (21 * 21 * 3)))
     qp = torch.distributions.Dirichlet(concentration)
-
-    config = "/Users/luis/integratorv3/integrator/src/integrator/config/config.yaml"
-    config = load_config(config)
-    dataloader = create_data_loader(config)

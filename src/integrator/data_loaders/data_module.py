@@ -78,10 +78,6 @@ class ShoeboxDataModule2D(BaseDataModule):
 
     def setup(self, stage=None):
         counts = torch.load(os.path.join(self.data_dir, self.shoebox_file_names["counts"]))
-        #        metadata = torch.load(
-        #            os.path.join(self.data_dir, self.shoebox_file_names["metadata"])
-        #        ).type(torch.float32)
-        #
         masks = torch.load(os.path.join(self.data_dir, self.shoebox_file_names["masks"]))
         stats = torch.load(os.path.join(self.data_dir, self.shoebox_file_names["stats"]))
         reference = torch.load(os.path.join(self.data_dir, self.shoebox_file_names["reference"]))
