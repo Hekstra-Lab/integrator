@@ -490,7 +490,7 @@ if __name__ == "__main__":
     argparser.add_argument(
         "--reference_path",
         type=str,
-        default="/n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/data/"
+        default="/n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/data/pass1_v2/ref_dials/"
     )
     args = argparser.parse_args()
 
@@ -537,4 +537,181 @@ if __name__ == "__main__":
     )  # Log the table to W&B
     wandb.log({"Kabsch Sum Anomalous Peaks": kabsch_sum_tbl})  # Log the table to W&B
 
+
+    import pandas
+
+    # Get metrics for all epochs
+    d = dict()
+    for h, e in zip(data.html_files, data.data_dict["posterior"].keys()):
+        tbl = pd.read_html(h, header=0)[0]
+        d[e] = {
+            "Observations": tbl.loc[1].values[1:].astype(int),
+            "MeanI/SigI": tbl.loc[5].values[1:].astype(float),
+            "Rmerge": tbl.loc[6].values[1:].astype(float),
+            "Rmeas": tbl.loc[7].values[1:].astype(float),
+            "Rpim": tbl.loc[8].values[1:].astype(float),
+            "CChalf": tbl.loc[9].values[1:].astype(float),
+        }
+
+
+    d_ref = {
+        "Observations": pd.read_html(data.reference_html, header=0)[0]
+        .loc[1]
+        .values[1:]
+        .astype(int),
+        "MeanI/SigI": pd.read_html(data.reference_html, header=0)[0]
+        .loc[5]
+        .values[1:]
+        .astype(float),
+        "Rmerge": pd.read_html(data.reference_html, header=0)[0]
+        .loc[6]
+        .values[1:]
+        .astype(float),
+        "Rmeas": pd.read_html(data.reference_html, header=0)[0]
+        .loc[7]
+        .values[1:]
+        .astype(float),
+        "Rpim": pd.read_html(data.reference_html, header=0)[0]
+        .loc[8]
+        .values[1:]
+        .astype(float),
+        "CChalf": pd.read_html(data.reference_html, header=0)[0]
+        .loc[9]
+        .values[1:]
+        .astype(float),
+    }
+
+
+    # %%
+    # NOTE: Function to plot tables across epoch
+    def plot_table(metric, ref):
+        df = pd.DataFrame(d).transpose()[metric]
+        df_ref = pd.DataFrame(ref)[metric]
+        arr = np.vstack(df.values)  # shape (N, 3)
+        arr = np.vstack([df_ref.values, arr])
+        epochs = [e.split("_")[-1] for e in df.keys().tolist()]
+        epochs.insert(0, "reference")
+
+        # Determine alternating row colors
+        n_rows = len(epochs)
+        fill_colors = [["#f9f9f9", "#e6e6e6"][(i % 2)] for i in range(n_rows)]
+
+        fig = make_subplots(rows=1, cols=1)
+        fig.add_trace(
+            go.Table(
+                columnwidth=[5, 10, 10, 10],  # Adjust as needed
+                header=dict(
+                    values=["Epoch", "Overall", "Low-res", "High-res"],
+                    fill_color="lightgrey",
+                    align="center",
+                    font=dict(color="black", size=12),
+                ),
+                cells=dict(
+                    values=[epochs, arr[:, 0], arr[:, 1], arr[:, 2]],
+                    fill_color=[fill_colors]
+                    * 4,  # Apply same alternating pattern to all columns
+                    align="center",
+                    font=dict(size=12),
+                ),
+            )
+        )
+
+        fig.update_layout(title_text=f"{metric} Over Epochs", title_x=0.5, width=700)
+
+        return fig
+
+
+    # plot and show figure
+    fig = plot_table("Observations", d_ref)
+
+    wandb.log({"Observations": wandb.Html(fig.to_html())})
+
+    # %%
+    # NOTE: Code to get start/final r-free and r-work from phenix.logs
+
+    # string to match
+    pattern1 = re.compile(r"Start R-work")
+    pattern2 = re.compile(r"Final R-work")
+    log_files = list(path.glob("**/refine*.log"))
+
+    # Search files
+    matches_start = {}
+    matches_final = {}
+    for log_file in log_files:
+        with log_file.open("r") as f:
+            lines = f.readlines()
+        epoch = log_file.parents[3].name
+        matched_lines_start = [line.strip() for line in lines if pattern1.search(line)]
+        matched_lines_final = [line.strip() for line in lines if pattern2.search(line)]
+        if matched_lines_start:
+            matches_start[epoch] = {
+                "r_work": re.findall("\d+\.\d+", matched_lines_start[0])[0],
+                "r_free": re.findall("\d+\.\d+", matched_lines_start[0])[1],
+            }
+        if matched_lines_final:
+            matches_final[epoch] = {
+                "r_work": re.findall("\d+\.\d+", matched_lines_final[0])[0],
+                "r_free": re.findall("\d+\.\d+", matched_lines_final[0])[1],
+            }
+
+    # TODO: add reference row to top of table
+
+    df_start = pd.DataFrame(matches_start).transpose()
+
+    # Extract numeric part of index and sort
+    df_start_sorted = df_start.loc[
+        df_start.index.to_series()
+        .str.extract(r"epoch_(\d+)", expand=False)
+        .astype(int)
+        .sort_values()
+        .index
+    ]
+
+    df_final = pd.DataFrame(matches_final).transpose()
+
+    # Extract numeric part of index and sort
+    df_final_sorted = df_final.loc[
+        df_final.index.to_series()
+        .str.extract(r"epoch_(\d+)", expand=False)
+        .astype(int)
+        .sort_values()
+        .index
+    ]
+
+    # Replace the 'epochs' line with this:
+    epochs = df_start_sorted.index.tolist()  # or df_final_sorted.index.tolist(), same order
+
+    # Convert string values to float for numeric table display (optional but recommended)
+    arr_start = df_start_sorted.astype(float).values
+    arr_final = df_final_sorted.astype(float).values
+
+    # Build the table
+    fig = make_subplots(rows=1, cols=1)
+
+    fig.add_trace(
+        go.Table(
+            header=dict(
+                values=[
+                    "Epoch",
+                    "Start R-work",
+                    "Final R-work",
+                    "Start R-free",
+                    "Final R-free",
+                ]
+            ),
+            cells=dict(
+                values=[
+                    epochs,
+                    arr_start[:, 0],  # Start R-work
+                    arr_final[:, 0],  # Final R-work
+                    arr_start[:, 1],  # Start R-free
+                    arr_final[:, 1],  # Final R-free
+                ]
+            ),
+        )
+    )
+
+    wandb.log({"R-vals": wandb.Html(fig.to_html())})
+
+    # close wandb
     run.finish()

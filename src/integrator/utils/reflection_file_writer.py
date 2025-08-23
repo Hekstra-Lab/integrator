@@ -50,11 +50,6 @@ def reflection_file_writer(
                 qI_mean_list = empty_df["qI_mean"].explode().to_list()
                 qI_variance_list = empty_df["qI_variance"].explode().to_list()
 
-            weighted_sum_mean = empty_df["profile_masking_mean"].explode().to_list()
-            weighted_sum_var = empty_df["profile_masking_var"].explode().to_list()
-            thresholded_mean = empty_df["kabsch_sum_mean"].explode().to_list()
-            thresholded_var = empty_df["kabsch_sum_var"].explode().to_list()
-
             for id in reflection_ids:
                 sel[id] = True
 
@@ -68,22 +63,6 @@ def reflection_file_writer(
             temp.as_file(pred_dir + "/reflections/posterior_.refl")
             posterior_refl = Path(pred_dir + "/reflections/posterior_.refl")
             file_dict["refl_files"].append(posterior_refl.resolve().as_posix())
-
-            temp["intensity.sum.value"] = flex.double(thresholded_mean)
-            temp["intensity.sum.variance"] = flex.double(thresholded_var)
-            temp["intensity.prf.value"] = flex.double(thresholded_mean)
-            temp["intensity.prf.variance"] = flex.double(thresholded_var)
-            temp.as_file(pred_dir + "/reflections/thresholded_.refl")
-            thresholded_refl = Path(pred_dir + "/reflections/thresholded_.refl")
-            file_dict["refl_files"].append(thresholded_refl.resolve().as_posix())
-
-            temp["intensity.sum.value"] = flex.double(weighted_sum_mean)
-            temp["intensity.sum.variance"] = flex.double(weighted_sum_var)
-            temp["intensity.prf.value"] = flex.double(weighted_sum_mean)
-            temp["intensity.prf.variance"] = flex.double(weighted_sum_var)
-            temp.as_file(pred_dir + "/reflections/weighted_.refl")
-            weighted_refl = Path(pred_dir + "/reflections/weighted_.refl")
-            file_dict["refl_files"].append(weighted_refl.resolve().as_posix())
 
         # refl_file_path = Path(weighted_refl.parents[2] / "paths.json")
         with open(f"paths_{job_id}.json", "w") as f:

@@ -18,7 +18,7 @@ config = load_config(
 )
 
 # update batch_size
-config["data_loader"]["params"]["batch_size"] = 1000
+config["data_loader"]["params"]["batch_size"] = 1500
  
 # create DataLoader
 data = create_data_loader(config)
