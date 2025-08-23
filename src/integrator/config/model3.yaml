@@ -1,6 +1,7 @@
-global:
+global_vars:
   dmodel: &dmodel 64
   mc_samples: &mc_samples 100
+  data_dir: /Users/luis/integratorv4/tests/data/3d/hewl_9b7c/
 
 integrator:
   name: model3
@@ -14,35 +15,32 @@ integrator:
     weight_decay: 0.0
 
 components:
-  encoder1:
-    name: shoebox_encoder
-    args:
-      out_dim: 64
-      in_channels: 1
-      conv1_out_channels: 64
-      conv2_out_channels: 128
-      conv1_kernel: [1,3,3]
-      conv1_padding: [0,1,1]
+  # Define model encoders
+  encoders: 
+    - name: shoebox_encoder
+      args:
+        out_dim: 64
+        in_channels: 1
+        conv1_out_channels: 64
+        conv2_out_channels: 128
+        conv1_kernel: [1,3,3]
+        conv1_padding: [0,1,1]
+    - name: intensity_encoder
+      args:
+        out_dim: 64
+        in_channels: 1
+        conv1_out_channels: 64
+        conv2_out_channels: 128
+        conv3_out_channels: 256
+        conv1_kernel: [3,3,3]
+        conv1_padding: [1,1,1]
+    - name: mlp_metadata_encoder
+      args:
+        feature_dim: 4
+        depth: 5
+        output_dims: 64
 
-  encoder2:
-    name: intensity_encoder
-    args:
-      out_dim: 64
-      in_channels: 1
-      conv1_out_channels: 64
-      conv2_out_channels: 128
-      conv3_out_channels: 256
-      conv1_kernel: [3,3,3]
-      conv1_padding: [1,1,1]
-
-  encoder3:
-    name: mlp_metadata_encoder
-    args:
-      feature_dim: 4
-      depth: 5
-      output_dims: 64
-
-
+  # Define surrogate distributions
   qp:
     name: dirichlet
     args:
@@ -54,15 +52,14 @@ components:
     args:
       dmodel: *dmodel
       out_features: 2
-      use_metarep: false
 
   qi:
     name: folded_normal
     args:
       dmodel: 64
       out_features: 2
-      use_metarep: false
 
+  # Define loss function, prior distributions,
   loss:
     name: loss2
     args:
@@ -76,15 +73,14 @@ components:
         scale: 1.0
 
       pprf_name: dirichlet
-      pprf_params:
-        concentration: 0.001
+      pprf_params: null 
 
       pprf_weight: 0.0001
       pbg_weight: 0.5
       pi_weight: 1.0
       use_robust: true
 
-      prior_tensor: '/Users/luis/Downloads/new/concentration.pt'
+      prior_tensor: 'concentration_3d.pt'
 
 data_loader:
   name: default

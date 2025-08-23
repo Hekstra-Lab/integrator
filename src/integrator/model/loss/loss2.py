@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import torch
 from torch import Tensor
@@ -12,6 +14,7 @@ from torch.distributions import (
 )
 
 from integrator.model.loss import BaseLoss
+from utils import ROOT_DIR
 
 
 def create_center_focused_dirichlet_prior(
@@ -70,12 +73,13 @@ class Loss2(BaseLoss):
         pi_name: str = "gamma",
         pi_params: dict = {"concentration": 1.0, "rate": 1.0},
         pi_weight: float = 0.001,
-        prior_tensor: None = None,
+        prior_tensor: Path | str | None = None,
         use_robust: bool = False,
         shape: tuple[int, ...] = (3, 21, 21),
         quantile: float = 0.99,
         pprf_conc_factor: int = 40,
         mc_samples_kl: int = 100,
+        data_dir: Path = ROOT_DIR / "tests/data/",
     ):
         super().__init__(
             mc_samples=mc_samples_kl,
@@ -103,7 +107,8 @@ class Loss2(BaseLoss):
         self.pi_params = pi_params
 
         if prior_tensor is not None and pprf_params is None:
-            self.concentration = torch.load(prior_tensor, weights_only=False)
+            self.prior_tensor = f"{data_dir}{prior_tensor}"
+            self.concentration = torch.load(self.prior_tensor, weights_only=False)
             self.concentration[
                 self.concentration > torch.quantile(self.concentration, quantile)
             ] *= pprf_conc_factor
@@ -294,4 +299,3 @@ if __name__ == "__main__":
     zi = qi.rsample([mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
     rate = zi * zprf + zbg  # [B,S,Pix]
-

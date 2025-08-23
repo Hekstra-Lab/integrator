@@ -1,4 +1,4 @@
-global:
+global_vars:
   dmodel: &dmodel 64
   mc_samples: &mc_samples 100
 

@@ -21,16 +21,22 @@ classifiers = [
 dependencies = [
   "matplotlib>=3.5",
   "numpy>=1.21,<2.0",
+  "pandas>=2.3.2",
   "polars>=1.6.0",
+  "pydantic>=2.11.7",
   "pytorch_lightning>=2.2,<3.0",
   "rs_distributions==0.0.2",
   "scipy>=1.11,<2.0",
+  "shtab>=1.7.2",
   "torch>=2.2,<3.0",
+  "typer>=0.16.1",
 ]
 
 [project.optional-dependencies]
 dev = ['pytest','ruff','mypy','wandb>=0.17']
 
+[project.scripts]
+"integrator.train" = "integrator.cli.train:app"
 
 [project.urls]
 Homepage = "https://github.com/Hekstra-Lab/integrator/tree/integrator_mvn"
@@ -93,8 +99,10 @@ warn_unused_ignores = true
 disallow_untyped_defs = true
 
 [tool.pytest.ini_options]
+addopts = "-ra -q"
 testpaths = ["tests"]
-addopts = "-q"
+
+
 
 [dependency-groups]
 docs = [
@@ -103,7 +111,6 @@ docs = [
   "mkdocstrings[python]>=0.25",
   "mkdocs-mermaid2-plugin>=1.1",
 ]
-
 dev = [
     "ipython>=8.37.0",
     "mypy>=1.17.1",
@@ -111,4 +118,5 @@ dev = [
     "pytest>=8.4.1",
     "pytest-cov>=6.2.1",
     "ruff>=0.12.9",
+    "wandb>=0.21.1",
 ]

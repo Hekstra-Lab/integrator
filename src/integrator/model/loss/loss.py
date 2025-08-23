@@ -137,9 +137,7 @@ class Loss(torch.nn.Module):
             # Check if concentration is provided
             if p_prf_params and "concentration" in p_prf_params:
                 # If concentration is provided, create uniform Dirichlet with that concentration
-                alpha_vector = (
-                    torch.ones(self.profile_size) * p_prf_params["concentration"]
-                )
+                alpha_vector = torch.ones(self.profile_size) * p_prf_params["concentration"]
                 self.register_buffer("dirichlet_concentration", alpha_vector)
             elif use_center_focused_prior:
                 # Create center-focused Dirichlet prior
@@ -173,9 +171,7 @@ class Loss(torch.nn.Module):
             return
 
         if name == "gamma":
-            self.register_buffer(
-                f"{prefix}concentration", torch.tensor(params["concentration"])
-            )
+            self.register_buffer(f"{prefix}concentration", torch.tensor(params["concentration"]))
             self.register_buffer(f"{prefix}rate", torch.tensor(params["rate"]))
         elif name == "log_normal":
             self.register_buffer(f"{prefix}loc", torch.tensor(params["loc"]))
@@ -183,12 +179,8 @@ class Loss(torch.nn.Module):
         elif name == "exponential":
             self.register_buffer(f"{prefix}rate", torch.tensor(params["rate"]))
         elif name == "beta":
-            self.register_buffer(
-                f"{prefix}concentration1", torch.tensor(params["concentration1"])
-            )
-            self.register_buffer(
-                f"{prefix}concentration0", torch.tensor(params["concentration0"])
-            )
+            self.register_buffer(f"{prefix}concentration1", torch.tensor(params["concentration1"]))
+            self.register_buffer(f"{prefix}concentration0", torch.tensor(params["concentration0"]))
         elif name == "half_normal":
             self.register_buffer(f"{prefix}scale", torch.tensor(params["scale"]))
         elif name == "laplace":
@@ -203,9 +195,7 @@ class Loss(torch.nn.Module):
         if name == "gamma":
             concentration = getattr(self, f"{params_prefix}concentration").to(device)
             rate = getattr(self, f"{params_prefix}rate").to(device)
-            return torch.distributions.gamma.Gamma(
-                concentration=concentration, rate=rate
-            )
+            return torch.distributions.gamma.Gamma(concentration=concentration, rate=rate)
         elif name == "log_normal":
             loc = getattr(self, f"{params_prefix}loc").to(device)
             scale = getattr(self, f"{params_prefix}scale").to(device)
@@ -341,15 +331,12 @@ class Loss(torch.nn.Module):
             if self.simpson_scale is not None:
                 profile_reshaped = q_p.mean.reshape(profile_shape)
                 profile_simpson_batch = (
-                    self.inverse_simpson_regularization(profile_reshaped)
-                    * self.simpson_scale
+                    self.inverse_simpson_regularization(profile_reshaped) * self.simpson_scale
                 )
 
             if self.tv_loss_scale is not None:
                 profile_reshaped = q_p.mean.reshape(profile_shape)
-                tv_loss_batch = (
-                    self.total_variation_3d(profile_reshaped) * self.tv_loss_scale
-                )
+                tv_loss_batch = self.total_variation_3d(profile_reshaped) * self.tv_loss_scale
 
             if self.entropy_scale is not None:
                 entropy_loss = self.concentration_entropy_loss(q_p.mean)
@@ -361,11 +348,7 @@ class Loss(torch.nn.Module):
 
         # Combine all loss terms
         batch_loss = (
-            neg_ll_batch
-            + kl_terms
-            + tv_loss_batch
-            + profile_simpson_batch
-            + entropy_loss_batch
+            neg_ll_batch + kl_terms + tv_loss_batch + profile_simpson_batch + entropy_loss_batch
         )
 
         # Final scalar loss

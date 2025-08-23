@@ -91,23 +91,6 @@ class Integrator(BaseIntegrator):
         w: int = 21,
         weight_decay=1e-8,
     ):
-        """
-        Args:
-            qbg ():
-            qp ():
-            qi ():
-            encoder1 (torch.nn.module):
-            encoder2 ():
-            loss ():
-            weight_decay (float):
-            mc_samples (int):
-            lr (float):
-            max_iterations (int):
-            renyi_scale (float):
-            d (int):
-            h (int):
-            w (int):
-        """
         super().__init__(
             qbg=qbg,
             qp=qp,
@@ -127,10 +110,12 @@ class Integrator(BaseIntegrator):
         # Save hyperparameters
         self.save_hyperparameters(
             ignore=[
-                "image_encoder",
-                "profile_model",
-                "unet",
-                "signal_preprocessor",
+                "encoder1",
+                "encoder2",
+                "qp",
+                "qi",
+                "qbg",
+                "loss",
             ]
         )
 
@@ -187,8 +172,8 @@ class Model2(BaseIntegrator):
         qbg: BaseDistribution,
         qp: BaseDistribution,
         qi: BaseDistribution,
-        encoder: nn.Module,
-        intensity_encoder: nn.Module,
+        encoder1: nn.Module,
+        encoder2: nn.Module,
         loss: BaseLoss,
         mc_samples: int = 100,
         lr: float = 1e-3,
@@ -199,23 +184,6 @@ class Model2(BaseIntegrator):
         w: int = 21,
         weight_decay=1e-8,
     ):
-        """
-        Args:
-            qbg ():
-            qp ():
-            qi ():
-            intensity_encoder ():
-            encoder2 ():
-            loss ():
-            weight_decay (float):
-            mc_samples (int):
-            lr (float):
-            max_iterations (int):
-            renyi_scale (float):
-            d (int):
-            h (int):
-            w (int):
-        """
         super().__init__(
             qbg=qbg,
             qp=qp,
@@ -233,18 +201,20 @@ class Model2(BaseIntegrator):
         # Save hyperparameters
         self.save_hyperparameters(
             ignore=[
-                "image_encoder",
-                "profile_model",
-                "unet",
-                "signal_preprocessor",
+                "qbg",
+                "qp",
+                "qi",
+                "loss",
+                "encoder1",
+                "encoder2",
             ]
         )
 
         self.data_dim: str = "3d"
 
         # Model components
-        self.encoder1 = intensity_encoder
-        self.encoder2 = encoder
+        self.encoder1 = encoder1
+        self.encoder2 = encoder2
 
     def forward(
         self,
@@ -307,24 +277,6 @@ class Integrator2D(BaseIntegrator):
         w: int = 21,
         weight_decay=1e-8,
     ):
-        """
-        Integrator for 2D data
-        Args:
-            qbg ():
-            qp ():
-            qi ():
-            encoder1 ():
-            encoder2 ():
-            loss ():
-            weight_decay (float):
-            mc_samples (int):
-            lr (float):
-            max_iterations (int):
-            renyi_scale (float):
-            d (int):
-            h (int):
-            w (int):
-        """
         super().__init__(
             qbg=qbg,
             qp=qp,
@@ -343,10 +295,12 @@ class Integrator2D(BaseIntegrator):
         self.data_dim: str = "2d"
         self.save_hyperparameters(
             ignore=[
-                "image_encoder",
-                "profile_model",
-                "unet",
-                "signal_preprocessor",
+                "encoder1",
+                "encoder2",
+                "loss",
+                "qbg",
+                "qp",
+                "qi",
             ]
         )
 
@@ -421,23 +375,6 @@ class Model3(BaseIntegrator):
         w: int = 21,
         weight_decay=1e-8,
     ):
-        """
-        Args:
-            qbg ():
-            qp ():
-            qi ():
-            encoder1 ():
-            encoder2 ():
-            loss ():
-            weight_decay (float):
-            mc_samples (int):
-            lr (float):
-            max_iterations (int):
-            renyi_scale (float):
-            d (int):
-            h (int):
-            w (int):
-        """
         super().__init__(
             qbg=qbg,
             qp=qp,
@@ -456,10 +393,13 @@ class Model3(BaseIntegrator):
         self.data_dim: str = "3d"
         self.save_hyperparameters(
             ignore=[
-                "image_encoder",
-                "profile_model",
-                "unet",
-                "signal_preprocessor",
+                "encoder1",
+                "encoder2",
+                "encoder3",
+                "qbg",
+                "qp",
+                "qi",
+                "loss",
             ]
         )
 
@@ -517,25 +457,22 @@ if __name__ == "__main__":
     import torch
 
     from integrator.utils import create_data_loader, create_integrator, load_config
-    from utils import CONFIGS
+    from utils import CONFIGS, ROOT_DIR
+
+    data_path = ROOT_DIR / "tests/data/3d/hewl_9b7c"
 
     # load 3d model
     config = load_config(CONFIGS["config3d"])
 
-    integrator = create_integrator(config)
+    data_loader = create_data_loader(config.dict())
 
-    counts = torch.exp(torch.randn(10, 1323))
-    shoebox = torch.exp(torch.randn(10, 1323))
-    masks = torch.randint(2, (10, 1323))
-    reference = torch.randn(10, 14)
-
-    integrator(counts, shoebox, masks, reference)
+    integrator = create_integrator(config.dict())
 
     # ld data
-    config = load_config(CONFIGS["ld"])
-    integrator = create_integrator(config)
+    config = load_config(CONFIGS["config2d"])
+    integrator = create_integrator(config.dict())
 
-    data_loader = create_data_loader(config)
+    data_loader = create_data_loader(config.dict())
 
     counts, shoebox, masks, reference = next(iter(data_loader.train_dataloader()))
 

@@ -1,0 +1,121 @@
+global_vars:
+  dmodel: &dmodel 32
+  mc_samples: &mc_samples 100
+  data_dir: &data "/Users/luis/integratorv3/integrator/tests/data/3d/hewl_9b7c/"
+
+integrator:
+  name: integrator_2d
+  args:
+      lr: 0.001
+      mc_samples: *mc_samples
+      renyi_scale: 0.00
+      h: 21
+      w: 21
+      weight_decay: 0.0
+
+components:
+  encoders: 
+    - encoder1:
+        name: shoebox_encoder_2d
+        args:
+          out_dim: *dmodel
+          in_channels: 1
+          conv1_out_channels: 16
+          conv2_out_channels: 32
+          conv1_kernel: [3,3]
+          conv1_padding: [1,1]
+
+    - encoder2:
+        name: intensity_encoder_2d
+        args:
+          out_dim: *dmodel
+          in_channels: 1
+          conv1_out_channels: 16
+          conv2_out_channels: 32
+          conv3_out_channels: 64
+          conv1_kernel: [3,3]
+          conv1_padding: [1,1]
+
+  qp:
+    name: dirichlet
+    args:
+      dmodel: *dmodel
+      #dmodel: null
+      input_shape: [21,21]
+
+  qbg:
+    name: folded_normal
+    args:
+      dmodel: *dmodel
+      out_features: 2
+
+  qi: 
+    name: folded_normal
+    args: 
+      dmodel: *dmodel
+      out_features: 2
+
+  loss:
+    name: loss2
+    args:
+      pi_name: half_cauchy
+      pi_params:
+        scale: 0.5
+
+      pbg_name: half_cauchy
+      pbg_params:
+        scale: 0.5
+
+      pprf_name: dirichlet
+      pprf_params:
+        concentration: 1.0
+        #loc: 0.05
+        #scale: 0.1
+      pprf_weight: 0.02
+      pbg_weight: 0.5
+      pi_weight: 0.4
+      prior_tensor: "/Users/luis/integratorv4/tests/data/2d/hewl_1118/concentration_2d.pt"
+      use_robust: false
+
+data_loader:
+  name: shoebox_data_module_2d
+  args:
+    data_dir: "/Users/luis/integratorv4/tests/data/2d/hewl_1118/"
+    batch_size: 256
+    val_split: 0.3
+    test_split: 0.0
+    num_workers: 3
+    include_test: false
+    subset_size: null
+    cutoff: null
+    use_metadata: true
+    shoebox_file_names:
+      counts: "counts_2d_subset.pt"
+      masks: "masks_2d_subset.pt"
+      stats: 'stats_2d.pt'
+      reference: 'reference_2d_subset.pt'
+      standardized_counts: null
+
+trainer:
+  args:
+    max_epochs: 1000
+    accelerator: auto
+    devices: 1
+    logger: true
+    precision: "32"
+    check_val_every_n_epoch: 2
+    log_every_n_steps: 3
+    deterministic: false
+    callbacks:
+      pred_writer:
+        output_dir: null
+        write_interval: epoch
+    enable_checkpointing: true
+
+logger:
+    d: 3
+    h: 21
+    w: 21
+
+output:
+  refl_file: "/n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/data/pass1_v3/reflections_.refl"

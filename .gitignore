@@ -108,7 +108,8 @@ venv.bak/
 .mypy_cache/
 
 # Project specific
-data/
+**/*.mtz
+**/*.refl
 logs/
 pytorch_*.err
 pytorch_*.out

@@ -9,42 +9,55 @@ import torch
 import yaml
 
 from integrator.callbacks import PredWriter
+from integrator.config.schema import Cfg
 from integrator.model.integrators import BaseIntegrator
 from integrator.registry import ARGUMENT_RESOLVER, REGISTRY
 
 
-def create_module(module_type, module_name, **kwargs):
-    """"""
+def create_module(module_type: str, module_name: str, **kwargs):
     try:
-        module_class = REGISTRY[module_type][module_name]
-        return module_class(**kwargs)
+        cls = REGISTRY[module_type][module_name]
+        return cls(**kwargs)
     except KeyError as e:
         raise ValueError(
-            f"Unknown {module_type}: {module_name}. Available options: {list(REGISTRY[module_type].keys())}"
+            f"Unknown {module_type}: {module_name}. Available: {list(REGISTRY[module_type].keys())}"
         ) from e
 
 
-def create_integrator(config, checkpoint: None = None) -> BaseIntegrator:
-    modules = dict()
-    integrator_class = REGISTRY["integrator"][config["integrator"]["name"]]
+def _build_modules(components: dict) -> dict:
+    modules: dict[str, object] = {}
 
-    for k, v in config["components"].items():
-        # search for encoder key
-        if re.match(r"encoder\d", k):
-            module_type = "encoders"
-        else:
-            module_type = k
-
-        modules[k] = create_module(module_type, v["name"], **v["args"])
-
-    if checkpoint is not None:
-        integrator = integrator_class.load_from_checkpoint(
-            checkpoint, **modules, **config["integrator"]["args"]
-        )
-        return integrator
+    enc_field = components.get("encoders", [])
+    if isinstance(enc_field, dict):
+        enc_iter = [{k: v} for k, v in enc_field.items()]
+    elif isinstance(enc_field, list):
+        enc_iter = enc_field
+    elif enc_field in (None, []):
+        enc_iter = []
     else:
-        integrator = integrator_class(**modules, **config["integrator"]["args"])
-        return integrator
+        raise TypeError("components.encoders must be a list or dict")
+
+    for enc_dict in enc_iter:
+        for enc_key, sub in enc_dict.items():  # (name, sub-config)
+            modules[enc_key] = create_module("encoders", sub["name"], **(sub.get("args")))
+
+    # --- everything else is a singleton component (qp, qbg, qi, loss, ...)
+    for k, v in components.items():
+        if k == "encoders":
+            continue
+        modules[k] = create_module(k, v["name"], **(v.get("args") or {}))
+
+    return modules
+
+
+def create_integrator(config: dict, checkpoint: str | None = None) -> BaseIntegrator:
+    integrator_cls = REGISTRY["integrator"][config["integrator"]["name"]]
+    modules = _build_modules(config["components"])
+    kwargs = {**modules, **config["integrator"]["args"]}
+
+    if checkpoint:
+        return integrator_cls.load_from_checkpoint(checkpoint, **kwargs)
+    return integrator_cls(**kwargs)
 
 
 def create_argument(module_type, argument_name, argument_value):
@@ -58,10 +71,10 @@ def create_argument(module_type, argument_name, argument_value):
 
 
 # %%
-def load_config(config_path):
-    """utility function to load a yaml config file"""
-    with open(config_path) as f:
-        return yaml.safe_load(f)
+# def load_config(config_path) -> dict:
+#     """utility function to load a yaml config file"""
+#     with open(config_path) as f:
+#         return yaml.safe_load(f)
 
 
 def create_data_loader(config):
@@ -70,16 +83,16 @@ def create_data_loader(config):
 
     if data_loader_name in {"default", "shoebox_data_module", "shoebox_data_module_2d"}:
         data_module = data_loader_class(
-            data_dir=config["data_loader"]["params"]["data_dir"],
-            batch_size=config["data_loader"]["params"]["batch_size"],
-            val_split=config["data_loader"]["params"]["val_split"],
-            test_split=config["data_loader"]["params"]["test_split"],
-            num_workers=config["data_loader"]["params"]["num_workers"],
-            include_test=config["data_loader"]["params"]["include_test"],
-            subset_size=config["data_loader"]["params"]["subset_size"],
-            cutoff=config["data_loader"]["params"]["cutoff"],
-            use_metadata=config["data_loader"]["params"]["use_metadata"],
-            shoebox_file_names=config["data_loader"]["params"]["shoebox_file_names"],
+            data_dir=config["data_loader"]["args"]["data_dir"],
+            batch_size=config["data_loader"]["args"]["batch_size"],
+            val_split=config["data_loader"]["args"]["val_split"],
+            test_split=config["data_loader"]["args"]["test_split"],
+            num_workers=config["data_loader"]["args"]["num_workers"],
+            include_test=config["data_loader"]["args"]["include_test"],
+            subset_size=config["data_loader"]["args"]["subset_size"],
+            cutoff=config["data_loader"]["args"]["cutoff"],
+            use_metadata=config["data_loader"]["args"]["use_metadata"],
+            shoebox_file_names=config["data_loader"]["args"]["shoebox_file_names"],
         )
         data_module.setup()
         return data_module
@@ -89,18 +102,18 @@ def create_data_loader(config):
 
 def create_trainer(config, callbacks=None, logger=None):
     return pl.Trainer(
-        max_epochs=config["trainer"]["params"]["max_epochs"],
+        max_epochs=config["trainer"]["args"]["max_epochs"],
         accelerator=create_argument(
-            "trainer", "accelerator", config["trainer"]["params"]["accelerator"]
+            "trainer", "accelerator", config["trainer"]["args"]["accelerator"]
         )(),
-        devices=config["trainer"]["params"]["devices"],
+        devices=config["trainer"]["args"]["devices"],
         logger=logger,
-        precision=config["trainer"]["params"]["precision"],
-        check_val_every_n_epoch=config["trainer"]["params"]["check_val_every_n_epoch"],
-        log_every_n_steps=config["trainer"]["params"]["log_every_n_steps"],
-        deterministic=config["trainer"]["params"]["deterministic"],
+        precision=config["trainer"]["args"]["precision"],
+        check_val_every_n_epoch=config["trainer"]["args"]["check_val_every_n_epoch"],
+        log_every_n_steps=config["trainer"]["args"]["log_every_n_steps"],
+        deterministic=config["trainer"]["args"]["deterministic"],
         callbacks=callbacks,
-        enable_checkpointing=config["trainer"]["params"]["enable_checkpointing"],
+        enable_checkpointing=config["trainer"]["args"]["enable_checkpointing"],
     )
 
 
@@ -137,9 +150,9 @@ def parse_args():
 def override_config(args, config):
     # Override config options from command line
     if args.batch_size:
-        config["data_loader"]["params"]["batch_size"] = args.batch_size
+        config["data_loader"]["args"]["batch_size"] = args.batch_size
     if args.epochs:
-        config["trainer"]["params"]["max_epochs"] = args.epochs
+        config["trainer"]["args"]["max_epochs"] = args.epochs
 
 
 def clean_from_memory(trainer, pred_writer, pred_integrator, checkpoint_callback=None):
@@ -165,9 +178,7 @@ def predict_from_checkpoints(config, trainer, pred_integrator, data, version_dir
         # prediction writer for current checkpoint
         pred_writer = PredWriter(
             output_dir=ckpt_dir,
-            write_interval=config["trainer"]["params"]["callbacks"]["pred_writer"][
-                "write_interval"
-            ],
+            write_interval=config["trainer"]["args"]["callbacks"]["pred_writer"]["write_interval"],
         )
 
         trainer.callbacks = [pred_writer]
@@ -198,6 +209,58 @@ def predict_from_checkpoints(config, trainer, pred_integrator, data, version_dir
         gc.collect()
 
 
+# src/integrator/config/load.py
+
+
+def load_config(path: Path) -> Cfg:
+    with open(path) as f:
+        raw = yaml.safe_load(f)  # YAML anchors are resolved here
+    return Cfg.model_validate(raw)  # validate + fill defaults
+
+
 # assign train/val labels
 if __name__ == "__main__":
-    pass
+    from utils import CONFIGS
+
+    # Laue model config
+    config2d = load_config(CONFIGS["config2d"])
+    create_integrator(config2d.dict())
+
+    # Two encoder config
+    config3d = load_config(CONFIGS["config3d"])
+    create_integrator(config3d.dict())
+
+    updates = {
+        "trainer": {"args": {"max_epochs": 100}},
+    }
+
+    updates = dict()
+    updates.setdefault("trainer", {}).setdefault("args", {})["max_epochs"] = 100
+
+    config3d.dict()["trainer"]
+
+    updates.setdefault("trainer", {}).setdefault("args", {})["max_epochs"] = 100
+
+    config3d.model_copy(update=updates).dict()["trainer"]
+
+    from pathlib import Path
+
+    def apply_cli_overrides(
+        cfg: Cfg,
+        *,
+        epochs: int | None = None,
+        batch_size: int | None = None,
+        data_path: Path | None = None,
+    ) -> Cfg:
+        if epochs is not None:
+            cfg.trainer.args.max_epochs = epochs
+
+        if batch_size is not None:
+            cfg.data_loader.params.batch_size = batch_size
+
+        if data_path is not None:
+            cfg.data_loader.params.data_dir = data_path
+            # If you want to rebase relative filenames under the new data_dir,
+            # rely on your validator in DataLoaderParams or re-run a validate step (next option).
+
+        return cfg

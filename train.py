@@ -5,7 +5,7 @@ import subprocess
 
 import torch
 import yaml
-from pytorch_lightning.callbacks import Callback, ModelCheckpoint
+from pytorch_lightning.callbacks import ModelCheckpoint
 
 # from lightning.pytorch.loggers import TensorBoardLogger
 from pytorch_lightning.loggers import WandbLogger
@@ -31,44 +31,6 @@ torch.set_float32_matmul_precision("medium")
 
 
 if __name__ == "__main__":
-    dials_env = "/n/hekstra_lab/people/aldama/software/dials-v3-16-1/dials_env.sh "
-    phenix_env = "/n/hekstra_lab/garden_backup/phenix-1.21/phenix-1.21.1-5286/phenix_env.sh"
-    expt_file = "/n/holylabs/LABS/hekstra_lab/Users/laldama/integratorv2/integrator/logs/DIALS_/CNNResNetSoftmax_08_045/integrated.expt"
-    pdb = "/n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/1dpx.pdb"
-
-    def get_git_info():
-        try:
-            commit_hash = (
-                subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL)
-                .decode("ascii")
-                .strip()
-            )
-            branch = (
-                subprocess.check_output(
-                    ["git", "branch", "--show-current"], stderr=subprocess.DEVNULL
-                )
-                .decode("ascii")
-                .strip()
-            )
-            dirty = (
-                subprocess.check_output(["git", "status", "--porcelain"], stderr=subprocess.DEVNULL)
-                .decode("ascii")
-                .strip()
-                != ""
-            )
-            return {"commit_hash": commit_hash, "branch": branch, "dirty": dirty}
-        except Exception:
-            return {"commit_hash": "unknown", "branch": "unknown", "dirty": False}
-
-    class GitInfoCallback(Callback):
-        def on_train_start(self, trainer, pl_module):
-            log_dir = trainer.logger.log_dir
-            git_info = get_git_info()
-            with open(os.path.join(log_dir, "git_info.txt"), "w") as f:
-                f.write(f"Commit hash: {git_info['commit_hash']}\n")
-                f.write(f"Branch: {git_info['branch']}\n")
-                f.write(f"Dirty: {git_info['dirty']}\n")
-
     args = parse_args()
 
     # Load configuration file
@@ -135,8 +97,6 @@ if __name__ == "__main__":
     os.makedirs(trainer.logger.experiment.dir, exist_ok=True)
 
     log_dirr = trainer.logger.experiment.dir
-
-    git_info = get_git_info()
 
     save_git_info = os.path.join(log_dirr, "git_info.txt")
     logger.log_hyperparams(git_info)
