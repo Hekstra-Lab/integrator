@@ -1,4 +1,3 @@
-import argparse
 import gc
 import glob
 import re
@@ -115,36 +114,6 @@ def create_trainer(config, callbacks=None, logger=None):
         callbacks=callbacks,
         enable_checkpointing=config["trainer"]["args"]["enable_checkpointing"],
     )
-
-
-# later
-def parse_args():
-    parser = argparse.ArgumentParser(description="Configuration for Integration Model")
-    parser.add_argument(
-        "--config",
-        type=str,
-        default="./src/integrator/configs/config.yaml",
-        help="Path to the config.yaml file",
-    )
-    parser.add_argument(
-        "--job_id",
-        type=str,
-        default=None,
-        help="Optional ID for the current run",
-    )
-    parser.add_argument(
-        "--epochs",
-        type=int,
-        default=5,
-        help="Number of epochs to train the model",
-    )
-    parser.add_argument(
-        "--batch_size",
-        type=int,
-        default=250,
-        help="Batch size for training",
-    )
-    return parser.parse_args()
 
 
 def override_config(args, config):
