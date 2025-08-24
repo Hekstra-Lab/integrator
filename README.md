@@ -1,3 +1,4 @@
 # Integrator
 
-An amoritzed variational inference model to integrate diffraction data.
+An amortized variational inference model to integrate diffraction data.
+
