@@ -16,7 +16,7 @@ from .model.encoders import (
     ShoeboxEncoder2D,
 )
 from .model.integrators import Integrator, Integrator2D, Model2, Model3
-from .model.loss import Loss, Loss2
+from .model.loss import Loss
 
 REGISTRY = {
     "encoders": {
@@ -28,7 +28,7 @@ REGISTRY = {
     },
     "loss": {
         "elbo": Loss,
-        "loss2": Loss2,
+        "loss": Loss,
     },
     "integrator": {
         "integrator": Integrator,

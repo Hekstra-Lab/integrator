@@ -82,9 +82,7 @@ class DataManager:
             df = plr.read_csv(c)
 
             # Extract epoch number from epoch name (e.g., "epoch_99" -> "99")
-            epoch_num = (
-                re.findall(r"\d+", epoch)[0] if re.findall(r"\d+", epoch) else None
-            )
+            epoch_num = re.findall(r"\d+", epoch)[0] if re.findall(r"\d+", epoch) else None
 
             val = None
             if epoch_num:
@@ -266,9 +264,7 @@ def plot_method(method, metrics=["cc_half", "cc_anom", "r_pim", "I_vs_sigI"]):
     axes = list(itertools.product(range(1, 3), range(1, 3)))
 
     # Create a consistent colormap
-    colors = (
-        px.colors.qualitative.Plotly
-    )  # Or any other colormap like px.colors.sequential.Viridis
+    colors = px.colors.qualitative.Plotly  # Or any other colormap like px.colors.sequential.Viridis
 
     # Track which epochs have been added to the legend
     added_to_legend = set()
@@ -291,9 +287,7 @@ def plot_method(method, metrics=["cc_half", "cc_anom", "r_pim", "I_vs_sigI"]):
                     y=y,
                     mode="lines+markers",
                     name=f"{epoch}",
-                    line=dict(
-                        color=colors[i % len(colors)]
-                    ),  # Consistent color per epoch
+                    line=dict(color=colors[i % len(colors)]),  # Consistent color per epoch
                     showlegend=showlegend,  # Only show in legend once
                 ),
                 row=ax[0],
@@ -313,9 +307,7 @@ def plot_method(method, metrics=["cc_half", "cc_anom", "r_pim", "I_vs_sigI"]):
                 y=y_ref,
                 mode="lines+markers",
                 name="DIALS",
-                line=dict(
-                    dash="dash", color="black"
-                ),  # Use a distinct style for reference
+                line=dict(dash="dash", color="black"),  # Use a distinct style for reference
                 showlegend="DIALS" not in added_to_legend,  # Only show in legend once
             ),
             row=ax[0],
@@ -327,9 +319,7 @@ def plot_method(method, metrics=["cc_half", "cc_anom", "r_pim", "I_vs_sigI"]):
 
         # Add axis labels for each subplot
         fig.update_xaxes(title_text="Resolution", row=ax[0], col=ax[1])
-        fig.update_yaxes(
-            title_text=data.metrics[metric]["display_name"], row=ax[0], col=ax[1]
-        )
+        fig.update_yaxes(title_text=data.metrics[metric]["display_name"], row=ax[0], col=ax[1])
 
     # Update overall layout
     fig.update_layout(
@@ -547,17 +537,13 @@ if __name__ == "__main__":
 
         # set up color map and count number of epochs
         # cmap = plt.cm.Greys
-        cmap = sns.cubehelix_palette(
-            start=0.5, rot=-0.55, dark=0, light=0.8, as_cmap=True
-        )
+        cmap = sns.cubehelix_palette(start=0.5, rot=-0.55, dark=0, light=0.8, as_cmap=True)
         cmap_list = cmap(np.linspace(0.0, 1, epochs, retstep=2)[0])
 
         # plot
         i = 0
         for color, epoch in zip(cmap_list, data.data_dict["posterior"].items(), strict=False):
-            arr = epoch[1]["merging_stats"][:, data.metrics[metric]["col_idx"]].astype(
-                np.float32
-            )
+            arr = epoch[1]["merging_stats"][:, data.metrics[metric]["col_idx"]].astype(np.float32)
             ax.plot(x_ticks, arr, color=color, linewidth=1.5)
             i += 1
 
@@ -582,9 +568,7 @@ if __name__ == "__main__":
         fontsize=16,
     )
     plt.tight_layout(rect=[0, 0, 0.95, 0.95])
-    plt.savefig(
-        f"{path.as_posix()}/merging_stats_p_prf_{p_prf_scale}_{id}.png", dpi=600
-    )
+    plt.savefig(f"{path.as_posix()}/merging_stats_p_prf_{p_prf_scale}_{id}.png", dpi=600)
     wandb.log({"Posterior Merging Stats": wandb.Image(plt.gcf())})
 
     # log anomalous peak height tables
@@ -592,9 +576,7 @@ if __name__ == "__main__":
     method_figures = create_peaks_tables(data.data_dict, data.reference_peaks)
 
     direct_method_tbl = method_figures["posterior"]
-    wandb.log(
-        {"Direct Method Anomalous Peaks": direct_method_tbl}
-    )  # Log the table to W&B
+    wandb.log({"Direct Method Anomalous Peaks": direct_method_tbl})  # Log the table to W&B
 
     # Get metrics for all epochs
     d = dict()
@@ -618,22 +600,10 @@ if __name__ == "__main__":
         .loc[5]
         .values[1:]
         .astype(float),
-        "Rmerge": pd.read_html(data.reference_html, header=0)[0]
-        .loc[6]
-        .values[1:]
-        .astype(float),
-        "Rmeas": pd.read_html(data.reference_html, header=0)[0]
-        .loc[7]
-        .values[1:]
-        .astype(float),
-        "Rpim": pd.read_html(data.reference_html, header=0)[0]
-        .loc[8]
-        .values[1:]
-        .astype(float),
-        "CChalf": pd.read_html(data.reference_html, header=0)[0]
-        .loc[9]
-        .values[1:]
-        .astype(float),
+        "Rmerge": pd.read_html(data.reference_html, header=0)[0].loc[6].values[1:].astype(float),
+        "Rmeas": pd.read_html(data.reference_html, header=0)[0].loc[7].values[1:].astype(float),
+        "Rpim": pd.read_html(data.reference_html, header=0)[0].loc[8].values[1:].astype(float),
+        "CChalf": pd.read_html(data.reference_html, header=0)[0].loc[9].values[1:].astype(float),
     }
 
     # -
@@ -662,8 +632,7 @@ if __name__ == "__main__":
                 ),
                 cells=dict(
                     values=[epochs, arr[:, 0], arr[:, 1], arr[:, 2]],
-                    fill_color=[fill_colors]
-                    * 4,  # Apply same alternating pattern to all columns
+                    fill_color=[fill_colors] * 4,  # Apply same alternating pattern to all columns
                     align="center",
                     font=dict(size=12),
                 ),
@@ -738,8 +707,7 @@ if __name__ == "__main__":
     print(df_final)
 
     rgap = (
-        df_final_sorted["r_free"].astype(np.float64)
-        - df_final_sorted["r_work"].astype(np.float64)
+        df_final_sorted["r_free"].astype(np.float64) - df_final_sorted["r_work"].astype(np.float64)
     ).to_numpy()
 
     rgap_str = np.vectorize(lambda x: f"{x:.2g}")(rgap)
@@ -750,8 +718,8 @@ if __name__ == "__main__":
     arr_start = df_start_sorted.astype(float).values
     arr_final = df_final_sorted.astype(float).values
 
-    print('arr_start:',arr_start)
-    print('arr_final:',arr_final)
+    print("arr_start:", arr_start)
+    print("arr_final:", arr_final)
 
     fill_colors = [["#f9f9f9", "#e6e6e6"][(i % 2)] for i in range(len(epochs))]
 
@@ -816,9 +784,7 @@ if __name__ == "__main__":
             merged_df = ref_df.join(
                 plr.DataFrame(
                     {
-                        "residue": data.data_dict["posterior"][epoch]["peaks"][
-                            "residue"
-                        ],
+                        "residue": data.data_dict["posterior"][epoch]["peaks"]["residue"],
                         "seqid": data.data_dict["posterior"][epoch]["peaks"]["seqid"],
                         "peakz": data.data_dict["posterior"][epoch]["peaks"]["peakz"],
                     }
@@ -897,9 +863,7 @@ if __name__ == "__main__":
     )
     plt.tight_layout(rect=[0, 0, 0.95, 0.95])
 
-    plt.savefig(
-        f"{path.as_posix()}/overall_peak_heatmap_p_prf_{p_prf_scale}_{id}.png", dpi=600
-    )
+    plt.savefig(f"{path.as_posix()}/overall_peak_heatmap_p_prf_{p_prf_scale}_{id}.png", dpi=600)
     wandb.log({"Largest peak difference": wandb.Image(plt.gcf())})
 
     # -
@@ -954,9 +918,7 @@ if __name__ == "__main__":
     plt.yticks(ticks=y_axis, labels=epochs, rotation=0)
 
     plt.tight_layout(rect=[0, 0, 0.95, 0.95])
-    plt.savefig(
-        f"{path.as_posix()}/heatmap_peaks_p_prf_{p_prf_scale}_{id}.png", dpi=600
-    )
+    plt.savefig(f"{path.as_posix()}/heatmap_peaks_p_prf_{p_prf_scale}_{id}.png", dpi=600)
     wandb.log({"Anomalous peak differences": wandb.Image(plt.gcf())})
 
     ref_tbl = flex.reflection_table.from_file(config["output"]["refl_file"])
@@ -971,12 +933,8 @@ if __name__ == "__main__":
 
     vals = []
     for epoch in data.data_dict["posterior"].keys():
-        chalf = data.data_dict["posterior"][epoch]["merging_stats"][:, -2].astype(
-            np.float64
-        )
-        n_obs = data.data_dict["posterior"][epoch]["merging_stats"][:, 1].astype(
-            np.float64
-        )
+        chalf = data.data_dict["posterior"][epoch]["merging_stats"][:, -2].astype(np.float64)
+        n_obs = data.data_dict["posterior"][epoch]["merging_stats"][:, 1].astype(np.float64)
 
         vals.append((chalf * n_obs).sum() / n_obs.sum())
 
@@ -1007,19 +965,12 @@ if __name__ == "__main__":
 
     x_axis = np.arange(len(epochs))
     val_loss = np.array(
-        [
-            data.data_dict["posterior"][epoch]["val"]
-            for epoch in data.data_dict["posterior"].keys()
-        ]
+        [data.data_dict["posterior"][epoch]["val"] for epoch in data.data_dict["posterior"].keys()]
     )
     axes[0, 0].plot(x_axis, arr_final[1:, 0], color="black", label="Final R-work")
     axes[0, 0].plot(x_axis, arr_final[1:, 1], color="blue", label="Final R-free")
-    axes[0, 0].axhline(
-        y=arr_final[0, 0], color="black", label="Ref Final R-work", linestyle="--"
-    )
-    axes[0, 0].axhline(
-        y=arr_final[0, 1], color="blue", label="Ref Final R-free", linestyle="--"
-    )
+    axes[0, 0].axhline(y=arr_final[0, 0], color="black", label="Ref Final R-work", linestyle="--")
+    axes[0, 0].axhline(y=arr_final[0, 1], color="blue", label="Ref Final R-free", linestyle="--")
     axes[0, 0].grid()
     axes[0, 0].set_xlabel("epoch")
     axes[0, 0].set_title(
@@ -1030,13 +981,9 @@ if __name__ == "__main__":
     axes[0, 0].legend()
 
     axes[0, 1].plot(train_epochs, train_avg_loss, color="black", label="train_loss")
-    axes[0, 1].plot(
-        train_epochs, train_avg_nll, color="black", label="train_nll", linestyle="--"
-    )
+    axes[0, 1].plot(train_epochs, train_avg_nll, color="black", label="train_nll", linestyle="--")
     axes[0, 1].plot(val_epochs, val_avg_loss, color="red", label="val_loss")
-    axes[0, 1].plot(
-        val_epochs, val_avg_nll, color="red", label="val_nll", linestyle="--"
-    )
+    axes[0, 1].plot(val_epochs, val_avg_nll, color="red", label="val_nll", linestyle="--")
     axes[0, 1].set_title("Val loss vs Epoch")
     axes[0, 1].set_xlabel("epoch")
     axes[0, 1].set_ylabel("loss")
@@ -1075,9 +1022,7 @@ if __name__ == "__main__":
     cmap_list = cmap(np.linspace(0.0, 1, epochs, retstep=2)[0])
 
     for color, epoch in zip(cmap_list, data.data_dict["posterior"].keys(), strict=False):
-        cchalf = data.data_dict["posterior"][epoch]["merging_stats"][:, -2].astype(
-            np.float64
-        )
+        cchalf = data.data_dict["posterior"][epoch]["merging_stats"][:, -2].astype(np.float64)
         cc_star = np.sqrt(2 * cchalf / (1 + cchalf))
 
         vals.append(cc_star)
@@ -1136,9 +1081,7 @@ if __name__ == "__main__":
     plt.ylabel("DIALS I_sum", fontsize=26)
     plt.xlabel("I_NN", fontsize=26)
     plt.tight_layout()
-    plt.savefig(
-        f"{path.as_posix()}/corr_plot_sum_vs_nn_p_prf_{p_prf_scale}_{id}.png", dpi=600
-    )
+    plt.savefig(f"{path.as_posix()}/corr_plot_sum_vs_nn_p_prf_{p_prf_scale}_{id}.png", dpi=600)
 
     wandb.log({"Correlation plot: DIALS summation vs NN": wandb.Image(plt.gcf())})
 
@@ -1162,17 +1105,9 @@ if __name__ == "__main__":
     plt.ylabel("DIALS I_prf", fontsize=26)
     plt.xlabel("I_NN", fontsize=26)
     plt.tight_layout()
-    plt.savefig(
-        f"{path.as_posix()}/corr_plot_prf_vs_nn_p_prf_{p_prf_scale}_{id}.png", dpi=600
-    )
+    plt.savefig(f"{path.as_posix()}/corr_plot_prf_vs_nn_p_prf_{p_prf_scale}_{id}.png", dpi=600)
 
-    wandb.log(
-        {
-            "Correlation plot: DIALS profile fitting algorithm vs NN": wandb.Image(
-                plt.gcf()
-            )
-        }
-    )
+    wandb.log({"Correlation plot: DIALS profile fitting algorithm vs NN": wandb.Image(plt.gcf())})
 
     # -
     nn_background = np.concatenate(best_preds["qbg_mean"])

@@ -40,9 +40,11 @@ def run_phenix(phenix_env, mtz_file, phenix_eff, paired_ref_eff, paired_model_ef
     Path(paired_model_dir).mkdir(parents=True, exist_ok=True)
 
     # Construct the phenix.refine command with proper escaping
-    refine_command = f"phenix.refine {Path(phenix_eff).resolve()} {Path(mtz_file).resolve()} overwrite=true"
+    refine_command = (
+        f"phenix.refine {Path(phenix_eff).resolve()} {Path(mtz_file).resolve()} overwrite=true"
+    )
 
-    #refined_mtz_out = phenix_dir + "/refine_001.mtz"
+    # refined_mtz_out = phenix_dir + "/refine_001.mtz"
     refined_mtz_out = mtz_file
     updated_paired_model_eff = paired_model_dir + "/updated_paired_model.eff"
 
@@ -60,9 +62,7 @@ def run_phenix(phenix_env, mtz_file, phenix_eff, paired_ref_eff, paired_model_ef
     )
 
     # Construct the find_peaks command
-    peaks_command = (
-        "rs.find_peaks *[0-9].mtz *[0-9].pdb -f ANOM -p PANOM -z 5.0 -o peaks.csv"
-    )
+    peaks_command = "rs.find_peaks *[0-9].mtz *[0-9].pdb -f ANOM -p PANOM -z 5.0 -o peaks.csv"
 
     full_command = f"source {phenix_env} && cd {phenix_dir} && {refine_command} && {peaks_command} && cd {paired_ref_dir} && {paired_ref_command} && cd {paired_model_dir} && {paired_model_command} "
 
@@ -80,9 +80,7 @@ def run_phenix(phenix_env, mtz_file, phenix_eff, paired_ref_eff, paired_model_ef
         return result
     except subprocess.CalledProcessError as e:
         print(f"Command failed with error code: {e.returncode}")
-        print(
-            "Command that failed:", full_command
-        )  # Print the actual command for debugging
+        print("Command that failed:", full_command)  # Print the actual command for debugging
         print("Working directory:", phenix_dir)
         print("Standard Output:")
         print(e.stdout)

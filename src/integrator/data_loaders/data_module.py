@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader, Subset, TensorDataset, random_split
@@ -33,17 +34,17 @@ class ShoeboxDataModule2D(BaseDataModule):
 
     def __init__(
         self,
-        data_dir,
-        batch_size=100,
-        val_split=0.2,
-        test_split=0.1,
-        num_workers=3,
-        include_test=False,
-        subset_size=None,
-        single_sample_index=None,
+        data_dir: Path,
+        batch_size: int = 100,
+        val_split: float | None = 0.2,
+        test_split: float | None = 0.1,
+        num_workers: int = 3,
+        include_test: bool = False,
+        subset_size: int | None = None,
+        single_sample_index: None = None,
         cutoff=None,
         use_metadata=None,
-        persistent_workers=True,
+        persistent_workers: bool = True,
         shoebox_file_names={
             "counts": "counts.pt",
             # "metadata": "metadata.pt",
@@ -114,10 +115,10 @@ class ShoeboxDataModule2D(BaseDataModule):
         # Optionally, create a subset of the dataset
         if self.subset_size is not None and self.subset_size < len(self.full_dataset):
             indices = torch.randperm(len(self.full_dataset))[: self.subset_size]
-            self.full_dataset = Subset(self.full_dataset, indices)
+            self.full_dataset = Subset(self.full_dataset, indices=indices)
 
         # Calculate lengths for train/val/test splits
-        total_size = len(self.full_dataset)
+        total_size: int = len(self.full_dataset)
         val_size = int(total_size * self.val_split)
         if self.include_test:
             test_size = int(total_size * self.test_split)
@@ -204,17 +205,17 @@ class ShoeboxDataModule(BaseDataModule):
 
     def __init__(
         self,
-        data_dir,
-        batch_size=100,
-        val_split=0.2,
-        test_split=0.1,
-        num_workers=3,
-        include_test=False,
-        subset_size=None,
+        data_dir: Path,
+        batch_size: int = 100,
+        val_split: float = 0.2,
+        test_split: float = 0.1,
+        num_workers: int = 3,
+        include_test: bool = False,
+        subset_size: int | None = None,
         single_sample_index=None,
-        cutoff=None,
-        use_metadata=None,
-        persistent_workers=True,
+        cutoff: float | None = None,
+        use_metadata: bool | None = None,
+        persistent_workers: bool = True,
         shoebox_file_names={
             "counts": "counts.pt",
             # "metadata": "metadata.pt",
@@ -223,11 +224,11 @@ class ShoeboxDataModule(BaseDataModule):
             "reference": "reference.pt",
             "standardized_counts": None,
         },
-        refl_file=None,
-        H=21,
-        W=21,
-        Z=3,
-        get_dxyz=False,
+        refl_file: Path | None = None,
+        H: int = 21,
+        W: int = 21,
+        Z: int = 3,
+        get_dxyz: bool = False,
     ):
         super().__init__()
         self.data_dir = data_dir
@@ -272,6 +273,7 @@ class ShoeboxDataModule(BaseDataModule):
         if self.cutoff is not None:
             # Make sure we're checking the first column of reference against cutoff
             # Ensure reference has the right shape before filtering
+
             if reference.dim() > 1:
                 selection = reference[:, 13] < self.cutoff
             else:

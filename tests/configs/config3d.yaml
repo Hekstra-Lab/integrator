@@ -57,7 +57,7 @@ components:
       out_features: 2
 
   loss:
-    name: loss2
+    name: loss
     args:
 
       pi_name: half_normal

@@ -56,7 +56,7 @@ components:
       out_features: 2
 
   loss:
-    name: loss2
+    name: loss
     args:
       pi_name: half_cauchy
       pi_params:
@@ -69,8 +69,6 @@ components:
       pprf_name: dirichlet
       pprf_params:
         concentration: 1.0
-        #loc: 0.05
-        #scale: 0.1
       pprf_weight: 0.02
       pbg_weight: 0.5
       pi_weight: 0.4
