@@ -132,9 +132,7 @@ print(f"{good.count(True)} / {good.size()} kept")
 reflections = reflections.select(good)
 
 # store shoeboxes into reflection file
-reflections["shoebox"] = flex.shoebox(
-    reflections["panel"], reflections["bbox"], allocate=True
-)
+reflections["shoebox"] = flex.shoebox(reflections["panel"], reflections["bbox"], allocate=True)
 
 # get shoeboxes
 reflections.extract_shoeboxes(imageset)
@@ -166,9 +164,7 @@ for experiment, indices in reflections.iterate_experiments_and_indices(experimen
 # mask shape is (N_samples x z_shape x x_shape x y_shape)
 masks = torch.stack(
     [
-        torch.tensor(
-            sbox.mask.as_numpy_array().ravel(), dtype=torch.float32, requires_grad=False
-        )
+        torch.tensor(sbox.mask.as_numpy_array().ravel(), dtype=torch.float32, requires_grad=False)
         for sbox in reflections["shoebox"]
     ]
 )
@@ -240,18 +236,10 @@ gc.collect()
 # Metadata Tensor
 metadata = torch.stack(
     [
-        torch.tensor(
-            reflections["intensity.sum.value"].as_numpy_array(), dtype=torch.float32
-        ),
-        torch.tensor(
-            reflections["intensity.sum.variance"].as_numpy_array(), dtype=torch.float32
-        ),
-        torch.tensor(
-            reflections["intensity.prf.value"].as_numpy_array(), dtype=torch.float32
-        ),
-        torch.tensor(
-            reflections["intensity.prf.variance"].as_numpy_array(), dtype=torch.float32
-        ),
+        torch.tensor(reflections["intensity.sum.value"].as_numpy_array(), dtype=torch.float32),
+        torch.tensor(reflections["intensity.sum.variance"].as_numpy_array(), dtype=torch.float32),
+        torch.tensor(reflections["intensity.prf.value"].as_numpy_array(), dtype=torch.float32),
+        torch.tensor(reflections["intensity.prf.variance"].as_numpy_array(), dtype=torch.float32),
         torch.tensor(reflections["refl_ids"].as_numpy_array(), dtype=torch.float32),
     ]
 ).transpose(0, 1)

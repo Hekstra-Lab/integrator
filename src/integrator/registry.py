@@ -7,7 +7,6 @@ from .model.distributions import (
     GammaDistribution,
     HalfNormalDistribution,
     LogNormalDistribution,
-    NormalDistribution,
 )
 from .model.encoders import (
     IntensityEncoder,
@@ -40,7 +39,6 @@ REGISTRY = {
     "qi": {
         "gamma": GammaDistribution,
         "log_normal": LogNormalDistribution,
-        "normal": NormalDistribution,
         "folded_normal": FoldedNormalDistribution,
     },
     "qp": {

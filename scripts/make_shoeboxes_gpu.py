@@ -14,6 +14,7 @@ from libtbx.phil import parse
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
+
 def to_gpu(data):
     if isinstance(data, torch.Tensor):
         return data.to(device)
@@ -21,6 +22,7 @@ def to_gpu(data):
         return torch.from_numpy(data).to(device)
     else:
         return data
+
 
 phil_scope = parse(
     """
@@ -130,9 +132,7 @@ print(f"{good.count(True)} / {good.size()} kept")
 reflections = reflections.select(good)
 
 # store shoeboxes into reflection file
-reflections["shoebox"] = flex.shoebox(
-    reflections["panel"], reflections["bbox"], allocate=True
-)
+reflections["shoebox"] = flex.shoebox(reflections["panel"], reflections["bbox"], allocate=True)
 
 # get shoeboxes
 reflections.extract_shoeboxes(imageset)
@@ -161,50 +161,61 @@ for experiment, indices in reflections.iterate_experiments_and_indices(experimen
     )
     modified_count += modified.count(True)
 
+
 def process_and_save_chunk(chunk, chunk_index, output_dir, overwrite=False):
     masks_file = os.path.join(output_dir, f"masks_{chunk_index}.pt")
     samples_file = os.path.join(output_dir, f"samples_{chunk_index}.pt")
     metadata_file = os.path.join(output_dir, f"metadata_{chunk_index}.pt")
-    
+
     if not overwrite and all(os.path.exists(f) for f in [masks_file, samples_file, metadata_file]):
         print(f"Chunk {chunk_index} already processed. Skipping.")
         return 0
-    
+
     batch_size = 1000  # Process in very small batches
     total_processed = 0
-    
+
     all_filtered_masks = []
     all_filtered_samples = []
     all_filtered_metadata = []
-    
+
     for i in range(0, len(chunk), batch_size):
-        sub_chunk = chunk[i:i+batch_size]
-        
+        sub_chunk = chunk[i : i + batch_size]
+
         try:
-            print(f"Processing sub-chunk {i//batch_size + 1} of chunk {chunk_index}")
-            
+            print(f"Processing sub-chunk {i // batch_size + 1} of chunk {chunk_index}")
+
             print("Creating masks...")
-            masks = torch.stack([
-                torch.tensor(sbox.mask.as_numpy_array().ravel(), dtype=torch.float32)
-                for sbox in sub_chunk["shoebox"]
-            ])
+            masks = torch.stack(
+                [
+                    torch.tensor(sbox.mask.as_numpy_array().ravel(), dtype=torch.float32)
+                    for sbox in sub_chunk["shoebox"]
+                ]
+            )
             masks[masks == 3] = 0
-            
+
             print("Creating coordinates...")
-            coordinates = torch.stack([
-                torch.tensor(sbox.coords().as_numpy_array(), dtype=torch.float32)
-                for sbox in sub_chunk["shoebox"]
-            ])
-            
+            coordinates = torch.stack(
+                [
+                    torch.tensor(sbox.coords().as_numpy_array(), dtype=torch.float32)
+                    for sbox in sub_chunk["shoebox"]
+                ]
+            )
+
             print("Creating i_obs...")
-            i_obs = torch.stack([
-                torch.tensor(sbox.data.as_numpy_array().ravel().astype(np.float32), dtype=torch.float32)
-                for sbox in sub_chunk["shoebox"]
-            ]).unsqueeze(-1)
-            
+            i_obs = torch.stack(
+                [
+                    torch.tensor(
+                        sbox.data.as_numpy_array().ravel().astype(np.float32), dtype=torch.float32
+                    )
+                    for sbox in sub_chunk["shoebox"]
+                ]
+            ).unsqueeze(-1)
+
             print("Creating centroids...")
-            centroids = torch.tensor(sub_chunk["xyzobs.px.value"].as_numpy_array(), dtype=torch.float32).unsqueeze(1)
-            
+            centroids = torch.tensor(
+                sub_chunk["xyzobs.px.value"].as_numpy_array(), dtype=torch.float32
+            ).unsqueeze(1)
+
             print("Calculating dxyz...")
             try:
                 coordinates = to_gpu(coordinates)
@@ -215,52 +226,60 @@ def process_and_save_chunk(chunk, chunk_index, output_dir, overwrite=False):
                 print(f"GPU processing failed: {e}")
                 print("Falling back to CPU processing")
                 dxyz = torch.abs(coordinates - centroids)
-            
+
             coordinates = coordinates.cpu()
             centroids = centroids.cpu()
             torch.cuda.empty_cache()
-            
+
             print("Concatenating samples...")
             samples = torch.cat((coordinates, dxyz, i_obs), dim=-1)
-            
+
             del coordinates, dxyz, i_obs, centroids
             gc.collect()
-            
+
             print("Filtering dead panels...")
-            filter = ((samples[..., -1] < 0).sum(-1) < 700)
-            
+            filter = (samples[..., -1] < 0).sum(-1) < 700
+
             filtered_samples = torch.clamp(samples[filter], min=0)
             filtered_masks = masks[filter]
-            
+
             del samples, masks
             gc.collect()
-            
+
             print("Creating metadata...")
-            metadata = torch.stack([
-                torch.tensor(sub_chunk[col].as_numpy_array(), dtype=torch.float32)
-                for col in ["intensity.sum.value", "intensity.sum.variance", "intensity.prf.value", "intensity.prf.variance", "refl_ids"]
-            ]).transpose(0, 1)
-            
+            metadata = torch.stack(
+                [
+                    torch.tensor(sub_chunk[col].as_numpy_array(), dtype=torch.float32)
+                    for col in [
+                        "intensity.sum.value",
+                        "intensity.sum.variance",
+                        "intensity.prf.value",
+                        "intensity.prf.variance",
+                        "refl_ids",
+                    ]
+                ]
+            ).transpose(0, 1)
+
             filtered_metadata = metadata[filter]
-            
+
             del metadata
             gc.collect()
-            
+
             print("Appending to lists...")
             all_filtered_masks.append(filtered_masks)
             all_filtered_samples.append(filtered_samples)
             all_filtered_metadata.append(filtered_metadata)
-            
+
             total_processed += filtered_samples.shape[0]
-            
+
             del filtered_samples, filtered_masks, filtered_metadata
             gc.collect()
             torch.cuda.empty_cache()
-            
-            print(f"Sub-chunk {i//batch_size + 1} of chunk {chunk_index} processed successfully")
-            
+
+            print(f"Sub-chunk {i // batch_size + 1} of chunk {chunk_index} processed successfully")
+
         except Exception as e:
-            print(f"Error processing sub-chunk {i//batch_size + 1} of chunk {chunk_index}")
+            print(f"Error processing sub-chunk {i // batch_size + 1} of chunk {chunk_index}")
             print(f"Error details: {str(e)}")
             print(traceback.format_exc())
             continue
@@ -268,17 +287,17 @@ def process_and_save_chunk(chunk, chunk_index, output_dir, overwrite=False):
     if not all_filtered_masks:
         print(f"No data processed for chunk {chunk_index}")
         return 0, None, None, None
-    
+
     try:
         print(f"Combining data for chunk {chunk_index}...")
         combined_masks = torch.cat(all_filtered_masks, dim=0)
         combined_samples = torch.cat(all_filtered_samples, dim=0)
         combined_metadata = torch.cat(all_filtered_metadata, dim=0)
-        
+
         torch.save(combined_masks, masks_file)
         torch.save(combined_samples, samples_file)
         torch.save(combined_metadata, metadata_file)
-        
+
         del all_filtered_masks, all_filtered_samples, all_filtered_metadata
         gc.collect()
         torch.cuda.empty_cache()
@@ -288,12 +307,15 @@ def process_and_save_chunk(chunk, chunk_index, output_dir, overwrite=False):
         print(f"Error details: {str(e)}")
         print(traceback.format_exc())
         return 0, None, None, None
-    
+
     return total_processed, combined_masks, combined_samples, combined_metadata
+
 
 # Parse command-line arguments
 parser = argparse.ArgumentParser(description="Process reflection data")
-parser.add_argument("--output_dir", type=str, default="processed_data", help="Output directory for processed files")
+parser.add_argument(
+    "--output_dir", type=str, default="processed_data", help="Output directory for processed files"
+)
 args = parser.parse_args()
 
 # Main processing loop
@@ -311,19 +333,19 @@ all_metadata = []
 processed_indices = []
 
 for i in range(0, len(reflections), chunk_size):
-    chunk = reflections[i:i+chunk_size]
+    chunk = reflections[i : i + chunk_size]
     processed_count, masks, samples, metadata = process_chunk(chunk, chunk_index, output_dir)
-    
+
     if masks is not None:
         all_masks.append(masks)
         all_samples.append(samples)
         all_metadata.append(metadata)
         processed_indices.extend(range(i, i + processed_count))
-    
+
     total_processed += processed_count
     chunk_index += 1
     print(f"Processed chunk {chunk_index}, total processed: {total_processed}")
-    
+
     gc.collect()
     torch.cuda.empty_cache()
 

@@ -66,9 +66,7 @@ class PredWriter(BasePredictionWriter):
             Path(self.output_dir).mkdir(parents=True, exist_ok=True)
 
         # Move predictions to CPU and save
-        prediction_cpu = {
-            k: v.cpu().numpy() for k, v in prediction.items()
-        }  # Ensure CPU transfer
+        prediction_cpu = {k: v.cpu().numpy() for k, v in prediction.items()}  # Ensure CPU transfer
         torch.save(
             prediction_cpu,
             os.path.join(self.output_dir, f"batch_{batch_idx}.pt"),
