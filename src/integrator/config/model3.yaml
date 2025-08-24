@@ -2,10 +2,9 @@ global_vars:
   dmodel: &dmodel 64
   mc_samples: &mc_samples 100
   data_dir: /Users/luis/integratorv4/tests/data/3d/hewl_9b7c/
-
 integrator:
   name: model3
-  args: 
+  args:
     mc_samples: *mc_samples
     lr: 0.001
     renyi_scale: 0.0
@@ -13,18 +12,17 @@ integrator:
     h: 21
     w: 21
     weight_decay: 0.0
-
 components:
   # Define model encoders
-  encoders: 
+  encoders:
     - name: shoebox_encoder
       args:
         out_dim: 64
         in_channels: 1
         conv1_out_channels: 64
         conv2_out_channels: 128
-        conv1_kernel: [1,3,3]
-        conv1_padding: [0,1,1]
+        conv1_kernel: [1, 3, 3]
+        conv1_padding: [0, 1, 1]
     - name: intensity_encoder
       args:
         out_dim: 64
@@ -32,56 +30,46 @@ components:
         conv1_out_channels: 64
         conv2_out_channels: 128
         conv3_out_channels: 256
-        conv1_kernel: [3,3,3]
-        conv1_padding: [1,1,1]
+        conv1_kernel: [3, 3, 3]
+        conv1_padding: [1, 1, 1]
     - name: mlp_metadata_encoder
       args:
         feature_dim: 4
         depth: 5
         output_dims: 64
-
   # Define surrogate distributions
   qp:
     name: dirichlet
     args:
       dmodel: *dmodel
-      input_shape: [3,21,21]
-
+      input_shape: [3, 21, 21]
   qbg:
     name: folded_normal
     args:
       dmodel: *dmodel
       out_features: 2
-
   qi:
     name: folded_normal
     args:
       dmodel: 64
       out_features: 2
-
   # Define loss function, prior distributions,
   loss:
     name: loss2
     args:
-
       pi_name: half_normal
       pi_params:
         scale: 9605
-
       pbg_name: half_normal
       pbg_params:
         scale: 1.0
-
       pprf_name: dirichlet
-      pprf_params: null 
-
+      pprf_params: null
       pprf_weight: 0.0001
       pbg_weight: 0.5
       pi_weight: 1.0
       use_robust: true
-
       prior_tensor: 'concentration_3d.pt'
-
 data_loader:
   name: default
   params:
@@ -100,7 +88,6 @@ data_loader:
       stats: "/Users/luis/Downloads/new/stats.pt"
       reference: "/Users/luis/Downloads/new/reference.pt"
       standardized_counts: null
-
 trainer:
   params:
     max_epochs: 600
@@ -116,11 +103,9 @@ trainer:
         output_dir: null
         write_interval: epoch
     enable_checkpointing: true
-
-logger: 
+logger:
   d: 3
   h: 21
   w: 21
-
 output:
   refl_file: "/Users/luis/integratorv3/integrator/data/hewl_816/reflections_.refl"

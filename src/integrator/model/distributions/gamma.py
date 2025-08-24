@@ -73,4 +73,4 @@ if __name__ == "__main__":
     qbg = gamma_dist(representation)
 
     # use with metadata
-    qbg = gamma_dist(representation, meta_data=MetaData(metarep))
+    qbg = gamma_dist(representation)

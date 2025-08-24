@@ -39,8 +39,8 @@ class BaseDistribution[T: Distribution](nn.Module):
         beta = (self.beta + self.eps).item()
         return F.softplus(x, beta=beta)
 
-    def forward(self, x: Tensor, *, meta_data: MetaData | None = None) -> T:  # subclasses implement
+    def forward(self, x: Tensor) -> T:  # subclasses implement
         raise NotImplementedError
 
-    def __call__(self, x: Tensor, *, meta_data: MetaData | None = None) -> T:
-        return cast(T, super().__call__(x, meta_data=meta_data))
+    def __call__(self, x: Tensor) -> T:
+        return cast(T, super().__call__(x))

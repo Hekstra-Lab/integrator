@@ -2,45 +2,43 @@ site_name: integrator
 site_url: https://hekstra-lab.github.io/integrator/
 repo_url: https://github.com/Hekstra-Lab/integrator
 repo_name: Hekstra-Lab/integrator
-nav: 
-    - Overview: index.md
-    - Getting started: 
-        - Installation: ./getting-started/installation.md
-        - Quickstart: ./getting-started/quickstart.md
-        - Configuration: ./getting-started/configuration.md
-    - Examples: ./examples/example.md
-    - Model:
-        - Integrator: ./Model/integrator.md
-        - Encoders: ./Model/encoders.md
-        - Distributions:
-            - Intensity and Background Distributions: ./Model/distributions/intensity_and_background_distributions.md
-            - Profile Distributions: ./Model/distributions/profile_distributions.md
-theme: 
+nav:
+  - Overview: index.md
+  - Getting started:
+      - Installation: ./getting-started/installation.md
+      - Quickstart: ./getting-started/quickstart.md
+      - Configuration: ./getting-started/configuration.md
+  - Examples: ./examples/example.md
+  - Model:
+      - Integrator: ./Model/integrator.md
+      - Encoders: ./Model/encoders.md
+      - Distributions:
+          - Intensity and Background Distributions: ./Model/distributions/intensity_and_background_distributions.md
+          - Profile Distributions: ./Model/distributions/profile_distributions.md
+theme:
   name: material
   palette:
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
       primary: black
-  features: 
+  features:
     - content.code.copy
     - content.code.annotate
-  font: 
+  font:
     text: Metropolis
   #logo: ./assets/intgrater.png
-  icon: 
+  icon:
     repo: fontawesome/brands/github
-
-plugins: 
+plugins:
   - search
   - mermaid2
   - mkdocstrings:
       handlers:
-        python: 
+        python:
           paths: ["src"]
-          options: 
+          options:
             docstring_style: google
             merge_init_into_class: true
-
 markdown_extensions:
   - pymdownx.inlinehilite
   - pymdownx.snippets
@@ -51,9 +49,8 @@ markdown_extensions:
       pygments_lang_class: true
   - pymdownx.arithmatex:
       generic: true
-  - toc: 
+  - toc:
       toc_depth: 6
-
 extra_javascript:
   - javascripts/mathjax.js
   - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
