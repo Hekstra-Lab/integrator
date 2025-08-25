@@ -28,6 +28,7 @@ jobs:
       - run: pip install mkdocs-material
       - run: pip install mkdocstrings-python
       - run: pip install mkdocs-mermaid2-plugin
+      - run: pip install griffe-inherited-docstrings
       - run: mkdocs gh-deploy --force
         #name: Deploy gh-pages
         #on:
