@@ -40,7 +40,9 @@ def create_center_focused_dirichlet_prior(
                 dist_c = abs(c - center_c) / (channels / 2)
                 dist_h = abs(h - center_h) / (height / 2)
                 dist_w = abs(w - center_w) / (width / 2)
-                distance = np.sqrt(dist_c**2 + dist_h**2 + dist_w**2) / np.sqrt(3)
+                distance = np.sqrt(
+                    dist_c**2 + dist_h**2 + dist_w**2
+                ) / np.sqrt(3)
 
                 if distance < peak_percentage * 5:
                     alpha_value = (
@@ -108,14 +110,18 @@ class Loss(BaseLoss):
 
         if prior_tensor is not None and pprf_params is None:
             self.prior_tensor = f"{data_dir}{prior_tensor}"
-            self.concentration = torch.load(self.prior_tensor, weights_only=False)
+            self.concentration = torch.load(
+                self.prior_tensor, weights_only=False
+            )
             self.concentration[
-                self.concentration > torch.quantile(self.concentration, quantile)
+                self.concentration
+                > torch.quantile(self.concentration, quantile)
             ] *= pprf_conc_factor
             self.concentration /= self.concentration.max()
         elif pprf_params is not None:
             self.concentration = (
-                torch.ones(shape[0] * shape[1] * shape[2]) * pprf_params["concentration"]
+                torch.ones(shape[0] * shape[1] * shape[2])
+                * pprf_params["concentration"]
             )
 
         self._register_distribution_params(pbg_name, pbg_params, prefix="pbg_")
@@ -145,20 +151,30 @@ class Loss(BaseLoss):
         if name is None or params is None:
             return
         if name == "gamma":
-            self.register_buffer(f"{prefix}concentration", torch.tensor(params["concentration"]))
+            self.register_buffer(
+                f"{prefix}concentration", torch.tensor(params["concentration"])
+            )
             self.register_buffer(f"{prefix}rate", torch.tensor(params["rate"]))
         elif name == "log_normal":
             self.register_buffer(f"{prefix}loc", torch.tensor(params["loc"]))
-            self.register_buffer(f"{prefix}scale", torch.tensor(params["scale"]))
+            self.register_buffer(
+                f"{prefix}scale", torch.tensor(params["scale"])
+            )
         elif name == "exponential":
             self.register_buffer(f"{prefix}rate", torch.tensor(params["rate"]))
         elif name == "half_normal":
-            self.register_buffer(f"{prefix}scale", torch.tensor(params["scale"]))
+            self.register_buffer(
+                f"{prefix}scale", torch.tensor(params["scale"])
+            )
         elif name == "half_cauchy":
-            self.register_buffer(f"{prefix}scale", torch.tensor(params["scale"]))
+            self.register_buffer(
+                f"{prefix}scale", torch.tensor(params["scale"])
+            )
         elif name == "normal":
             self.register_buffer(f"{prefix}loc", torch.tensor(params["loc"]))
-            self.register_buffer(f"{prefix}scale", torch.tensor(params["scale"]))
+            self.register_buffer(
+                f"{prefix}scale", torch.tensor(params["scale"])
+            )
 
     def get_prior(
         self,
@@ -171,7 +187,9 @@ class Loss(BaseLoss):
         params = {}
         if name == "gamma":
             params = {
-                "concentration": getattr(self, f"{params_prefix}concentration").to(device),
+                "concentration": getattr(
+                    self, f"{params_prefix}concentration"
+                ).to(device),
                 "rate": getattr(self, f"{params_prefix}rate").to(device),
             }
         if name == "log_normal":
@@ -180,9 +198,13 @@ class Loss(BaseLoss):
                 "scale": getattr(self, f"{params_prefix}scale").to(device),
             }
         if name == "half_normal":
-            params = {"scale": getattr(self, f"{params_prefix}scale").to(device)}
+            params = {
+                "scale": getattr(self, f"{params_prefix}scale").to(device)
+            }
         if name == "half_cauchy":
-            params = {"scale": getattr(self, f"{params_prefix}scale").to(device)}
+            params = {
+                "scale": getattr(self, f"{params_prefix}scale").to(device)
+            }
         if name == "exponential":
             params = {"rate": getattr(self, f"{params_prefix}rate").to(device)}
         if name == "dirichlet":
@@ -216,7 +238,9 @@ class Loss(BaseLoss):
         counts = counts.to(device)
         masks = masks.to(device)
 
-        pprf = torch.distributions.dirichlet.Dirichlet(self.concentration.to(device))
+        pprf = torch.distributions.dirichlet.Dirichlet(
+            self.concentration.to(device)
+        )
         pbg = self.get_prior(self.pbg_name, "pbg_", device)
         pi = self.get_prior(self.pi_name, "pi_", device)
 
@@ -233,7 +257,9 @@ class Loss(BaseLoss):
         kl_p = self.compute_kl(q_p, pprf)
         kl_terms += kl_p * self.pprf_weight
 
-        log_prob = torch.distributions.Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
+        log_prob = torch.distributions.Poisson(rate + self.eps).log_prob(
+            counts.unsqueeze(1)
+        )
 
         ll_mean = torch.mean(log_prob, dim=1) * masks.squeeze(-1)
 
@@ -276,17 +302,21 @@ if __name__ == "__main__":
     intensity_encoder_2d = IntensityEncoder2D()
 
     # distributions
-    qbg_ = FoldedNormalDistribution(dmodel=64)
-    qi_ = FoldedNormalDistribution(dmodel=64)
-    qprf_ = DirichletDistribution(dmodel=64, input_shape=(21, 21))
+    qbg_ = FoldedNormalDistribution(in_features=64)
+    qi_ = FoldedNormalDistribution(in_features=64)
+    qprf_ = DirichletDistribution(in_features=64, input_shape=(21, 21))
 
     # generate a random batch
     batch = F.softplus(torch.randn(10, 21 * 21))
     masks = torch.randint(2, (10, 21 * 21))
 
     # encode batch
-    shoebox_rep = sbox_encoder_2d(batch.reshape(batch.shape[0], 1, 21, 21), masks)
-    intensity_rep = intensity_encoder_2d(batch.reshape(batch.shape[0], 1, 21, 21), masks)
+    shoebox_rep = sbox_encoder_2d(
+        batch.reshape(batch.shape[0], 1, 21, 21), masks
+    )
+    intensity_rep = intensity_encoder_2d(
+        batch.reshape(batch.shape[0], 1, 21, 21), masks
+    )
 
     # get distributinos
     qbg = qbg_(intensity_rep)

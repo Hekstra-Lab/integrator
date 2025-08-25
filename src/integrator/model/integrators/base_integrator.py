@@ -89,9 +89,13 @@ class BaseIntegrator(pl.LightningModule, ABC):
 
             # kabsch sum
             for _ in range(self.max_iterations):
-                num = (counts.unsqueeze(1) - zbg) * zp * masks.unsqueeze(1) / vi
+                num = (
+                    (counts.unsqueeze(1) - zbg) * zp * masks.unsqueeze(1) / vi
+                )
                 denom = zp.pow(2) / vi
-                intensity = num.sum(-1) / denom.sum(-1)  # [batch_size, mc_samples]
+                intensity = num.sum(-1) / denom.sum(
+                    -1
+                )  # [batch_size, mc_samples]
                 vi = (intensity.unsqueeze(-1) * zp) + zbg
                 vi = vi.mean(-1, keepdim=True)
             kabsch_sum_mean = intensity.mean(-1)
@@ -208,7 +212,15 @@ class BaseIntegrator(pl.LightningModule, ABC):
         )
 
         renyi_loss = (
-            (-torch.log(outputs["qp"].rsample([self.mc_samples]).permute(1, 0, 2).pow(2).sum(-1)))
+            (
+                -torch.log(
+                    outputs["qp"]
+                    .rsample([self.mc_samples])
+                    .permute(1, 0, 2)
+                    .pow(2)
+                    .sum(-1)
+                )
+            )
             .mean(1)
             .sum()
         ) * self.renyi_scale
@@ -234,7 +246,9 @@ class BaseIntegrator(pl.LightningModule, ABC):
         return loss_dict["total_loss"].mean() + renyi_loss.sum()
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+        return torch.optim.Adam(
+            self.parameters(), lr=self.lr, weight_decay=self.weight_decay
+        )
 
     def validation_step(self, batch, _batch_idx):
         """

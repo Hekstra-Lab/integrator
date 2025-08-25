@@ -74,7 +74,7 @@ class DataLoaderCfg(BaseModel):
 
 
 class GlobalCfg(BaseModel):
-    dmodel: int = 64
+    in_features: int = 64
     mc_samples: int = 100
     data_dir: Path
 

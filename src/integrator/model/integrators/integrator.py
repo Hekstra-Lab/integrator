@@ -329,16 +329,24 @@ class Integrator2D(BaseIntegrator):
         # Unpack batch
         counts = torch.clamp(counts, min=0) * masks
 
-        profile_rep = self.encoder1(shoebox.reshape(shoebox.shape[0], 1, self.h, self.w))
+        profile_rep = self.encoder1(
+            shoebox.reshape(shoebox.shape[0], 1, self.h, self.w)
+        )
 
-        intensity_rep = self.encoder2(shoebox.reshape(shoebox.shape[0], 1, self.h, self.w))
+        intensity_rep = self.encoder2(
+            shoebox.reshape(shoebox.shape[0], 1, self.h, self.w)
+        )
         qbg = self.qbg(intensity_rep)
         qp = self.qp(profile_rep)
         qi = self.qi(intensity_rep)
 
-        zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)  # [B,S,1]
+        zbg = (
+            qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        )  # [B,S,1]
         zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)  # [B,S,Pix]
-        zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)  # [B,S,1]
+        zI = (
+            qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        )  # [B,S,1]
         rate = zI * zp + zbg
         out = get_outputs(
             vars=locals(),
@@ -456,7 +464,11 @@ class Model3(BaseIntegrator):
 if __name__ == "__main__":
     import torch
 
-    from integrator.utils import create_data_loader, create_integrator, load_config
+    from integrator.utils import (
+        create_data_loader,
+        create_integrator,
+        load_config,
+    )
     from utils import CONFIGS, ROOT_DIR
 
     data_path = ROOT_DIR / "tests/data/3d/hewl_9b7c"
@@ -474,6 +486,8 @@ if __name__ == "__main__":
 
     data_loader = create_data_loader(config.dict())
 
-    counts, shoebox, masks, reference = next(iter(data_loader.train_dataloader()))
+    counts, shoebox, masks, reference = next(
+        iter(data_loader.train_dataloader())
+    )
 
     out = integrator(counts, shoebox, masks, reference)

@@ -1,71 +1,62 @@
 global_vars:
-  dmodel: &dmodel 32
+  in_features: &in_features 32
   mc_samples: &mc_samples 100
   data_dir: &data "/Users/luis/integratorv3/integrator/tests/data/3d/hewl_9b7c/"
-
 integrator:
   name: integrator_2d
   args:
-      lr: 0.001
-      mc_samples: *mc_samples
-      renyi_scale: 0.00
-      h: 21
-      w: 21
-      weight_decay: 0.0
-
+    lr: 0.001
+    mc_samples: *mc_samples
+    renyi_scale: 0.00
+    h: 21
+    w: 21
+    weight_decay: 0.0
 components:
-  encoders: 
+  encoders:
     - encoder1:
         name: shoebox_encoder_2d
         args:
-          out_dim: *dmodel
+          out_features: *in_features
           in_channels: 1
           conv1_out_channels: 16
           conv2_out_channels: 32
-          conv1_kernel: [3,3]
-          conv1_padding: [1,1]
-
+          conv1_kernel: [3, 3]
+          conv1_padding: [1, 1]
     - encoder2:
         name: intensity_encoder_2d
         args:
-          out_dim: *dmodel
+          out_features: *in_features
           in_channels: 1
           conv1_out_channels: 16
           conv2_out_channels: 32
           conv3_out_channels: 64
-          conv1_kernel: [3,3]
-          conv1_padding: [1,1]
-
+          conv1_kernel: [3, 3]
+          conv1_padding: [1, 1]
   qp:
     name: dirichlet
     args:
-      dmodel: *dmodel
-      #dmodel: null
-      input_shape: [21,21]
-
+      in_features: *in_features
+      #in_features: null
+      input_shape: [21, 21]
   qbg:
     name: folded_normal
     args:
-      dmodel: *dmodel
+      in_features: *in_features
       out_features: 2
-
-  qi: 
+  qi:
     name: folded_normal
-    args: 
-      dmodel: *dmodel
+    args:
+      in_features: *in_features
       out_features: 2
-
   loss:
     name: loss
     args:
       pi_name: half_cauchy
       pi_params:
         scale: 0.5
-
       pbg_name: half_cauchy
       pbg_params:
         scale: 0.5
-
       pprf_name: dirichlet
       pprf_params:
         concentration: 1.0
@@ -74,7 +65,6 @@ components:
       pi_weight: 0.4
       prior_tensor: "/Users/luis/integratorv4/tests/data/2d/hewl_1118/concentration_2d.pt"
       use_robust: false
-
 data_loader:
   name: shoebox_data_module_2d
   args:
@@ -93,7 +83,6 @@ data_loader:
       stats: 'stats_2d.pt'
       reference: 'reference_2d_subset.pt'
       standardized_counts: null
-
 trainer:
   args:
     max_epochs: 1000
@@ -109,11 +98,9 @@ trainer:
         output_dir: null
         write_interval: epoch
     enable_checkpointing: true
-
 logger:
-    d: 3
-    h: 21
-    w: 21
-
+  d: 3
+  h: 21
+  w: 21
 output:
   refl_file: "/n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/data/pass1_v3/reflections_.refl"

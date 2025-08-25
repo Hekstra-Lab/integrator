@@ -1,6 +1,10 @@
 import torch
 
-from .data_loaders import ShoeboxDataModule, ShoeboxDataModule2, ShoeboxDataModule2D
+from .data_loaders import (
+    ShoeboxDataModule,
+    ShoeboxDataModule2,
+    ShoeboxDataModule2D,
+)
 from .model.distributions import (
     DirichletDistribution,
     FoldedNormalDistribution,

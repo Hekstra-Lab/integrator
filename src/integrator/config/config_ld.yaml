@@ -1,5 +1,5 @@
 global_vars:
-  dmodel: &dmodel 64
+  in_features: &in_features 64
   mc_samples: &mc_samples 100
 integrator:
   name: integrator_2d
@@ -14,7 +14,7 @@ components:
   encoder1:
     name: shoebox_encoder_2d
     args:
-      out_dim: 64
+      out_features: 64
       in_channels: 1
       conv1_out_channels: 64
       conv2_out_channels: 128
@@ -23,18 +23,18 @@ components:
   qp:
     name: dirichlet
     args:
-      dmodel: *dmodel
+      in_features: *in_features
       input_shape: [21, 21]
   qbg:
     name: folded_normal
     args:
-      dmodel: *dmodel
+      in_features: *in_features
       out_features: 2
       use_metarep: false
   qi:
     name: folded_normal
     args:
-      dmodel: 64
+      in_features: 64
       out_features: 2
       use_metarep: false
   loss:

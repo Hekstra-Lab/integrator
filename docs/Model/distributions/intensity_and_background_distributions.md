@@ -5,13 +5,14 @@ Positive support distributions to be used as varitional distributions for Intens
       show_root_full_path: true
       show_root_heading: true
       show_root_toc_entry: true
+      show_signature_annotations: false
+      separate_signature: true
       heading_level: 3
       show_object_full_path: false
       annotations_path: full	
       parameter_headings: false
       show_symbol_type_heading: true
       show_symbol_type_toc: true
-      show_group_by_category: true
       show_category_heading: false
       show_source: false
 
@@ -26,7 +27,6 @@ Positive support distributions to be used as varitional distributions for Intens
       parameter_headings: false
       show_symbol_type_heading: true
       show_symbol_type_toc: true
-      show_group_by_category: true
       show_category_heading: false
       show_source: false
 
@@ -41,7 +41,6 @@ Positive support distributions to be used as varitional distributions for Intens
       parameter_headings: false
       show_symbol_type_heading: true
       show_symbol_type_toc: true
-      show_group_by_category: true
       show_category_heading: false
       show_source: false
 

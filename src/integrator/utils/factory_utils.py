@@ -38,7 +38,9 @@ def _build_modules(components: dict) -> dict:
 
     for enc_dict in enc_iter:
         for enc_key, sub in enc_dict.items():  # (name, sub-config)
-            modules[enc_key] = create_module("encoders", sub["name"], **(sub.get("args")))
+            modules[enc_key] = create_module(
+                "encoders", sub["name"], **(sub.get("args"))
+            )
 
     # --- everything else is a singleton component (qp, qbg, qi, loss, ...)
     for k, v in components.items():
@@ -49,7 +51,9 @@ def _build_modules(components: dict) -> dict:
     return modules
 
 
-def create_integrator(config: dict, checkpoint: str | None = None) -> BaseIntegrator:
+def create_integrator(
+    config: dict, checkpoint: str | None = None
+) -> BaseIntegrator:
     integrator_cls = REGISTRY["integrator"][config["integrator"]["name"]]
     modules = _build_modules(config["components"])
     kwargs = {**modules, **config["integrator"]["args"]}
@@ -80,7 +84,11 @@ def create_data_loader(config):
     data_loader_name = config["data_loader"]["name"]
     data_loader_class = REGISTRY["data_loader"][data_loader_name]
 
-    if data_loader_name in {"default", "shoebox_data_module", "shoebox_data_module_2d"}:
+    if data_loader_name in {
+        "default",
+        "shoebox_data_module",
+        "shoebox_data_module_2d",
+    }:
         data_module = data_loader_class(
             data_dir=config["data_loader"]["args"]["data_dir"],
             batch_size=config["data_loader"]["args"]["batch_size"],
@@ -91,7 +99,9 @@ def create_data_loader(config):
             subset_size=config["data_loader"]["args"]["subset_size"],
             cutoff=config["data_loader"]["args"]["cutoff"],
             use_metadata=config["data_loader"]["args"]["use_metadata"],
-            shoebox_file_names=config["data_loader"]["args"]["shoebox_file_names"],
+            shoebox_file_names=config["data_loader"]["args"][
+                "shoebox_file_names"
+            ],
         )
         data_module.setup()
         return data_module
@@ -108,7 +118,9 @@ def create_trainer(config, callbacks=None, logger=None):
         devices=config["trainer"]["args"]["devices"],
         logger=logger,
         precision=config["trainer"]["args"]["precision"],
-        check_val_every_n_epoch=config["trainer"]["args"]["check_val_every_n_epoch"],
+        check_val_every_n_epoch=config["trainer"]["args"][
+            "check_val_every_n_epoch"
+        ],
         log_every_n_steps=config["trainer"]["args"]["log_every_n_steps"],
         deterministic=config["trainer"]["args"]["deterministic"],
         callbacks=callbacks,
@@ -124,7 +136,9 @@ def override_config(args, config):
         config["trainer"]["args"]["max_epochs"] = args.epochs
 
 
-def clean_from_memory(trainer, pred_writer, pred_integrator, checkpoint_callback=None):
+def clean_from_memory(
+    trainer, pred_writer, pred_integrator, checkpoint_callback=None
+):
     del trainer
     del pred_writer
     del pred_integrator
@@ -134,7 +148,9 @@ def clean_from_memory(trainer, pred_writer, pred_integrator, checkpoint_callback
     gc.collect()
 
 
-def predict_from_checkpoints(config, trainer, pred_integrator, data, version_dir, path):
+def predict_from_checkpoints(
+    config, trainer, pred_integrator, data, version_dir, path
+):
     for ckpt in glob.glob(path):
         match = re.search(r"epoch=(\d+)", ckpt)
         if match is None:
@@ -147,7 +163,9 @@ def predict_from_checkpoints(config, trainer, pred_integrator, data, version_dir
         # prediction writer for current checkpoint
         pred_writer = PredWriter(
             output_dir=ckpt_dir,
-            write_interval=config["trainer"]["args"]["callbacks"]["pred_writer"]["write_interval"],
+            write_interval=config["trainer"]["args"]["callbacks"][
+                "pred_writer"
+            ]["write_interval"],
         )
 
         trainer.callbacks = [pred_writer]
@@ -204,10 +222,14 @@ if __name__ == "__main__":
     }
 
     updates = dict()
-    updates.setdefault("trainer", {}).setdefault("args", {})["max_epochs"] = 100
+    updates.setdefault("trainer", {}).setdefault("args", {})["max_epochs"] = (
+        100
+    )
 
     config3d.dict()["trainer"]
 
-    updates.setdefault("trainer", {}).setdefault("args", {})["max_epochs"] = 100
+    updates.setdefault("trainer", {}).setdefault("args", {})["max_epochs"] = (
+        100
+    )
 
     config3d.model_copy(update=updates).dict()["trainer"]

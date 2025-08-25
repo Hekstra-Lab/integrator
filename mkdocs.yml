@@ -12,15 +12,28 @@ nav:
   - Model:
       - Integrator: ./Model/integrator.md
       - Encoders: ./Model/encoders.md
-      - Distributions:
-          - Intensity and Background Distributions: ./Model/distributions/intensity_and_background_distributions.md
-          - Profile Distributions: ./Model/distributions/profile_distributions.md
+      - Distributions: ./Model/distributions/distributions.md
+# theme:
+#   name: material
+#   palette:
+#     - media: "(prefers-color-scheme: dark)"
+#       scheme: slate
+#       primary: black
 theme:
   name: material
   palette:
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
+    - scheme: default
       primary: black
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
   features:
     - content.code.copy
     - content.code.annotate
@@ -39,10 +52,18 @@ plugins:
           options:
             docstring_style: google
             merge_init_into_class: true
+            extensions:
+              - griffe_inherited_docstrings:
+                  merge: false
 markdown_extensions:
   - pymdownx.inlinehilite
   - pymdownx.snippets
   - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
   - pymdownx.highlight:
       anchor_linenums: true
       line_spans: __span

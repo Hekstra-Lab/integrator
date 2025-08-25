@@ -622,7 +622,7 @@ docs = [
     { name = "mkdocs", specifier = ">=1.6" },
     { name = "mkdocs-material", specifier = ">=9.5" },
     { name = "mkdocs-mermaid2-plugin", specifier = ">=1.1" },
-    { name = "mkdocstrings", extras = ["python"], specifier = ">=0.25" },
+    { name = "mkdocstrings", extras = ["python"], specifier = ">=0.18" },
 ]
 
 [[package]]

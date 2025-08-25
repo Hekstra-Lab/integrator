@@ -71,7 +71,7 @@ include = [
 
 [tool.ruff]
 target-version = "py312"
-line-length = 100
+line-length = 79
 extend-select = ["B","I","ARG","UP","F"]
 extend-exclude = [
   "build",
@@ -108,7 +108,7 @@ testpaths = ["tests"]
 docs = [
   "mkdocs>=1.6",
   "mkdocs-material>=9.5",
-  "mkdocstrings[python]>=0.25",
+  "mkdocstrings[python]>=0.18",
   "mkdocs-mermaid2-plugin>=1.1",
 ]
 dev = [

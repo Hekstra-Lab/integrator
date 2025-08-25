@@ -5,7 +5,9 @@ import torch.nn as nn
 from torch import Tensor
 from torch.distributions import Normal, constraints
 from torch.distributions.constraints import Constraint
-from torch.distributions.transformed_distribution import TransformedDistribution
+from torch.distributions.transformed_distribution import (
+    TransformedDistribution,
+)
 from torch.distributions.transforms import AbsTransform
 
 from integrator.model.distributions import BaseDistribution, MetaData
@@ -16,7 +18,9 @@ class FoldedNormal(TransformedDistribution):
 
     def __init__(self, loc, scale, validate_args=None):
         self._normal = Normal(loc, scale, validate_args=validate_args)
-        super().__init__(self._normal, AbsTransform(), validate_args=validate_args)
+        super().__init__(
+            self._normal, AbsTransform(), validate_args=validate_args
+        )
 
     @property
     def has_rsample(self) -> bool:
@@ -63,20 +67,32 @@ class FoldedNormal(TransformedDistribution):
 
 
 class FoldedNormalDistribution(BaseDistribution[FoldedNormal]):
+    """
+    FoldedNormal distribution with parameters predicted by a linear layer.
+    """
+
     def __init__(
         self,
-        dmodel: int,
-        out_features: int = 2,
+        in_features: int,
+        eps: float = 1e-12,
+        beta: float = 1.0,
     ):
-        super().__init__()
-        self.fc = nn.Linear(dmodel, out_features)
+        """
+        Args:
+        """
+        super().__init__(in_features=in_features, eps=eps, beta=1.0)
+        self.fc = nn.Linear(in_features, 2)
 
-    def _transform_loc_scale(self, raw_loc, raw_scale) -> tuple[Tensor, Tensor]:
-        loc = torch.exp(raw_loc)  #
+    def _transform_loc_scale(
+        self, raw_loc, raw_scale
+    ) -> tuple[Tensor, Tensor]:
+        loc = torch.exp(raw_loc)
         scale = self.constraint(raw_scale)
         return loc, scale
 
-    def forward(self, x: Tensor, *, meta_data: MetaData | None = None) -> FoldedNormal:
+    def forward(
+        self, x: Tensor, *, meta_data: MetaData | None = None
+    ) -> FoldedNormal:
         assert meta_data is None  # remove if you want to use metadata or masks
 
         raw_loc, raw_scale = self.fc(x).unbind(-1)
@@ -85,6 +101,6 @@ class FoldedNormalDistribution(BaseDistribution[FoldedNormal]):
 
 
 if __name__ == "main":
-    foldednormal = FoldedNormalDistribution(dmodel=64)
+    foldednormal = FoldedNormalDistribution(in_features=64)
     representation = torch.randn(10, 64)
     q = foldednormal(representation)

@@ -1,44 +1,50 @@
+from __future__ import annotations
+
 import torch
+import torch.nn as nn
 from torch import Tensor
 from torch.distributions import Gamma
 
 from integrator.layers import Linear
-from integrator.model.distributions import BaseDistribution, MetaData
+from integrator.model.distributions import BaseDistribution
 
 
 class GammaDistribution(BaseDistribution[Gamma]):
+    fc: nn.Module
+    """Linear layer to map input tensor to distribution parameters"""
+
     def __init__(
         self,
-        dmodel: int,
+        in_features: int,
         out_features: int = 2,
-        use_metarep: bool = False,
     ):
-        super().__init__()
+        """
 
-        self.use_metarep = use_metarep
+        Args:
+            in_features:
+            out_features:
+        """
+        super().__init__(in_features=in_features)
 
-        if self.use_metarep:
-            # separate layers for params1 and params2
-            self.fc1 = Linear(
-                in_features=dmodel,
-                out_features=1,
-            )
-            self.fc2 = Linear(
-                in_features=dmodel * 2,
-                out_features=1,
-            )
-        else:
-            # single layer for both params
-            self.fc = Linear(
-                in_features=dmodel,
-                out_features=out_features,
-            )
+        self.fc = Linear(
+            in_features=in_features,
+            out_features=out_features,
+        )
 
     def distribution(
         self,
         concentration: Tensor,
         rate: Tensor,
     ) -> Gamma:
+        """
+
+        Args:
+            concentration:
+            rate:
+
+        Returns:
+
+        """
         concentration = self.constraint(concentration)
         rate = self.constraint(rate)
         return Gamma(concentration.flatten(), rate.flatten())
@@ -46,28 +52,28 @@ class GammaDistribution(BaseDistribution[Gamma]):
     def forward(
         self,
         x: Tensor,
-        *,
-        meta_data: MetaData | None = None,
     ) -> Gamma:
-        if meta_data is not None and meta_data.metadata is not None:
-            assert metarep is not None, "metarep required when use_metarep=True"
-            params1 = self.fc1(x)
-            combined_rep = torch.cat([x, meta_data.metadata], dim=1)
-            params2 = self.fc2(combined_rep)
-            gamma = self.distribution(params1, params2)
-        else:
-            params = self.fc(x)
-            gamma = self.distribution(params[..., 0], params[..., 1])
+        """
+
+        Args:
+            x: Input batch of shoeboxes
+        Returns:
+
+        """
+        params = self.fc(x)
+        gamma = self.distribution(params[..., 0], params[..., 1])
 
         return gamma
 
 
 if __name__ == "__main__":
     # Example usage
-    dmodel = 64
-    gamma_dist = GammaDistribution(dmodel)
-    representation = torch.randn(10, dmodel)  # Example input
-    metarep = torch.randn(10, dmodel * 2)  # Example metadata representation
+    in_features = 64
+    gamma_dist = GammaDistribution(in_features)
+    representation = torch.randn(10, in_features)  # Example input
+    metarep = torch.randn(
+        10, in_features * 2
+    )  # Example metadata representation
 
     # use without metadata
     qbg = gamma_dist(representation)

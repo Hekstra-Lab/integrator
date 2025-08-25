@@ -1,5 +1,5 @@
 global_vars:
-  dmodel: &dmodel 64
+  in_features: &in_features 64
   mc_samples: &mc_samples 100
 integrator:
   name: integrator
@@ -15,7 +15,7 @@ components:
   profile_encoder:
     name: shoebox_encoder
     params:
-      out_dim: 64
+      out_features: 64
       in_channels: 1
       conv1_out_channels: 64
       conv2_out_channels: 128
@@ -24,7 +24,7 @@ components:
   intensity_encoder:
     name: intensity_encoder
     params:
-      out_dim: 64
+      out_features: 64
       in_channels: 1
       conv1_out_channels: 64
       conv2_out_channels: 128
@@ -34,7 +34,7 @@ components:
   profile:
     name: dirichlet
     params:
-      dmodel: *dmodel
+      in_features: *in_features
       input_shape: [3, 21, 21]
   decoder:
     name: default_decoder
@@ -43,13 +43,13 @@ components:
   q_bg:
     name: folded_normal
     params:
-      dmodel: *dmodel
+      in_features: *in_features
       out_features: 2
       use_metarep: false
   q_i:
     name: folded_normal
     params:
-      dmodel: 64
+      in_features: 64
       out_features: 2
       use_metarep: false
   loss:

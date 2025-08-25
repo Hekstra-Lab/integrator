@@ -9,12 +9,14 @@ from integrator.model.distributions import BaseDistribution, MetaData
 class HalfNormalDistribution(BaseDistribution[HalfNormal]):
     def __init__(
         self,
-        dmodel,
+        in_features,
         out_features=1,
     ):
-        super().__init__()
+        super().__init__(
+            in_features=in_features,
+        )
         self.fc = Linear(
-            in_features=dmodel,
+            in_features=self.in_features,
             out_features=out_features,
         )
         self.min_value = 1e-3
@@ -24,7 +26,9 @@ class HalfNormalDistribution(BaseDistribution[HalfNormal]):
         scale = self.constraint(params + 1e-6)
         return torch.distributions.half_normal.HalfNormal(scale.flatten())
 
-    def forward(self, x: Tensor, *, meta_data: MetaData | None = None) -> HalfNormal:
+    def forward(
+        self, x: Tensor, *, meta_data: MetaData | None = None
+    ) -> HalfNormal:
         assert meta_data is None  #
 
         params = self.fc(x)
@@ -35,8 +39,8 @@ class HalfNormalDistribution(BaseDistribution[HalfNormal]):
 if __name__ == "__main__":
     # Example usage
 
-    dmodel = 64
-    half_normal_dist = HalfNormalDistribution(dmodel)
-    representation = torch.randn(10, dmodel)  # Example input
+    in_features = 64
+    half_normal_dist = HalfNormalDistribution(in_features)
+    representation = torch.randn(10, in_features)  # Example input
     qbg = half_normal_dist(representation)
     qbg.rsample([100])
