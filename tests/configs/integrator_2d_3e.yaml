@@ -1,97 +1,107 @@
 global_vars:
-  in_features: &in_features 32
+  encoder_out: &encoder_out 32
   mc_samples: &mc_samples 100
-  data_dir: &data "/Users/luis/integratorv3/integrator/tests/data/3d/hewl_9b7c/"
+  data_dir: &data "/Users/luis/integratorv4/tests/data/2d/hewl_1118/"
 integrator:
-  name: integrator_2d
+  name: integratorB
   args:
     lr: 0.001
     mc_samples: *mc_samples
-    renyi_scale: 0.00
-    h: 21
-    w: 21
+    renyi_scale: 0.0
+    data_dim: "2d"
+    encoder_out: *encoder_out
+    d: &d 1
+    h: &h 21
+    w: &w 21
     weight_decay: 0.0
 components:
   encoders:
     - encoder1:
         name: shoebox_encoder_2d
         args:
-          out_features: *in_features
+          encoder_out: *encoder_out
           in_channels: 1
           conv1_out_channels: 16
           conv2_out_channels: 32
-          conv1_kernel: [3, 3]
+          conv1_kernel_size: [3, 3]
           conv1_padding: [1, 1]
     - encoder2:
         name: intensity_encoder_2d
         args:
-          out_features: *in_features
+          encoder_out: *encoder_out
           in_channels: 1
           conv1_out_channels: 16
           conv2_out_channels: 32
           conv3_out_channels: 64
-          conv1_kernel: [3, 3]
+          conv1_kernel_size: [3, 3]
           conv1_padding: [1, 1]
+    - encoder3:
+        name: mlp_metadata_encoder
+        args:
+          encoder_in: 6 #number of features
+          encoder_out: *encoder_out
   qp:
     name: dirichlet
     args:
-      in_features: *in_features
-      #in_features: null
-      input_shape: [21, 21]
+      in_features: *encoder_out
+      out_features: [*d, *h, *w]
+      constraint: softplus
   qbg:
     name: folded_normal
     args:
-      in_features: *in_features
+      in_features: *encoder_out
       out_features: 2
+      constraint: softplus
   qi:
     name: folded_normal
     args:
-      in_features: *in_features
+      in_features: *encoder_out
       out_features: 2
+      constraint: softplus
   loss:
     name: loss
     args:
-      pi_name: half_cauchy
+      pi_name: half_normal
       pi_params:
         scale: 0.5
-      pbg_name: half_cauchy
+      pbg_name: half_normal
       pbg_params:
-        scale: 0.5
+        scale: 1.0
       pprf_name: dirichlet
-      pprf_params:
-        concentration: 1.0
-      pprf_weight: 0.02
+      pprf_params: null
+      pprf_weight: 0.0001
       pbg_weight: 0.5
-      pi_weight: 0.4
-      prior_tensor: "/Users/luis/integratorv4/tests/data/2d/hewl_1118/concentration_2d.pt"
-      use_robust: false
+      pi_weight: 1.0
+      use_robust: true
+      data_dir: *data
+      prior_tensor: 'concentration_2d.pt'
 data_loader:
   name: shoebox_data_module_2d
   args:
-    data_dir: "/Users/luis/integratorv4/tests/data/2d/hewl_1118/"
-    batch_size: 256
+    data_dir: *data
+    batch_size: 10
     val_split: 0.3
     test_split: 0.0
-    num_workers: 3
+    num_workers: 0
     include_test: false
-    subset_size: null
-    cutoff: null
+    subset_size: 100
+    cutoff: 2000
     use_metadata: true
     shoebox_file_names:
       counts: "counts_2d_subset.pt"
       masks: "masks_2d_subset.pt"
-      stats: 'stats_2d.pt'
-      reference: 'reference_2d_subset.pt'
+      stats: "stats_2d.pt"
+      reference: "reference_2d_subset.pt"
       standardized_counts: null
 trainer:
   args:
-    max_epochs: 1000
+    max_epochs: 600
     accelerator: auto
     devices: 1
     logger: true
     precision: "32"
     check_val_every_n_epoch: 2
-    log_every_n_steps: 3
+    log_every_n_steps: 1
     deterministic: false
     callbacks:
       pred_writer:
@@ -103,4 +113,4 @@ logger:
   h: 21
   w: 21
 output:
-  refl_file: "/n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/data/pass1_v3/reflections_.refl"
+  refl_file: "/Users/luis/integratorv3/integrator/data/hewl_816/reflections_.refl"

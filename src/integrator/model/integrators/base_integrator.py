@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -11,12 +13,38 @@ from integrator.model.loss import BaseLoss
 
 
 class BaseIntegrator(pl.LightningModule, ABC):
+    qbg: BaseDistribution
+    """Surrogate posterior shoebox Background"""
+    qp: BaseDistribution
+    """Surrogate posterior of spot Profile"""
+    qi: BaseDistribution
+    """Surrogate posterior of the spot Intensity"""
+    data_dim: str
+    """Dimensionality of diffraction data (2d or 3d)"""
+    loss: BaseLoss
+    """Loss function to optimize."""
+    d: int
+    """Depth of input shoebox."""
+    h: int
+    """Height on input shoebox."""
+    w: int
+    """Width of input shoebox."""
+    lr: float
+    weight_decay: float
+    """Weight decay value for Adam optimizer."""
+    mc_samples: int
+    """Number of samples to use for Monte Carlo approximations"""
+    max_iterations: int
+    renyi_scale: float
+    encoder_out: int
+
     def __init__(
         self,
         qbg: BaseDistribution,
         qp: BaseDistribution,
         qi: BaseDistribution,
         loss: BaseLoss,
+        data_dim: str = "3d",
         d: int = 3,
         h: int = 21,
         w: int = 21,
@@ -26,6 +54,7 @@ class BaseIntegrator(pl.LightningModule, ABC):
         mc_samples: int = 100,
         max_iterations: int = 4,
         renyi_scale: float = 0.00,
+        encoder_out: int,
         predict_keys: tuple[str, ...] = (
             "intensity_mean",
             "intensity_var",
@@ -51,6 +80,8 @@ class BaseIntegrator(pl.LightningModule, ABC):
         self.w = w
         self.loss = loss
         self.renyi_scale = renyi_scale
+        self.data_dim = data_dim
+        self.encoder_out = encoder_out
 
         # lists to track avg traning metrics
         self.train_loss = []
@@ -67,6 +98,12 @@ class BaseIntegrator(pl.LightningModule, ABC):
         self.mc_samples = mc_samples
         self.max_iterations = max_iterations
         self.predict_keys = predict_keys
+
+        #
+        if self.data_dim == "3d":
+            self.shoebox_shape = (self.d, self.h, self.w)
+        elif self.data_dim == "2d":
+            self.shoebox_shape = (self.h, self.w)
 
         # dataframes to keep track of val/train epoch metrics
         self.schema = [
@@ -135,7 +172,9 @@ class BaseIntegrator(pl.LightningModule, ABC):
         shoebox: Tensor,
         masks: Tensor,
         reference: Tensor | None = None,
-    ) -> dict[str, Any]: ...
+    ) -> dict[str, Any]:
+        """test"""
+        ...
 
     def on_train_epoch_end(self):
         # calculate epoch averages
@@ -167,6 +206,7 @@ class BaseIntegrator(pl.LightningModule, ABC):
         self.train_nll = []
 
     def on_validation_epoch_end(self):
+        """Validation step processing"""
         avg_val_loss = sum(self.val_loss) / len(self.val_loss)
         avg_kl = sum(self.val_kl) / len(self.val_kl)
         avg_nll = sum(self.val_nll) / len(self.val_nll)
@@ -190,14 +230,6 @@ class BaseIntegrator(pl.LightningModule, ABC):
         self.val_nll = []
 
     def training_step(self, batch, _batch_idx):
-        """
-        Args:
-            batch ():
-            batch_idx ():
-
-        Returns:
-
-        """
         counts, shoebox, masks, reference = batch
         outputs = self(counts, shoebox, masks, reference)
 
@@ -255,7 +287,7 @@ class BaseIntegrator(pl.LightningModule, ABC):
 
         Args:
             batch ():
-            batch_idx ():
+            _batch_idx ():
 
         Returns:
 
@@ -285,12 +317,13 @@ class BaseIntegrator(pl.LightningModule, ABC):
         return outputs
 
     def predict_step(self, batch, _batch_idx):
-        """
+        """Prediction step
+
         Args:
-            batch ():
-            _batch_idx ():
+            batch: Inpute Tensor data
 
         Returns:
+
 
         """
         counts, shoebox, masks, reference = batch
@@ -301,8 +334,6 @@ class BaseIntegrator(pl.LightningModule, ABC):
 
 if __name__ == "__main__":
     pass
-    # -
-
     import torch
 
     concentration = torch.exp(torch.randn(10, (21 * 21 * 3)))

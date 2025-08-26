@@ -20,29 +20,35 @@ class DirichletDistribution(BaseDistribution[Dirichlet]):
     def __init__(
         self,
         in_features: int = 64,
-        input_shape: tuple[int, ...] = (3, 21, 21),
+        out_features: tuple[int, ...] = (3, 21, 21),
+        **kwargs,
     ):
         """
         Args:
             in_features: Input feature dimension.
-            input_shape: ``(C, H, W)`` or ``(H, W)`` used to derive ``num_components``.
+            out_features: ``(C, H, W)`` or ``(H, W)`` used to calculate dimension of the Diritchlet concentration paramter.
         """
         super().__init__(
             eps=1e-6,
             in_features=in_features,
+            out_features=out_features,
+            **kwargs,
         )
 
-        self.input_shape = input_shape
+        self.num_components = 0
 
-        if len(input_shape) == 3:
+        if len(out_features) == 3:
             self.num_components = (
-                input_shape[0] * input_shape[1] * input_shape[2]
+                out_features[0] * out_features[1] * out_features[2]
             )
-        elif len(input_shape) == 2:
-            self.num_components = input_shape[0] * input_shape[1]
+        elif len(out_features) == 2:
+            self.num_components = out_features[0] * out_features[1]
 
-        if self.in_features is not None:
-            self.alpha_layer = Linear(in_features, self.num_components)
+        if self.out_features is not None:
+            self.alpha_layer = Linear(
+                self.in_features,
+                self.num_components,
+            )
 
     def forward(
         self,
@@ -69,12 +75,13 @@ if __name__ == "__main__":
     x = torch.rand(10, 64)
     dirichlet = DirichletDistribution(in_features=64, input_shape=(21, 21))
 
+    # DirichletDistribution
     qp = dirichlet(x)
 
     # 3D Case
-
     dirichlet = DirichletDistribution(in_features=64, input_shape=(3, 21, 21))
     qp = dirichlet(x)
 
+    # DirichletDistribution
     dirichlet = DirichletDistribution(in_features=64, input_shape=(21, 21))
     q = dirichlet(x)

@@ -17,14 +17,20 @@ class GammaDistribution(BaseDistribution[Gamma]):
         self,
         in_features: int,
         out_features: int = 2,
+        eps: float = 1e-12,
+        beta: float = 1.0,
     ):
         """
-
         Args:
-            in_features:
-            out_features:
+            in_features: Dimension of input Tensor
+            out_features: Dimension of the networks parameter Tensor
         """
-        super().__init__(in_features=in_features)
+        super().__init__(
+            in_features=in_features,
+            out_features=out_features,
+            eps=eps,
+            beta=beta,
+        )
 
         self.fc = Linear(
             in_features=in_features,

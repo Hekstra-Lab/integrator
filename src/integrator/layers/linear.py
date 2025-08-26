@@ -25,7 +25,11 @@ class Linear(torch.nn.Linear):
 
 
 class ResidualLayer(nn.Module):
-    def __init__(self, width, dropout_rate=0.0):
+    def __init__(
+        self,
+        width: int,
+        dropout_rate: float = 0.0,
+    ):
         super().__init__()
         # First layer
         self.fc1 = Linear(width, width)

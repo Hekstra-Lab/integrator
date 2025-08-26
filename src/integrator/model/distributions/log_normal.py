@@ -7,28 +7,30 @@ from integrator.model.distributions import BaseDistribution
 
 
 class LogNormalDistribution(BaseDistribution[LogNormal]):
+    """
+    LogNormal distribution with parameters predicted by a linear layer.
+
+    """
+
     def __init__(
         self,
-        in_features: int,
+        out_features: int = 2,
         constraint: str = "softplus",
         eps: float = 1e-12,
         beta: float = 1.0,
+        **kwargs,
     ):
-        """
-        Args:
-            in_features:
-            use_metarep:
-        """
         super().__init__(
-            in_features=in_features,
+            out_features=out_features,
+            constraint=constraint,
             eps=eps,
             beta=beta,
-            constraint=constraint,
+            **kwargs,
         )
 
         self.fc = Linear(
-            in_features=in_features,
-            out_features=2,
+            in_features=self.in_features,
+            out_features=self.out_features,
         )
 
     def distribution(self, loc, scale) -> LogNormal:

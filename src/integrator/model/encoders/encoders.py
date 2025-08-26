@@ -8,7 +8,7 @@ class ShoeboxEncoder(nn.Module):
     """3D CNN encoder producing a fixed-length embedding from a shoebox volume.
 
     This module applies two Conv3d + GroupNorm + ReLU blocks with an
-    intermediate MaxPool3d, then flattens and projects to `out_features`.
+    intermediate MaxPool3d, then flattens and projects to `encoder_out`.
     """
 
     input_shape: tuple[int, int, int]
@@ -17,7 +17,7 @@ class ShoeboxEncoder(nn.Module):
     in_channels: int
     """Number of input channels (C) in the 3D volume."""
 
-    out_features: int
+    encoder_out: int
     """Dimensionality of the output embedding."""
 
     conv1_out_channels: int
@@ -37,7 +37,7 @@ class ShoeboxEncoder(nn.Module):
         self,
         input_shape: tuple[int, ...] = (3, 21, 21),
         in_channels: int = 1,
-        out_features: int = 64,
+        encoder_out: int = 64,
         conv1_out_channels: int = 16,
         conv1_kernel_size: tuple[int, int, int] = (1, 3, 3),
         conv1_padding: tuple[int, int, int] = (0, 1, 1),
@@ -53,7 +53,7 @@ class ShoeboxEncoder(nn.Module):
         Args:
             input_shape: Shoebox spatial dimensions as ``(D, H, W)``.
             in_channels: Number of input channels (`C`).
-            out_features: Output embedding dimension.
+            encoder_out: Output embedding dimension.
             conv1_out_channels: Output channels of the first 3D convolution.
             conv1_kernel_size: Kernel size for the first 3D convolution.
             conv1_padding: Padding for the first 3D convolution.
@@ -67,6 +67,7 @@ class ShoeboxEncoder(nn.Module):
         """
         super().__init__()
 
+        self.encoder_out = encoder_out
         self.conv1 = nn.Conv3d(
             in_channels=in_channels,
             out_channels=conv1_out_channels,
@@ -100,7 +101,7 @@ class ShoeboxEncoder(nn.Module):
         )
         self.fc = nn.Linear(
             in_features=self.flattened_size,
-            out_features=out_features,
+            out_features=encoder_out,
         )
 
     def _infer_flattened_size(self, input_shape, in_channels):
@@ -129,7 +130,7 @@ class IntensityEncoder(nn.Module):
     def __init__(
         self,
         in_channels=1,
-        out_features=64,
+        encoder_out=64,
         conv1_out_channels=16,
         conv1_kernel_size=(1, 3, 3),
         conv1_padding=(0, 1, 1),
@@ -193,26 +194,15 @@ class IntensityEncoder(nn.Module):
 
         self.fc = nn.Linear(
             in_features=conv3_out_channels,
-            out_features=out_features,
+            out_features=encoder_out,
         )
 
     def forward(self, x: Tensor) -> Tensor:
-        # First conv + norm + activation
         x = F.relu(self.norm1(self.conv1(x)))
-
-        # Pooling
         x = self.pool(x)
-
-        # Second conv + norm + activation
         x = F.relu(self.norm2(self.conv2(x)))
-
-        # Third conv + norm + activation
         x = F.relu(self.norm3(self.conv3(x)))
-
-        # Adaptive average pooling - reduces to (batch, channels, 1, 1, 1)
         x = self.adaptive_pool(x)
-
-        # Squeeze and apply final linear layer
         x = x.squeeze()  # Remove dimensions of size 1
         return F.relu(self.fc(x))
 
@@ -222,7 +212,7 @@ class ShoeboxEncoder2D(nn.Module):
         self,
         input_shape=(21, 21),
         in_channels=1,
-        out_features=64,
+        encoder_out=64,
         conv1_out_channels=16,
         conv1_kernel_size=(3, 3),
         conv1_padding=(1, 1),
@@ -267,7 +257,7 @@ class ShoeboxEncoder2D(nn.Module):
         self.flattened_size = self._infer_flattened_size(
             input_shape=input_shape, in_channels=in_channels
         )
-        self.fc = nn.Linear(self.flattened_size, out_features)
+        self.fc = nn.Linear(self.flattened_size, encoder_out)
 
     def _infer_flattened_size(self, input_shape, in_channels) -> int:
         with torch.no_grad():
@@ -289,9 +279,8 @@ class ShoeboxEncoder2D(nn.Module):
 class IntensityEncoder2D(nn.Module):
     def __init__(
         self,
-        input_shape=(21, 21),
         in_channels=1,
-        out_features=64,
+        encoder_out=64,
         conv1_out_channels=16,
         conv1_kernel_size=(3, 3),
         conv1_padding=(1, 1),
@@ -352,7 +341,10 @@ class IntensityEncoder2D(nn.Module):
             1
         )  # Output: (batch, channels, 1, 1)
 
-        self.fc = nn.Linear(conv3_out_channels, out_features)
+        self.fc = nn.Linear(
+            in_features=conv3_out_channels,
+            out_features=encoder_out,
+        )
 
     def forward(self, x: Tensor) -> Tensor:
         x = F.relu(self.norm1(self.conv1(x)))
@@ -365,8 +357,9 @@ class IntensityEncoder2D(nn.Module):
 
 
 if __name__ == "__main__":
-    encoder_2d = ShoeboxEncoder2D()
+    encoder_2d = ShoeboxEncoder()
 
-    batch = F.softplus(torch.randn(10, 21, 21).unsqueeze(1))
-
+    batch = F.softplus(torch.randn(10, 1, 21, 21))
     encoder_2d(batch)
+
+# -

@@ -80,6 +80,8 @@ class GlobalCfg(BaseModel):
 
 
 class IntegratorArgs(BaseModel):
+    data_dim: str
+    encoder_out: int
     lr: float = 0.001
     mc_samples: int = 100
     renyi_scale: float = 0.0
@@ -90,7 +92,7 @@ class IntegratorArgs(BaseModel):
 
 
 class IntegratorCfg(BaseModel):
-    name: str = "integrator"
+    name: str = "integratorB"
     args: IntegratorArgs
 
 
@@ -123,7 +125,9 @@ class ComponentsCfg(BaseModel):
     @model_validator(mode="after")
     def _must_have_at_least_one_encoder(self) -> ComponentsCfg:
         if not self.encoders:
-            raise ValueError("components.encoders must contain at least one encoder")
+            raise ValueError(
+                "components.encoders must contain at least one encoder"
+            )
         return self
 
 

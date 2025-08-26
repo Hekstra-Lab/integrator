@@ -63,6 +63,8 @@ match "str":
 
 
 # -
+
+
 @dataclass(slots=True)
 class MetaData:
     masks: Tensor | None = None
@@ -71,12 +73,12 @@ class MetaData:
 
 class BaseDistribution[T: Distribution](nn.Module):
     eps: Tensor
-    """Small offset to prevent division by zero."""
+    """Registed buffer: Small offset to prevent division by zero."""
     beta: Tensor
     """Registed buffer: Beta parameter used in the softplus constraint."""
     in_features: int
     """Dimension of the input `shoebox`."""
-    out_features: int
+    out_features: int | tuple[int, ...]
     """Dimension of the paramters for `qp`."""
 
     def __init__(
@@ -90,6 +92,8 @@ class BaseDistribution[T: Distribution](nn.Module):
         """
         Args:
             in_features: Input feature dimension.
+            out_features: Output feature dimension.
+            constraint: String name of positivity constraint function.
             eps: Optional epsilon used for numerical stability. If ``None``, defaults to ``1e-12``.
             beta: Optional beta parameter for the softplus constraint. If ``None``, defaults to ``1.0``.
         """
@@ -115,18 +119,6 @@ class BaseDistribution[T: Distribution](nn.Module):
                     beta=self.beta.item(),
                 )
             )
-
-    def constraint(self, x: Tensor) -> Tensor:
-        """
-        Apply the softplus constraint.
-
-        Args:
-            x: Input tensor.
-
-        Returns:
-            Constrained tensor with strictly positive values.
-        """
-        ...
 
     def forward(self, x: Tensor) -> T:
         """

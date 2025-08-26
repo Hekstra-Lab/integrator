@@ -10,7 +10,7 @@ from torch.distributions.transformed_distribution import (
 )
 from torch.distributions.transforms import AbsTransform
 
-from integrator.model.distributions import BaseDistribution, MetaData
+from integrator.model.distributions import BaseDistribution
 
 
 class FoldedNormal(TransformedDistribution):
@@ -74,27 +74,30 @@ class FoldedNormalDistribution(BaseDistribution[FoldedNormal]):
     def __init__(
         self,
         in_features: int,
-        eps: float = 1e-12,
-        beta: float = 1.0,
+        out_features: int = 2,
+        **kwargs,
     ):
         """
         Args:
         """
-        super().__init__(in_features=in_features, eps=eps, beta=1.0)
+        super().__init__(
+            in_features=in_features,
+            out_features=out_features,
+            **kwargs,
+        )
         self.fc = nn.Linear(in_features, 2)
 
     def _transform_loc_scale(
         self, raw_loc, raw_scale
     ) -> tuple[Tensor, Tensor]:
         loc = torch.exp(raw_loc)
-        scale = self.constraint(raw_scale)
+        scale = self._constrain_fn(raw_scale)
         return loc, scale
 
     def forward(
-        self, x: Tensor, *, meta_data: MetaData | None = None
+        self,
+        x: Tensor,
     ) -> FoldedNormal:
-        assert meta_data is None  # remove if you want to use metadata or masks
-
         raw_loc, raw_scale = self.fc(x).unbind(-1)
         loc, scale = self._transform_loc_scale(raw_loc, raw_scale)
         return FoldedNormal(loc, scale)
