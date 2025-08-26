@@ -92,7 +92,7 @@ class IntegratorArgs(BaseModel):
 
 
 class IntegratorCfg(BaseModel):
-    name: str = "integratorB"
+    name: str = "integrator"
     args: IntegratorArgs
 
 

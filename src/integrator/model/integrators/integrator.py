@@ -85,7 +85,7 @@ def get_outputs(
 
 
 # -
-class IntegratorB(LightningModule):
+class Integrator(LightningModule):
     encoder1: ShoeboxEncoder | IntensityEncoder
     """Encoder to get profile distribution"""
     encoder2: ShoeboxEncoder | IntensityEncoder
@@ -496,6 +496,7 @@ class IntegratorB(LightningModule):
 if __name__ == "__main__":
     import torch
 
+    from integrator.model.encoders import MLPMetadataEncoder
     from integrator.utils import (
         create_data_loader,
         create_integrator,
@@ -515,6 +516,10 @@ if __name__ == "__main__":
 
     integrator = create_integrator(config.dict())
 
+    if integrator.encoder3 is not None:
+        raise ValueError(
+            "Incorrect encoder: encoder3 does not belong to this model"
+        )
     data_loader = create_data_loader(config.dict())
 
     counts, shoebox, masks, reference = next(
@@ -529,6 +534,9 @@ if __name__ == "__main__":
     config = load_config(CONFIGS["integrator_3d_3e"])
 
     config.model_dump()["integrator"]
+
+    if integrator.encoder3 is None:
+        raise ValueError("missing encoder3.")
 
     integrator = create_integrator(config.dict())
 

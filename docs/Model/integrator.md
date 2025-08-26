@@ -25,7 +25,7 @@
         functions: true
         attributes: true
 
-::: integrator.model.integrators.integrator.IntegratorB
+::: integrator.model.integrators.integrator.integrator
     options:
       annotations_path: source
       modernize_annotations: true

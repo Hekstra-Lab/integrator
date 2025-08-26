@@ -3,7 +3,7 @@ global_vars:
   mc_samples: &mc_samples 100
   data_dir: &data "/Users/luis/integratorv4/tests/data/2d/hewl_1118/"
 integrator:
-  name: integratorB
+  name: integrator
   args:
     lr: 0.001
     mc_samples: *mc_samples

@@ -1,8 +1,7 @@
 from .base_integrator import BaseIntegrator
-from .integrator import IntegratorA, IntegratorB
+from .integrator import Integrator
 
 __all__ = [
     "BaseIntegrator",
-    "IntegratorA",
-    "IntegratorB",
+    "Integrator",
 ]

@@ -19,7 +19,7 @@ from .model.encoders import (
     ShoeboxEncoder,
     ShoeboxEncoder2D,
 )
-from .model.integrators import IntegratorA, IntegratorB
+from .model.integrators import Integrator
 from .model.loss import Loss
 
 REGISTRY = {
@@ -34,10 +34,7 @@ REGISTRY = {
         "elbo": Loss,
         "loss": Loss,
     },
-    "integrator": {
-        "integratorA": IntegratorA,
-        "integratorB": IntegratorB,
-    },
+    "integrator": {"integrator": Integrator},
     "qi": {
         "gamma": GammaDistribution,
         "log_normal": LogNormalDistribution,
