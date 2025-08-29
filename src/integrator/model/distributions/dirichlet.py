@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import torch
 import torch.nn.functional as F
 from torch import Tensor
@@ -34,6 +32,9 @@ class DirichletDistribution(BaseDistribution[Dirichlet]):
             out_features=out_features,
             **kwargs,
         )
+
+        if out_features is not int:
+            raise ValueError("`out_features` is not an integer")
 
         self.num_components = 0
 

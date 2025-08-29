@@ -28,13 +28,23 @@ components:
     - encoder2:
         name: intensity_encoder
         args:
-          encoder_out: *encoder_out
+          data_dim: 3d
           in_channels: 1
+          encoder_out: *encoder_out
           conv1_out_channels: 64
-          conv2_out_channels: 128
-          conv3_out_channels: 256
           conv1_kernel_size: [3, 3, 3]
           conv1_padding: [1, 1, 1]
+          norm1_num_groups: 4
+          pool_kernel_size: [1, 2, 2]
+          pool_stride: [1, 2, 2]
+          conv2_out_channels: 128
+          conv2_kernel_size: [3, 3, 3]
+          conv2_padding: [0, 0, 0]
+          norm2_num_groups: 4
+          conv3_out_channels: 256
+          conv3_kernel_size: [3, 3, 3]
+          conv3_padding: [1, 1, 1]
+          norm3_num_groups: 8
   qp:
     name: dirichlet
     args:

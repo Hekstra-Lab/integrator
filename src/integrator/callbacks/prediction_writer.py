@@ -13,12 +13,16 @@ def assign_labels(dataset, save_dir: str):
     with torch.no_grad():
         for batch in dataset.train_dataloader():
             _, _, _, reference = batch
-            train_ids = plr.DataFrame({"train_ids": (reference[:, -1].int()).tolist()})
+            train_ids = plr.DataFrame(
+                {"train_ids": (reference[:, -1].int()).tolist()}
+            )
             train_id_df = plr.concat([train_id_df, train_ids])
 
         for batch in dataset.val_dataloader():
             _, _, _, reference = batch
-            val_ids = plr.DataFrame({"val_ids": (reference[:, -1].int()).tolist()})
+            val_ids = plr.DataFrame(
+                {"val_ids": (reference[:, -1].int()).tolist()}
+            )
             val_id_df = plr.concat([val_id_df, val_ids])
 
     train_id_df.write_csv(save_dir + "/train_labels.csv")
@@ -34,7 +38,9 @@ class IntensityPlotter(Callback):
         self.batch_predictions = []
         self.val_predictions = []
 
-    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+    def on_train_batch_end(
+        self, trainer, pl_module, outputs, batch, batch_idx
+    ):
         with torch.no_grad():
             predictions = pl_module(batch)
             self.batch_predictions.append(predictions)
@@ -66,14 +72,18 @@ class PredWriter(BasePredictionWriter):
             Path(self.output_dir).mkdir(parents=True, exist_ok=True)
 
         # Move predictions to CPU and save
-        prediction_cpu = {k: v.cpu().numpy() for k, v in prediction.items()}  # Ensure CPU transfer
+        prediction_cpu = {
+            k: v.cpu().numpy() for k, v in prediction.items()
+        }  # Ensure CPU transfer
         torch.save(
             prediction_cpu,
             os.path.join(self.output_dir, f"batch_{batch_idx}.pt"),
         )
         del prediction
 
-    def write_on_epoch_end(self, trainer, pl_module, predictions, batch_indices):
+    def write_on_epoch_end(
+        self, trainer, pl_module, predictions, batch_indices
+    ):
         if self.output_dir is None:
             # Default to logger directory
             # self.output_dir = trainer.logger.log_dir
@@ -84,12 +94,20 @@ class PredWriter(BasePredictionWriter):
         merged_predictions = {}
 
         for batch_prediction in predictions:
-            batch_cpu = {k: v.cpu().numpy() for k, v in batch_prediction.items()}
+            batch_cpu = {
+                k: v.cpu().numpy() for k, v in batch_prediction.items()
+            }
 
             for key, value in batch_cpu.items():
                 if key not in merged_predictions:
-                    merged_predictions[key] = []  # Initialize list for this key
-                merged_predictions[key].append(value)  # Append batch values to list
+                    merged_predictions[
+                        key
+                    ] = []  # Initialize list for this key
+                merged_predictions[key].append(
+                    value
+                )  # Append batch values to list
 
         # Save the merged predictions as a single .pt file
-        torch.save(merged_predictions, os.path.join(self.output_dir, "preds.pt"))
+        torch.save(
+            merged_predictions, os.path.join(self.output_dir, "preds.pt")
+        )

@@ -3,6 +3,19 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+operations = {
+    "2d": {
+        "conv": nn.Conv2d,
+        "max_pool": nn.MaxPool2d,
+        "adaptive_pool": nn.AdaptiveAvgPool2d,
+    },
+    "3d": {
+        "conv": nn.Conv3d,
+        "max_pool": nn.MaxPool3d,
+        "adaptive_pool": nn.AdaptiveAvgPool3d,
+    },
+}
+
 
 class ShoeboxEncoder(nn.Module):
     """3D CNN encoder producing a fixed-length embedding from a shoebox volume.
@@ -29,7 +42,6 @@ class ShoeboxEncoder(nn.Module):
     conv1_padding: tuple[int, int, int]
     """Padding for the first convolution as ``(pD, pH, pW)``."""
 
-    # ---- Implementation detail -----------------------------------------------------
     flattened_size: int
     """Internal: flattened feature size inferred from a dummy pass."""
 
@@ -126,7 +138,7 @@ class ShoeboxEncoder(nn.Module):
         return F.relu(self.fc(x))
 
 
-class IntensityEncoder(nn.Module):
+class tempIntensityEncoder(nn.Module):
     def __init__(
         self,
         in_channels=1,
@@ -276,7 +288,7 @@ class ShoeboxEncoder2D(nn.Module):
         return F.relu(self.fc(x))
 
 
-class IntensityEncoder2D(nn.Module):
+class tmepIntensityEncoder2D(nn.Module):
     def __init__(
         self,
         in_channels=1,
@@ -356,10 +368,90 @@ class IntensityEncoder2D(nn.Module):
         return F.relu(self.fc(x))
 
 
+class IntensityEncoder(nn.Module):
+    def __init__(
+        self,
+        data_dim: str,
+        in_channels=1,
+        encoder_out=64,
+        conv1_out_channels=16,
+        conv1_kernel_size=(3, 3),
+        conv1_padding=(1, 1),
+        norm1_num_groups=4,
+        pool_kernel_size=(2, 2),
+        pool_stride=(2, 2),
+        conv2_out_channels=32,
+        conv2_kernel_size=(3, 3),
+        conv2_padding=(0, 0),
+        norm2_num_groups=4,
+        conv3_out_channels=64,
+        conv3_kernel_size=(3, 3),
+        conv3_padding=(1, 1),
+        norm3_num_groups=8,
+    ):
+        super().__init__()
+
+        # self.conv1 = nn.Conv2d(
+        self.conv1 = operations[data_dim]["conv"](
+            in_channels=in_channels,
+            out_channels=conv1_out_channels,
+            kernel_size=conv1_kernel_size,
+            padding=conv1_padding,
+        )
+        self.norm1 = nn.GroupNorm(
+            num_groups=norm1_num_groups,
+            num_channels=conv1_out_channels,
+        )
+
+        # self.pool = nn.MaxPool2d(
+        self.pool = operations[data_dim]["max_pool"](
+            kernel_size=pool_kernel_size,
+            stride=pool_stride,
+            ceil_mode=True,
+        )
+
+        # self.conv2 = nn.Conv2d(
+        self.conv2 = operations[data_dim]["conv"](
+            in_channels=conv1_out_channels,
+            out_channels=conv2_out_channels,
+            kernel_size=conv2_kernel_size,
+            padding=conv2_padding,
+        )
+        self.norm2 = nn.GroupNorm(
+            num_groups=norm2_num_groups,
+            num_channels=conv2_out_channels,
+        )
+
+        self.conv3 = operations[data_dim]["conv"](
+            in_channels=conv2_out_channels,
+            out_channels=conv3_out_channels,
+            kernel_size=conv3_kernel_size,
+            padding=conv3_padding,
+        )
+        self.norm3 = nn.GroupNorm(
+            num_groups=norm3_num_groups,
+            num_channels=conv3_out_channels,
+        )
+
+        self.adaptive_pool = operations[data_dim]["adaptive_pool"](
+            1
+        )  # Output: (batch, channels, 1, 1)
+
+        self.fc = nn.Linear(
+            in_features=conv3_out_channels,
+            out_features=encoder_out,
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        x = F.relu(self.norm1(self.conv1(x)))
+        x = self.pool(x)
+        x = F.relu(self.norm2(self.conv2(x)))
+        x = F.relu(self.norm3(self.conv3(x)))
+        x = self.adaptive_pool(x)
+        # x = x.squeeze(-1).squeeze(-1)  # From (B, C, 1, 1) to (B, C)
+        x = x.squeeze()  # From (B, C, 1, 1) to (B, C)
+        return F.relu(self.fc(x))
+
+
 if __name__ == "__main__":
-    encoder_2d = ShoeboxEncoder()
-
-    batch = F.softplus(torch.randn(10, 1, 21, 21))
-    encoder_2d(batch)
-
-# -
+    pass

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import torch
 import torch.nn as nn
 from torch import Tensor
@@ -11,7 +9,7 @@ from integrator.model.distributions import BaseDistribution
 
 class GammaDistribution(BaseDistribution[Gamma]):
     fc: nn.Module
-    """Linear layer to map input tensor to distribution parameters"""
+    """`Linear` layer to map input tensors to distribution parameters"""
 
     def __init__(
         self,
@@ -37,24 +35,6 @@ class GammaDistribution(BaseDistribution[Gamma]):
             out_features=out_features,
         )
 
-    def distribution(
-        self,
-        concentration: Tensor,
-        rate: Tensor,
-    ) -> Gamma:
-        """
-
-        Args:
-            concentration:
-            rate:
-
-        Returns:
-
-        """
-        concentration = self.constraint(concentration)
-        rate = self.constraint(rate)
-        return Gamma(concentration.flatten(), rate.flatten())
-
     def forward(
         self,
         x: Tensor,
@@ -64,12 +44,13 @@ class GammaDistribution(BaseDistribution[Gamma]):
         Args:
             x: Input batch of shoeboxes
         Returns:
+            `torch.distributions.Gamma`
 
         """
         params = self.fc(x)
-        gamma = self.distribution(params[..., 0], params[..., 1])
-
-        return gamma
+        concentration = self._constrain_fn(params[..., 0])
+        rate = self._constrain_fn(params[..., 1])
+        return Gamma(concentration.flatten(), rate.flatten())
 
 
 if __name__ == "__main__":

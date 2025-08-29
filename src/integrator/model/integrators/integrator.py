@@ -116,6 +116,8 @@ class Integrator(LightningModule):
     max_iterations: int
     renyi_scale: float
     encoder_out: int
+    train_df: pl.DataFrame
+    """`DataFrame` with train and validation metrics"""
 
     def __init__(
         self,
@@ -533,12 +535,10 @@ if __name__ == "__main__":
 
     config = load_config(CONFIGS["integrator_3d_3e"])
 
-    config.model_dump()["integrator"]
+    integrator = create_integrator(config.dict())
 
     if integrator.encoder3 is None:
         raise ValueError("missing encoder3.")
-
-    integrator = create_integrator(config.dict())
 
     data_loader = create_data_loader(config.dict())
 
@@ -553,7 +553,7 @@ if __name__ == "__main__":
 
     config = load_config(CONFIGS["integrator_2d_2e"])
 
-    config.model_dump()["integrator"]
+    config.model_dump()["components"]
 
     integrator = create_integrator(config.dict())
     data_loader = create_data_loader(config.dict())

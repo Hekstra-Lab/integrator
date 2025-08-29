@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum, auto
@@ -84,7 +82,7 @@ class BaseDistribution[T: Distribution](nn.Module):
     def __init__(
         self,
         in_features: int,
-        out_features: int,
+        out_features: int | tuple[int, ...],
         constraint: str | None = None,
         eps: float = 0.0,
         beta: float = 1.0,

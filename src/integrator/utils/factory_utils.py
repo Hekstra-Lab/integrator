@@ -6,10 +6,10 @@ from pathlib import Path
 import pytorch_lightning as pl
 import torch
 import yaml
+from pytorch_lightning import LightningModule
 
 from integrator.callbacks import PredWriter
 from integrator.config.schema import Cfg
-from integrator.model.integrators import BaseIntegrator
 from integrator.registry import ARGUMENT_RESOLVER, REGISTRY
 
 
@@ -53,7 +53,7 @@ def _build_modules(components: dict) -> dict:
 
 def create_integrator(
     config: dict, checkpoint: str | None = None
-) -> BaseIntegrator:
+) -> LightningModule:
     integrator_cls = REGISTRY["integrator"][config["integrator"]["name"]]
     modules = _build_modules(config["components"])
     kwargs = {**modules, **config["integrator"]["args"]}

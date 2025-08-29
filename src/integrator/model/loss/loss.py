@@ -292,14 +292,14 @@ if __name__ == "__main__":
         DirichletDistribution,
         FoldedNormalDistribution,
     )
-    from integrator.model.encoders import IntensityEncoder2D, ShoeboxEncoder2D
+    from integrator.model.encoders import IntensityEncoder, ShoeboxEncoder
 
     # hyperparameters
     mc_samples = 100
 
     # encoders
-    sbox_encoder_2d = ShoeboxEncoder2D()
-    intensity_encoder_2d = IntensityEncoder2D()
+    sbox_encoder_2d = ShoeboxEncoder()
+    intensity_encoder_2d = IntensityEncoder(data_dim="2d")
 
     # distributions
     qbg_ = FoldedNormalDistribution(in_features=64)

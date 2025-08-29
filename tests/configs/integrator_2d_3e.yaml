@@ -26,8 +26,9 @@ components:
           conv1_kernel_size: [3, 3]
           conv1_padding: [1, 1]
     - encoder2:
-        name: intensity_encoder_2d
+        name: intensity_encoder
         args:
+          data_dim: 2d
           encoder_out: *encoder_out
           in_channels: 1
           conv1_out_channels: 16
@@ -44,7 +45,7 @@ components:
     name: dirichlet
     args:
       in_features: *encoder_out
-      out_features: [*d, *h, *w]
+      out_features: [*h, *w]
       constraint: softplus
   qbg:
     name: folded_normal
