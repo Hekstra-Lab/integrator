@@ -91,7 +91,7 @@ class Integrator(LightningModule):
     encoder2: ShoeboxEncoder | IntensityEncoder
     """Encoder to get intensity & background distributions"""
     encoder3: MLPMetadataEncoder | None
-    """Encoder for experimental metadata"""
+    """Optional Encoder for experimental metadata"""
     qbg: BaseDistribution
     """Surrogate posterior shoebox Background"""
     qp: BaseDistribution
@@ -102,6 +102,9 @@ class Integrator(LightningModule):
     """Dimensionality of diffraction data (2d or 3d)"""
     loss: BaseLoss
     """Loss function to optimize."""
+    max_iterations: int
+    mc_samples: int
+    """Number of samples to use for Monte Carlo approximations"""
     d: int
     """Depth of input shoebox."""
     h: int
@@ -109,15 +112,27 @@ class Integrator(LightningModule):
     w: int
     """Width of input shoebox."""
     lr: float
-    weight_decay: float
-    """Weight decay value for Adam optimizer."""
-    mc_samples: int
-    """Number of samples to use for Monte Carlo approximations"""
-    max_iterations: int
-    renyi_scale: float
     encoder_out: int
+    """Dimension of the encoder codomain"""
+    predict_keys: tuple[str, ...]
+    """List of keys to store during the `predict_step`. """
+    renyi_scale: float
     train_df: pl.DataFrame
     """`DataFrame` with train and validation metrics"""
+    weight_decay: float
+    """Weight decay value for Adam optimizer."""
+    avg_loss: list
+    """List containing the average train loss per train epoch"""
+    avg_kl: list
+    """List containing the average Kullback-Leibler divergence of the train set"""
+    avg_nll: list
+    """List containing the average validation negative log-likelihood train epoch"""
+    val_loss: list
+    """List containing the average validation loss per validation epoch"""
+    val_kl: list
+    """List containing the average Kullback-Leibler divergence per validation epoch"""
+    val_nll: list
+    """List containing the average validation negative log-likelihood validation epoch"""
 
     def __init__(
         self,

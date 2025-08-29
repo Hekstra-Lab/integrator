@@ -2,7 +2,6 @@
     options:
       annotations_path: source
       modernize_annotations: true
-      members_order: alphabetical
       docstring_section_style: table
       heading_level: 2
       inherited_members: true
