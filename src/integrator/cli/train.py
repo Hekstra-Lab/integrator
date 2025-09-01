@@ -90,8 +90,6 @@ def train(
         save_dir="/n/netscratch/hekstra_lab/Lab/laldama/lightning_logs/",
     )
 
-    logger.log_hyperparams(cfg.model_dump())
-
     # get logging directory
     logdir = logger.experiment.dir
 

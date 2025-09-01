@@ -1,6 +1,7 @@
 import gc
 import glob
 import re
+from importlib.resources import as_file
 from pathlib import Path
 
 import pytorch_lightning as pl
@@ -42,7 +43,6 @@ def _build_modules(components: dict) -> dict:
                 "encoders", sub["name"], **(sub.get("args"))
             )
 
-    # --- everything else is a singleton component (qp, qbg, qi, loss, ...)
     for k, v in components.items():
         if k == "encoders":
             continue
@@ -199,10 +199,16 @@ def predict_from_checkpoints(
 # src/integrator/config/load.py
 
 
-def load_config(path: Path) -> Cfg:
-    with open(path) as f:
-        raw = yaml.safe_load(f)  # YAML anchors are resolved here
-    return Cfg.model_validate(raw)  # validate + fill defaults
+def load_config(resource: str | Path) -> Cfg:
+    """resource is a Traversable from get_configs()."""
+    # Turn into a real Path temporarily to use normal open/yaml
+    if isinstance(resource, str):
+        resource = Path(resource)
+
+    with as_file(resource) as p:
+        with open(Path(p), encoding="utf-8") as f:
+            raw = yaml.safe_load(f)
+    return Cfg.model_validate(raw)
 
 
 # assign train/val labels

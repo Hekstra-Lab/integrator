@@ -75,15 +75,16 @@ class FoldedNormalDistribution(BaseDistribution[FoldedNormal]):
         self,
         in_features: int,
         out_features: int = 2,
-        **kwargs,
+        eps=1e-12,
+        beta=1.0,
+        constraint="softplus",
     ):
-        """
-        Args:
-        """
         super().__init__(
             in_features=in_features,
             out_features=out_features,
-            **kwargs,
+            eps=eps,
+            beta=beta,
+            constraint=constraint,
         )
         self.fc = nn.Linear(in_features, 2)
 

@@ -49,18 +49,17 @@ Repository = "https://github.com/Hekstra-Lab/integrator"
 [tool.hatch.build.targets.wheel]
 packages = ["src/integrator"]
 
-include = [
-  "src/integrator/**/*.yaml",
-  "tests/configs/*.yaml",
-]
+#include = []
 
 # Source distribution: include your source tree and top-level files.
 [tool.hatch.build.targets.sdist]
 include = [
   "src/**",
+  "docs/**",
   "tests/**",        # optional—include tests in the sdist if you want
   "README.md",
   "pyproject.toml",
+  "mkdocs.yml"
 ]
 
 # ----------------------------

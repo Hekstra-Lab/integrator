@@ -33,11 +33,6 @@ class DirichletDistribution(BaseDistribution[Dirichlet]):
             **kwargs,
         )
 
-        if out_features is not int:
-            raise ValueError("`out_features` is not an integer")
-
-        self.num_components = 0
-
         if len(out_features) == 3:
             self.num_components = (
                 out_features[0] * out_features[1] * out_features[2]

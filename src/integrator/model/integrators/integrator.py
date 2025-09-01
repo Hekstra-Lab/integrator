@@ -86,6 +86,8 @@ def get_outputs(
 
 # -
 class Integrator(LightningModule):
+    """Integrator class to infer intenities from raw X-ray diffraction images and experimental metadata."""
+
     encoder1: ShoeboxEncoder | IntensityEncoder
     """Encoder to get profile distribution"""
     encoder2: ShoeboxEncoder | IntensityEncoder
@@ -112,25 +114,34 @@ class Integrator(LightningModule):
     w: int
     """Width of input shoebox."""
     lr: float
+    """Learning rate for `torch.optim.Adam`"""
     encoder_out: int
     """Dimension of the encoder codomain"""
     predict_keys: tuple[str, ...]
     """List of keys to store during the `predict_step`. """
     renyi_scale: float
+    schema: list[tuple]
+    """A `polars.DataFrame` schema to define logged metrics"""
     train_df: pl.DataFrame
     """`DataFrame` with train and validation metrics"""
     weight_decay: float
     """Weight decay value for Adam optimizer."""
+
     avg_loss: list
     """List containing the average train loss per train epoch"""
+
     avg_kl: list
     """List containing the average Kullback-Leibler divergence of the train set"""
+
     avg_nll: list
     """List containing the average validation negative log-likelihood train epoch"""
+
     val_loss: list
     """List containing the average validation loss per validation epoch"""
+
     val_kl: list
     """List containing the average Kullback-Leibler divergence per validation epoch"""
+
     val_nll: list
     """List containing the average validation negative log-likelihood validation epoch"""
 
@@ -140,6 +151,7 @@ class Integrator(LightningModule):
         qp: BaseDistribution,
         qi: BaseDistribution,
         loss: BaseLoss,
+        encoder_out: int,
         encoder1: ShoeboxEncoder | IntensityEncoder,
         encoder2: ShoeboxEncoder | IntensityEncoder,
         encoder3: MLPMetadataEncoder | None = None,
@@ -147,13 +159,11 @@ class Integrator(LightningModule):
         d: int = 3,
         h: int = 21,
         w: int = 21,
-        *,
         lr: float = 1e-3,
         weight_decay: float = 0.0,
         mc_samples: int = 100,
         max_iterations: int = 4,
         renyi_scale: float = 0.00,
-        encoder_out: int,
         predict_keys: tuple[str, ...] = (
             "intensity_mean",
             "intensity_var",
@@ -311,6 +321,7 @@ class Integrator(LightningModule):
         x_profile = self.encoder1(
             shoebox.reshape(shoebox.shape[0], 1, *(self.shoebox_shape))
         )
+
         x_intensity = self.encoder2(
             shoebox.reshape(shoebox.shape[0], 1, *(self.shoebox_shape))
         )
@@ -354,6 +365,14 @@ class Integrator(LightningModule):
         return out
 
     def on_train_epoch_end(self):
+        """
+        Aggregate and log training metrics at the end of each epoch.
+
+        - Computes average loss, KL, and NLL over the epoch.
+        - Logs values to PyTorch Lightning's logger.
+        - Appends a new row to self.train_df.
+        - Resets training metric lists for the next epoch.
+        """
         # calculate epoch averages
         avg_train_loss = sum(self.train_loss) / len(self.train_loss)
         avg_kl = sum(self.train_kl) / len(self.train_kl)
@@ -383,7 +402,14 @@ class Integrator(LightningModule):
         self.train_nll = []
 
     def on_validation_epoch_end(self):
-        """Validation step processing"""
+        """
+        Aggregate and log validation metrics at the end of each epoch.
+
+        - Computes average loss, KL, and NLL over the epoch.
+        - Logs values to PyTorch Lightning's logger.
+        - Appends a new row to `self.val_df`.
+        - Resets validation metric lists.
+        """
         avg_val_loss = sum(self.val_loss) / len(self.val_loss)
         avg_kl = sum(self.val_kl) / len(self.val_kl)
         avg_nll = sum(self.val_nll) / len(self.val_nll)
@@ -463,8 +489,7 @@ class Integrator(LightningModule):
         """
 
         Args:
-            batch ():
-            _batch_idx ():
+            batch:
 
         Returns:
 
@@ -493,15 +518,15 @@ class Integrator(LightningModule):
 
         return outputs
 
-    def predict_step(self, batch, _batch_idx):
-        """Prediction step
+    def predict_step(self, batch: Tensor, _batch_idx):
+        """
+        Run inference on a batch during prediction.
 
         Args:
-            batch: Inpute Tensor data
+            batch: Tuple of (counts, shoebox, masks, reference).
 
         Returns:
-
-
+            Dictionary with keys specified in self.predict_keys.
         """
         counts, shoebox, masks, reference = batch
         outputs = self(counts, shoebox, masks, reference)
@@ -519,9 +544,6 @@ if __name__ == "__main__":
         create_integrator,
         load_config,
     )
-    from utils import CONFIGS
-
-    torch.set_default_dtype(torch.float32)
 
     # key: 3d_2e
     # data: 3D
@@ -571,6 +593,7 @@ if __name__ == "__main__":
     config.model_dump()["components"]
 
     integrator = create_integrator(config.dict())
+
     data_loader = create_data_loader(config.dict())
 
     counts, shoebox, masks, reference = next(

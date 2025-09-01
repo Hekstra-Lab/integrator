@@ -1,21 +1,49 @@
+from __future__ import annotations
+
+from collections import defaultdict
+from collections.abc import Mapping
+from importlib.resources.abc import Traversable
 from pathlib import Path
 
-# ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-ROOT_DIR = Path(__file__).absolute().parent
+# -
+# ROOT_DIR = files("integrator")
+ROOT_DIR = Path(__file__).parents[1]
+# RESOURCES = ROOT_DIR / "resources"
+CONFIGS = ROOT_DIR / "tests/configs"
+DATA = ROOT_DIR / "tests/data"
 
-CONFIGS = {}
-for v in list(Path(ROOT_DIR).parent.glob("tests/configs/*.yaml")):
-    key = v.name.removesuffix(".yaml")
-    CONFIGS[key] = v
 
-DATA = {}
-for v in list(Path(ROOT_DIR).parent.glob("tests/data/*/")):
-    key = v.name
-    paths = [p for p in list(v.glob("**/*.pt"))]
-    paths.sort()
-    keys = [p.name.split("_")[0] for p in paths]
-    vals = {}
-    for k, p in zip(keys, paths, strict=False):
-        vals[k] = p
+def get_configs() -> Mapping[str, Traversable]:
+    """Return packaged config resources (NOT real Paths)."""
+    out: dict[str, Traversable] = {}
+    for entry in CONFIGS.rglob("*.yaml"):
+        if entry.is_file():
+            out[entry.stem] = entry  # keep as Traversable
+    return out
 
-    DATA[key] = vals
+
+def get_data() -> Mapping[str, Mapping[str, Mapping[str, Traversable]]]:
+    """
+    Returns {dim: {dataset_name: {key: resource}}}
+    """
+    out: dict[str, dict[str, dict[str, Traversable]]] = defaultdict(dict)
+
+    for dim_dir in DATA.iterdir():
+        if not dim_dir.is_dir():
+            continue
+
+        by_dataset: dict[str, dict[str, Traversable]] = {}
+        for ds_dir in dim_dir.iterdir():
+            if not ds_dir.is_dir():
+                continue
+            entries: dict[str, Traversable] = {}
+            for p in ds_dir.glob("*.pt"):
+                key = p.name.split("_", 1)[0]
+                entries[key] = p
+            if entries:
+                by_dataset[ds_dir.name] = entries
+
+        if by_dataset:
+            out[dim_dir.name] = by_dataset
+
+    return out

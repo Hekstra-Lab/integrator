@@ -16,7 +16,7 @@
       show_docstring_attributes: false
       show_group_by_category: true
       show_object_full_path: false
-      show_signature_annotations: false
+      show_signature_annotations: true
       show_source: false
       show_symbol_type_heading: true
       show_symbol_type_toc: true

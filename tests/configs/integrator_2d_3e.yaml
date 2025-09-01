@@ -17,25 +17,41 @@ integrator:
 components:
   encoders:
     - encoder1:
-        name: shoebox_encoder_2d
+        name: shoebox_encoder
         args:
-          encoder_out: *encoder_out
+          data_dim: 2d
+          input_shape: [*h, *w]
           in_channels: 1
+          encoder_out: *encoder_out
           conv1_out_channels: 16
-          conv2_out_channels: 32
           conv1_kernel_size: [3, 3]
           conv1_padding: [1, 1]
+          pool_kernel_size: [2, 2]
+          pool_stride: [2, 2]
+          conv2_out_channels: 32
+          conv2_kernel_size: [3, 3]
+          conv2_padding: [0, 0]
+          norm2_num_groups: 4
     - encoder2:
         name: intensity_encoder
         args:
           data_dim: 2d
-          encoder_out: *encoder_out
           in_channels: 1
+          encoder_out: *encoder_out
           conv1_out_channels: 16
-          conv2_out_channels: 32
-          conv3_out_channels: 64
           conv1_kernel_size: [3, 3]
           conv1_padding: [1, 1]
+          norm1_num_groups: 4
+          pool_kernel_size: [2, 2]
+          pool_stride: [2, 2]
+          conv2_out_channels: 32
+          conv2_kernel_size: [3, 3]
+          conv2_padding: [0, 0]
+          norm2_num_groups: 4
+          conv3_out_channels: 64
+          conv3_kernel_size: [3, 3]
+          conv3_padding: [1, 1]
+          norm3_num_groups: 8
     - encoder3:
         name: mlp_metadata_encoder
         args:
@@ -96,7 +112,7 @@ data_loader:
       standardized_counts: null
 trainer:
   args:
-    max_epochs: 600
+    max_epochs: 5
     accelerator: auto
     devices: 1
     logger: true

@@ -6,7 +6,7 @@
       heading_level: 3
       show_object_full_path: false
       annotations_path: source
-      show_signature_annotations: false
+      show_signature_annotations: true
       parameter_headings: false
       show_symbol_type_heading: true
       show_symbol_type_toc: true
@@ -26,7 +26,7 @@
       heading_level: 3
       show_object_full_path: false
       annotations_path: source
-      show_signature_annotations: false
+      show_signature_annotations: true
       parameter_headings: false
       show_symbol_type_heading: true
       show_symbol_type_toc: true
@@ -46,7 +46,7 @@
       heading_level: 3
       show_object_full_path: false
       annotations_path: source
-      show_signature_annotations: false
+      show_signature_annotations: true
       parameter_headings: false
       show_symbol_type_heading: true
       show_symbol_type_toc: true

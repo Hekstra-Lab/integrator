@@ -10,7 +10,6 @@ integrator:
     renyi_scale: 0.0
     data_dim: "2d"
     encoder_out: *encoder_out
-    d: &d 1
     h: &h 21
     w: &w 21
     weight_decay: 0.0
@@ -19,23 +18,39 @@ components:
     - encoder1:
         name: shoebox_encoder
         args:
-          encoder_out: *encoder_out
+          data_dim: 2d
+          input_shape: [*h, *w]
           in_channels: 1
+          encoder_out: *encoder_out
           conv1_out_channels: 16
-          conv2_out_channels: 32
           conv1_kernel_size: [3, 3]
           conv1_padding: [1, 1]
+          pool_kernel_size: [2, 2]
+          pool_stride: [2, 2]
+          conv2_out_channels: 32
+          conv2_kernel_size: [3, 3]
+          conv2_padding: [0, 0]
+          norm2_num_groups: 4
     - encoder2:
         name: intensity_encoder
         args:
           data_dim: 2d
-          encoder_out: *encoder_out
           in_channels: 1
+          encoder_out: *encoder_out
           conv1_out_channels: 16
-          conv2_out_channels: 32
-          conv3_out_channels: 64
           conv1_kernel_size: [3, 3]
           conv1_padding: [1, 1]
+          norm1_num_groups: 4
+          pool_kernel_size: [2, 2]
+          pool_stride: [2, 2]
+          conv2_out_channels: 32
+          conv2_kernel_size: [3, 3]
+          conv2_padding: [0, 0]
+          norm2_num_groups: 4
+          conv3_out_channels: 64
+          conv3_kernel_size: [3, 3]
+          conv3_padding: [1, 1]
+          norm3_num_groups: 8
   qp:
     name: dirichlet
     args:
@@ -72,7 +87,7 @@ components:
       data_dir: *data
       prior_tensor: 'concentration_2d.pt'
 data_loader:
-  name: default
+  name: shoebox_data_module_2d
   args:
     data_dir: *data
     batch_size: 10
@@ -91,7 +106,7 @@ data_loader:
       standardized_counts: null
 trainer:
   args:
-    max_epochs: 600
+    max_epochs: 5
     accelerator: auto
     devices: 1
     logger: true

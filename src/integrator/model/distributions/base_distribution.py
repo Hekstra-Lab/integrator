@@ -70,20 +70,20 @@ class MetaData:
 
 
 class BaseDistribution[T: Distribution](nn.Module):
-    eps: Tensor
-    """Registed buffer: Small offset to prevent division by zero."""
-    beta: Tensor
-    """Registed buffer: Beta parameter used in the softplus constraint."""
     in_features: int
     """Dimension of the input `shoebox`."""
     out_features: int | tuple[int, ...]
     """Dimension of the paramters for `qp`."""
+    eps: Tensor
+    """Registed buffer: Small offset to prevent division by zero."""
+    beta: Tensor
+    """Registed buffer: Beta parameter used in the softplus constraint."""
 
     def __init__(
         self,
         in_features: int,
         out_features: int | tuple[int, ...],
-        constraint: str | None = None,
+        constraint: str = "softplus",
         eps: float = 0.0,
         beta: float = 1.0,
     ):
