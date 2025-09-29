@@ -61,6 +61,7 @@ def train(
         typer.Option(help="Override data path in config.yaml file"),
     ] = None,
 ):
+    import torch
     from pytorch_lightning.callbacks import ModelCheckpoint, RichProgressBar
     from pytorch_lightning.loggers import WandbLogger
 
@@ -75,6 +76,8 @@ def train(
         create_trainer,
         load_config,
     )
+
+    torch.set_float32_matmul_precision("medium")
 
     # load configuration file
     cfg = load_config(config)
