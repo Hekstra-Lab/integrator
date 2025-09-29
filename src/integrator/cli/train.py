@@ -65,12 +65,14 @@ def train(
     from pytorch_lightning.loggers import WandbLogger
 
     from integrator.callbacks import Plotter, PlotterLD, PredWriter, assign_labels
+    import torch
     from integrator.utils import (
         create_data_loader,
         create_integrator,
         create_trainer,
         load_config,
     )
+    torch.set_float32_matmul_precision('medium')
 
     # load configuration file
     cfg = load_config(config)
