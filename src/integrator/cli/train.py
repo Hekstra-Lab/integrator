@@ -64,7 +64,11 @@ def train(
     from pytorch_lightning.callbacks import ModelCheckpoint, RichProgressBar
     from pytorch_lightning.loggers import WandbLogger
 
-    from integrator.callbacks import Plotter, PlotterLD, PredWriter, assign_labels
+    from integrator.callbacks import (
+        PlotterLD,
+        PredWriter,
+        assign_labels,
+    )
     from integrator.utils import (
         create_data_loader,
         create_integrator,
@@ -114,17 +118,19 @@ def train(
     )
 
     # to generate plots
-    #plotter = Plotter(n_profiles=10)
 
-    plotter = PlotterLD(
-        n_profiles=10,
-        plot_every_n_epochs=1,
-        d= 1,
-        h= 21, 
-        w= 21,
-    )
-
-
+    if cfg.dict()["integrator"]["args"]["data_dim"] == "3d":
+        plotter = Plotter(n_profiles=10)
+    elif cfg.dict()["integrator"]["args"]["data_dim"] == "2d":
+        plotter = PlotterLD(
+            n_profiles=10,
+            plot_every_n_epochs=1,
+            d=1,
+            h=21,
+            w=21,
+        )
+    else:
+        print("Incorrect data_dim value")
 
     # to save checkpoints
     checkpoint_callback = ModelCheckpoint(
