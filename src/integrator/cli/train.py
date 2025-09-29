@@ -64,7 +64,7 @@ def train(
     from pytorch_lightning.callbacks import ModelCheckpoint, RichProgressBar
     from pytorch_lightning.loggers import WandbLogger
 
-    from integrator.callbacks import Plotter, PredWriter, assign_labels
+    from integrator.callbacks import Plotter, PlotterLD, PredWriter, assign_labels
     from integrator.utils import (
         create_data_loader,
         create_integrator,
@@ -114,7 +114,17 @@ def train(
     )
 
     # to generate plots
-    plotter = Plotter(n_profiles=10)
+    #plotter = Plotter(n_profiles=10)
+
+    plotter = PlotterLD(
+        n_profiles=10,
+        plot_every_n_epochs=1,
+        d= 1,
+        h= 21, 
+        w= 21,
+    )
+
+
 
     # to save checkpoints
     checkpoint_callback = ModelCheckpoint(
