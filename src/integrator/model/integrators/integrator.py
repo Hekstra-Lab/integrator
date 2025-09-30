@@ -119,7 +119,7 @@ class Integrator(LightningModule):
     """Learning rate for `torch.optim.Adam`"""
     encoder_out: int
     """Dimension of the encoder codomain"""
-    predict_keys: tuple[str, ...]
+    predict_keys: str | list[str]
     """List of keys to store during the `predict_step`. """
     renyi_scale: float
     schema: list[tuple]
@@ -166,21 +166,7 @@ class Integrator(LightningModule):
         mc_samples: int = 100,
         max_iterations: int = 4,
         renyi_scale: float = 0.00,
-        predict_keys: tuple[str, ...] = (
-            "intensity_mean",
-            "intensity_var",
-            "refl_ids",
-            "dials_I_sum_value",
-            "dials_I_sum_var",
-            "dials_I_prf_value",
-            "dials_I_prf_var",
-            "dials_bg_mean",
-            "qbg_mean",
-            "qbg_scale",
-            "x_c",
-            "y_c",
-            "z_c",
-        ),
+        predict_keys: list[str] | str = "default",
     ):
         super().__init__()
         self.qbg = qbg
@@ -198,6 +184,25 @@ class Integrator(LightningModule):
         self.encoder1 = encoder1
         self.encoder2 = encoder2
         self.encoder3 = encoder3
+
+        if predict_keys == "default":
+            self.predict_keys = [
+                "intensity_mean",
+                "intensity_var",
+                "refl_ids",
+                "dials_I_sum_value",
+                "dials_I_sum_var",
+                "dials_I_prf_value",
+                "dials_I_prf_var",
+                "dials_bg_mean",
+                "qbg_mean",
+                "qbg_scale",
+                "x_c",
+                "y_c",
+                "z_c",
+            ]
+        elif isinstance(predict_keys, list):
+            self.predict_keys = predict_keys
 
         if self.encoder3 is not None:
             self.linear = nn.Linear(self.encoder_out * 2, self.encoder_out)

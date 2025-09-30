@@ -89,6 +89,7 @@ class IntegratorArgs(BaseModel):
     h: int = 21
     w: int = 21
     weight_decay: float = 0.0
+    predict_keys: str | list[str]
 
 
 class IntegratorCfg(BaseModel):

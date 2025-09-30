@@ -10,6 +10,7 @@ integrator:
     renyi_scale: 0.0
     data_dim: "2d"
     encoder_out: *encoder_out
+    d: &d 1
     h: &h 21
     w: &w 21
     weight_decay: 0.0
@@ -85,6 +86,8 @@ components:
       pi_weight: 1.0
       use_robust: true
       data_dir: *data
+      quantile: 0.95
+      pprf_conc_factor: 20
       prior_tensor: 'concentration_2d.pt'
 data_loader:
   name: shoebox_data_module_2d
@@ -120,8 +123,8 @@ trainer:
         write_interval: epoch
     enable_checkpointing: true
 logger:
-  d: 3
-  h: 21
-  w: 21
+  d: *d
+  h: *h
+  w: *w
 output:
   refl_file: "/Users/luis/integratorv3/integrator/data/hewl_816/reflections_.refl"

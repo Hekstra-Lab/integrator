@@ -5,15 +5,16 @@ global_vars:
 integrator:
   name: integrator
   args:
+    data_dim: "3d"
+    encoder_out: *encoder_out
     lr: 0.001
     mc_samples: *mc_samples
     renyi_scale: 0.0
-    data_dim: "3d"
-    encoder_out: *encoder_out
     d: &d 3
     h: &h 21
     w: &w 21
     weight_decay: 0.0
+    predict_keys: default
 components:
   encoders:
     - encoder1:

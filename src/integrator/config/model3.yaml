@@ -104,8 +104,8 @@ trainer:
         write_interval: epoch
     enable_checkpointing: true
 logger:
-  d: 3
-  h: 21
-  w: 21
+  d: *d
+  h: *h
+  w: *w
 output:
   refl_file: "/Users/luis/integratorv3/integrator/data/hewl_816/reflections_.refl"

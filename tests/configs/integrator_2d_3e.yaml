@@ -14,6 +14,7 @@ integrator:
     h: &h 21
     w: &w 21
     weight_decay: 0.0
+    predict_keys: default
 components:
   encoders:
     - encoder1:
