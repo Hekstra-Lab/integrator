@@ -94,9 +94,12 @@ class PredWriter(BasePredictionWriter):
         merged_predictions = {}
 
         for batch_prediction in predictions:
-            batch_cpu = {
-                k: v.cpu().numpy() for k, v in batch_prediction.items()
-            }
+            batch_cpu = dict()
+            for k, v in batch_prediction.items():
+                if isinstance(v, torch.Tensor):
+                    batch_cpu[k] = v.cpu().numpy()
+                elif isinstance(v, list):
+                    batch_cpu[k] = v
 
             for key, value in batch_cpu.items():
                 if key not in merged_predictions:
