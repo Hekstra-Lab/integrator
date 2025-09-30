@@ -24,6 +24,8 @@ def get_outputs(
         "counts": vars["counts"],
         "masks": vars["masks"],
         "qbg": vars["qbg"],
+        "qbg_mean": vars["qbg"].mean,
+        "qbg_var": vars["qbg"].var,
         "qp": vars["qp"],
         "qp_mean": vars["qp"].mean,
         "qi": vars["qi"],
