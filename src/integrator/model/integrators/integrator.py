@@ -74,6 +74,9 @@ def get_outputs(
                 "dials_bg_sum_var": reference[:, 1],
                 "wavelength": reference[:, 8],
                 "batch": reference[:, 2],
+                "h": reference[:, 5],
+                "k": reference[:, 6],
+                "l": reference[:, 7],
             }
 
             for k, v in ref_2d.items():
