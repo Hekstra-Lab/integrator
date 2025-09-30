@@ -70,6 +70,8 @@ def get_outputs(
                 "dials_bg_mean": reference[:, 0],
                 "dials_bg_sum_value": reference[:, 0],
                 "dials_bg_sum_var": reference[:, 1],
+                "wavelength": reference[:, 8],
+                "batch": reference[:, 2],
             }
 
             for k, v in ref_2d.items():
@@ -534,86 +536,5 @@ class Integrator(LightningModule):
         return {k: v for k, v in outputs.items() if k in self.predict_keys}
 
 
-# -
 if __name__ == "__main__":
-    import torch
-
-    from integrator.model.encoders import MLPMetadataEncoder
-    from integrator.utils import (
-        create_data_loader,
-        create_integrator,
-        load_config,
-    )
-
-    # key: 3d_2e
-    # data: 3D
-    # metadata: false
-
-    config = load_config(CONFIGS["integrator_3d_2e"])
-
-    config.model_dump()["integrator"]
-
-    integrator = create_integrator(config.dict())
-
-    if integrator.encoder3 is not None:
-        raise ValueError(
-            "Incorrect encoder: encoder3 does not belong to this model"
-        )
-    data_loader = create_data_loader(config.dict())
-
-    counts, shoebox, masks, reference = next(
-        iter(data_loader.train_dataloader())
-    )
-    out_3d_2e = integrator(counts, shoebox, masks, reference)
-
-    # key: 3d_3e
-    # data: 2D
-    # metadata: true
-
-    config = load_config(CONFIGS["integrator_3d_3e"])
-
-    integrator = create_integrator(config.dict())
-
-    if integrator.encoder3 is None:
-        raise ValueError("missing encoder3.")
-
-    data_loader = create_data_loader(config.dict())
-
-    counts, shoebox, masks, reference = next(
-        iter(data_loader.train_dataloader())
-    )
-    out_3d_3e = integrator(counts, shoebox, masks, reference)
-
-    # key: 2d_2e
-    # data: 2D
-    # metadata: false
-
-    config = load_config(CONFIGS["integrator_2d_2e"])
-
-    config.model_dump()["components"]
-
-    integrator = create_integrator(config.dict())
-
-    data_loader = create_data_loader(config.dict())
-
-    counts, shoebox, masks, reference = next(
-        iter(data_loader.train_dataloader())
-    )
-    out_2d_2e = integrator(counts, shoebox, masks, reference)
-
-    # key: 2d_3e
-    # data: 2D
-    # metadata: true
-
-    config = load_config(CONFIGS["integrator_2d_3e"])
-
-    config.model_dump()["integrator"]
-
-    integrator = create_integrator(config.dict())
-
-    data_loader = create_data_loader(config.dict())
-
-    counts, shoebox, masks, reference = next(
-        iter(data_loader.train_dataloader())
-    )
-    out_2d_3e = integrator(counts, shoebox, masks, reference)
+    pass

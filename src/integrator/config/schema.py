@@ -113,7 +113,7 @@ class ComponentsCfg(BaseModel):
         qi:  { name: ..., args: {...} }
         loss:{ name: ..., args: {...} }
 
-    encoders is a list of one-key dicts so you keep the logical encoder name.
+    encoders is a list of one-key dicts so you keep the encoder name.
     """
 
     encoders: list[dict[str, Component]] = Field(default_factory=list)
@@ -131,9 +131,16 @@ class ComponentsCfg(BaseModel):
         return self
 
 
+class LoggerCfg(BaseModel):
+    d: int = 3
+    h: int = 21
+    w: int = 21
+
+
 class Cfg(BaseModel):
     global_vars: GlobalCfg
     integrator: IntegratorCfg
     trainer: TrainerCfg
     data_loader: DataLoaderCfg
     components: ComponentsCfg
+    logger: LoggerCfg
