@@ -7,6 +7,7 @@ from .factory_utils import (
     override_config,
     predict_from_checkpoints,
 )
+from .mtzwriter import mtz_writer
 from .reflection_file_writer import reflection_file_writer
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "override_config",
     "predict_from_checkpoints",
     "reflection_file_writer",
+    "mtz_writer",
 ]

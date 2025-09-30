@@ -1,0 +1,38 @@
+from pathlib import Path
+
+import gemmi
+import numpy as np
+import reciprocalspaceship as rs
+import torch
+
+# TODO: pass optional spacegroup and unitcell parameters
+# Currently setting default spacegroup and unitcell parameters
+
+
+def mtz_writer(
+    pred_path: str | Path,
+    file_name: str | Path,
+):
+    preds = torch.load(
+        pred_path,
+        weights_only=False,
+    )
+    data = rs.DataSet(
+        {
+            "H": np.hstack(preds["h"]).astype(np.int32),
+            "K": np.hstack(preds["k"]).astype(np.int32),
+            "L": np.hstack(preds["l"]).astype(np.int32),
+            "BATCH": np.hstack(preds["batch"]),
+            "I": np.hstack(preds["intensity_mean"]),
+            "SIGI": np.hstack(preds["intensity_var"]),
+            "xcal": np.hstack(preds["x_c"]),
+            "ycal": np.hstack(preds["y_c"]),
+            "wavelength": np.hstack(preds["wavelength"]),
+            "BG": np.hstack(preds["qbg_mean"]),
+            "SIGBG": np.hstack(preds["qbg_var"]),
+            "PARTIAL": np.zeros(len(np.hstack(preds["batch"])), dtype=bool),
+        },
+        cell=gemmi.UnitCell(76.1176, 76.1176, 36.2049, 90, 90, 90),
+        spacegroup=gemmi.SpaceGroup("P 43 21 2"),
+    ).infer_mtz_dtypes()
+    data.write_mtz(file_name)
