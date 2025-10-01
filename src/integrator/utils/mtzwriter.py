@@ -22,17 +22,23 @@ def mtz_writer(
             "H": np.hstack(preds["h"]).astype(np.int32),
             "K": np.hstack(preds["k"]).astype(np.int32),
             "L": np.hstack(preds["l"]).astype(np.int32),
-            "BATCH": np.hstack(preds["batch"]),
+            "BATCH": np.hstack(preds["batch"]) + 1,
             "I": np.hstack(preds["intensity_mean"]),
-            "SIGI": np.hstack(preds["intensity_var"]),
+            "SIGI": np.hstack(preds["intensity_var"]) ** 0.5,
             "xcal": np.hstack(preds["x_c"]),
             "ycal": np.hstack(preds["y_c"]),
             "wavelength": np.hstack(preds["wavelength"]),
             "BG": np.hstack(preds["qbg_mean"]),
-            "SIGBG": np.hstack(preds["qbg_var"]),
+            "SIGBG": np.hstack(preds["qbg_var"]) ** 0.5,
             "PARTIAL": np.zeros(len(np.hstack(preds["batch"])), dtype=bool),
         },
         cell=gemmi.UnitCell(76.1176, 76.1176, 36.2049, 90, 90, 90),
         spacegroup=gemmi.SpaceGroup("P 43 21 2"),
     ).infer_mtz_dtypes()
     data.write_mtz(file_name)
+
+
+mtz_writer(
+    pred_path="/Users/luis/Downloads/preds(5).pt",
+    file_name="/Users/luis/Downloads/test.mtz",
+)
