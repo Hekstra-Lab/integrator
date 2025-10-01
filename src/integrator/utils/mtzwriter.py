@@ -12,6 +12,7 @@ import torch
 def mtz_writer(
     pred_path: str | Path,
     file_name: str | Path,
+    filter_by_batch: int | None = None,
 ):
     preds = torch.load(
         pred_path,
@@ -35,6 +36,10 @@ def mtz_writer(
         cell=gemmi.UnitCell(76.1176, 76.1176, 36.2049, 90, 90, 90),
         spacegroup=gemmi.SpaceGroup("P 43 21 2"),
     ).infer_mtz_dtypes()
+
+    if filter_by_batch is not None:
+        data = data[data["BATCH"] < filter]
+
     data.write_mtz(file_name)
 
 
