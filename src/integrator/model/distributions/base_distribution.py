@@ -53,16 +53,6 @@ def constraint_fn(params: ConstraintSpec) -> Callable[[Tensor], Tensor]:
             raise ValueError(f"Unknown constraint kind: {params.kind!r}")
 
 
-match "str":
-    case "str":
-        print("first")
-    case "2":
-        print("second")
-
-
-# -
-
-
 @dataclass(slots=True)
 class MetaData:
     masks: Tensor | None = None
