@@ -41,9 +41,3 @@ def mtz_writer(
         data = data[data["BATCH"] < filter]
 
     data.write_mtz(file_name)
-
-
-mtz_writer(
-    pred_path="/Users/luis/Downloads/preds(5).pt",
-    file_name="/Users/luis/Downloads/test.mtz",
-)
