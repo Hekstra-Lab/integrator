@@ -87,6 +87,8 @@ class ShoeboxDataModule2D(BaseDataModule):
         stats = torch.load(
             os.path.join(self.data_dir, self.shoebox_file_names["stats"])
         )
+        self.dataset_mean = stats[0]
+        self.dataset_var = stats[1]
         reference = torch.load(
             os.path.join(self.data_dir, self.shoebox_file_names["reference"])
         )
@@ -99,6 +101,9 @@ class ShoeboxDataModule2D(BaseDataModule):
         counts = counts[~all_dead]
         masks = masks[~all_dead]
         reference = reference[~all_dead]
+
+        # dataset
+        counts[masks.bool()] = self.dataset_mean.round()
 
         standardized_counts = (counts - stats[0]) / (stats[1] ** (1 / 2))
 
