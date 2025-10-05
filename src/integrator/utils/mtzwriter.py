@@ -13,7 +13,7 @@ def mtz_writer(
     pred_path: str | Path,
     file_name: str | Path,
     filter_by_batch: int | None = None,
-):
+) -> None:
     preds = torch.load(
         pred_path,
         weights_only=False,

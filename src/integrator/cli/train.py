@@ -103,6 +103,8 @@ def train(
     config_out = Path(logdir) / "config_copy.yaml"
     copy = cfg.model_dump(mode="json")
 
+    logger.log_hyperparams(cfg.model_dump())
+
     with open(config_out, "w") as f:
         yaml.safe_dump(copy, f, sort_keys=False)
 
