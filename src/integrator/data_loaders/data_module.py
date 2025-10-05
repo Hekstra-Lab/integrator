@@ -103,7 +103,7 @@ class ShoeboxDataModule2D(BaseDataModule):
         reference = reference[~all_dead]
 
         # dataset
-        counts[masks.bool()] = self.dataset_mean.round()
+        counts[~masks.bool()] = self.dataset_mean.round()
 
         standardized_counts = (counts - stats[0]) / (stats[1] ** (1 / 2))
 
