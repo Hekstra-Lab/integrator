@@ -57,6 +57,7 @@ class ShoeboxDataModule2D(BaseDataModule):
         H=21,
         W=21,
         get_dxyz=False,
+        anscombe=False,
     ):
         super().__init__()
         self.data_dir = data_dir
@@ -75,7 +76,7 @@ class ShoeboxDataModule2D(BaseDataModule):
         self.W = W
         self.standardized_counts = shoebox_file_names["standardized_counts"]
         self.get_dxyz = get_dxyz
-        self.anscombe = False
+        self.anscombe = anscombe
 
     def setup(self):
         counts = torch.load(
@@ -105,7 +106,11 @@ class ShoeboxDataModule2D(BaseDataModule):
         # dataset
         counts[~masks.bool()] = self.dataset_mean.round()
 
-        standardized_counts = (counts - stats[0]) / (stats[1] ** (1 / 2))
+        if self.anscombe:
+            ans = 2 * torch.sqrt(counts + (3.0 / 8.0))
+            standardized_counts = (ans - stats[1]) / stats[1].sqrt()
+        else:
+            standardized_counts = ((counts) - stats[0]) / stats[1].sqrt()
 
         # Create the full dataset based on whether metadata is present
         #        if self.use_metadata is not None:
