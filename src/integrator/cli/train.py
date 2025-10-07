@@ -130,9 +130,9 @@ def train(
         plotter = PlotterLD(
             n_profiles=10,
             plot_every_n_epochs=1,
-            d=1,
-            h=21,
-            w=21,
+            d=cfg.model_dump()["logger"]["d"],
+            h=cfg.model_dump()["logger"]["h"],
+            w=cfg.model_dump()["logger"]["w"],
         )
     else:
         print("Incorrect data_dim value")
