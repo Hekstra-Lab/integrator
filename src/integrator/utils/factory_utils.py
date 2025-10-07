@@ -104,7 +104,7 @@ def create_data_loader(config):
             ],
             H=config["data_loader"]["args"]["H"],
             W=config["data_loader"]["args"]["W"],
-            anscombe=anscombe["data_loader"]["args"]["anscombe"],
+            anscombe=config["data_loader"]["args"]["anscombe"],
         )
         data_module.setup()
         return data_module
