@@ -49,6 +49,9 @@ class DataLoaderParams(BaseModel):
     subset_size: int | None = None
     cutoff: int | None = None
     use_metadata: bool = True
+    anscombe: bool = True
+    H: int = 21
+    W: int = 21
     shoebox_file_names: dict[str, Path | None] = Field(default_factory=dict)
 
     @model_validator(mode="after")
