@@ -102,6 +102,9 @@ def create_data_loader(config):
             shoebox_file_names=config["data_loader"]["args"][
                 "shoebox_file_names"
             ],
+            H=config["data_loader"]["args"]["H"],
+            W=config["data_loader"]["args"]["W"],
+            anscombe=anscombe["data_loader"]["args"]["anscombe"],
         )
         data_module.setup()
         return data_module
