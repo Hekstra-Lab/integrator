@@ -328,7 +328,7 @@ class Integrator(LightningModule):
 
         """
         # Unpack batch
-        counts = torch.clamp(counts, min=0) * masks
+        counts = torch.clamp(counts, min=0)
 
         x_profile = self.encoder1(
             shoebox.reshape(shoebox.shape[0], 1, *(self.shoebox_shape))
