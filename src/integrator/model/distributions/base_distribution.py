@@ -17,7 +17,7 @@ class ConstrainFn(StrEnum):
 @dataclass(slots=True, kw_only=True)
 class ConstraintSpec:
     kind: ConstrainFn
-    eps: float = 0.0
+    eps: float = 1e-12
     beta: float = 1.0  # softplus beta
 
     def __post_init__(self) -> None:
@@ -74,7 +74,7 @@ class BaseDistribution[T: Distribution](nn.Module):
         in_features: int,
         out_features: int | tuple[int, ...],
         constraint: str = "softplus",
-        eps: float = 0.0,
+        eps: float = 1e-12,
         beta: float = 1.0,
     ):
         """
@@ -88,9 +88,7 @@ class BaseDistribution[T: Distribution](nn.Module):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
-        self.register_buffer(
-            "eps", torch.tensor(1e-12 if eps is None else eps)
-        )
+        self.register_buffer("eps", torch.tensor(1e-6 if eps is None else eps))
         self.register_buffer(
             "beta", torch.tensor(1.0 if beta is None else beta)
         )

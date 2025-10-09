@@ -33,7 +33,7 @@ def mtz_writer(
             "SIGBG": np.hstack(preds["qbg_var"]) ** 0.5,
             "PARTIAL": np.zeros(len(np.hstack(preds["batch"])), dtype=bool),
         },
-        cell=gemmi.UnitCell(78.312, 78.312, 37.234, 90.0, 90.0, 90.0),
+        cell=gemmi.UnitCell(79.405, 79.405, 37.837, 90.0, 90.0, 90.0),
         spacegroup=gemmi.SpaceGroup("P 43 21 2"),
     ).infer_mtz_dtypes()
 
