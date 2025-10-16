@@ -5,6 +5,7 @@ from typing import TypeVar, cast
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
+from torch.distributions import Distribution
 
 #
 # class ConstrainFn(StrEnum):
@@ -68,7 +69,7 @@ class ConstrainFn(str, enum.Enum):
     exp = "exp"
 
 
-class BaseDistribution(nn.Module):
+class BaseDistribution[T: Distribution](nn.Module):
     """
     Base class for parametric distributions.
     Ensures buffers like eps/beta are device-safe and used consistently.
