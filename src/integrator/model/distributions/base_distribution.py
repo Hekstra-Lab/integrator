@@ -1,4 +1,5 @@
 import enum
+from dataclasses import dataclass
 from typing import TypeVar, cast
 
 import torch
@@ -51,12 +52,13 @@ from torch import Tensor, nn
 #             # Should be unreachable due to __post_init__
 #             raise ValueError(f"Unknown constraint kind: {params.kind!r}")
 #
-#
-# @dataclass(slots=True)
-# class MetaData:
-#     masks: Tensor | None = None
-#     metadata: Tensor | None = None
-#
+
+
+@dataclass(slots=True)
+class MetaData:
+    masks: Tensor | None = None
+    metadata: Tensor | None = None
+
 
 T = TypeVar("T", bound=torch.distributions.Distribution)
 
