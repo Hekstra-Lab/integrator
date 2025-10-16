@@ -5,7 +5,7 @@ import torch
 import torch.distributions as dist
 import torch.nn as nn
 from torch import Tensor
-from torch.distributions import Normal, constraints
+from torch.distributions import Distribution, Normal, constraints
 from torch.distributions.constraints import Constraint
 from torch.distributions.transformed_distribution import (
     TransformedDistribution,
@@ -93,7 +93,7 @@ class NormalIRSample(torch.autograd.Function):
         )
 
 
-class FoldedNormal:
+class FoldedNormal(Distribution):
     """
     Folded Normal distribution class
 
