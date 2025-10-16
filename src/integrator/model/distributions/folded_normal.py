@@ -75,7 +75,7 @@ class FoldedNormalDistribution(BaseDistribution[FoldedNormal]):
         self,
         in_features: int,
         out_features: int = 2,
-        eps=1e-12,
+        eps=0.1,
         beta=1.0,
         constraint="softplus",
     ):
@@ -92,7 +92,7 @@ class FoldedNormalDistribution(BaseDistribution[FoldedNormal]):
         self, raw_loc, raw_scale
     ) -> tuple[Tensor, Tensor]:
         loc = torch.exp(raw_loc)
-        scale = self._constrain_fn(raw_scale)
+        scale = self._constrain(raw_scale)
         return loc, scale
 
     def forward(
