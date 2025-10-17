@@ -52,7 +52,6 @@ from torch.distributions import Distribution
 #         case _:
 #             # Should be unreachable due to __post_init__
 #             raise ValueError(f"Unknown constraint kind: {params.kind!r}")
-#
 
 
 @dataclass(slots=True)

@@ -348,7 +348,9 @@ class Integrator(LightningModule):
         if self.encoder3 is not None and reference is not None:
             if self.data_dim == "2d" and reference is not None:
                 # TODO: Change the datatypes in the DataLoader
-                metadata = (reference[:, [6, 7, 8, 9, 10, 11]]).float()
+                metadata = (
+                    reference[:, [8, 9, 10]]
+                ).float()  # [wavelength,xcal,ycal]
                 print("metadata type:", type(metadata))
 
             elif self.data_dim == "3d" and reference is not None:
