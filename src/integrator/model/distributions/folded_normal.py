@@ -169,17 +169,46 @@ class FoldedNormal(Distribution):
             -0.5 * (loc / scale) ** 2
         ) + loc * (1 - 2 * torch.distributions.Normal(0, 1).cdf(-loc / scale))
 
+    #
+    # @property
+    # def variance(self):
+    #     """
+    #     Compute the variance of the Folded Normal distribution
+    #
+    #     Returns:
+    #         Tensor: The variance of the distribution
+    #     """
+    #     loc = self.loc
+    #     scale = self.scale
+    #
+    #     return loc**2 + scale**2 - self.mean**2
+    #
     @property
     def variance(self):
         """
         Compute the variance of the Folded Normal distribution
-
-        Returns:
-            Tensor: The variance of the distribution
+        with numerical safeguards for large loc/scale ratios.
         """
         loc = self.loc
         scale = self.scale
-        return loc**2 + scale**2 - self.mean**2
+        a = loc / scale
+        mean = self.mean
+
+        # threshold logic: use normal variance when a > 5
+        var = torch.empty_like(loc)
+        large = a > 5
+        small = ~large
+
+        if large.any():
+            var[large] = scale[large] ** 2
+
+        if small.any():
+            # stable variant of μ²+σ²−E[X]²
+            var[small] = scale[small] ** 2 + (loc[small] - mean[small]) * (
+                loc[small] + mean[small]
+            )
+
+        return var
 
     def cdf(self, value):
         """
