@@ -180,7 +180,7 @@ def train(
     )
 
     # prediction
-    pred_dir = logdir.parent / "predictions"
+    pred_dir = Path(logdir).parent / "predictions"
     pred_dir.mkdir(exist_ok=True)
 
     checkpoints = list(logdir.glob("**/*.ckpt"))
