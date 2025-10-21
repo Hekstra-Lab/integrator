@@ -1,12 +1,14 @@
+import re
 from copy import deepcopy
 from pathlib import Path
 from typing import Annotated, Any
 
+import reciprocalspaceship as rs
 import typer
 import yaml
 
 from integrator.config.schema import Cfg
-from integrator.utils import clean_from_memory
+from integrator.utils import clean_from_memory, mtz_writer
 
 app = typer.Typer()
 
@@ -66,6 +68,7 @@ def train(
     from pytorch_lightning.loggers import WandbLogger
 
     from integrator.callbacks import (
+        Plotter,
         PlotterLD,
         PredWriter,
         assign_labels,
@@ -166,9 +169,9 @@ def train(
         val_dataloaders=data.val_dataloader(),
     )
 
+    # logdir: "/path/to/lightning_logs/wandb/run*/files/"
     integrator.train_df.write_csv(logdir + "avg_train_metrics.csv")
     integrator.val_df.write_csv(logdir + "avg_val_metrics.csv")
-    # path = Path(logdir) / "checkpoints/epoch*.ckpt"
 
     cfg.model_dump()["trainer"]["args"]["logger"] = False
 
@@ -176,4 +179,80 @@ def train(
         pred_writer, pred_writer, pred_writer, checkpoint_callback
     )
 
-    # pred_integrator = create_integrator(cfg.model_dump())
+    # prediction
+    pred_dir = logdir.parent / "predictions"
+    pred_dir.mkdir(exist_ok=True)
+
+    checkpoints = list(logdir.glob("**/*.ckpt"))
+
+    pattern = re.compile(r"epoch=\d+")
+    for ckpt in checkpoints:
+        if re.search(pattern, ckpt.as_posix()):
+            groups = re.findall(pattern, ckpt.as_posix())
+            epoch = groups[0].replace("=", "_")
+            out_dir = pred_dir.parent.as_posix() + f"/predictions/{epoch}"
+            Path(out_dir).mkdir(exist_ok=True)
+            pred_writer = PredWriter(
+                output_dir=out_dir, write_interval="epoch"
+            )
+            trainer = create_trainer(
+                cfg.model_dump(),
+                callbacks=[pred_writer],
+                logger=None,
+            )
+            ckpt_ = torch.load(ckpt.as_posix())
+            integrator = create_integrator(cfg.model_dump())
+            integrator.load_state_dict(ckpt_["state_dict"])
+            if torch.cuda.is_available():
+                integrator.to(torch.device("cuda"))
+            integrator.eval()
+            trainer.predict(
+                integrator,
+                return_predictions=False,
+                dataloaders=data.predict_dataloader(),
+            )
+
+    # Write output mtz files
+    pred_dir.glob("**/preds.pt")
+
+    pattern = re.compile(r"epoch_\d")
+    for p in pred_dir.iterdir():
+        if re.search(pattern, p.as_posix()):
+            groups = re.findall(pattern, p.as_posix())
+            epoch = groups[0]
+            pred_file = list(p.glob("preds.pt"))[0].as_posix()
+            mtz_path = Path(p.as_posix() + "/preds.mtz").as_posix()
+            mtz_writer(pred_path=pred_file, file_name=mtz_path)
+            ds = rs.read_mtz(mtz_path)
+
+            # remove refls with SIGI==0.0
+            n_filtered = 0
+
+            #           # switch to typer arg
+            # if args.filter_sigi:
+            #
+            mask = ds["SIGI"] == 0.0
+            n_filtered = mask.sum()
+            ds = ds[~mask]
+
+            # Include all centrics in friedel plus
+            plus = ds.hkl_to_asu()["M/ISYM"].to_numpy() % 2 == 1
+            centrics = ds.label_centrics().CENTRIC.to_numpy()
+            plus |= centrics
+            ds[plus].write_mtz(
+                Path(p.as_posix() + "/friedel_plus.mtz").as_posix()
+            )
+            ds[~plus].write_mtz(
+                Path(p.as_posix() + "/friedel_minus.mtz").as_posix()
+            )
+
+            # report for file
+            log_path = p.as_posix() + "/filter_log.txt"
+            with open(log_path, "w") as f:
+                f.write(f"file: {p.as_posix()}\n")
+                f.write(f"refls with sigi0: {n_filtered}\n")
+
+
+# -
+if __name__ == "__main__":
+    pass
