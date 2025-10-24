@@ -12,7 +12,7 @@ def main(args):
     id = Path(args.wandb_id)
     config = args.config
 
-    path = list((root / id).glob(f"*{id}"))[0]
+    path = list((root).glob(f"*{id}"))[0]
 
     # Get peak data
     epochs = []
