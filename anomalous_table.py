@@ -76,7 +76,7 @@ def main(args):
     # constructing dataframe
     df = pl.concat(dfs, how="vertical")
     df_e = pl.DataFrame({"epoch": epochs})
-    df = pl.concat([df_e, df], how="horizontal")
+    df = pl.concat([df_e, df], how="horizontal").sort("epoch")
 
     # save table as a LaTeX booktabs table
     data = df.to_numpy()
