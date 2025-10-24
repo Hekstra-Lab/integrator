@@ -43,7 +43,10 @@ def main(args):
 
     # # save table as a LaTeX booktabs table
     pytextable.write(
-        data, "table.text", header=header, caption=f"Peak heights for {config}"
+        data,
+        f"{root}/table_{id}_{config}.text",
+        header=header,
+        caption=f"Peak heights for {config}",
     )
 
 
