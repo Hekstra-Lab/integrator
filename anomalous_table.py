@@ -7,6 +7,12 @@ import pytextable
 from integrator.utils import BaseParser
 
 
+def plot_peaks(
+    df: pl.DataFrame,
+):
+    pass
+
+
 def plotly_table(
     df: pl.DataFrame,
     config: str,
@@ -24,14 +30,14 @@ def plotly_table(
                     line_color="darkslategray",
                     fill_color="#CDCDCD",
                     align="center",
-                    font=dict(color="black", size=14),
+                    font=dict(color="black", size=12),
                 ),
                 cells=dict(
                     values=[r for r in data],  # Transpose for Plotly format
                     line_color="darkslategray",
                     fill_color=[["white", "#F3F3F3"] * df.height],
                     align="center",
-                    font=dict(color="black", size=12),
+                    font=dict(color="black", size=10),
                 ),
             )
         ]
@@ -53,6 +59,9 @@ def main(args):
     config = args.config
 
     path = list((root).glob(f"*{id}"))[0]
+
+    save_dir = path / f"figures/{config}/peaks"
+    save_dir.mkdir(parents=True, exist_ok=True)
 
     # Get peak data
     epochs = []
@@ -84,14 +93,14 @@ def main(args):
 
     pytextable.write(
         data,
-        f"{path}/table_{id}_{config}.tex",
+        f"{save_dir}/table_{id}_{config}.tex",
         header=header,
         caption=f"Peak heights for {config}",
     )
 
     # write out a plotly image
     fig = plotly_table(df, config, id.as_posix())
-    fig.write_image(f"{path}/peak_heights_{id}_{config}.png")
+    fig.write_image(f"{save_dir}/peak_heights_{id}_{config}.png")
 
 
 if __name__ == "__main__":
