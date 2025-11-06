@@ -257,6 +257,7 @@ class ShoeboxDataModule(BaseDataModule):
         W: int = 21,
         Z: int = 3,
         get_dxyz: bool = False,
+        anscombe: bool = False,
     ):
         super().__init__()
         self.data_dir = data_dir
