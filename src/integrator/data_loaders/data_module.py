@@ -476,6 +476,7 @@ class ShoeboxDataModule2(BaseDataModule):
         W:
         Z:
         full_dataset:
+        anscombe:
     """
 
     def __init__(
@@ -501,6 +502,7 @@ class ShoeboxDataModule2(BaseDataModule):
         W=21,
         Z=3,
         get_dxyz=False,
+        anscombe=None,
     ):
         super().__init__()
         self.data_dir = data_dir
