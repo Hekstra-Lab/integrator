@@ -51,6 +51,8 @@ class ShoeboxDataModule2D(BaseDataModule):
             "masks": "masks.pt",
             "stats": "stats.pt",
             "reference": "reference.pt",
+            "x_coords": None,
+            "y_coords": None,
             "standardized_counts": None,
         },
         refl_file=None,
@@ -75,6 +77,8 @@ class ShoeboxDataModule2D(BaseDataModule):
         self.H = H
         self.W = W
         self.standardized_counts = shoebox_file_names["standardized_counts"]
+        self.x_coords = shoebox_file_names["x_coords"]
+        self.y_coords = shoebox_file_names["y_coords"]
         self.get_dxyz = get_dxyz
         self.anscombe = anscombe
 
@@ -112,6 +116,11 @@ class ShoeboxDataModule2D(BaseDataModule):
         else:
             standardized_counts = ((counts) - stats[0]) / stats[1].sqrt()
 
+        if self.x_coords is not None:
+            standardized_counts = torch.stack(
+                (standardized_counts, self.x_coords, self.y_coords)
+            )
+
         # Create the full dataset based on whether metadata is present
         #        if self.use_metadata is not None:
         #            self.full_dataset = TensorDataset(
@@ -125,6 +134,7 @@ class ShoeboxDataModule2D(BaseDataModule):
         #            self.full_dataset = TensorDataset(
         #                counts, standardized_counts, masks, reference
         #            )
+
         self.full_dataset = TensorDataset(
             counts, standardized_counts, masks, reference
         )

@@ -351,17 +351,19 @@ class Integrator(LightningModule):
                 metadata = (
                     reference[:, [8, 9, 10]]
                 ).float()  # [wavelength,xcal,ycal]
-                print("metadata type:", type(metadata))
 
             elif self.data_dim == "3d" and reference is not None:
                 metadata = reference[:, [0, 1, 2, 3, 4, 5, 13]]
 
-            print(metadata)
-
             x_metadata = self.encoder3(metadata)
 
-            x_intensity = torch.concat([x_intensity, x_metadata], dim=-1)
-            x_intensity = self.linear(x_intensity)
+            # combining metadata and intensity representation
+            # x_intensity = torch.concat([x_intensity, x_metadata], dim=-1)
+            # x_intensity = self.linear(x_intensity)
+
+            # combining metadata and profile representation
+            x_profile = torch.concat([x_profile, x_metadata], dim=-1)
+            x_profile = self.linear(x_profile)
 
         qbg = self.qbg(x_intensity)
         qi = self.qi(x_intensity)
