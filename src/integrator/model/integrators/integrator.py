@@ -330,13 +330,26 @@ class Integrator(LightningModule):
         # Unpack batch
         counts = torch.clamp(counts, min=0)
 
-        x_profile = self.encoder1(
-            shoebox.reshape(shoebox.shape[0], 1, *(self.shoebox_shape))
-        )
+        if shoebox.dim() == 2:
+            x_profile = self.encoder1(
+                shoebox.reshape(shoebox.shape[0], 1, *(self.shoebox_shape))
+            )
 
-        x_intensity = self.encoder2(
-            shoebox.reshape(shoebox.shape[0], 1, *(self.shoebox_shape))
-        )
+            x_intensity = self.encoder2(
+                shoebox.reshape(shoebox.shape[0], 1, *(self.shoebox_shape))
+            )
+
+        elif shoebox.dim() == 3:
+            x_profile = self.encoder1(
+                shoebox.reshape(
+                    shoebox.size(0), shoebox.size(1), *(self.shoebox_shape)
+                )
+            )
+            x_inensity = self.encoder2(
+                shoebox.reshape(
+                    shoebox.size(0), shoebox.size(1), *(self.shoebox_shape)
+                )
+            )
 
         if self.encoder3 is not None and reference is None:
             assert ValueError(

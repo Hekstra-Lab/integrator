@@ -124,7 +124,9 @@ class ShoeboxDataModule2D(BaseDataModule):
                 ~all_dead
             ]
 
-            standardized_counts = torch.stack((standardized_counts, x, y))
+            standardized_counts = torch.stack(
+                (standardized_counts, x, y)
+            ).permute(1, 0, 2)
 
         # Create the full dataset based on whether metadata is present
         #        if self.use_metadata is not None:
@@ -626,3 +628,12 @@ class ShoeboxDataModule2(BaseDataModule):
 
 
 # %%
+if __name__ == "__main__":
+    shoebox_file_names = {
+        "counts": "counts.pt",
+        # "metadata": "metadata.pt",
+        "masks": "masks.pt",
+        "stats": "stats.pt",
+        "reference": "reference.pt",
+        "standardized_counts": None,
+    }
