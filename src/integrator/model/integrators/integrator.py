@@ -345,7 +345,7 @@ class Integrator(LightningModule):
                     shoebox.size(0), shoebox.size(1), *(self.shoebox_shape)
                 )
             )
-            x_inensity = self.encoder2(
+            x_intensity = self.encoder2(
                 shoebox[:, 0, :].reshape(
                     shoebox.size(0), 1, *(self.shoebox_shape)
                 )
