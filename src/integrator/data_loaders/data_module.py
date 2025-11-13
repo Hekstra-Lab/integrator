@@ -124,13 +124,7 @@ class ShoeboxDataModule2D(BaseDataModule):
                 ~all_dead
             ]
 
-            standardized_counts = torch.stack(
-                (
-                    standardized_counts,
-                    torch.load(os.path.join(self.data_dir, self.x_coords)),
-                    torch.load(os.path.join(self.data_dir, self.y_coords)),
-                )
-            )
+            standardized_counts = torch.stack((standardized_counts, x, y))
 
         # Create the full dataset based on whether metadata is present
         #        if self.use_metadata is not None:
