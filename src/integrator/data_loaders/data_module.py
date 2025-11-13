@@ -117,6 +117,13 @@ class ShoeboxDataModule2D(BaseDataModule):
             standardized_counts = ((counts) - stats[0]) / stats[1].sqrt()
 
         if self.x_coords is not None:
+            x = torch.load(os.path.join(self.data_dir, self.x_coords))[
+                ~all_dead
+            ]
+            y = torch.load(os.path.join(self.data_dir, self.y_coords))[
+                ~all_dead
+            ]
+
             standardized_counts = torch.stack(
                 (
                     standardized_counts,
