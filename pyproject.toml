@@ -28,10 +28,8 @@ dependencies = [
   "reciprocalspaceship>=1.0.7",
   "rs_distributions==0.0.2",
   "scipy>=1.11,<2.0",
-  "shtab>=1.7.2",
-  #"torch>=2.2,<3.0",
   "torch>=2.2,<3.0 ; platform_machine != 'x86_64'",
-  "torch>=2.2,<3.0+cu124 ; platform_machine == 'x86_64'",
+  "torch==2.9.1+cu124 ; platform_machine == 'x86_64'",
   "typer>=0.16.1",
 ]
 
