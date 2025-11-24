@@ -1,0 +1,15 @@
+ mkdocs.yml
+
+.md-grid {
+  max-width: 1200px; 
+}
+
+/* Make main content wider */
+.md-main__inner {
+  max-width: 1440px;   /* default ~61rem ≈ 976px */
+}
+
+/* Also widen the content column (docs + sidebar) */
+.md-content {
+  max-width: 1440px;
+}
