@@ -105,7 +105,7 @@ testpaths = ["tests"]
 
 [tool.uv]
 environments = [
-  { name = "macos-arm64", platform = "macos", arch = "arm64" }
+  "sys_platform == 'darwin' and platform_machine == 'arm64'"
 ]
 
 [tool.uv.sources]
