@@ -62,6 +62,12 @@ def train(
         Path | None,
         typer.Option(help="Override data path in config.yaml file"),
     ] = None,
+    wandb_project: Annotated[
+        str, typer.Option(help="The name of W&B project")
+    ] = "default",
+    save_dir: Annotated[
+        str, typer.Option(help="Path to logging directory")
+    ] = "/n/netscratch/hekstra_lab/Lab/laldama/lightning_logs/",
 ):
     import torch
     from pytorch_lightning.callbacks import ModelCheckpoint, RichProgressBar
@@ -96,8 +102,8 @@ def train(
 
     # load wandb logger
     logger = WandbLogger(
-        project="integrator_updated",
-        save_dir="/n/netscratch/hekstra_lab/Lab/laldama/lightning_logs/",
+        project=wandb_project,
+        save_dir=save_dir,
     )
 
     # get logging directory

@@ -4,18 +4,18 @@ from typing import Any
 import polars as plr
 import pytorch_lightning as pl
 import torch
+import torch.nn as nn
 from torch import Tensor
 
-from integrator.model.distributions import BaseDistribution
 from integrator.model.loss import BaseLoss
 
 
 class BaseIntegrator(pl.LightningModule, ABC):
-    qbg: BaseDistribution
+    qbg: nn.Module
     """Surrogate posterior shoebox Background"""
-    qp: BaseDistribution
+    qp: nn.Module
     """Surrogate posterior of spot Profile"""
-    qi: BaseDistribution
+    qi: nn.Module
     """Surrogate posterior of the spot Intensity"""
     data_dim: str
     """Dimensionality of diffraction data (2d or 3d)"""
@@ -38,10 +38,10 @@ class BaseIntegrator(pl.LightningModule, ABC):
 
     def __init__(
         self,
-        qbg: BaseDistribution,
-        qp: BaseDistribution,
-        qi: BaseDistribution,
-        loss: BaseLoss,
+        qbg: nn.Module,
+        qp: nn.Module,
+        qi: nn.Module,
+        loss: nn.Module,
         data_dim: str = "3d",
         d: int = 3,
         h: int = 21,

@@ -1,13 +1,14 @@
+from typing import Literal
+
 import torch
 import torch.nn as nn
 from torch import Tensor
 from torch.distributions import Gamma
 
-from integrator.layers import Linear
-from integrator.model.distributions import BaseDistribution
+from integrator.layers import Constrain
 
 
-class GammaDistribution(BaseDistribution[Gamma]):
+class GammaDistribution(nn.Module):
     fc: nn.Module
     """`Linear` layer to map input tensors to distribution parameters"""
 
@@ -16,23 +17,26 @@ class GammaDistribution(BaseDistribution[Gamma]):
         in_features: int,
         out_features: int = 2,
         eps: float = 1e-12,
-        beta: float = 1.0,
+        beta: int = 1,
+        constraint: Literal["exp", "softplus"] | None = "softplus",
     ):
         """
         Args:
             in_features: Dimension of input Tensor
             out_features: Dimension of the networks parameter Tensor
         """
-        super().__init__(
+        super().__init__()
+
+        self.fc = nn.Linear(
             in_features=in_features,
             out_features=out_features,
-            eps=eps,
-            beta=beta,
+            bias=False,
         )
 
-        self.fc = Linear(
-            in_features=in_features,
-            out_features=out_features,
+        self.constrain_fn = Constrain(
+            constraint_fn=constraint,
+            eps=eps,
+            beta=beta,
         )
 
     def forward(
@@ -48,8 +52,8 @@ class GammaDistribution(BaseDistribution[Gamma]):
 
         """
         params = self.fc(x)
-        concentration = self._constrain_fn(params[..., 0])
-        rate = self._constrain_fn(params[..., 1])
+        concentration = self.constrain(params[..., 0])
+        rate = self.constrain(params[..., 1])
         return Gamma(concentration.flatten(), rate.flatten())
 
 

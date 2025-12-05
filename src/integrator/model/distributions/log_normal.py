@@ -1,12 +1,14 @@
+from typing import Literal
+
 import torch
+import torch.nn as nn
 from torch import Tensor
 from torch.distributions import LogNormal
 
-from integrator.layers import Linear
-from integrator.model.distributions import BaseDistribution
+from integrator.layers import Constrain, Linear
 
 
-class LogNormalDistribution(BaseDistribution[LogNormal]):
+class LogNormalDistribution(nn.Module):
     """
     LogNormal distribution with parameters predicted by a linear layer.
     """
@@ -15,21 +17,23 @@ class LogNormalDistribution(BaseDistribution[LogNormal]):
         self,
         in_features: int,
         out_features: int = 2,
-        constraint: str = "softplus",
         eps: float = 1e-12,
-        beta: float = 1.0,
+        beta: int = 1,
+        bias: bool = False,
+        constraint: Literal["exp", "softplus"] | None = "softplus",
     ):
-        super().__init__(
-            in_features=in_features,
-            out_features=out_features,
-            constraint=constraint,
-            eps=eps,
-            beta=beta,
-        )
+        super().__init__()
 
         self.fc = Linear(
             in_features=in_features,
             out_features=out_features,
+            bias=bias,
+        )
+
+        self.constrain_fn = Constrain(
+            constraint_fn=constraint,
+            eps=eps,
+            beta=beta,
         )
 
     def forward(
@@ -39,7 +43,7 @@ class LogNormalDistribution(BaseDistribution[LogNormal]):
         params = self.fc(x)
         lognormal = LogNormal(
             loc=params[..., 0],
-            scale=self._constrain_fn(params[..., 1]),
+            scale=self.constrain_fn(params[..., 1]),
         )
 
         return lognormal

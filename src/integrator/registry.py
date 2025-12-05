@@ -16,7 +16,6 @@ from .model.encoders import (
     IntensityEncoder,
     MLPMetadataEncoder,
     ShoeboxEncoder,
-    ShoeboxEncoder2D,
 )
 from .model.integrators import Integrator
 from .model.loss import Loss
@@ -25,7 +24,6 @@ REGISTRY = {
     "encoders": {
         "shoebox_encoder": ShoeboxEncoder,
         "intensity_encoder": IntensityEncoder,
-        "shoebox_encoder_2d": ShoeboxEncoder2D,
         "mlp_metadata_encoder": MLPMetadataEncoder,
     },
     "loss": {

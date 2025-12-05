@@ -1,4 +1,5 @@
 from math import pi, sqrt
+from typing import Literal
 
 import numpy as np
 import torch
@@ -12,7 +13,7 @@ from torch.distributions.transformed_distribution import (
 )
 from torch.distributions.transforms import AbsTransform
 
-from integrator.model.distributions import BaseDistribution
+from integrator.layers import Constrain
 
 
 class FoldedNormal(TransformedDistribution):
@@ -196,7 +197,7 @@ class FoldedNormal(Distribution):
 
         # threshold logic: use normal variance when a > 5
         var = torch.empty_like(loc)
-        large = a > 5
+        large = a > self.var_thresh
         small = ~large
 
         if large.any():
@@ -204,9 +205,8 @@ class FoldedNormal(Distribution):
 
         if small.any():
             # stable variant of μ²+σ²−E[X]²
-            var[small] = scale[small] ** 2 + (loc[small] - mean[small]) * (
-                loc[small] + mean[small]
-            )
+
+            var[small] = loc[small] ** 2 + scale[small] ** 2 - mean[small] ** 2
 
         return var
 
@@ -268,7 +268,7 @@ class FoldedNormal(Distribution):
         )
 
 
-class FoldedNormalDistribution(BaseDistribution[FoldedNormal]):
+class FoldedNormalDistribution(nn.Module):
     """
     FoldedNormal distribution with parameters predicted by a linear layer.
     """
@@ -276,33 +276,34 @@ class FoldedNormalDistribution(BaseDistribution[FoldedNormal]):
     def __init__(
         self,
         in_features: int,
+        constraint: Literal["exp", "softplus"] | None = "softplus",
         out_features: int = 2,
-        eps=0.1,
-        beta=1.0,
-        constraint="softplus",
+        eps: float = 0.1,
+        beta: int = 1,
     ):
-        super().__init__(
-            in_features=in_features,
-            out_features=out_features,
+        super().__init__()
+        self.fc = nn.Linear(
+            in_features,
+            out_features,
+            bias=False,
+        )
+        self.constrain_fn = Constrain(
+            constraint_fn=constraint,
             eps=eps,
             beta=beta,
-            constraint=constraint,
         )
-        self.fc = nn.Linear(in_features, 2)
-
-    def _transform_loc_scale(
-        self, raw_loc, raw_scale
-    ) -> tuple[Tensor, Tensor]:
-        loc = torch.exp(raw_loc)
-        scale = self._constrain(raw_scale)
-        return loc, scale
 
     def forward(
         self,
         x: Tensor,
     ) -> FoldedNormal:
+        # raw params
         raw_loc, raw_scale = self.fc(x).unbind(-1)
-        loc, scale = self._transform_loc_scale(raw_loc, raw_scale)
+
+        # transform
+        loc = torch.exp(raw_loc)
+        scale = self.constrain_fn(raw_scale)
+
         return FoldedNormal(loc, scale)
 
 

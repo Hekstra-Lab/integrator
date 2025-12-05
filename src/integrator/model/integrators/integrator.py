@@ -1,11 +1,17 @@
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 import polars as pl
 import torch
 from pytorch_lightning import LightningModule
 from torch import Tensor, nn
 
-from integrator.model.distributions import BaseDistribution
+from integrator.model.distributions import (
+    DirichletDistribution,
+    FoldedNormalDistribution,
+    GammaDistribution,
+    LogNormalDistribution,
+)
 from integrator.model.encoders import (
     IntensityEncoder,
     MLPMetadataEncoder,
@@ -14,85 +20,413 @@ from integrator.model.encoders import (
 from integrator.model.loss import BaseLoss
 
 
-def get_outputs(
-    vars: dict,
+def calculate_intensities(counts, qbg, qp, masks, cfg):
+    with torch.no_grad():
+        counts = counts * masks  # [B,P]
+        zbg = qbg.rsample([cfg.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        zp = qp.mean.unsqueeze(1)
+
+        vi = zbg + 1e-6
+        intensity = torch.tensor([0.0])
+
+        # kabsch sum
+        for _ in range(cfg.max_iterations):
+            num = (counts.unsqueeze(1) - zbg) * zp * masks.unsqueeze(1) / vi
+            denom = zp.pow(2) / vi
+            intensity = num.sum(-1) / denom.sum(-1)  # [batch_size, mc_samples]
+            vi = (intensity.unsqueeze(-1) * zp) + zbg
+            vi = vi.mean(-1, keepdim=True)
+        kabsch_sum_mean = intensity.mean(-1)
+        kabsch_sum_var = intensity.var(-1)
+
+        # profile masking
+        zp = zp * masks.unsqueeze(1)  # profiles
+        thresholds = torch.quantile(
+            zp,
+            0.99,
+            dim=-1,
+            keepdim=True,
+        )  # threshold values
+        profile_mask = zp > thresholds
+
+        masked_counts = counts.unsqueeze(1) * profile_mask
+
+        profile_masking_I = (masked_counts - zbg * profile_mask).sum(-1)
+
+        profile_masking_mean = profile_masking_I.mean(-1)
+
+        profile_masking_var = profile_masking_I.var(-1)
+
+        intensities = {
+            "profile_masking_mean": profile_masking_mean,
+            "profile_masking_var": profile_masking_var,
+            "kabsch_sum_mean": kabsch_sum_mean,
+            "kabsch_sum_var": kabsch_sum_var,
+        }
+
+        return intensities
+
+
+def _default_predict_keys() -> list["str"]:
+    return [
+        "intensity_mean",
+        "intensity_var",
+        "refl_ids",
+        "dials_I_sum_value",
+        "dials_I_sum_var",
+        "dials_I_prf_value",
+        "dials_I_prf_var",
+        "dials_bg_mean",
+        "qbg_mean",
+        "qbg_scale",
+        "x_c",
+        "y_c",
+        "z_c",
+    ]
+
+
+# config classes
+@dataclass
+class IntegratorHyperParameters:
+    data_dim: Literal["2d", "3d"]
+    d: int
+    h: int
+    w: int
+    lr: float = 0.001
+    encoder_out: int = 64
+    weight_decay: float = 0.0
+    mc_samples: int = 4
+    renyi_scale: float = 0.0
+    predict_keys: Literal["default"] | list[str] = "default"
+
+
+@dataclass
+class IntegratorBaseOutputs:
+    rates: Tensor
+    counts: Tensor
+    masks: Tensor
+    qbg: Any
+    qp: Any
+    qi: Any
+    zp: Tensor
+    concentration: Tensor | None = None
+    reference: Tensor | None = None
+
+
+def extract_reference_fields(
+    ref: Tensor,
     data_dim: str,
-) -> dict:
-    # default network outputs
-    out = {
-        "rates": vars["rate"],
-        "counts": vars["counts"],
-        "masks": vars["masks"],
-        "qbg": vars["qbg"],
-        "qbg_mean": vars["qbg"].mean,
-        "qbg_var": vars["qbg"].variance,
-        "qp": vars["qp"],
-        "qp_mean": vars["qp"].mean,
-        "qi": vars["qi"],
-        "intensity_mean": vars["qi"].mean,
-        "intensity_var": vars["qi"].variance,
-        "profile": vars["qp"].mean,
-        "zp": vars["zp"],
+) -> dict[str, Any]:
+    if data_dim == "3d":
+        return {
+            "dials_I_sum_value": ref[:, 6],
+            "dials_I_sum_var": ref[:, 7],
+            "dials_I_prf_value": ref[:, 8],
+            "dials_I_prf_var": ref[:, 9],
+            "refl_ids": ref[:, -1].int().tolist(),
+            "x_c": ref[:, 0],
+            "y_c": ref[:, 1],
+            "z_c": ref[:, 2],
+            "x_c_mm": ref[:, 3],
+            "y_c_mm": ref[:, 4],
+            "z_c_mm": ref[:, 5],
+            "dials_bg_mean": ref[:, 10],
+            "dials_bg_sum_value": ref[:, 11],
+            "dials_bg_sum_var": ref[:, 12],
+            "d": ref[:, 13],
+        }
+    elif data_dim == "2d":
+        return {
+            "dials_I_sum_value": ref[:, 3],
+            "dials_I_sum_var": ref[:, 4],
+            "dials_I_prf_value": ref[:, 3],
+            "dials_I_prf_var": ref[:, 4],
+            "refl_ids": ref[:, -1].tolist(),
+            "x_c": ref[:, 9],
+            "y_c": ref[:, 10],
+            "z_c": ref[:, 11],
+            "dials_bg_mean": ref[:, 0],
+            "dials_bg_sum_value": ref[:, 0],
+            "dials_bg_sum_var": ref[:, 1],
+            "wavelength": ref[:, 8],
+            "batch": ref[:, 2],
+            "h": ref[:, 5],
+            "k": ref[:, 6],
+            "l": ref[:, 7],
+        }
+    else:
+        raise ValueError(f"Unsupported data_dim: {data_dim}")
+
+
+def _assemble_outputs(
+    out: IntegratorBaseOutputs,
+    data_dim: Literal["2d", "3d"],
+) -> dict[str, Any]:
+    base = {
+        "rates": out.rates,
+        "counts": out.counts,
+        "masks": out.masks,
+        "qbg": out.qbg,
+        "qbg_mean": out.qbg.mean,
+        "qbg_var": out.qbg.variance,
+        "qp": out.qp,
+        "qp_mean": out.qp.mean,
+        "qi": out.qi,
+        "intensity_mean": out.qi.mean,
+        "intensity_var": out.qi.variance,
+        "profile": out.qp.mean,
+        "zp": out.zp,
+        "concentration": out.concentration,
     }
+    if out.reference is None:
+        return base
 
-    if vars["reference"] is not None:
-        reference = vars["reference"]
+    base.update(extract_reference_fields(out.reference, data_dim))
+    return base
 
-        if data_dim == "3d":
-            ref_3d = {
-                "dials_I_sum_value": reference[:, 6],
-                "dials_I_sum_var": reference[:, 7],
-                "dials_I_prf_value": reference[:, 8],
-                "dials_I_prf_var": reference[:, 9],
-                "refl_ids": reference[:, -1].int().tolist(),
-                "x_c": reference[:, 0],
-                "y_c": reference[:, 1],
-                "z_c": reference[:, 2],
-                "x_c_mm": reference[:, 3],
-                "y_c_mm": reference[:, 4],
-                "z_c_mm": reference[:, 5],
-                "dials_bg_mean": reference[:, 10],
-                "dials_bg_sum_value": reference[:, 11],
-                "dials_bg_sum_var": reference[:, 12],
-                "d": reference[:, 13],
-            }
-            for k, v in ref_3d.items():
-                out[k] = v
 
-        elif data_dim == "2d":
-            ref_2d = {
-                "dials_I_sum_value": reference[:, 3],
-                "dials_I_sum_var": reference[:, 4],
-                "dials_I_prf_value": reference[:, 3],
-                "dials_I_prf_var": reference[:, 4],
-                "refl_ids": reference[:, -1].tolist(),
-                "x_c": reference[:, 9],
-                "y_c": reference[:, 10],
-                "z_c": reference[:, 11],
-                "dials_bg_mean": reference[:, 0],
-                "dials_bg_sum_value": reference[:, 0],
-                "dials_bg_sum_var": reference[:, 1],
-                "wavelength": reference[:, 8],
-                "batch": reference[:, 2],
-                "h": reference[:, 5],
-                "k": reference[:, 6],
-                "l": reference[:, 7],
-            }
+def _encode_shoebox(encoder1, encoder2, shoebox, shoebox_shape):
+    if shoebox.dim() == 2:
+        x_profile = encoder1(
+            shoebox.reshape(shoebox.shape[0], 1, *(shoebox_shape))
+        )
+        x_intensity = encoder2(
+            shoebox.reshape(shoebox.shape[0], 1, *(shoebox_shape))
+        )
 
-            for k, v in ref_2d.items():
-                out[k] = v
+        return x_profile, x_intensity
 
-    elif vars["reference"] is None:
+    elif shoebox.dim() == 3:
+        x_profile = encoder1(
+            shoebox.reshape(shoebox.size(0), shoebox.size(1), *(shoebox_shape))
+        )
+        x_intensity = encoder2(
+            shoebox[:, 0, :].reshape(shoebox.size(0), 1, *(shoebox_shape))
+        )
+        return x_profile, x_intensity
+    else:
+        raise ValueError(
+            "Incorrect shoebox dimension. The shoebox should be 2 or 3 dimensional"
+        )
+
+
+@dataclass
+class EncoderModules:
+    encoder1: ShoeboxEncoder | IntensityEncoder
+    encoder2: ShoeboxEncoder | IntensityEncoder
+    encoder3: MLPMetadataEncoder | None = None
+
+
+@dataclass
+class SurrogateModules:
+    qbg: LogNormalDistribution | GammaDistribution | FoldedNormalDistribution
+    qi: LogNormalDistribution | GammaDistribution | FoldedNormalDistribution
+    qp: DirichletDistribution
+
+
+# %%
+class Integrator(LightningModule):
+    def __init__(
+        self,
+        cfg: IntegratorHyperParameters,
+        loss: nn.Module,
+        surrogates: SurrogateModules,
+        encoders: EncoderModules,
+    ):
+        super().__init__()
+        self.cfg = cfg
+
+        # hyperparams
+        self.lr = cfg.lr
+        self.weight_decay = cfg.weight_decay
+        self.mc_samples = cfg.mc_samples
+        self.renyi_scale = cfg.renyi_scale
+
+        # posterior modules
+        self.qbg = surrogates.qbg
+        self.qp = surrogates.qp
+        self.qi = surrogates.qi
+
+        # encoder modules
+        self.encoder1 = encoders.encoder1
+        self.encoder2 = encoders.encoder2
+        self.encoder3 = encoders.encoder3
+
+        # loss module
+        self.loss = loss
+
+        # predict keys
+        self.predict_keys = (
+            _default_predict_keys()
+            if cfg.predict_keys == "default"
+            else cfg.predict_keys
+        )
+
+        if self.encoder3 is not None:
+            self.linear = nn.Linear(cfg.encoder_out * 2, cfg.encoder_out)
+
+        self.automatic_optimization = True
+
+        if cfg.data_dim == "3d":
+            self.shoebox_shape = (cfg.d, cfg.h, cfg.w)
+        elif cfg.data_dim == "2d":
+            self.shoebox_shape = (cfg.h, cfg.w)
+
+    def forward(
+        self,
+        counts: Tensor,
+        shoebox: Tensor,
+        masks: Tensor,
+        reference: Tensor | None = None,
+    ) -> dict[str, Any]:
+        # Unpack batch
+        counts = torch.clamp(counts, min=0)
+
+        x_profile, x_intensity = _encode_shoebox(
+            self.encoder1, self.encoder2, shoebox, self.shoebox_shape
+        )
+
+        metadata = None
+
+        if self.encoder3 is not None:
+            if reference is None:
+                raise ValueError(
+                    "A metadata encoder (encoder 3) was provided, but no reference data was found. "
+                    "Please provide a `reference.pt` dataset"
+                )
+            if self.cfg.data_dim == "2d":
+                metadata = reference[:, [8, 9, 10]].float()
+            else:
+                metadata = reference[:, [0, 1, 2, 3, 4, 5, 13]]
+
+            x_metadata = self.encoder3(metadata)
+
+            # combining metadata and profile representation
+            x_profile = torch.cat([x_profile, x_metadata], dim=-1)
+            x_profile = self.linear(x_profile)
+
+        qbg = self.qbg(x_intensity)
+        qi = self.qi(x_intensity)
+        qp = self.qp(x_profile)
+
+        zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
+        zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+
+        rate = zI * zp + zbg
+
+        # calculate profile renyi entropy
+        avg_reynyi_entropy = (-(zp.pow(2).sum(-1).log())).mean(-1)
+
+        out = IntegratorBaseOutputs(
+            rates=rate,
+            counts=counts,
+            masks=masks,
+            qbg=qbg,
+            qp=qp,
+            qi=qi,
+            zp=zp,
+            concentration=qp.concentration,  # if using Dirichlet
+            reference=reference,
+        )
+        out = _assemble_outputs(out, self.cfg.data_dim)
         return out
 
-    else:
-        print("Invalid output data")
+    def training_step(self, batch, _batch_idx):
+        counts, shoebox, masks, reference = batch
+        outputs = self(counts, shoebox, masks, reference)
 
-    return out
+        # Calculate loss
+        loss_dict = self.loss(
+            rate=outputs["rates"],
+            counts=outputs["counts"],
+            q_p=outputs["qp"],
+            q_i=outputs["qi"],
+            q_bg=outputs["qbg"],
+            masks=outputs["masks"],
+        )
+
+        renyi_loss = (
+            (
+                -torch.log(
+                    outputs["qp"]
+                    .rsample([self.cfg.mc_samples])
+                    .permute(1, 0, 2)
+                    .pow(2)
+                    .sum(-1)
+                )
+            )
+            .mean(1)
+            .sum()
+        ) * self.renyi_scale
+        self.log("renyi_loss", renyi_loss)
+
+        self.log("Mean(qi.mean)", outputs["qi"].mean.mean())
+        self.log("Min(qi.mean)", outputs["qi"].mean.min())
+        self.log("Max(qi.mean)", outputs["qi"].mean.max())
+        self.log("Mean(qbg.mean)", outputs["qbg"].mean.mean())
+        self.log("Min(qbg.mean)", outputs["qbg"].mean.min())
+        self.log("Max(qbg.mean)", outputs["qbg"].mean.max())
+        self.log("Mean(qbg.variance)", outputs["qbg"].variance.mean())
+
+        total_loss = loss_dict["loss"]
+        kl = loss_dict["kl_mean"]
+        nll = loss_dict["neg_ll_mean"]
+
+        self.log(
+            "train/loss",
+            total_loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+        )
+        self.log("train/kl", kl, on_step=False, on_epoch=True)
+        self.log("train/nll", nll, on_step=False, on_epoch=True)
+
+        return total_loss + renyi_loss.sum()
+
+    def configure_optimizers(self):
+        return torch.optim.Adam(
+            self.parameters(),
+            lr=self.lr,
+            weight_decay=self.weight_decay,
+        )
+
+    def validation_step(self, batch, _batch_idx):
+        # Unpack batch
+        counts, shoebox, masks, reference = batch
+        outputs = self(counts, shoebox, masks, reference)
+
+        loss_dict = self.loss(
+            rate=outputs["rates"],
+            counts=outputs["counts"],
+            q_p=outputs["qp"],
+            q_i=outputs["qi"],
+            q_bg=outputs["qbg"],
+            masks=outputs["masks"],
+        )
+
+        total_loss = loss_dict["loss"]
+        kl = loss_dict["kl_mean"]
+        nll = loss_dict["neg_ll_mean"]
+
+        self.log(
+            "val/loss", total_loss, on_step=False, on_epoch=True, prog_bar=True
+        )
+        self.log("val/kl", kl, on_step=False, on_epoch=True)
+        self.log("val/nll", nll, on_step=False, on_epoch=True)
+
+        return outputs
+
+    def predict_step(self, batch: Tensor, _batch_idx):
+        counts, shoebox, masks, reference = batch
+        outputs = self(counts, shoebox, masks, reference)
+
+        return {k: v for k, v in outputs.items() if k in self.predict_keys}
 
 
-# -
-class Integrator(LightningModule):
+# %%
+class IntegratorNew(LightningModule):
     """Integrator class to infer intenities from raw X-ray diffraction images and experimental metadata."""
 
     encoder1: ShoeboxEncoder | IntensityEncoder
@@ -101,11 +435,11 @@ class Integrator(LightningModule):
     """Encoder to get intensity & background distributions"""
     encoder3: MLPMetadataEncoder | None
     """Optional Encoder for experimental metadata"""
-    qbg: BaseDistribution
+    qbg: nn.Module
     """Surrogate posterior shoebox Background"""
-    qp: BaseDistribution
+    qp: nn.Module
     """Surrogate posterior of spot Profile"""
-    qi: BaseDistribution
+    qi: nn.Module
     """Surrogate posterior of the spot Intensity"""
     data_dim: str
     """Dimensionality of diffraction data (2d or 3d)"""
@@ -154,9 +488,9 @@ class Integrator(LightningModule):
 
     def __init__(
         self,
-        qbg: BaseDistribution,
-        qp: BaseDistribution,
-        qi: BaseDistribution,
+        qbg: nn.Module,
+        qp: nn.Module,
+        qi: nn.Module,
         loss: BaseLoss,
         encoder_out: int,
         encoder1: ShoeboxEncoder | IntensityEncoder,
@@ -301,32 +635,6 @@ class Integrator(LightningModule):
         masks: Tensor,
         reference: Tensor | None = None,
     ) -> dict[str, Any]:
-        """
-        Forward model architecture:
-        ```mermaid
-        flowchart LR
-
-            counts --> encoder1
-            counts --> encoder2
-            metadata --> encoder3
-
-            encoder1 --> qp
-            encoder2 --> torch.concat
-            encoder3 --> torch.concat
-            torch.concat --> qi
-            torch.concat --> qbg
-
-        ```
-
-        Args:
-            counts: Raw photon count Tensor
-            shoebox: Standardized photon count Tensor
-            masks: Dead-pixel mask
-            reference: Optional metadata Tensor
-
-        Returns:
-
-        """
         # Unpack batch
         counts = torch.clamp(counts, min=0)
 
@@ -349,6 +657,10 @@ class Integrator(LightningModule):
                 shoebox[:, 0, :].reshape(
                     shoebox.size(0), 1, *(self.shoebox_shape)
                 )
+            )
+        else:
+            assert ValueError(
+                "Incorrect shoebox dimension. The shoebox should be 2 or 3 dimensional"
             )
 
         if self.encoder3 is not None and reference is None:
@@ -394,14 +706,6 @@ class Integrator(LightningModule):
         return out
 
     def on_train_epoch_end(self):
-        """
-        Aggregate and log training metrics at the end of each epoch.
-
-        - Computes average loss, KL, and NLL over the epoch.
-        - Logs values to PyTorch Lightning's logger.
-        - Appends a new row to self.train_df.
-        - Resets training metric lists for the next epoch.
-        """
         # calculate epoch averages
         avg_train_loss = sum(self.train_loss) / len(self.train_loss)
         avg_kl = sum(self.train_kl) / len(self.train_kl)
@@ -431,14 +735,6 @@ class Integrator(LightningModule):
         self.train_nll = []
 
     def on_validation_epoch_end(self):
-        """
-        Aggregate and log validation metrics at the end of each epoch.
-
-        - Computes average loss, KL, and NLL over the epoch.
-        - Logs values to PyTorch Lightning's logger.
-        - Appends a new row to `self.val_df`.
-        - Resets validation metric lists.
-        """
         avg_val_loss = sum(self.val_loss) / len(self.val_loss)
         avg_kl = sum(self.val_kl) / len(self.val_kl)
         avg_nll = sum(self.val_nll) / len(self.val_nll)
@@ -515,14 +811,6 @@ class Integrator(LightningModule):
         )
 
     def validation_step(self, batch, _batch_idx):
-        """
-
-        Args:
-            batch:
-
-        Returns:
-
-        """
         # Unpack batch
         counts, shoebox, masks, reference = batch
         outputs = self(counts, shoebox, masks, reference)
@@ -548,15 +836,6 @@ class Integrator(LightningModule):
         return outputs
 
     def predict_step(self, batch: Tensor, _batch_idx):
-        """
-        Run inference on a batch during prediction.
-
-        Args:
-            batch: Tuple of (counts, shoebox, masks, reference).
-
-        Returns:
-            Dictionary with keys specified in self.predict_keys.
-        """
         counts, shoebox, masks, reference = batch
         outputs = self(counts, shoebox, masks, reference)
 

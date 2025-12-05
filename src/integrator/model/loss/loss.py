@@ -1,26 +1,25 @@
-from pathlib import Path
+from dataclasses import dataclass
+from math import prod
 
 import numpy as np
 import torch
+import torch.nn as nn
 from torch import Tensor
 from torch.distributions import (
     Dirichlet,
     Distribution,
     Exponential,
     Gamma,
-    HalfCauchy,
     HalfNormal,
     LogNormal,
+    Poisson,
 )
-
-from integrator.model.loss import BaseLoss
-from utils import ROOT_DIR
 
 
 def create_center_focused_dirichlet_prior(
     shape: tuple[int, ...] = (3, 21, 21),
     base_alpha: float = 0.1,  # outer region
-    center_alpha: float = 100.0,  # high alpha at the center => center gets more mass
+    center_alpha: float = 100.0,  # high alpha at the center
     decay_factor: float = 1.0,
     peak_percentage: float = 0.1,
 ) -> Tensor:
@@ -56,266 +55,234 @@ def create_center_focused_dirichlet_prior(
     return alpha_vector
 
 
-# TODO Remove mutable data structures
-class Loss(BaseLoss):
+PRIOR_MAP = {
+    "gamma": Gamma,
+    "log_normal": LogNormal,
+    "half_normal": HalfNormal,
+    "exponential": Exponential,
+    "dirichlet": Dirichlet,
+}
+
+
+@dataclass
+class PriorConfig:
+    name: str
+    params: dict[str, float | str]
+    weight: float
+
+
+@dataclass
+class LossConfig:
+    pprf: PriorConfig | None
+    pi: PriorConfig | None
+    pbg: PriorConfig | None
+    shape: tuple = (3, 21, 21)
+    mc_smpls: int = 100
+    eps: float = 1e-6
+
+
+def get_dirichlet_prior(
+    prior: PriorConfig | None,
+    shape: tuple[int, ...],
+) -> dict[str, torch.Tensor] | None:
+    if prior is None:
+        return None
+
+    conc = prior.params.get("concentration")
+
+    if isinstance(conc, float) or isinstance(conc, int):
+        K = prod(shape)
+        return {"concentration": torch.full((K,), float(conc))}
+
+    if isinstance(conc, str):
+        loaded = torch.load(conc)
+        return {"concentration": loaded.reshape(-1)}
+
+    if isinstance(conc, torch.Tensor):
+        return {"concentration": conc.reshape(-1)}
+
+    raise TypeError(f"Unsupported concentration type: {type(conc)}")
+
+
+def _params_as_tensors(
+    prior: PriorConfig | None,
+) -> dict[str, torch.Tensor] | None:
+    if prior is None or prior.params is None:
+        return None
+    return {k: torch.tensor(v) for k, v in prior.params.items()}
+
+
+def _build_prior(prior, params, device):
+    Dist = PRIOR_MAP.get(prior.name)
+    if Dist is None:
+        raise ValueError(f"Unknown prior name: {prior.name}")
+
+    return Dist(**{k: v.to(device) for k, v in params.items()})
+
+
+def _kl(
+    q: Distribution,
+    p: Distribution,
+    cfg: LossConfig,
+):
+    try:
+        return torch.distributions.kl.kl_divergence(q, p)
+    except NotImplementedError:
+        samples = q.rsample(torch.Size([cfg.mc_smpls]))
+        log_q = q.log_prob(samples)
+        log_p = p.log_prob(samples)
+        return (log_q - log_p).mean(dim=0)
+
+
+def _prior_kl(
+    prior: PriorConfig,
+    q: Distribution,
+    params: dict[str, torch.Tensor],
+    weight: float,
+    device: torch.device,
+    cfg: LossConfig,
+) -> torch.Tensor:
+    p = _build_prior(
+        prior,
+        params,
+        device,
+    )
+    kl_prior = _kl(q, p, cfg)
+    return kl_prior * weight
+
+
+class Loss(nn.Module):
     def __init__(
         self,
-        beta: float = 1.0,
-        eps: float = 1e-5,
-        pprf_name: str | None = None,
-        pprf_params: dict | None = None,
-        pprf_weight: float = 0.0001,
-        pbg_name: str = "gamma",
-        pbg_params: dict = {"concentration": 1.0, "rate": 1.0},
-        pbg_weight: float = 0.0001,
-        prior_base_alpha: float = 0.1,
-        prior_center_alpha: float = 50.0,
-        prior_decay_factor: float = 0.4,
-        prior_peak_percentage: float = 0.026,
-        pi_name: str = "gamma",
-        pi_params: dict = {"concentration": 1.0, "rate": 1.0},
-        pi_weight: float = 0.001,
-        prior_tensor: Path | str | None = None,
-        use_robust: bool = False,
-        shape: tuple[int, ...] = (3, 21, 21),
-        quantile: float = 0.99,
-        pprf_conc_factor: int = 40,
-        mc_samples_kl: int = 100,
-        data_dir: Path = ROOT_DIR / "tests/data/",
+        cfg: LossConfig,
     ):
-        super().__init__(
-            mc_samples=mc_samples_kl,
-        )
+        super().__init__()
+        self.cfg = cfg
+        self.eps = cfg.eps
 
-        self.pbg_weight: Tensor
-        self.pprf_weight: Tensor
-        self.eps: Tensor
-
-        self.register_buffer("eps", torch.tensor(eps))
-        self.register_buffer("beta", torch.tensor(beta))
-        self.register_buffer("pbg_weight", torch.tensor(pbg_weight))
-
-        self.register_buffer("pprf_weight", torch.tensor(pprf_weight))
-
-        # self.register_buffer("pi_scale", pi_scale)
-        self.pi_weight = pi_weight
-
-        # Store distribution names and params
-        self.pprf_name = pprf_name
-        self.pprf_params = pprf_params
-        self.pbg_name = pbg_name
-        self.pbg_params = pbg_params
-        self.pi_name = pi_name
-        self.pi_params = pi_params
-
-        if prior_tensor is not None and pprf_params is None:
-            self.prior_tensor = f"{data_dir}{prior_tensor}"
-            self.concentration = torch.load(
-                self.prior_tensor, weights_only=False
+        if cfg.pi is not None:
+            self.pi_params = _params_as_tensors(cfg.pi)
+        if cfg.pbg is not None:
+            self.bg_params = _params_as_tensors(cfg.pbg)
+        if cfg.pprf is not None:
+            self.prf_params = get_dirichlet_prior(
+                cfg.pprf,
+                cfg.shape,
             )
-            self.concentration[
-                self.concentration
-                > torch.quantile(self.concentration, quantile)
-            ] *= pprf_conc_factor
-            self.concentration /= self.concentration.max()
-        elif pprf_params is not None:
-            self.concentration = (
-                torch.ones(shape[0] * shape[1] * shape[2])
-                * pprf_params["concentration"]
-            )
-
-        self._register_distribution_params(pbg_name, pbg_params, prefix="pbg_")
-        self._register_distribution_params(pi_name, pi_params, prefix="pi_")
-
-        self.profile_size = shape[0] * shape[1] * shape[2]
-
-        # Number of elements in the profile
-        self.use_robust = use_robust
-
-        # Create center-focused Dirichlet prior
-        alpha_vector = create_center_focused_dirichlet_prior(
-            shape=shape,
-            base_alpha=prior_base_alpha,
-            center_alpha=prior_center_alpha,
-            decay_factor=prior_decay_factor,
-            peak_percentage=prior_peak_percentage,
-        )
-
-        self.register_buffer("dirichlet_concentration", alpha_vector)
-
-        # Store shape for profile reshaping
-        self.prior_shape = shape
-
-    def _register_distribution_params(self, name, params, prefix):
-        """Register distribution parameters as buffers with appropriate prefixes"""
-        if name is None or params is None:
-            return
-        if name == "gamma":
-            self.register_buffer(
-                f"{prefix}concentration", torch.tensor(params["concentration"])
-            )
-            self.register_buffer(f"{prefix}rate", torch.tensor(params["rate"]))
-        elif name == "log_normal":
-            self.register_buffer(f"{prefix}loc", torch.tensor(params["loc"]))
-            self.register_buffer(
-                f"{prefix}scale", torch.tensor(params["scale"])
-            )
-        elif name == "exponential":
-            self.register_buffer(f"{prefix}rate", torch.tensor(params["rate"]))
-        elif name == "half_normal":
-            self.register_buffer(
-                f"{prefix}scale", torch.tensor(params["scale"])
-            )
-        elif name == "half_cauchy":
-            self.register_buffer(
-                f"{prefix}scale", torch.tensor(params["scale"])
-            )
-        elif name == "normal":
-            self.register_buffer(f"{prefix}loc", torch.tensor(params["loc"]))
-            self.register_buffer(
-                f"{prefix}scale", torch.tensor(params["scale"])
-            )
-
-    def get_prior(
-        self,
-        name: str,
-        params_prefix: str,
-        device: torch.device,
-    ) -> Distribution:
-        """Create a distribution on the specified device"""
-
-        params = {}
-        if name == "gamma":
-            params = {
-                "concentration": getattr(
-                    self, f"{params_prefix}concentration"
-                ).to(device),
-                "rate": getattr(self, f"{params_prefix}rate").to(device),
-            }
-        if name == "log_normal":
-            params = {
-                "loc": getattr(self, f"{params_prefix}loc").to(device),
-                "scale": getattr(self, f"{params_prefix}scale").to(device),
-            }
-        if name == "half_normal":
-            params = {
-                "scale": getattr(self, f"{params_prefix}scale").to(device)
-            }
-        if name == "half_cauchy":
-            params = {
-                "scale": getattr(self, f"{params_prefix}scale").to(device)
-            }
-        if name == "exponential":
-            params = {"rate": getattr(self, f"{params_prefix}rate").to(device)}
-        if name == "dirichlet":
-            params = {"concentration": self.dirichlet_concentration.to(device)}
-
-        distribution_map = {
-            "gamma": Gamma,
-            "log_normal": LogNormal,
-            "exponential": Exponential,
-            "dirichlet": Dirichlet,
-            "half_normal": HalfNormal,
-            "half_cauchy": HalfCauchy,
-        }
-
-        return distribution_map[name](**params)
 
     def forward(
         self,
         rate: Tensor,
         counts: Tensor,
-        q_p: Distribution,
-        q_i: Distribution,
-        q_bg: Distribution,
-        masks: Tensor,
-    ) -> dict:
-        # get device and batch size
+        qprf: Distribution,
+        qi: Distribution,
+        qbg: Distribution,
+        mask: Tensor,
+    ):
+        # batch metadata
         device = rate.device
         batch_size = rate.shape[0]
-        self.current_batch_size = batch_size
 
+        # moving data to device
         counts = counts.to(device)
-        masks = masks.to(device)
+        mask = mask.to(device)
 
-        pprf = torch.distributions.dirichlet.Dirichlet(
-            self.concentration.to(device)
-        )
-        pbg = self.get_prior(self.pbg_name, "pbg_", device)
-        pi = self.get_prior(self.pi_name, "pi_", device)
+        # total KL and per-prior KLs
+        kl = torch.zeros(batch_size, device=device)
+        kl_prf = torch.zeros(batch_size, device=device)
+        kl_i = torch.zeros(batch_size, device=device)
+        kl_bg = torch.zeros(batch_size, device=device)
 
-        # calculate kl terms
-        kl_terms = torch.zeros(batch_size, device=device)
+        # calculating per prior KL temrms
 
-        kl_i = self.compute_kl(q_i, pi)
-        kl_terms += kl_i * self.pi_weight
+        if self.cfg.pprf is not None and self.prf_params is not None:
+            kl_prf = _prior_kl(
+                prior=self.cfg.pprf,
+                q=qprf,
+                params=self.prf_params,
+                weight=self.cfg.pprf.weight,
+                device=device,
+                cfg=self.cfg,
+            )
+            kl += kl_prf
 
-        # calculate background and intensity kl divergence
-        kl_bg = self.compute_kl(q_bg, pbg)
-        kl_terms += kl_bg * self.pbg_weight
+        if self.cfg.pi is not None and self.pi_params is not None:
+            kl_i = _prior_kl(
+                prior=self.cfg.pi,
+                q=qi,
+                params=self.pi_params,
+                weight=self.cfg.pi.weight,
+                device=device,
+                cfg=self.cfg,
+            )
+            kl += kl_i
 
-        kl_p = self.compute_kl(q_p, pprf)
-        kl_terms += kl_p * self.pprf_weight
+        if self.cfg.pbg is not None and self.bg_params is not None:
+            kl_bg = _prior_kl(
+                prior=self.cfg.pbg,
+                q=qbg,
+                params=self.bg_params,
+                weight=self.cfg.pbg.weight,
+                device=device,
+                cfg=self.cfg,
+            )
+            kl += kl_bg
 
-        log_prob = torch.distributions.Poisson(rate + self.eps).log_prob(
-            counts.unsqueeze(1)
-        )
+        # Calculating log likelihood
+        ll = Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
+        ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
+        neg_ll = (-ll_mean).sum(1)
 
-        ll_mean = torch.mean(log_prob, dim=1) * masks.squeeze(-1)
+        # Total loss
+        loss = (neg_ll + kl).mean()
 
-        # Calculate negative log likelihood
-        neg_ll_batch = (-ll_mean).sum(1)
-        # neg_ll_batch = neg_ll_batch
-
-        # combine all loss terms
-        batch_loss = neg_ll_batch + kl_terms
-
-        # final scalar loss
-        total_loss = batch_loss.mean()
-
-        # return all components for monitoring
         return {
-            "total_loss": total_loss,
-            "neg_ll_mean": neg_ll_batch.mean(),
-            "kl_mean": kl_terms.mean(),
-            "kl_bg_mean": (kl_bg * self.pbg_weight).mean(),
-            "kl_i_mean": kl_i.mean() * self.pi_weight,
-            "kl_p": (kl_p * self.pprf_weight).mean(),
+            "loss": loss,
+            "neg_ll_mean": neg_ll.mean(),
+            "kl_mean": kl.mean(),
+            "kl_prf_mean": kl_prf.mean(),
+            "kl_i_mean": kl_i.mean(),
+            "kl_bg_mean": kl_bg.mean(),
         }
 
 
+# %%
 if __name__ == "__main__":
     import torch
-    import torch.nn.functional as F
 
     from integrator.model.distributions import (
         DirichletDistribution,
         FoldedNormalDistribution,
     )
-    from integrator.model.encoders import IntensityEncoder, ShoeboxEncoder
+    from integrator.utils import (
+        create_data_loader,
+        create_integrator,
+        load_config,
+    )
+    from utils import CONFIGS
+
+    cfg = list(CONFIGS.glob("*"))[0]
+    cfg = load_config(cfg)
+
+    integrator = create_integrator(cfg)
+    data = create_data_loader(cfg)
 
     # hyperparameters
     mc_samples = 100
 
-    # encoders
-    sbox_encoder_2d = ShoeboxEncoder()
-    intensity_encoder_2d = IntensityEncoder(data_dim="2d")
-
     # distributions
     qbg_ = FoldedNormalDistribution(in_features=64)
     qi_ = FoldedNormalDistribution(in_features=64)
-    qprf_ = DirichletDistribution(in_features=64, input_shape=(21, 21))
+    qprf_ = DirichletDistribution(in_features=64, out_features=(3, 21, 21))
 
-    # generate a random batch
-    batch = F.softplus(torch.randn(10, 21 * 21))
-    masks = torch.randint(2, (10, 21 * 21))
+    # load a batch
+    counts, sbox, mask, meta = next(iter(data.train_dataloader()))
 
-    # encode batch
-    shoebox_rep = sbox_encoder_2d(
-        batch.reshape(batch.shape[0], 1, 21, 21), masks
+    shoebox_rep = integrator.encoder1(
+        sbox.reshape(sbox.shape[0], 1, 3, 21, 21)
     )
-    intensity_rep = intensity_encoder_2d(
-        batch.reshape(batch.shape[0], 1, 21, 21), masks
+    intensity_rep = integrator.encoder2(
+        sbox.reshape(sbox.shape[0], 1, 3, 21, 21)
     )
 
     # get distributinos
@@ -329,3 +296,12 @@ if __name__ == "__main__":
     zi = qi.rsample([mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
     rate = zi * zprf + zbg  # [B,S,Pix]
+
+    integrator.loss(
+        rate=rate,
+        counts=counts,
+        qprf=qprf,
+        qi=qi,
+        qbg=qbg,
+        mask=mask,
+    )

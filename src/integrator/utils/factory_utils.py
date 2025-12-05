@@ -10,7 +10,12 @@ import yaml
 from pytorch_lightning import LightningModule
 
 from integrator.callbacks import PredWriter
-from integrator.config.schema import Cfg
+from integrator.model.integrators import (
+    EncoderModules,
+    IntegratorHyperParameters,
+    SurrogateModules,
+)
+from integrator.model.loss import LossConfig, PriorConfig
 from integrator.registry import ARGUMENT_RESOLVER, REGISTRY
 
 
@@ -51,16 +56,94 @@ def _build_modules(components: dict) -> dict:
     return modules
 
 
-def create_integrator(
-    config: dict, checkpoint: str | None = None
-) -> LightningModule:
-    integrator_cls = REGISTRY["integrator"][config["integrator"]["name"]]
-    modules = _build_modules(config["components"])
-    kwargs = {**modules, **config["integrator"]["args"]}
+def _build_encoders(config: dict) -> dict:
+    encoders = {}
+    enc_field = config.get("encoders", [])
+    if isinstance(enc_field, dict):
+        enc_iter = [{k: v} for k, v in enc_field.items()]
+    elif isinstance(enc_field, list):
+        enc_iter = enc_field
+    elif enc_field in (None, []):
+        enc_iter = []
+    else:
+        raise TypeError("components.encoders must be a list or dict")
 
-    if checkpoint:
-        return integrator_cls.load_from_checkpoint(checkpoint, **kwargs)
-    return integrator_cls(**kwargs)
+    for enc_dict in enc_iter:
+        for enc_key, sub in enc_dict.items():  # (name, sub-config)
+            encoders[enc_key] = create_module(
+                "encoders", sub["name"], **(sub.get("args"))
+            )
+    return encoders
+
+
+def _build_surrogates(config: dict) -> dict:
+    surrogates = {}
+    surr_dict = config.get("surrogates", [])
+
+    for k, v in surr_dict.items():
+        surrogates[k] = create_module(
+            k,
+            v.get("name"),
+            **(v.get("args")),
+        )
+
+    return surrogates
+
+
+def build_prior(prior_cfg: dict | None) -> PriorConfig | None:
+    if prior_cfg is None:
+        return None
+    return PriorConfig(**prior_cfg)
+
+
+def create_integrator(
+    config: dict,
+    checkpoint: str | None = None,
+) -> LightningModule:
+    # load integrator class
+    integrator_cls = REGISTRY["integrator"][config["integrator"]["name"]]
+    modules = {}
+
+    # build encoders
+    encoders = _build_encoders(config)
+    encoders = EncoderModules(**encoders)
+
+    # build surrogates
+    surrogates = _build_surrogates(config)
+    surrogates = SurrogateModules(**surrogates)
+
+    # build loss
+    priors_config = config["loss"]["priors"]
+    pi = build_prior(priors_config.get("intensity"))
+    pprf = build_prior(priors_config.get("profile"))
+    pbg = build_prior(priors_config.get("background"))
+
+    # loss module
+    loss_cfg = LossConfig(
+        pprf=pprf,
+        pbg=pbg,
+        pi=pi,
+        mc_smpls=config["loss"]["args"]["mc_smpls"],
+        eps=config["loss"]["args"]["eps"],
+    )
+    loss_cls = REGISTRY["loss"]["loss"](cfg=loss_cfg)
+    modules["loss"] = loss_cls
+
+    # integrator hyperparameters
+    cfg = IntegratorHyperParameters(**config["integrator"]["args"])
+
+    # integrator arguments
+    args = {
+        "loss": loss_cls,
+        "encoders": encoders,
+        "surrogates": surrogates,
+        "cfg": cfg,
+    }
+
+    # load from checkpoint
+    if checkpoint is not None:
+        return integrator_cls.load_from_checkpoint(checkpoint, **args)
+    return integrator_cls(**args)
 
 
 def create_argument(module_type, argument_name, argument_value):
@@ -71,13 +154,6 @@ def create_argument(module_type, argument_name, argument_value):
         raise ValueError(
             f"Unknown {module_type}: {argument_name}. Available options: {list(ARGUMENT_RESOLVER[module_type].keys())}"
         ) from e
-
-
-# %%
-# def load_config(config_path) -> dict:
-#     """utility function to load a yaml config file"""
-#     with open(config_path) as f:
-#         return yaml.safe_load(f)
 
 
 def create_data_loader(config):
@@ -199,24 +275,30 @@ def predict_from_checkpoints(
         gc.collect()
 
 
-# src/integrator/config/load.py
-
-
-def load_config(resource: str | Path) -> Cfg:
+def load_config(resource: str | Path) -> dict:
     """resource is a Traversable from get_configs()."""
-    # Turn into a real Path temporarily to use normal open/yaml
+
     if isinstance(resource, str):
         resource = Path(resource)
 
     with as_file(resource) as p:
         with open(Path(p), encoding="utf-8") as f:
             raw = yaml.safe_load(f)
-    return Cfg.model_validate(raw)
+    return raw
 
 
 # assign train/val labels
 if __name__ == "__main__":
+    from integrator.utils import load_config
     from utils import CONFIGS
+
+    cfg = list(CONFIGS.glob("*"))[0]
+    cfg = load_config(cfg)
+
+    for k, v in cfg["surrogates"].items():
+        print(k, v)
+
+    _build_encoders(cfg)
 
     # Laue model config
     config2d = load_config(CONFIGS["config2d"])

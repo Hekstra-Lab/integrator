@@ -6,9 +6,10 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import torch
-import wandb
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from pytorch_lightning.callbacks import Callback
+
+import wandb
 
 
 # TODO: handle 2d shoeboxes
@@ -295,10 +296,10 @@ class PlotterLD(Callback):
                     try:
                         data.append(
                             [
-                                float(torch.log(i_flat[i])),
-                                float(torch.log(i_var_flat[i])),
-                                float(torch.log(dials_flat[i])),
-                                float(torch.log(dials_var_flat[i])),
+                                i_flat[i],
+                                i_var_flat[i],
+                                dials_flat[i],
+                                dials_var_flat[i],
                                 dials_bg_flat[i],
                                 qbg_flat[i],
                                 renyi_entropy_flat[i],
@@ -573,6 +574,9 @@ class PlotterLD(Callback):
             # Clear memory
             self.preds_val = {}
             torch.cuda.empty_cache()
+
+
+# -
 
 
 # -
