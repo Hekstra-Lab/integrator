@@ -326,6 +326,14 @@ class PlotterLD(Callback):
                     else 0
                 )
 
+                corr_bg = (
+                    torch.corrcoef(torch.vstack([dials_bg_flat, dials_flat]))[
+                        0, 1
+                    ]
+                    if len(dials_bg_flat) > 1
+                    else 0
+                )
+
                 # Create log dictionary
                 log_dict = {
                     "Train: qi vs DIALS I prf": wandb.plot.scatter(
