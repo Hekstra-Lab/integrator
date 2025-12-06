@@ -235,7 +235,7 @@ class PlotterLD(Callback):
         with torch.no_grad():
             # get forward outputs
             shoebox, dials, masks, counts = batch
-            base_output = pl_module(shoebox, dials, masks, counts)
+            base_output = pl_module(counts, shoebox, masks, dials)
 
             # additional metrics to log
 
@@ -420,7 +420,7 @@ class PlotterLD(Callback):
         with torch.no_grad():
             # get forward outputs
             shoebox, dials, masks, counts = batch
-            base_output = pl_module(shoebox, dials, masks, counts)
+            base_output = pl_module(counts, shoebox, masks, dials)
 
             # updated tracked shoeboxes
             self.tracked_ids_val, self.tracked_shoeboxes_val = (
