@@ -2,6 +2,7 @@ from typing import Literal
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import Tensor
 from torch.distributions import LogNormal
 
@@ -42,7 +43,7 @@ class LogNormalDistribution(nn.Module):
     ) -> LogNormal:
         raw_loc, raw_scale = self.fc(x).chunk(2, dim=-1)
         loc = torch.tanh(raw_loc) * 14.0
-        scale_unbounded = torch.softplus(raw_scale)
+        scale_unbounded = F.softplus(raw_scale)
         scale = 0.01 + (2.0 - 0.01) * torch.sigmoid(scale_unbounded)
         lognormal = LogNormal(loc=loc, scale=scale)
 
