@@ -222,6 +222,13 @@ class SurrogateModules:
     qp: DirichletDistribution
 
 
+def stats(name, x):
+    print(
+        f"{name}:   min={x.min().item():.4e}, max={x.max().item():.4e}, "
+        f"mean={x.mean().item():.4e}, std={x.std().item():.4e}"
+    )
+
+
 # %%
 class Integrator(LightningModule):
     def __init__(
@@ -311,6 +318,42 @@ class Integrator(LightningModule):
         zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
         rate = zI * zp + zbg
+        print("rate.max:", {rate.max()})
+        print("rate.min:", {rate.max()})
+        print("counts.min:", {counts.min()})
+        print("counts.max:", {counts.max()})
+
+        # ----- Check encoders -----
+        stats("x_profile", x_profile)
+        stats("x_intensity", x_intensity)
+
+        # ----- Check LogNormal qbg -----
+        print("\nqbg params:")
+        stats("qbg.loc", qbg.loc)
+        stats("qbg.scale", qbg.scale)
+
+        # Sample diagnostics
+        stats("zbg sample", zbg)
+
+        # ----- Check LogNormal qi -----
+        print("\nqi params:")
+        stats("qi.loc", qi.loc)
+        stats("qi.scale", qi.scale)
+
+        stats("zI sample", zI)
+
+        # ----- Check Dirichlet qp -----
+        print("\nqp params:")
+        stats("qp.concentration", qp.concentration)
+
+        stats("zp sample", zp)
+
+        # ----- Check rate -----
+        print("\nrate stats:")
+        stats("rate", rate)
+
+        # ----- Check input counts -----
+        stats("counts", counts)
 
         out = IntegratorBaseOutputs(
             rates=rate,
