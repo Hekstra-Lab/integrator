@@ -397,7 +397,8 @@ class Integrator(LightningModule):
         self.log("val/kl", kl, on_step=False, on_epoch=True)
         self.log("val/nll", nll, on_step=False, on_epoch=True)
 
-        return outputs
+        outputs["loss"] = total_loss
+        return {"loss": total_loss, "model_output": outputs}
 
     def predict_step(self, batch: Tensor, _batch_idx):
         counts, shoebox, mask, reference = batch
