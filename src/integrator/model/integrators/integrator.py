@@ -117,8 +117,8 @@ def extract_reference_fields(
 ) -> dict[str, Any]:
     if data_dim == "3d":
         return {
-            "dials_I_sum_value": ref[:, 6],
-            "dials_I_sum_var": ref[:, 7],
+            "dials_I_sum_value": ref[:, 6].cpu(),
+            "dials_I_sum_var": ref[:, 7].cpu(),
             "dials_I_prf_value": ref[:, 8],
             "dials_I_prf_var": ref[:, 9],
             "refl_ids": ref[:, -1].int().tolist(),
@@ -160,26 +160,40 @@ def _assemble_outputs(
     out: IntegratorBaseOutputs,
     data_dim: Literal["2d", "3d"],
 ) -> dict[str, Any]:
+    def cpu(x):
+        # handle tensors, distributions, scalars
+        if isinstance(x, torch.Tensor):
+            return x.detach().cpu()
+        elif hasattr(x, "mean") and hasattr(x, "variance"):  # distribution
+            return None  # don't return distribution objects ever
+        else:
+            return x
+
     base = {
-        "rates": out.rates,
-        "counts": out.counts,
-        "mask": out.mask,
-        "qbg": out.qbg,
-        "qbg_mean": out.qbg.mean,
-        "qbg_var": out.qbg.variance,
-        "qp": out.qp,
-        "qp_mean": out.qp.mean,
-        "qi": out.qi,
-        "intensity_mean": out.qi.mean,
-        "intensity_var": out.qi.variance,
-        "profile": out.qp.mean,
-        "zp": out.zp,
-        "concentration": out.concentration,
+        "rates": cpu(out.rates),
+        "counts": cpu(out.counts),
+        "mask": cpu(out.mask),
+        "zp": cpu(out.zp),
+        "qbg_mean": cpu(out.qbg.mean),
+        "qbg_var": cpu(out.qbg.variance),
+        "qp_mean": cpu(out.qp.mean),
+        "intensity_mean": cpu(out.qi.mean),
+        "intensity_var": cpu(out.qi.variance),
+        "profile": cpu(out.qp.mean),
+        "concentration": cpu(out.concentration),
     }
+
     if out.reference is None:
         return base
 
-    base.update(extract_reference_fields(out.reference, data_dim))
+    ref_fields = extract_reference_fields(out.reference, data_dim)
+    for k, v in ref_fields.items():
+        if isinstance(v, torch.Tensor):
+            ref_fields[k] = v.detach().cpu()
+        else:
+            ref_fields[k] = v
+
+    base.update(ref_fields)
     return base
 
 

@@ -44,7 +44,7 @@ class ShoeboxDataModule2D(BaseDataModule):
         single_sample_index: None = None,
         cutoff=None,
         use_metadata=None,
-        persistent_workers: bool = True,
+        persistent_workers: bool = False,
         shoebox_file_names={
             "counts": "counts.pt",
             # "metadata": "metadata.pt",
@@ -135,20 +135,6 @@ class ShoeboxDataModule2D(BaseDataModule):
                 (standardized_counts, x, y)
             ).permute(1, 0, 2)
 
-        # Create the full dataset based on whether metadata is present
-        #        if self.use_metadata is not None:
-        #            self.full_dataset = TensorDataset(
-        #                counts,
-        #                standardized_counts,
-        #                metadata,
-        #                masks,
-        #                reference,
-        #            )
-        #        else:
-        #            self.full_dataset = TensorDataset(
-        #                counts, standardized_counts, masks, reference
-        #            )
-
         self.full_dataset = TensorDataset(
             processed_counts, standardized_counts, masks, reference
         )
@@ -196,7 +182,7 @@ class ShoeboxDataModule2D(BaseDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
-            pin_memory=True,
+            pin_memory=False,
         )
 
     def val_dataloader(self):
@@ -205,7 +191,7 @@ class ShoeboxDataModule2D(BaseDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            pin_memory=True,
+            pin_memory=False,
         )
 
     def test_dataloader(self):
@@ -215,7 +201,7 @@ class ShoeboxDataModule2D(BaseDataModule):
                 batch_size=self.batch_size,
                 shuffle=False,
                 num_workers=self.num_workers,
-                pin_memory=True,
+                pin_memory=False,
             )
         else:
             return None
@@ -226,7 +212,7 @@ class ShoeboxDataModule2D(BaseDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            pin_memory=True,
+            pin_memory=False,
         )
 
 
