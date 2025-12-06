@@ -110,9 +110,9 @@ def create_comparison_grid(
         )
         axes[2, i].set_title(
             f"Bg: {float(pred_dict[id_str]['bg_mean']):.2f}\n"
-            f"I: {pred_dict[id_str]['intensity_mean']:.2f}\n"
-            f"I_var: {pred_dict[id_str]['intensity_var']:.2f}\n"
-            f"I_std: {np.sqrt(pred_dict[id_str]['intensity_var']):.2f}"
+            f"I: {pred_dict[id_str]['qi_mean']:.2f}\n"
+            f"I_var: {pred_dict[id_str]['qi_var']:.2f}\n"
+            f"I_std: {np.sqrt(pred_dict[id_str]['qi_var']):.2f}"
         )
 
         axes[2, i].set_ylabel(
@@ -210,18 +210,6 @@ class PlotterLD(Callback):
                 .reshape(-1, self.d, self.h, self.w)[:, self.d // 2]
             )
 
-        # profile_images = preds["profile"].reshape(-1, self.d, self.h, self.w)[
-        #     ..., (self.d - 1) // 2, :, :
-        # ]
-        # count_images = preds["counts"].reshape(-1, self.d, self.h, self.w)[
-        #     ..., (self.d - 1) // 2, :, :
-        # ]
-        # rate_images = (
-        #     preds["rates"]
-        #     .mean(1)
-        #     .reshape(-1, self.d, self.h, self.w)[..., (self.d - 1) // 2, :, :]
-        # )
-
         for ref_id in tracked_ids:
             id_str = str(ref_id)
             matches = np.where(np.array(current_refl_ids) == ref_id)[0]
@@ -235,8 +223,8 @@ class PlotterLD(Callback):
                     "rates": rate_images[idx].cpu(),
                     "bg_mean": preds["qbg_mean"][idx].cpu(),
                     "bg_var": preds["qbg_var"][idx].cpu(),
-                    "intensity_mean": preds["intensity_mean"][idx].cpu(),
-                    "intensity_var": preds["intensity_var"][idx].cpu(),
+                    "qi_mean": preds["qi_mean"][idx].cpu(),
+                    "qi_var": preds["qi_var"][idx].cpu(),
                     "dials_I_prf_value": preds["dials_I_prf_value"][idx].cpu(),
                     "dials_I_prf_var": preds["dials_I_prf_var"][idx].cpu(),
                     "dials_bg_mean": preds["dials_bg_mean"][idx].cpu(),
@@ -269,8 +257,8 @@ class PlotterLD(Callback):
             # Create CPU tensor versions to avoid keeping GPU memory
             self.preds_train = {}
             for key in [
-                "intensity_mean",
-                "intensity_var",
+                "qi_mean",
+                "qi_var",
                 "dials_I_prf_value",
                 "dials_I_prf_var",
                 "profile",
@@ -300,9 +288,9 @@ class PlotterLD(Callback):
                 # Create data for scatter plots
                 data = []
 
-                i_flat = self.preds_train["intensity_mean"].flatten() + 1e-8
+                i_flat = self.preds_train["qi_mean"].flatten() + 1e-8
 
-                i_var_flat = self.preds_train["intensity_var"].flatten() + 1e-8
+                i_var_flat = self.preds_train["qi_var"].flatten() + 1e-8
 
                 dials_flat = (
                     self.preds_train["dials_I_prf_value"].flatten() + 1e-8
@@ -449,8 +437,8 @@ class PlotterLD(Callback):
 
             self.preds_val = {}
             for key in [
-                "intensity_mean",
-                "intensity_var",
+                "qi_mean",
+                "qi_var",
                 "dials_I_prf_value",
                 "dials_I_prf_var",
                 "profile",
@@ -479,9 +467,9 @@ class PlotterLD(Callback):
             try:
                 data = []
 
-                i_flat = self.preds_val["intensity_mean"].flatten() + 1e-8
+                i_flat = self.preds_val["qi_mean"].flatten() + 1e-8
 
-                i_var_flat = self.preds_val["intensity_var"].flatten() + 1e-8
+                i_var_flat = self.preds_val["qi_var"].flatten() + 1e-8
 
                 dials_flat = (
                     self.preds_val["dials_I_prf_value"].flatten() + 1e-8
@@ -492,7 +480,7 @@ class PlotterLD(Callback):
                 dials_bg_flat = (
                     self.preds_val["dials_bg_mean"].flatten() + 1e-8
                 )
-                qbg_flat = self.preds_val["qbg"].flatten() + 1e-8
+                qbg_flat = self.preds_val["qbg_mean"].flatten() + 1e-8
 
                 x_c_flat = self.preds_val["x_c"].flatten()
                 y_c_flat = self.preds_val["y_c"].flatten()
@@ -667,8 +655,8 @@ class Plotter(Callback):
                     "rates": rate_images[idx].cpu(),
                     "bg_mean": preds["qbg"].mean[idx].cpu(),
                     "bg_var": preds["qbg"].variance[idx].cpu(),
-                    "intensity_mean": preds["intensity_mean"][idx].cpu(),
-                    "intensity_var": preds["intensity_var"][idx].cpu(),
+                    "qi_mean": preds["qi_mean"][idx].cpu(),
+                    "qi_var": preds["qi_var"][idx].cpu(),
                     "dials_I_prf_value": preds["dials_I_prf_value"][idx],
                     "dials_I_prf_var": preds["dials_I_prf_var"][idx],
                     "dials_bg_mean": preds["dials_bg_mean"][idx].cpu(),
@@ -703,8 +691,8 @@ class Plotter(Callback):
             # Create CPU tensor versions to avoid keeping GPU memory
             self.preds_train = {}
             for key in [
-                "intensity_mean",
-                "intensity_var",
+                "qi_mean",
+                "qi_var",
                 "dials_I_prf_value",
                 "dials_I_prf_var",
                 "profile",
@@ -735,9 +723,9 @@ class Plotter(Callback):
                 # Create data for scatter plots
                 data = []
 
-                i_flat = self.preds_train["intensity_mean"].flatten() + 1e-8
+                i_flat = self.preds_train["qi_mean"].flatten() + 1e-8
 
-                i_var_flat = self.preds_train["intensity_var"].flatten() + 1e-8
+                i_var_flat = self.preds_train["qi_var"].flatten() + 1e-8
 
                 dials_flat = (
                     self.preds_train["dials_I_prf_value"].flatten() + 1e-8
@@ -909,8 +897,8 @@ class Plotter(Callback):
 
             self.preds_val = {}
             for key in [
-                "intensity_mean",
-                "intensity_var",
+                "qi_mean",
+                "qi_var",
                 "dials_I_prf_value",
                 "dials_I_prf_var",
                 "profile",
@@ -941,9 +929,9 @@ class Plotter(Callback):
             try:
                 data = []
 
-                i_flat = self.preds_val["intensity_mean"].flatten() + 1e-8
+                i_flat = self.preds_val["qi_mean"].flatten() + 1e-8
 
-                i_var_flat = self.preds_val["intensity_var"].flatten() + 1e-8
+                i_var_flat = self.preds_val["qi_var"].flatten() + 1e-8
 
                 dials_flat = (
                     self.preds_val["dials_I_prf_value"].flatten() + 1e-8
@@ -1110,7 +1098,7 @@ class MVNPlotter(Callback):
             "profile": [],
             "counts": [],
             "refl_ids": [],
-            "intensity_mean": [],
+            "qi_mean": [],
             "dials_I_prf_value": [],
             "weighted_sum_mean": [],
             "thresholded_mean": [],
@@ -1123,7 +1111,7 @@ class MVNPlotter(Callback):
             "counts": {},
             "qbg": {},
             "rates": {},
-            "intensity_mean": {},
+            "qi_mean": {},
             # "qI_var": {},
             "qbg_var": {},
             "dials_I_prf_value": {},
@@ -1137,7 +1125,7 @@ class MVNPlotter(Callback):
         count_preds,
         refl_ids,
         dials_I,
-        intensity_mean,
+        qi_mean,
     ):
         current_refl_ids = refl_ids.cpu().numpy()
 
@@ -1174,9 +1162,7 @@ class MVNPlotter(Callback):
                     idx
                 ].cpu()
                 self.tracked_predictions["qbg"][ref_id] = bg_mean[idx].cpu()
-                self.tracked_predictions["intensity_mean"][ref_id] = (
-                    intensity_mean[idx]
-                )
+                self.tracked_predictions["qi_mean"][ref_id] = qi_mean[idx]
                 # self.tracked_predictions["qI_var"][ref_id] = qi_var[idx].cpu()
                 self.tracked_predictions["qbg_var"][ref_id] = bg_var[idx].cpu()
                 self.tracked_predictions["dials_I_prf_value"][ref_id] = (
@@ -1237,7 +1223,7 @@ class MVNPlotter(Callback):
                 rates_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13
             )
             axes[2, i].set_title(
-                f"Bg: {self.tracked_predictions['qbg'][refl_id]:.2f}\n intensity_mean: {self.tracked_predictions['intensity_mean'][refl_id]:.2f}"
+                f"Bg: {self.tracked_predictions['qbg'][refl_id]:.2f}\n qi_mean: {self.tracked_predictions['qi_mean'][refl_id]:.2f}"
             )
 
             axes[2, i].set_ylabel("rate = I*pij + Bg", labelpad=5)
@@ -1303,14 +1289,14 @@ class MVNPlotter(Callback):
                     predictions["counts"],
                     predictions["refl_ids"],
                     predictions["dials_I_prf_value"],
-                    predictions["intensity_mean"],
+                    predictions["qi_mean"],
                 )
 
             # Store only a minimal version of the last batch predictions
             # Create CPU tensor versions to avoid keeping GPU memory
             self.train_predictions = {}
             for key in [
-                "intensity_mean",
+                "qi_mean",
                 # "qI_var",
                 "dials_I_prf_value",
                 "weighted_sum_mean",
@@ -1343,7 +1329,7 @@ class MVNPlotter(Callback):
                 data = []
 
                 qI_flat = (
-                    self.train_predictions["intensity_mean"].flatten() + 1e-8
+                    self.train_predictions["qi_mean"].flatten() + 1e-8
                 )  # Add epsilon before log
                 # qI_var_flat = (
                 # self.train_predictions["qI_var"].flatten() + 1e-8
@@ -1388,7 +1374,7 @@ class MVNPlotter(Callback):
                 table = wandb.Table(
                     data=data,
                     columns=[
-                        "intensity_mean",
+                        "qi_mean",
                         # "qI_var",
                         "dials_I_prf_value",
                         "weighted_sum_mean",
@@ -1421,7 +1407,7 @@ class MVNPlotter(Callback):
                 # Create log dictionary
                 log_dict = {
                     "train_qI_vs_prf": wandb.plot.scatter(
-                        table, "intensity_mean", "dials_I_prf_value"
+                        table, "qi_mean", "dials_I_prf_value"
                     ),
                     "train_weighted_sum_vs_prf": wandb.plot.scatter(
                         table, "weighted_sum_mean", "dials_I_prf_value"
@@ -1496,7 +1482,7 @@ class MVNPlotter(Callback):
             # Store only minimal data needed for metrics
             self.val_predictions = {}
             for key in [
-                "intensity_mean",
+                "qi_mean",
                 "dials_I_prf_value",
                 "weighted_sum_mean",
                 "thresholded_mean",

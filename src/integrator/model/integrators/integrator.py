@@ -67,8 +67,8 @@ def calculate_intensities(counts, qbg, qp, mask, cfg):
 
 def _default_predict_keys() -> list["str"]:
     return [
-        "intensity_mean",
-        "intensity_var",
+        "qi_mean",
+        "qi_var",
         "refl_ids",
         "dials_I_sum_value",
         "dials_I_sum_var",
@@ -168,8 +168,8 @@ def _assemble_outputs(
         "qbg_mean": out.qbg.mean,
         "qbg_var": out.qbg.variance,
         "qp_mean": out.qp.mean,
-        "intensity_mean": out.qi.mean,
-        "intensity_var": out.qi.variance,
+        "qi_mean": out.qi.mean,
+        "qi_var": out.qi.variance,
         "profile": out.qp.mean,
         "concentration": out.concentration,
     }

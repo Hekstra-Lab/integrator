@@ -111,13 +111,14 @@ class FoldedNormal(Distribution):
     }
     support = torch.distributions.constraints.nonnegative
 
-    def __init__(self, loc, scale, validate_args=None):
+    def __init__(self, loc, scale, var_thresh=5, validate_args=None):
         self.loc, self.scale = torch.distributions.utils.broadcast_all(
             loc, scale
         )
         batch_shape = self.loc.shape
         super().__init__(batch_shape, validate_args=validate_args)
         self._irsample = NormalIRSample.apply
+        self.var_thresh = var_thresh
 
     def log_prob(self, value):
         """
