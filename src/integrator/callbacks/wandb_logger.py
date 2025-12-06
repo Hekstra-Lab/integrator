@@ -166,7 +166,7 @@ class PlotterLD(Callback):
         self.h = h
         self.w = w
         self.preds_train = {}
-        self.preds_val = {}
+        self.preds_validation = {}
         self.n_profiles = n_profiles
         self.tracked_ids_train = None
         self.tracked_ids_val = None
@@ -439,7 +439,7 @@ class PlotterLD(Callback):
                 )
             )
 
-            self.preds_val = {}
+            self.preds_validation = {}
             for key in [
                 "qi_mean",
                 "qi_var",
@@ -455,13 +455,17 @@ class PlotterLD(Callback):
             ]:
                 if key in base_output:
                     if hasattr(base_output[key], "sample"):
-                        self.preds_val[key] = (
+                        self.preds_validation[key] = (
                             base_output[key].mean.detach().cpu()
                         )
                     else:
-                        self.preds_val[key] = base_output[key].detach().cpu()
+                        self.preds_validation[key] = (
+                            base_output[key].detach().cpu()
+                        )
                 elif key in base_output:
-                    self.preds_val[key] = base_output[key].detach().cpu()
+                    self.preds_validation[key] = (
+                        base_output[key].detach().cpu()
+                    )
 
             # Clean up
             torch.cuda.empty_cache()
@@ -471,24 +475,24 @@ class PlotterLD(Callback):
             try:
                 data = []
 
-                i_flat = self.preds_val["qi_mean"].flatten() + 1e-8
+                i_flat = self.preds_validation["qi_mean"].flatten() + 1e-8
 
-                i_var_flat = self.preds_val["qi_var"].flatten() + 1e-8
+                i_var_flat = self.preds_validation["qi_var"].flatten() + 1e-8
 
                 dials_flat = (
-                    self.preds_val["dials_I_prf_value"].flatten() + 1e-8
+                    self.preds_validation["dials_I_prf_value"].flatten() + 1e-8
                 )
                 dials_var_flat = (
-                    self.preds_val["dials_I_prf_var"].flatten() + 1e-8
+                    self.preds_validation["dials_I_prf_var"].flatten() + 1e-8
                 )
                 dials_bg_flat = (
-                    self.preds_val["dials_bg_mean"].flatten() + 1e-8
+                    self.preds_validation["dials_bg_mean"].flatten() + 1e-8
                 )
-                qbg_flat = self.preds_val["qbg_mean"].flatten() + 1e-8
+                qbg_flat = self.preds_validation["qbg_mean"].flatten() + 1e-8
 
-                x_c_flat = self.preds_val["x_c"].flatten()
-                y_c_flat = self.preds_val["y_c"].flatten()
-                z_c_flat = self.preds_val["z_c"].flatten()
+                x_c_flat = self.preds_validation["x_c"].flatten()
+                y_c_flat = self.preds_validation["y_c"].flatten()
+                z_c_flat = self.preds_validation["z_c"].flatten()
 
                 # Create data points with safe log transform
                 for i in range(len(i_flat)):
@@ -561,13 +565,13 @@ class PlotterLD(Callback):
                     "validation: Min var(I)": torch.min(i_var_flat),
                     "validation: Max var(I)": torch.max(i_var_flat),
                     "validation: mean(qbg.mean)": torch.mean(
-                        self.preds_val["qbg_mean"]
+                        self.preds_validation["qbg_mean"]
                     ),
                     "validation: min(qbg.mean)": torch.min(
-                        self.preds_val["qbg_mean"]
+                        self.preds_validation["qbg_mean"]
                     ),
                     "validation: max(qbg.mean)": torch.max(
-                        self.preds_val["qbg_mean"]
+                        self.preds_validation["qbg_mean"]
                     ),
                 }
 
@@ -599,7 +603,7 @@ class PlotterLD(Callback):
                 traceback.print_exc(file=sys.stdout)
 
             # Clear memory
-            self.preds_val = {}
+            self.preds_validation = {}
             torch.cuda.empty_cache()
 
 
@@ -1093,7 +1097,7 @@ class Plotter(Callback):
                 traceback.print_exc(file=sys.stdout)
 
             # Clear memory
-            self.preds_val = {}
+            self.preds_validation = {}
             torch.cuda.empty_cache()
 
 
