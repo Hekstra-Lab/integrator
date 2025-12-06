@@ -24,13 +24,6 @@ class ShoeboxEncoder(nn.Module):
     intermediate MaxPool3d, then flattens and projects to `encoder_out`.
     """
 
-    conv1: nn.Conv3d
-    norm1: nn.GroupNorm
-    pool: nn.MaxPool3d
-    conv2: nn.Conv3d
-    norm2: nn.GroupNorm
-    data_dim: str
-
     input_shape: tuple[int, int, int]
     """Shoebox shape as ``(D, H, W)``."""
 
@@ -93,10 +86,11 @@ class ShoeboxEncoder(nn.Module):
             kernel_size=conv1_kernel_size,
             padding=conv1_padding,
         )
-        self.norm1 = nn.GroupNorm(
-            num_groups=norm1_num_groups,
-            num_channels=conv1_out_channels,
-        )
+        # self.norm1 = nn.GroupNorm(
+        #     num_groups=norm1_num_groups,
+        #     num_channels=conv1_out_channels,
+        # )
+        self.norm1 = nn.Identity()
         self.pool = operations[data_dim]["max_pool"](
             kernel_size=pool_kernel_size,
             stride=pool_stride,
@@ -136,8 +130,9 @@ class ShoeboxEncoder(nn.Module):
             return x.numel()
 
     def forward(self, x):
-        if torch.isnan(x).any():
-            raise RuntimeError("NaNs in ShoeboxEncoder input")
+        if torch.isnan(x).any() or torch.isinf(x).any():
+            print("Stats:", torch.min(x), torch.max(x))
+            raise RuntimeError("NaNs or inf in ShoeboxEncoder input")
 
         x = F.relu(self.norm1(self.conv1(x)))
         if torch.isnan(x).any():
