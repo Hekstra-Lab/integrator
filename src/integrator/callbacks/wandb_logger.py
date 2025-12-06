@@ -191,17 +191,36 @@ class PlotterLD(Callback):
                 f"Selected {self.n_profiles} refl_ids to track: {tracked_ids}"
             )
 
-        profile_images = preds["profile"].reshape(-1, self.d, self.h, self.w)[
-            ..., (self.d - 1) // 2, :, :
-        ]
-        count_images = preds["counts"].reshape(-1, self.d, self.h, self.w)[
-            ..., (self.d - 1) // 2, :, :
-        ]
-        rate_images = (
-            preds["rates"]
-            .mean(1)
-            .reshape(-1, self.d, self.h, self.w)[..., (self.d - 1) // 2, :, :]
-        )
+        if self.d == 1:
+            # 2D shoebox
+            count_images = preds["counts"].reshape(-1, self.h, self.w)
+            profile_images = preds["profile"].reshape(-1, self.h, self.w)
+            rate_images = preds["rates"].mean(1).reshape(-1, self.h, self.w)
+        else:
+            # 3D shoebox
+            count_images = preds["counts"].reshape(-1, self.d, self.h, self.w)[
+                :, self.d // 2
+            ]
+            profile_images = preds["profile"].reshape(
+                -1, self.d, self.h, self.w
+            )[:, self.d // 2]
+            rate_images = (
+                preds["rates"]
+                .mean(1)
+                .reshape(-1, self.d, self.h, self.w)[:, self.d // 2]
+            )
+
+        # profile_images = preds["profile"].reshape(-1, self.d, self.h, self.w)[
+        #     ..., (self.d - 1) // 2, :, :
+        # ]
+        # count_images = preds["counts"].reshape(-1, self.d, self.h, self.w)[
+        #     ..., (self.d - 1) // 2, :, :
+        # ]
+        # rate_images = (
+        #     preds["rates"]
+        #     .mean(1)
+        #     .reshape(-1, self.d, self.h, self.w)[..., (self.d - 1) // 2, :, :]
+        # )
 
         for ref_id in tracked_ids:
             id_str = str(ref_id)
