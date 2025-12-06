@@ -108,13 +108,16 @@ class ShoeboxDataModule2D(BaseDataModule):
         reference = reference[~all_dead]
 
         # dataset
-        counts[~masks.bool()] = self.dataset_mean.round()
+        processed_counts = counts.clone()
+        processed_counts[~masks.bool()] = self.dataset_mean.round()
 
         if self.anscombe:
-            ans = 2 * torch.sqrt(counts + (3.0 / 8.0))
+            ans = 2 * torch.sqrt(processed_counts + (3.0 / 8.0))
             standardized_counts = (ans - stats[1]) / stats[1].sqrt()
         else:
-            standardized_counts = ((counts) - stats[0]) / stats[1].sqrt()
+            standardized_counts = ((processed_counts) - stats[0]) / stats[
+                1
+            ].sqrt()
 
         if self.x_coords is not None:
             x = torch.load(os.path.join(self.data_dir, self.x_coords))[
@@ -143,7 +146,7 @@ class ShoeboxDataModule2D(BaseDataModule):
         #            )
 
         self.full_dataset = TensorDataset(
-            counts, standardized_counts, masks, reference
+            processed_counts, standardized_counts, masks, reference
         )
         # If single_sample_index is specified, use only that sample
         if self.single_sample_index is not None:
