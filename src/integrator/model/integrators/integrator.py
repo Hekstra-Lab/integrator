@@ -363,7 +363,7 @@ class Integrator(LightningModule):
         self.log("train/kl", kl, on_step=False, on_epoch=True)
         self.log("train/nll", nll, on_step=False, on_epoch=True)
 
-        outputs["loss"]
+        outputs["loss"] = total_loss
         return {"loss": total_loss, "model_output": outputs}
 
     def configure_optimizers(self):
