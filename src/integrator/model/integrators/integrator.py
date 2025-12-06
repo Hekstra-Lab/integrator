@@ -340,9 +340,9 @@ class Integrator(LightningModule):
         loss_dict = self.loss(
             rate=outputs["rates"],
             counts=outputs["counts"],
-            q_p=outputs["qp"],
-            q_i=outputs["qi"],
-            q_bg=outputs["qbg"],
+            qp=outputs["qp"],
+            qi=outputs["qi"],
+            qbg=outputs["qbg"],
             masks=outputs["masks"],
         )
 
@@ -400,9 +400,9 @@ class Integrator(LightningModule):
         loss_dict = self.loss(
             rate=outputs["rates"],
             counts=outputs["counts"],
-            q_p=outputs["qp"],
-            q_i=outputs["qi"],
-            q_bg=outputs["qbg"],
+            qp=outputs["qp"],
+            qi=outputs["qi"],
+            qbg=outputs["qbg"],
             masks=outputs["masks"],
         )
 

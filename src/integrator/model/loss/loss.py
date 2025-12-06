@@ -174,7 +174,7 @@ class Loss(nn.Module):
         self,
         rate: Tensor,
         counts: Tensor,
-        qprf: Distribution,
+        qp: Distribution,
         qi: Distribution,
         qbg: Distribution,
         mask: Tensor,
@@ -198,7 +198,7 @@ class Loss(nn.Module):
         if self.cfg.pprf is not None and self.prf_params is not None:
             kl_prf = _prior_kl(
                 prior=self.cfg.pprf,
-                q=qprf,
+                q=qp,
                 params=self.prf_params,
                 weight=self.cfg.pprf.weight,
                 device=device,
@@ -273,7 +273,7 @@ if __name__ == "__main__":
     # distributions
     qbg_ = FoldedNormalDistribution(in_features=64)
     qi_ = FoldedNormalDistribution(in_features=64)
-    qprf_ = DirichletDistribution(in_features=64, out_features=(3, 21, 21))
+    qp_ = DirichletDistribution(in_features=64, out_features=(3, 21, 21))
 
     # load a batch
     counts, sbox, mask, meta = next(iter(data.train_dataloader()))
@@ -288,20 +288,11 @@ if __name__ == "__main__":
     # get distributinos
     qbg = qbg_(intensity_rep)
     qi = qi_(intensity_rep)
-    qprf = qprf_(shoebox_rep)
+    qp = qp_(shoebox_rep)
 
     # get samples
     zbg = qbg.rsample([mc_samples]).unsqueeze(-1).permute(1, 0, 2)
-    zprf = qprf.rsample([mc_samples]).permute(1, 0, 2)
+    zprf = qp.rsample([mc_samples]).permute(1, 0, 2)
     zi = qi.rsample([mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
     rate = zi * zprf + zbg  # [B,S,Pix]
-
-    integrator.loss(
-        rate=rate,
-        counts=counts,
-        qprf=qprf,
-        qi=qi,
-        qbg=qbg,
-        mask=mask,
-    )

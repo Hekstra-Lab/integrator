@@ -257,6 +257,6 @@ def train(
                 f.write(f"refls with sigi0: {n_filtered}\n")
 
 
-# -
+# %%
 if __name__ == "__main__":
     pass
