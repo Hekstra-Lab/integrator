@@ -20,9 +20,9 @@ from integrator.model.encoders import (
 from integrator.model.loss import BaseLoss
 
 
-def calculate_intensities(counts, qbg, qp, masks, cfg):
+def calculate_intensities(counts, qbg, qp, mask, cfg):
     with torch.no_grad():
-        counts = counts * masks  # [B,P]
+        counts = counts * mask  # [B,P]
         zbg = qbg.rsample([cfg.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
         zp = qp.mean.unsqueeze(1)
 
@@ -31,7 +31,7 @@ def calculate_intensities(counts, qbg, qp, masks, cfg):
 
         # kabsch sum
         for _ in range(cfg.max_iterations):
-            num = (counts.unsqueeze(1) - zbg) * zp * masks.unsqueeze(1) / vi
+            num = (counts.unsqueeze(1) - zbg) * zp * mask.unsqueeze(1) / vi
             denom = zp.pow(2) / vi
             intensity = num.sum(-1) / denom.sum(-1)  # [batch_size, mc_samples]
             vi = (intensity.unsqueeze(-1) * zp) + zbg
@@ -40,7 +40,7 @@ def calculate_intensities(counts, qbg, qp, masks, cfg):
         kabsch_sum_var = intensity.var(-1)
 
         # profile masking
-        zp = zp * masks.unsqueeze(1)  # profiles
+        zp = zp * mask.unsqueeze(1)  # profiles
         thresholds = torch.quantile(
             zp,
             0.99,
@@ -104,7 +104,7 @@ class IntegratorHyperParameters:
 class IntegratorBaseOutputs:
     rates: Tensor
     counts: Tensor
-    masks: Tensor
+    mask: Tensor
     qbg: Any
     qp: Any
     qi: Any
@@ -165,7 +165,7 @@ def _assemble_outputs(
     base = {
         "rates": out.rates,
         "counts": out.counts,
-        "masks": out.masks,
+        "mask": out.mask,
         "qbg": out.qbg,
         "qbg_mean": out.qbg.mean,
         "qbg_var": out.qbg.variance,
@@ -276,7 +276,7 @@ class Integrator(LightningModule):
         self,
         counts: Tensor,
         shoebox: Tensor,
-        masks: Tensor,
+        mask: Tensor,
         reference: Tensor | None = None,
     ) -> dict[str, Any]:
         # Unpack batch
@@ -321,7 +321,7 @@ class Integrator(LightningModule):
         out = IntegratorBaseOutputs(
             rates=rate,
             counts=counts,
-            masks=masks,
+            mask=mask,
             qbg=qbg,
             qp=qp,
             qi=qi,
@@ -333,8 +333,8 @@ class Integrator(LightningModule):
         return out
 
     def training_step(self, batch, _batch_idx):
-        counts, shoebox, masks, reference = batch
-        outputs = self(counts, shoebox, masks, reference)
+        counts, shoebox, mask, reference = batch
+        outputs = self(counts, shoebox, mask, reference)
 
         # Calculate loss
         loss_dict = self.loss(
@@ -343,7 +343,7 @@ class Integrator(LightningModule):
             qp=outputs["qp"],
             qi=outputs["qi"],
             qbg=outputs["qbg"],
-            masks=outputs["masks"],
+            mask=outputs["mask"],
         )
 
         renyi_loss = (
@@ -394,8 +394,8 @@ class Integrator(LightningModule):
 
     def validation_step(self, batch, _batch_idx):
         # Unpack batch
-        counts, shoebox, masks, reference = batch
-        outputs = self(counts, shoebox, masks, reference)
+        counts, shoebox, mask, reference = batch
+        outputs = self(counts, shoebox, mask, reference)
 
         loss_dict = self.loss(
             rate=outputs["rates"],
@@ -403,7 +403,7 @@ class Integrator(LightningModule):
             qp=outputs["qp"],
             qi=outputs["qi"],
             qbg=outputs["qbg"],
-            masks=outputs["masks"],
+            mask=outputs["mask"],
         )
 
         total_loss = loss_dict["loss"]
@@ -419,8 +419,8 @@ class Integrator(LightningModule):
         return outputs
 
     def predict_step(self, batch: Tensor, _batch_idx):
-        counts, shoebox, masks, reference = batch
-        outputs = self(counts, shoebox, masks, reference)
+        counts, shoebox, mask, reference = batch
+        outputs = self(counts, shoebox, mask, reference)
 
         return {k: v for k, v in outputs.items() if k in self.predict_keys}
 
@@ -578,9 +578,9 @@ class IntegratorNew(LightningModule):
         self.train_df = pl.DataFrame(schema=self.schema)
         self.val_df = pl.DataFrame(schema=self.schema)
 
-    def calculate_intensities(self, counts, qbg, qp, masks):
+    def calculate_intensities(self, counts, qbg, qp, mask):
         with torch.no_grad():
-            counts = counts * masks  # [B,P]
+            counts = counts * mask  # [B,P]
             zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
             zp = qp.mean.unsqueeze(1)
 
@@ -589,9 +589,7 @@ class IntegratorNew(LightningModule):
 
             # kabsch sum
             for _ in range(self.max_iterations):
-                num = (
-                    (counts.unsqueeze(1) - zbg) * zp * masks.unsqueeze(1) / vi
-                )
+                num = (counts.unsqueeze(1) - zbg) * zp * mask.unsqueeze(1) / vi
                 denom = zp.pow(2) / vi
                 intensity = num.sum(-1) / denom.sum(
                     -1
@@ -602,7 +600,7 @@ class IntegratorNew(LightningModule):
             kabsch_sum_var = intensity.var(-1)
 
             # profile masking
-            zp = zp * masks.unsqueeze(1)  # profiles
+            zp = zp * mask.unsqueeze(1)  # profiles
             thresholds = torch.quantile(
                 zp,
                 0.99,
@@ -632,7 +630,7 @@ class IntegratorNew(LightningModule):
         self,
         counts: Tensor,
         shoebox: Tensor,
-        masks: Tensor,
+        mask: Tensor,
         reference: Tensor | None = None,
     ) -> dict[str, Any]:
         # Unpack batch
@@ -758,8 +756,8 @@ class IntegratorNew(LightningModule):
         self.val_nll = []
 
     def training_step(self, batch, _batch_idx):
-        counts, shoebox, masks, reference = batch
-        outputs = self(counts, shoebox, masks, reference)
+        counts, shoebox, mask, reference = batch
+        outputs = self(counts, shoebox, mask, reference)
 
         # Calculate loss
         loss_dict = self.loss(
@@ -768,7 +766,7 @@ class IntegratorNew(LightningModule):
             q_p=outputs["qp"],
             q_i=outputs["qi"],
             q_bg=outputs["qbg"],
-            masks=outputs["masks"],
+            mask=outputs["mask"],
         )
 
         renyi_loss = (
@@ -812,8 +810,8 @@ class IntegratorNew(LightningModule):
 
     def validation_step(self, batch, _batch_idx):
         # Unpack batch
-        counts, shoebox, masks, reference = batch
-        outputs = self(counts, shoebox, masks, reference)
+        counts, shoebox, mask, reference = batch
+        outputs = self(counts, shoebox, mask, reference)
 
         loss_dict = self.loss(
             rate=outputs["rates"],
@@ -821,7 +819,7 @@ class IntegratorNew(LightningModule):
             q_p=outputs["qp"],
             q_i=outputs["qi"],
             q_bg=outputs["qbg"],
-            masks=outputs["masks"],
+            mask=outputs["mask"],
         )
 
         for k, v in loss_dict.items():
@@ -836,8 +834,8 @@ class IntegratorNew(LightningModule):
         return outputs
 
     def predict_step(self, batch: Tensor, _batch_idx):
-        counts, shoebox, masks, reference = batch
-        outputs = self(counts, shoebox, masks, reference)
+        counts, shoebox, mask, reference = batch
+        outputs = self(counts, shoebox, mask, reference)
 
         return {k: v for k, v in outputs.items() if k in self.predict_keys}
 
