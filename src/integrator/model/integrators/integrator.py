@@ -117,8 +117,8 @@ def extract_reference_fields(
 ) -> dict[str, Any]:
     if data_dim == "3d":
         return {
-            "dials_I_sum_value": ref[:, 6].cpu(),
-            "dials_I_sum_var": ref[:, 7].cpu(),
+            "dials_I_sum_value": ref[:, 6],
+            "dials_I_sum_var": ref[:, 7],
             "dials_I_prf_value": ref[:, 8],
             "dials_I_prf_var": ref[:, 9],
             "refl_ids": ref[:, -1].int().tolist(),
@@ -412,4 +412,38 @@ class Integrator(LightningModule):
 
 
 if __name__ == "__main__":
+    import torch
+
+    from integrator.model.distributions import (
+        DirichletDistribution,
+        FoldedNormalDistribution,
+    )
+    from integrator.utils import (
+        create_data_loader,
+        create_integrator,
+        load_config,
+    )
+    from utils import CONFIGS
+
+    cfg = list(CONFIGS.glob("*"))[0]
+    cfg = load_config(cfg)
+
+    integrator = create_integrator(cfg)
+    data = create_data_loader(cfg)
+
+    # hyperparameters
+    mc_samples = 100
+
+    # distributions
+    qbg_ = FoldedNormalDistribution(in_features=64)
+    qi_ = FoldedNormalDistribution(in_features=64)
+    qp_ = DirichletDistribution(in_features=64, out_features=(3, 21, 21))
+
+    # load a batch
+    counts, sbox, mask, meta = next(iter(data.train_dataloader()))
+
+    out = integrator.forward(counts, sbox, mask, meta)
+
+    out = integrator.training_step((counts, sbox, mask, meta), 0)
+
     pass
