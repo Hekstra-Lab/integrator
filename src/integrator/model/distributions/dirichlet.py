@@ -1,5 +1,6 @@
 from typing import Literal
 
+import torch
 import torch.nn as nn
 from torch import Tensor
 from torch.distributions import Dirichlet
@@ -62,9 +63,17 @@ class DirichletDistribution(nn.Module):
             qp: A `torch.distributions.Dirichlet(x)`
 
         """
-        x = self.alpha_layer(x)
-        x = self.constrain_fn(x) + self.eps
-        qp = Dirichlet(x)
+        # x = self.alpha_layer(x)
+        # x = self.constrain_fn(x) + self.eps
+
+        log_alpha = self.alpha_layer(x)
+
+        # keep log_alpha within [-4, 4]
+        log_alpha = torch.tanh(log_alpha) * 4.0
+
+        alpha = torch.exp(log_alpha)  # α ∈ [0.018, 54.6]
+
+        qp = Dirichlet(alpha)
 
         return qp
 
