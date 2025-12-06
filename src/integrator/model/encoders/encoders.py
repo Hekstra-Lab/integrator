@@ -91,6 +91,9 @@ class ShoeboxEncoder(nn.Module):
         #     num_channels=conv1_out_channels,
         # )
         self.norm1 = nn.Identity()
+
+        nn.init.kaiming_normal_(self.conv1.weight)
+        nn.init.zeros_(self.conv1.bias)
         self.pool = operations[data_dim]["max_pool"](
             kernel_size=pool_kernel_size,
             stride=pool_stride,

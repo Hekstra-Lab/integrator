@@ -374,11 +374,17 @@ class Integrator(LightningModule):
         }
 
     def configure_optimizers(self):
-        return torch.optim.Adam(
+        optimizer = torch.optim.Adam(
             self.parameters(),
-            lr=self.lr,
-            weight_decay=self.weight_decay,
+            lr=3e-4,
+            betas=(0.9, 0.95),
         )
+        return optimizer
+        # return torch.optim.Adam(
+        #     self.parameters(),
+        #     lr=self.lr,
+        #     weight_decay=self.weight_decay,
+        # )
 
     def validation_step(self, batch, _batch_idx):
         # Unpack batch
