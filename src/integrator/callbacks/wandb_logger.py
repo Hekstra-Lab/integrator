@@ -253,8 +253,7 @@ class PlotterLD(Callback):
     ):
         with torch.no_grad():
             # get forward outputs
-            counts, shoebox, mask, reference = batch
-            base_output = pl_module(counts, shoebox, mask, reference)
+            base_output = outputs
 
             # additional metrics to log
 
@@ -293,7 +292,6 @@ class PlotterLD(Callback):
                         self.preds_train[key] = base_output[key].detach().cpu()
 
             # Clean up
-            del base_output
             torch.cuda.empty_cache()
 
     def on_train_epoch_end(self, trainer, pl_module):
@@ -438,8 +436,7 @@ class PlotterLD(Callback):
     ):
         with torch.no_grad():
             # get forward outputs
-            counts, shoebox, mask, reference = batch
-            base_output = pl_module(counts, shoebox, mask, reference)
+            base_output = outputs
 
             # updated tracked shoeboxes
             self.tracked_ids_val, self.tracked_shoeboxes_val = (
@@ -475,7 +472,6 @@ class PlotterLD(Callback):
                     self.preds_val[key] = base_output[key].detach().cpu()
 
             # Clean up
-            del base_output
             torch.cuda.empty_cache()
 
     def on_validation_epoch_end(self, trainer, pl_module):
@@ -731,7 +727,6 @@ class Plotter(Callback):
                         self.preds_train[key] = base_output[key].detach().cpu()
 
             # Clean up
-            del base_output
             torch.cuda.empty_cache()
 
     def on_train_epoch_end(self, trainer, pl_module):
@@ -1489,8 +1484,7 @@ class MVNPlotter(Callback):
         # Only track the last validation batch to save memory
 
         with torch.no_grad():
-            shoebox, dials, masks, metadata, counts = batch
-            base_output = pl_module(shoebox, dials, masks, metadata, counts)
+            base_output = outputs
 
             intensities = pl_module.calculate_intensities(
                 counts=base_output["counts"],
