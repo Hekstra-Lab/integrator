@@ -7,7 +7,6 @@ import reciprocalspaceship as rs
 import typer
 import yaml
 
-from integrator.config.schema import Cfg
 from integrator.utils import clean_from_memory, mtz_writer
 
 app = typer.Typer()
@@ -24,13 +23,13 @@ def _deep_merge(a: dict, b: dict) -> dict:
 
 
 def apply_cli_overrides(
-    cfg: Cfg,
+    cfg: dict,
     *,
     epochs: int | None = None,
     batch_size: int | None = None,
     data_path: Path | None = None,
-) -> Cfg:
-    base = cfg.model_dump()  # plain dict
+) -> dict:
+    base = cfg  # plain dict
     updates: dict[str, Any] = {}
     if epochs is not None:
         updates.setdefault("trainer", {}).setdefault("args", {})[
@@ -46,7 +45,7 @@ def apply_cli_overrides(
         ] = str(data_path)
 
     merged = _deep_merge(base, updates)
-    return Cfg.model_validate(merged)
+    return merged
 
 
 @app.command()
@@ -98,7 +97,7 @@ def train(
     )
 
     # load data
-    data = create_data_loader(cfg.dict())
+    data = create_data_loader(cfg)
 
     # load wandb logger
     logger = WandbLogger(
@@ -110,38 +109,38 @@ def train(
     logdir = logger.experiment.dir
 
     config_out = Path(logdir) / "config_copy.yaml"
-    copy = cfg.model_dump(mode="json")
+    cfg_json = deepcopy(cfg)
 
-    logger.log_hyperparams(cfg.model_dump())
+    logger.log_hyperparams(cfg_json)
 
     with open(config_out, "w") as f:
-        yaml.safe_dump(copy, f, sort_keys=False)
+        yaml.safe_dump(cfg_json, f, sort_keys=False)
 
     # assign validation/train labels to each shoebox
     assign_labels(dataset=data, save_dir=logdir)
 
     # create integrator
-    integrator = create_integrator(cfg.dict())
+    integrator = create_integrator(cfg)
 
     # create prediction writer
     pred_writer = PredWriter(
         output_dir=None,
-        write_interval=cfg.dict()["trainer"]["args"]["callbacks"][
-            "pred_writer"
-        ]["write_interval"],
+        write_interval=cfg["trainer"]["args"]["callbacks"]["pred_writer"][
+            "write_interval"
+        ],
     )
 
     # to generate plots
 
-    if cfg.dict()["integrator"]["args"]["data_dim"] == "3d":
+    if cfg["integrator"]["args"]["data_dim"] == "3d":
         plotter = Plotter(n_profiles=10)
-    elif cfg.dict()["integrator"]["args"]["data_dim"] == "2d":
+    elif cfg["integrator"]["args"]["data_dim"] == "2d":
         plotter = PlotterLD(
             n_profiles=10,
             plot_every_n_epochs=1,
-            d=cfg.model_dump()["logger"]["d"],
-            h=cfg.model_dump()["logger"]["h"],
-            w=cfg.model_dump()["logger"]["w"],
+            d=cfg["logger"]["d"],
+            h=cfg["logger"]["h"],
+            w=cfg["logger"]["w"],
         )
     else:
         print("Incorrect data_dim value")
@@ -158,7 +157,7 @@ def train(
 
     # to train integrator
     trainer = create_trainer(
-        cfg.dict(),
+        cfg,
         callbacks=[
             pred_writer,
             checkpoint_callback,
@@ -176,10 +175,8 @@ def train(
     )
 
     # logdir: "/path/to/lightning_logs/wandb/run*/files/"
-    integrator.train_df.write_csv(logdir + "avg_train_metrics.csv")
-    integrator.val_df.write_csv(logdir + "avg_val_metrics.csv")
 
-    cfg.model_dump()["trainer"]["args"]["logger"] = False
+    cfg["trainer"]["args"]["logger"] = False
 
     clean_from_memory(
         pred_writer, pred_writer, pred_writer, checkpoint_callback
@@ -203,12 +200,12 @@ def train(
                 output_dir=out_dir, write_interval="epoch"
             )
             trainer = create_trainer(
-                cfg.model_dump(),
+                cfg,
                 callbacks=[pred_writer],
                 logger=None,
             )
             ckpt_ = torch.load(ckpt.as_posix())
-            integrator = create_integrator(cfg.model_dump())
+            integrator = create_integrator(cfg)
             integrator.load_state_dict(ckpt_["state_dict"])
             if torch.cuda.is_available():
                 integrator.to(torch.device("cuda"))
