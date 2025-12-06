@@ -291,7 +291,6 @@ class Integrator(LightningModule):
         mask: Tensor,
         reference: Tensor | None = None,
     ) -> dict[str, Any]:
-        # Unpack batch
         counts = torch.clamp(counts, min=0)
 
         x_profile, x_intensity = _encode_shoebox(
