@@ -11,6 +11,27 @@ from pytorch_lightning.callbacks import Callback
 import wandb
 
 
+def plot_symlog_qi_vs_dials(
+    qi_mean,
+    dials_prf,
+    title="qI mean vs DIALS I_prf",
+):
+    fig, ax = plt.subplots(figsize=(6, 5))
+
+    ax.scatter(qi_mean, dials_prf, s=10, alpha=0.6)
+
+    ax.set_xscale("symlog", linthresh=1e-3)
+    ax.set_yscale("symlog", linthresh=1e-3)
+
+    ax.set_xlabel("symlog mean(qI)", fontsize=12)
+    ax.set_ylabel("symlog DIALS I_prf", fontsize=12)
+    ax.set_title(title)
+
+    ax.grid(True, which="both", ls="--", alpha=0.3)
+
+    return fig
+
+
 def create_comparison_grid(
     n_profiles,
     refl_ids,
@@ -374,6 +395,12 @@ class PlotterLD(Callback):
                 # Log metrics
                 wandb.log(log_dict)
 
+                fig = plot_symlog_qi_vs_dials(
+                    i_flat.cpu().numpy(), dials_flat.cpu().numpy()
+                )
+                wandb.log({"qi_vs_dials_symlog": wandb.Image(fig)})
+                plt.close(fig)
+
             except Exception as e:
                 print("Caught exception in on_train_epoch_end!")
                 print("Type of exception:", type(e))
@@ -538,6 +565,12 @@ class PlotterLD(Callback):
 
                 log_dict["Val: Tracked Profiles"] = wandb.Image(comparison_fig)
                 plt.close(comparison_fig)
+
+                fig = plot_symlog_qi_vs_dials(
+                    i_flat.cpu().numpy(), dials_flat.cpu().numpy()
+                )
+                wandb.log({"qi_vs_dials_symlog": wandb.Image(fig)})
+                plt.close(fig)
 
                 # Log metrics
                 wandb.log(log_dict)
