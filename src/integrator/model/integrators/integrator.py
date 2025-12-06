@@ -325,7 +325,7 @@ class Integrator(LightningModule):
         )
         out = _assemble_outputs(out, self.cfg.data_dim)
         return {
-            "model_output": out,
+            "forward_base_out": out,
             "qp": qp,
             "qi": qi,
             "qbg": qbg,
@@ -337,12 +337,12 @@ class Integrator(LightningModule):
 
         # Calculate loss
         loss_dict = self.loss(
-            rate=outputs["model_output"]["rates"],
-            counts=outputs["model_output"]["counts"],
+            rate=outputs["forward_base_out"]["rates"],
+            counts=outputs["forward_base_out"]["counts"],
             qp=outputs["qp"],
             qi=outputs["qi"],
             qbg=outputs["qbg"],
-            mask=outputs["model_output"]["mask"],
+            mask=outputs["forward_base_out"]["mask"],
         )
 
         self.log("Mean(qi.mean)", outputs["qi"].mean.mean())
@@ -368,7 +368,10 @@ class Integrator(LightningModule):
         self.log("train/nll", nll, on_step=False, on_epoch=True)
 
         outputs["loss"] = total_loss
-        return {"loss": total_loss, "model_output": outputs}
+        return {
+            "loss": total_loss,
+            "model_output": outputs["forward_base_out"],
+        }
 
     def configure_optimizers(self):
         return torch.optim.Adam(
@@ -383,12 +386,12 @@ class Integrator(LightningModule):
         outputs = self(counts, shoebox, mask, reference)
 
         loss_dict = self.loss(
-            rate=outputs["model_output"]["rates"],
-            counts=outputs["model_output"]["counts"],
+            rate=outputs["forward_base_out"]["rates"],
+            counts=outputs["forward_base_out"]["counts"],
             qp=outputs["qp"],
             qi=outputs["qi"],
             qbg=outputs["qbg"],
-            mask=outputs["model_output"]["mask"],
+            mask=outputs["forward_base_out"]["mask"],
         )
 
         total_loss = loss_dict["loss"]
@@ -402,7 +405,10 @@ class Integrator(LightningModule):
         self.log("val/nll", nll, on_step=False, on_epoch=True)
 
         outputs["loss"] = total_loss
-        return {"loss": total_loss, "model_output": outputs}
+        return {
+            "loss": total_loss,
+            "model_output": outputs["forward_base_out"],
+        }
 
     def predict_step(self, batch: Tensor, _batch_idx):
         counts, shoebox, mask, reference = batch
@@ -445,5 +451,3 @@ if __name__ == "__main__":
     out = integrator.forward(counts, sbox, mask, meta)
 
     out = integrator.training_step((counts, sbox, mask, meta), 0)
-
-    pass
