@@ -262,7 +262,7 @@ class PlotterLD(Callback):
                 "dials_I_prf_value",
                 "dials_I_prf_var",
                 "profile",
-                "qbg",
+                "qbg_mean",
                 "x_c",
                 "y_c",
                 "z_c",
@@ -301,7 +301,7 @@ class PlotterLD(Callback):
                 dials_bg_flat = (
                     self.preds_train["dials_bg_mean"].flatten() + 1e-8
                 )
-                qbg_flat = self.preds_train["qbg"].flatten() + 1e-8
+                qbg_flat = self.preds_train["qbg_mean"].flatten() + 1e-8
 
                 x_c_flat = self.preds_train["x_c"].flatten()
                 y_c_flat = self.preds_train["y_c"].flatten()
@@ -378,10 +378,14 @@ class PlotterLD(Callback):
                 }
 
                 log_dict["mean(qbg.mean)"] = torch.mean(
-                    self.preds_train["qbg"]
+                    self.preds_train["qbg_mean"]
                 )
-                log_dict["min(qbg.mean)"] = torch.min(self.preds_train["qbg"])
-                log_dict["max(qbg.mean)"] = torch.max(self.preds_train["qbg"])
+                log_dict["min(qbg.mean)"] = torch.min(
+                    self.preds_train["qbg_mean"]
+                )
+                log_dict["max(qbg.mean)"] = torch.max(
+                    self.preds_train["qbg_mean"]
+                )
 
                 # plot every n user-specified epochs
                 if self.current_epoch % self.plot_every_n_epochs == 0:
@@ -442,7 +446,7 @@ class PlotterLD(Callback):
                 "dials_I_prf_value",
                 "dials_I_prf_var",
                 "profile",
-                "qbg",
+                "qbg_mean",
                 "x_c",
                 "y_c",
                 "z_c",
@@ -554,9 +558,15 @@ class PlotterLD(Callback):
                     "Val: Mean var(I) ": torch.mean(i_var_flat),
                     "Val: Min var(I)": torch.min(i_var_flat),
                     "Val: Max var(I)": torch.max(i_var_flat),
-                    "val: mean(qbg.mean)": torch.mean(self.preds_val["qbg"]),
-                    "val: min(qbg.mean)": torch.min(self.preds_val["qbg"]),
-                    "val: max(qbg.mean)": torch.max(self.preds_val["qbg"]),
+                    "val: mean(qbg.mean)": torch.mean(
+                        self.preds_val["qbg_mean"]
+                    ),
+                    "val: min(qbg.mean)": torch.min(
+                        self.preds_val["qbg_mean"]
+                    ),
+                    "val: max(qbg.mean)": torch.max(
+                        self.preds_val["qbg_mean"]
+                    ),
                 }
 
                 # plot input shoebox and predicted profile
@@ -653,8 +663,8 @@ class Plotter(Callback):
                     "profile": profile_images[idx].cpu(),
                     "counts": count_images[idx].cpu(),
                     "rates": rate_images[idx].cpu(),
-                    "bg_mean": preds["qbg"].mean[idx].cpu(),
-                    "bg_var": preds["qbg"].variance[idx].cpu(),
+                    "bg_mean": preds["qbg_mean"][idx].cpu(),
+                    "bg_var": preds["qbgvar"][idx].cpu(),
                     "qi_mean": preds["qi_mean"][idx].cpu(),
                     "qi_var": preds["qi_var"][idx].cpu(),
                     "dials_I_prf_value": preds["dials_I_prf_value"][idx],
