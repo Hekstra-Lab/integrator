@@ -52,8 +52,8 @@ class GammaDistribution(nn.Module):
 
         """
         params = self.fc(x)
-        concentration = self.constrain(params[..., 0])
-        rate = self.constrain(params[..., 1])
+        concentration = self.constrain_fn(params[..., 0])
+        rate = self.constrain_fn(params[..., 1])
         return Gamma(concentration.flatten(), rate.flatten())
 
 
