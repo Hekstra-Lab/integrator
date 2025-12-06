@@ -355,7 +355,9 @@ class Integrator(LightningModule):
         # ----- Check input counts -----
         stats("counts", counts)
 
-        print("counts total:", counts.sum(-1))
+        print("max counts total:", counts.sum(-1).max())
+        print("max mask total:", mask.sum(-1).max())
+        print("min mask total:", mask.sum(-1).min())
 
         out = IntegratorBaseOutputs(
             rates=rate,
