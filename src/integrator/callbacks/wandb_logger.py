@@ -253,7 +253,7 @@ class PlotterLD(Callback):
     ):
         with torch.no_grad():
             # get forward outputs
-            base_output = outputs
+            base_output = outputs["model_output"]
 
             # additional metrics to log
 
@@ -436,7 +436,7 @@ class PlotterLD(Callback):
     ):
         with torch.no_grad():
             # get forward outputs
-            base_output = outputs
+            base_output = outputs["model_output"]
 
             # updated tracked shoeboxes
             self.tracked_ids_val, self.tracked_shoeboxes_val = (
