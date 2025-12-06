@@ -123,8 +123,7 @@ def create_integrator(
         pprf=pprf,
         pbg=pbg,
         pi=pi,
-        mc_smpls=config["loss"]["mc_smpls"],
-        eps=config["loss"]["eps"],
+        **config["loss"]["args"],
     )
     loss_name = config["loss"]["name"]
     loss_cls = REGISTRY["loss"][loss_name](cfg=loss_cfg)
