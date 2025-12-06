@@ -237,6 +237,9 @@ class Loss(nn.Module):
         # Total loss
         loss = (neg_ll + kl).mean()
 
+        print("min nll", neg_ll.min())
+        print("max nll", neg_ll.max())
+
         return {
             "loss": loss,
             "neg_ll_mean": neg_ll.mean(),
