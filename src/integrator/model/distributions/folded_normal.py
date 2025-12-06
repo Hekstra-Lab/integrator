@@ -311,4 +311,8 @@ class FoldedNormalDistribution(nn.Module):
 if __name__ == "main":
     foldednormal = FoldedNormalDistribution(in_features=64)
     representation = torch.randn(10, 64)
+
     q = foldednormal(representation)
+
+
+torch.distributions.Gamma(10, 0.0001).mean

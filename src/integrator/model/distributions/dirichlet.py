@@ -1,3 +1,4 @@
+import math
 from typing import Literal
 
 import torch
@@ -51,6 +52,8 @@ class DirichletDistribution(nn.Module):
         )
         self.beta = beta
         self.eps = eps
+        self.min_log_alpha = math.log(1e-3)
+        self.max_log_alpha = math.log(1e3)
 
     def forward(self, x: Tensor) -> Dirichlet:
         """
@@ -66,13 +69,26 @@ class DirichletDistribution(nn.Module):
         # x = self.alpha_layer(x)
         # x = self.constrain_fn(x) + self.eps
 
+        if torch.isnan(x).any():
+            raise RuntimeError("NaNs in Dirichlet input x")
+
         log_alpha = self.alpha_layer(x)
 
+        if torch.isnan(log_alpha).any():
+            raise RuntimeError("NaNs right after Dirichlet fc")
+
+        log_alpha = torch.clamp(
+            log_alpha, self.min_log_alpha, self.max_log_alpha
+        )
+        alpha = torch.exp(log_alpha)
+
+        if torch.isnan(alpha).any() or (alpha <= 0).any():
+            raise RuntimeError(
+                "NaNs or nonpositive alpha before constructing Dirichlet"
+            )
         # keep log_alpha within [-4, 4]
-        log_alpha = torch.tanh(log_alpha) * 4.0
-
-        alpha = torch.exp(log_alpha)  # α ∈ [0.018, 54.6]
-
+        # log_alpha = torch.tanh(log_alpha) * 4.0
+        # alpha = torch.exp(log_alpha)
         qp = Dirichlet(alpha)
 
         return qp

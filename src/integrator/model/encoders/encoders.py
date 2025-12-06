@@ -136,12 +136,38 @@ class ShoeboxEncoder(nn.Module):
             return x.numel()
 
     def forward(self, x):
+        if torch.isnan(x).any():
+            raise RuntimeError("NaNs in ShoeboxEncoder input")
+
         x = F.relu(self.norm1(self.conv1(x)))
+        if torch.isnan(x).any():
+            raise RuntimeError("NaNs after conv1/norm1")
+
         x = self.pool(x)
+        if torch.isnan(x).any():
+            raise RuntimeError("NaNs after pool")
+
         x = F.relu(self.norm2(self.conv2(x)))
+        if torch.isnan(x).any():
+            raise RuntimeError("NaNs after conv2/norm2")
+
         x = x.view(x.size(0), -1)
+        if torch.isnan(x).any():
+            raise RuntimeError("NaNs after flatten")
+
         x = self.fc(x)
+        if torch.isnan(x).any():
+            raise RuntimeError("NaNs after fc before tanh")
+
         x = torch.tanh(x) * 5.0
+        if torch.isnan(x).any():
+            raise RuntimeError("NaNs after tanh in ShoeboxEncoder")
+        # x = F.relu(self.norm1(self.conv1(x)))
+        # x = self.pool(x)
+        # x = F.relu(self.norm2(self.conv2(x)))
+        # x = x.view(x.size(0), -1)
+        # x = self.fc(x)
+        # x = torch.tanh(x) * 5.0
         return x
 
 

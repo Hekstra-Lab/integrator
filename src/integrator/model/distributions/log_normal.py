@@ -43,7 +43,7 @@ class LogNormalDistribution(nn.Module):
     ) -> LogNormal:
         raw_loc, raw_scale = self.fc(x).chunk(2, dim=-1)
         print(raw_loc.shape, raw_scale.shape)
-        loc = torch.tanh(raw_loc) * 14.0
+        loc = torch.tanh(raw_loc) * 12
         scale_unbounded = F.softplus(raw_scale)
         scale = 0.01 + (2.0 - 0.01) * torch.sigmoid(scale_unbounded)
         print(loc.shape, scale.shape)
@@ -59,6 +59,3 @@ if __name__ == "__main__":
 
     # initialize a LogNormalDistribution object
     lognormal = LogNormalDistribution(in_features=64, constraint="softplus")
-    qi = lognormal(representation)
-
-    qi.rsample([10]).unsqueeze(-1).permute(1, 0, 2)
