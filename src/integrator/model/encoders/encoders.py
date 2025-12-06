@@ -117,6 +117,9 @@ class ShoeboxEncoder(nn.Module):
             out_features=encoder_out,
         )
 
+        self.conv1 = nn.utils.weight_norm(self.conv1)
+        self.conv2 = nn.utils.weight_norm(self.conv2)
+
     def _infer_flattened_size(self, input_shape, in_channels):
         # input_shape: (H, W, D)
         with torch.no_grad():
@@ -133,6 +136,11 @@ class ShoeboxEncoder(nn.Module):
         if torch.isnan(x).any() or torch.isinf(x).any():
             print("Stats:", torch.min(x), torch.max(x))
             raise RuntimeError("NaNs or inf in ShoeboxEncoder input")
+        if (
+            torch.isnan(self.conv1.weight).any()
+            or torch.isinf(self.conv1.weight).any()
+        ):
+            raise RuntimeError("conv1 weights corrupted")
 
         x = F.relu(self.norm1(self.conv1(x)))
         if torch.isnan(x).any():
