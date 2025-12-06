@@ -126,7 +126,8 @@ def create_integrator(
         mc_smpls=config["loss"]["args"]["mc_smpls"],
         eps=config["loss"]["args"]["eps"],
     )
-    loss_cls = REGISTRY["loss"]["loss"](cfg=loss_cfg)
+    loss_name = config["loss"]["name"]
+    loss_cls = REGISTRY["loss"][loss_name](cfg=loss_cfg)
     modules["loss"] = loss_cls
 
     # integrator hyperparameters
