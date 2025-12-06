@@ -27,7 +27,7 @@ def plot_symlog_qi_vs_dials(
     ax.set_ylabel("symlog DIALS I_prf", fontsize=12)
     ax.set_title(title)
 
-    ax.grid(True, which="both", ls="--", alpha=0.3)
+    ax.grid(True, which="both", alpha=0.3)
 
     return fig
 
@@ -407,7 +407,7 @@ class PlotterLD(Callback):
                 fig = plot_symlog_qi_vs_dials(
                     i_flat.cpu().numpy(), dials_flat.cpu().numpy()
                 )
-                wandb.log({"qi_vs_dials_symlog": wandb.Image(fig)})
+                wandb.log({"train: qi_vs_dials_symlog": wandb.Image(fig)})
                 plt.close(fig)
 
             except Exception as e:
@@ -467,7 +467,7 @@ class PlotterLD(Callback):
             torch.cuda.empty_cache()
 
     def on_validation_epoch_end(self, trainer, pl_module):
-        if self.preds_val:
+        if self.preds_validation:
             try:
                 data = []
 
@@ -514,12 +514,12 @@ class PlotterLD(Callback):
                 df = pd.DataFrame(
                     data,
                     columns=[
-                        "val: mean(qI)",
-                        "val: var(qI)",
+                        "validation: mean(qI)",
+                        "validation: var(qI)",
                         "DIALS intensity.prf.value",
                         "DIALS intensity.prf.variance",
                         "DIALS background.mean",
-                        "val: mean(qbg)",
+                        "validation: mean(qbg)",
                         "x_c",
                         "y_c",
                     ],
@@ -545,26 +545,28 @@ class PlotterLD(Callback):
 
                 # Create log dictionary
                 log_dict = {
-                    "Val: qi vs DIALS I prf": wandb.plot.scatter(
-                        table, "val: mean(qI)", "DIALS intensity.prf.value"
+                    "Validation: qi vs DIALS I prf": wandb.plot.scatter(
+                        table,
+                        "validation: mean(qI)",
+                        "DIALS intensity.prf.value",
                     ),
-                    "Val: Bg vs DIALS bg": wandb.plot.scatter(
-                        table, "val: mean(qbg)", "DIALS background.mean"
+                    "Validation: Bg vs DIALS bg": wandb.plot.scatter(
+                        table, "validation: mean(qbg)", "DIALS background.mean"
                     ),
-                    "Val: Correlation Coefficient qi": corr_I,
-                    "Val: Correlation Coefficient bg": corr_bg,
-                    "Val: Max mean(I)": torch.max(i_flat),
-                    "Val: Mean mean(I)": torch.mean(i_flat),
-                    "Val: Mean var(I) ": torch.mean(i_var_flat),
-                    "Val: Min var(I)": torch.min(i_var_flat),
-                    "Val: Max var(I)": torch.max(i_var_flat),
-                    "val: mean(qbg.mean)": torch.mean(
+                    "validation: Correlation Coefficient qi": corr_I,
+                    "validation: Correlation Coefficient bg": corr_bg,
+                    "validation: Max mean(I)": torch.max(i_flat),
+                    "validation: Mean mean(I)": torch.mean(i_flat),
+                    "validation: Mean var(I) ": torch.mean(i_var_flat),
+                    "validation: Min var(I)": torch.min(i_var_flat),
+                    "validation: Max var(I)": torch.max(i_var_flat),
+                    "validation: mean(qbg.mean)": torch.mean(
                         self.preds_val["qbg_mean"]
                     ),
-                    "val: min(qbg.mean)": torch.min(
+                    "validation: min(qbg.mean)": torch.min(
                         self.preds_val["qbg_mean"]
                     ),
-                    "val: max(qbg.mean)": torch.max(
+                    "validation: max(qbg.mean)": torch.max(
                         self.preds_val["qbg_mean"]
                     ),
                 }
@@ -576,13 +578,15 @@ class PlotterLD(Callback):
                     pred_dict=self.tracked_shoeboxes_val,
                 )
 
-                log_dict["Val: Tracked Profiles"] = wandb.Image(comparison_fig)
+                log_dict["validation: Tracked Profiles"] = wandb.Image(
+                    comparison_fig
+                )
                 plt.close(comparison_fig)
 
                 fig = plot_symlog_qi_vs_dials(
                     i_flat.cpu().numpy(), dials_flat.cpu().numpy()
                 )
-                wandb.log({"qi_vs_dials_symlog": wandb.Image(fig)})
+                wandb.log({"validation: qi_vs_dials_symlog": wandb.Image(fig)})
                 plt.close(fig)
 
                 # Log metrics
@@ -935,7 +939,7 @@ class Plotter(Callback):
             torch.cuda.empty_cache()
 
     def on_validation_epoch_end(self, trainer, pl_module):
-        if self.preds_val:
+        if self.preds_validation:
             try:
                 data = []
 
@@ -986,12 +990,12 @@ class Plotter(Callback):
                 df = pd.DataFrame(
                     data,
                     columns=[
-                        "val: mean(qI)",
-                        "val: var(qI)",
+                        "validation: mean(qI)",
+                        "validation: var(qI)",
                         "DIALS intensity.prf.value",
                         "DIALS intensity.prf.variance",
                         "DIALS background.mean",
-                        "val: mean(qbg)",
+                        "validation: mean(qbg)",
                         "x_c",
                         "y_c",
                         "d",
@@ -1041,22 +1045,30 @@ class Plotter(Callback):
 
                 # Create log dictionary
                 log_dict = {
-                    "Val: qi vs DIALS I prf": wandb.plot.scatter(
-                        table, "val: mean(qI)", "DIALS intensity.prf.value"
+                    "validation: qi vs DIALS I prf": wandb.plot.scatter(
+                        table,
+                        "validation: mean(qI)",
+                        "DIALS intensity.prf.value",
                     ),
-                    "Val: Bg vs DIALS bg": wandb.plot.scatter(
-                        table, "val: mean(qbg)", "DIALS background.mean"
+                    "validation: Bg vs DIALS bg": wandb.plot.scatter(
+                        table, "validation: mean(qbg)", "DIALS background.mean"
                     ),
-                    "Val: Correlation Coefficient qi": corr_I,
-                    "Val: Correlation Coefficient bg": corr_bg,
-                    "Val: Max mean(I)": torch.max(i_flat),
-                    "Val: Mean mean(I)": torch.mean(i_flat),
-                    "Val: Mean var(I) ": torch.mean(i_var_flat),
-                    "Val: Min var(I)": torch.min(i_var_flat),
-                    "Val: Max var(I)": torch.max(i_var_flat),
-                    "val: mean(qbg.mean)": torch.mean(self.preds_val["qbg"]),
-                    "val: min(qbg.mean)": torch.min(self.preds_val["qbg"]),
-                    "val: max(qbg.mean)": torch.max(self.preds_val["qbg"]),
+                    "validation: Correlation Coefficient qi": corr_I,
+                    "validation: Correlation Coefficient bg": corr_bg,
+                    "validation: Max mean(I)": torch.max(i_flat),
+                    "validation: Mean mean(I)": torch.mean(i_flat),
+                    "validation: Mean var(I) ": torch.mean(i_var_flat),
+                    "validation: Min var(I)": torch.min(i_var_flat),
+                    "validation: Max var(I)": torch.max(i_var_flat),
+                    "validation: mean(qbg.mean)": torch.mean(
+                        self.preds_val["qbg"]
+                    ),
+                    "validation: min(qbg.mean)": torch.min(
+                        self.preds_val["qbg"]
+                    ),
+                    "validation: max(qbg.mean)": torch.max(
+                        self.preds_val["qbg"]
+                    ),
                 }
 
                 # plot input shoebox and predicted profile
@@ -1066,7 +1078,9 @@ class Plotter(Callback):
                     pred_dict=self.tracked_shoeboxes_val,
                 )
 
-                log_dict["Val: Tracked Profiles"] = wandb.Image(comparison_fig)
+                log_dict["validation: Tracked Profiles"] = wandb.Image(
+                    comparison_fig
+                )
                 plt.close(comparison_fig)
 
                 # Log metrics
@@ -1512,3 +1526,6 @@ class MVNPlotter(Callback):
             # Clean up
             del base_output, intensities
             torch.cuda.empty_cache()
+
+
+# %%
