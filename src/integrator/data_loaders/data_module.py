@@ -84,20 +84,24 @@ class ShoeboxDataModule2D(BaseDataModule):
 
     def setup(self):
         counts = torch.load(
-            os.path.join(self.data_dir, self.shoebox_file_names["counts"])
+            os.path.join(self.data_dir, self.shoebox_file_names["counts"]),
+            map_location="cpu",
         )
         masks = torch.load(
-            os.path.join(self.data_dir, self.shoebox_file_names["masks"])
+            os.path.join(self.data_dir, self.shoebox_file_names["masks"]),
+            map_location="cpu",
         )
         stats = torch.load(
-            os.path.join(self.data_dir, self.shoebox_file_names["stats"])
+            os.path.join(self.data_dir, self.shoebox_file_names["stats"]),
+            map_location="cpu",
         )
-        self.dataset_mean = stats[0]
-        self.dataset_var = stats[1]
         reference = torch.load(
-            os.path.join(self.data_dir, self.shoebox_file_names["reference"])
+            os.path.join(self.data_dir, self.shoebox_file_names["reference"]),
+            map_location="cpu",
         )
 
+        self.dataset_mean = stats[0]
+        self.dataset_var = stats[1]
         all_dead = masks.sum(-1) < 10
 
         # print("all_dead", all_dead.sum())
