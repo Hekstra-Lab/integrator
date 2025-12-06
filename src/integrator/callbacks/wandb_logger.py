@@ -4,7 +4,6 @@ import traceback
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import plotly.express as px
 import torch
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from pytorch_lightning.callbacks import Callback
@@ -160,7 +159,6 @@ class PlotterLD(Callback):
     def update_tracked_shoeboxes(
         self,
         preds,
-        renyi_entropy,
         tracked_ids,
         tracked_shoeboxes,
     ):
@@ -205,7 +203,6 @@ class PlotterLD(Callback):
                     "x_c": preds["x_c"][idx].cpu(),
                     "y_c": preds["y_c"][idx].cpu(),
                     "z_c": preds["z_c"][idx].cpu(),
-                    "renyi_entropy": renyi_entropy[idx].cpu(),
                 }
 
         torch.cuda.empty_cache()
@@ -220,13 +217,11 @@ class PlotterLD(Callback):
             base_output = pl_module(shoebox, dials, masks, counts)
 
             # additional metrics to log
-            renyi_entropy = -torch.log(base_output["qp"].mean.pow(2).sum(-1))
 
             if self.current_epoch % self.plot_every_n_epochs == 0:
                 self.tracked_ids_train, self.tracked_shoeboxes_train = (
                     self.update_tracked_shoeboxes(
                         base_output,
-                        renyi_entropy,
                         self.tracked_ids_train,
                         self.tracked_shoeboxes_train,
                     )
@@ -282,10 +277,6 @@ class PlotterLD(Callback):
                 )
                 qbg_flat = self.preds_train["qbg"].flatten() + 1e-8
 
-                renyi_entropy_flat = -torch.log(
-                    self.preds_train["profile"].pow(2).sum(-1)
-                )
-
                 x_c_flat = self.preds_train["x_c"].flatten()
                 y_c_flat = self.preds_train["y_c"].flatten()
                 z_c_flat = self.preds_train["z_c"].flatten()
@@ -301,7 +292,6 @@ class PlotterLD(Callback):
                                 dials_var_flat[i],
                                 dials_bg_flat[i],
                                 qbg_flat[i],
-                                renyi_entropy_flat[i],
                                 x_c_flat[i],
                                 y_c_flat[i],
                             ]
@@ -321,7 +311,6 @@ class PlotterLD(Callback):
                         "DIALS intensity.prf.variance",
                         "DIALS background.mean",
                         "mean(qbg)",
-                        "Renyi entropy",
                         "x_c",
                         "y_c",
                     ],
@@ -334,15 +323,6 @@ class PlotterLD(Callback):
                 corr_I = (
                     torch.corrcoef(torch.vstack([i_flat, dials_flat]))[0, 1]
                     if len(i_flat) > 1
-                    else 0
-                )
-
-                # plot renyi entropy
-                corr_bg = (
-                    torch.corrcoef(torch.vstack([dials_bg_flat, dials_flat]))[
-                        0, 1
-                    ]
-                    if len(dials_bg_flat) > 1
                     else 0
                 )
 
@@ -407,14 +387,10 @@ class PlotterLD(Callback):
             shoebox, dials, masks, counts = batch
             base_output = pl_module(shoebox, dials, masks, counts)
 
-            # additional metrics to log
-            renyi_entropy = -torch.log(base_output["qp"].mean.pow(2).sum(-1))
-
             # updated tracked shoeboxes
             self.tracked_ids_val, self.tracked_shoeboxes_val = (
                 self.update_tracked_shoeboxes(
                     base_output,
-                    renyi_entropy,
                     tracked_ids=self.tracked_ids_val,
                     tracked_shoeboxes=self.tracked_shoeboxes_val,
                 )
@@ -468,10 +444,6 @@ class PlotterLD(Callback):
                 )
                 qbg_flat = self.preds_val["qbg"].flatten() + 1e-8
 
-                renyi_entropy_flat = -torch.log(
-                    self.preds_val["profile"].pow(2).sum(-1)
-                )
-
                 x_c_flat = self.preds_val["x_c"].flatten()
                 y_c_flat = self.preds_val["y_c"].flatten()
                 z_c_flat = self.preds_val["z_c"].flatten()
@@ -487,7 +459,6 @@ class PlotterLD(Callback):
                                 dials_var_flat[i],
                                 dials_bg_flat[i],
                                 qbg_flat[i],
-                                renyi_entropy_flat[i],
                                 x_c_flat[i],
                                 y_c_flat[i],
                             ]
@@ -507,7 +478,6 @@ class PlotterLD(Callback):
                         "DIALS intensity.prf.variance",
                         "DIALS background.mean",
                         "val: mean(qbg)",
-                        "val: Renyi entropy",
                         "x_c",
                         "y_c",
                     ],
@@ -605,7 +575,6 @@ class Plotter(Callback):
     def update_tracked_shoeboxes(
         self,
         preds,
-        renyi_entropy,
         tracked_ids,
         tracked_shoeboxes,
     ):
@@ -651,7 +620,6 @@ class Plotter(Callback):
                     "y_c": preds["y_c"][idx].cpu(),
                     "z_c": preds["z_c"][idx].cpu(),
                     "d": preds["d"][idx].cpu(),
-                    "renyi_entropy": renyi_entropy[idx].cpu(),
                 }
 
         torch.cuda.empty_cache()
@@ -666,13 +634,11 @@ class Plotter(Callback):
             base_output = pl_module(shoebox, dials, masks, counts)
 
             # additional metrics to log
-            renyi_entropy = -torch.log(base_output["qp"].mean.pow(2).sum(-1))
 
             if self.current_epoch % self.plot_every_n_epochs == 0:
                 self.tracked_ids_train, self.tracked_shoeboxes_train = (
                     self.update_tracked_shoeboxes(
                         base_output,
-                        renyi_entropy,
                         self.tracked_ids_train,
                         self.tracked_shoeboxes_train,
                     )
@@ -729,10 +695,6 @@ class Plotter(Callback):
                 )
                 qbg_flat = self.preds_train["qbg"].flatten() + 1e-8
 
-                renyi_entropy_flat = -torch.log(
-                    self.preds_train["profile"].pow(2).sum(-1)
-                )
-
                 x_c_flat = self.preds_train["x_c"].flatten()
                 y_c_flat = self.preds_train["y_c"].flatten()
                 z_c_flat = self.preds_train["z_c"].flatten()
@@ -750,7 +712,6 @@ class Plotter(Callback):
                                 float(torch.log(dials_var_flat[i])),
                                 dials_bg_flat[i],
                                 qbg_flat[i],
-                                renyi_entropy_flat[i],
                                 x_c_flat[i],
                                 y_c_flat[i],
                                 d_flat[i],
@@ -772,7 +733,6 @@ class Plotter(Callback):
                         "DIALS intensity.prf.variance",
                         "DIALS background.mean",
                         "mean(qbg)",
-                        "Renyi entropy",
                         "x_c",
                         "y_c",
                         "d",
@@ -788,14 +748,6 @@ class Plotter(Callback):
                     torch.corrcoef(torch.vstack([i_flat, dials_flat]))[0, 1]
                     if len(i_flat) > 1
                     else 0
-                )
-
-                # plot renyi entropy
-                renyi_vs_d = px.scatter(
-                    df,
-                    x="d",
-                    y="Renyi entropy",
-                    hover_data=["mean(qI)", "DIALS intensity.prf.value"],
                 )
 
                 layout_updates = {
@@ -819,7 +771,6 @@ class Plotter(Callback):
                     ),
                     "yaxis": dict(showgrid=True, gridcolor="lightgrey"),
                 }
-                renyi_vs_d.update_layout(**layout_updates)
 
                 corr_bg = (
                     torch.corrcoef(torch.vstack([dials_bg_flat, dials_flat]))[
@@ -834,7 +785,6 @@ class Plotter(Callback):
                     "Train: qi vs DIALS I prf": wandb.plot.scatter(
                         table, "mean(qI)", "DIALS intensity.prf.value"
                     ),
-                    "Renyi entropy vs d": wandb.Html(renyi_vs_d.to_html()),
                     "Train: Bg vs DIALS bg": wandb.plot.scatter(
                         table, "mean(qbg)", "DIALS background.mean"
                     ),
@@ -892,13 +842,11 @@ class Plotter(Callback):
             base_output = pl_module(shoebox, dials, masks, counts)
 
             # additional metrics to log
-            renyi_entropy = -torch.log(base_output["qp"].mean.pow(2).sum(-1))
 
             # updated tracked shoeboxes
             self.tracked_ids_val, self.tracked_shoeboxes_val = (
                 self.update_tracked_shoeboxes(
                     base_output,
-                    renyi_entropy,
                     tracked_ids=self.tracked_ids_val,
                     tracked_shoeboxes=self.tracked_shoeboxes_val,
                 )
@@ -953,10 +901,6 @@ class Plotter(Callback):
                 )
                 qbg_flat = self.preds_val["qbg"].flatten() + 1e-8
 
-                renyi_entropy_flat = -torch.log(
-                    self.preds_val["profile"].pow(2).sum(-1)
-                )
-
                 x_c_flat = self.preds_val["x_c"].flatten()
                 y_c_flat = self.preds_val["y_c"].flatten()
                 z_c_flat = self.preds_val["z_c"].flatten()
@@ -974,7 +918,6 @@ class Plotter(Callback):
                                 float(torch.log(dials_var_flat[i])),
                                 dials_bg_flat[i],
                                 qbg_flat[i],
-                                renyi_entropy_flat[i],
                                 x_c_flat[i],
                                 y_c_flat[i],
                                 d_flat[i],
@@ -996,7 +939,6 @@ class Plotter(Callback):
                         "DIALS intensity.prf.variance",
                         "DIALS background.mean",
                         "val: mean(qbg)",
-                        "val: Renyi entropy",
                         "x_c",
                         "y_c",
                         "d",
@@ -1012,13 +954,6 @@ class Plotter(Callback):
                     torch.corrcoef(torch.vstack([i_flat, dials_flat]))[0, 1]
                     if len(i_flat) > 1
                     else 0
-                )
-
-                renyi_vs_d = px.scatter(
-                    df,
-                    x="d",
-                    y="val: Renyi entropy",
-                    hover_data=["val: mean(qI)", "DIALS intensity.prf.value"],
                 )
 
                 layout_updates = {
@@ -1042,7 +977,6 @@ class Plotter(Callback):
                     ),
                     "yaxis": dict(showgrid=True, gridcolor="lightgrey"),
                 }
-                renyi_vs_d.update_layout(**layout_updates)
 
                 corr_bg = (
                     torch.corrcoef(torch.vstack([dials_bg_flat, dials_flat]))[
@@ -1056,9 +990,6 @@ class Plotter(Callback):
                 log_dict = {
                     "Val: qi vs DIALS I prf": wandb.plot.scatter(
                         table, "val: mean(qI)", "DIALS intensity.prf.value"
-                    ),
-                    "Val: Renyi entropy vs d": wandb.Html(
-                        renyi_vs_d.to_html()
                     ),
                     "Val: Bg vs DIALS bg": wandb.plot.scatter(
                         table, "val: mean(qbg)", "DIALS background.mean"

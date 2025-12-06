@@ -313,9 +313,6 @@ class Integrator(LightningModule):
 
         rate = zI * zp + zbg
 
-        # calculate profile renyi entropy
-        avg_reynyi_entropy = torch.zeros(10)
-
         out = IntegratorBaseOutputs(
             rates=rate,
             counts=counts,
@@ -343,9 +340,6 @@ class Integrator(LightningModule):
             qbg=outputs["qbg"],
             mask=outputs["mask"],
         )
-
-        renyi_loss = torch.zeros(10)
-        self.log("renyi_loss", renyi_loss)
 
         self.log("Mean(qi.mean)", outputs["qi"].mean.mean())
         self.log("Min(qi.mean)", outputs["qi"].mean.min())
