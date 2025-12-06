@@ -95,7 +95,7 @@ def get_dirichlet_prior(
         return {"concentration": torch.full((K,), float(conc))}
 
     if isinstance(conc, str):
-        loaded = torch.load(conc)
+        loaded = torch.load(conc, map_location="cpu")
         return {"concentration": loaded.reshape(-1)}
 
     if isinstance(conc, torch.Tensor):
