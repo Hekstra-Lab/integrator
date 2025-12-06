@@ -24,6 +24,13 @@ class ShoeboxEncoder(nn.Module):
     intermediate MaxPool3d, then flattens and projects to `encoder_out`.
     """
 
+    conv1: nn.Conv3d
+    norm1: nn.GroupNorm
+    pool: nn.MaxPool3d
+    conv2: nn.Conv3d
+    norm2: nn.GroupNorm
+    data_dim: str
+
     input_shape: tuple[int, int, int]
     """Shoebox shape as ``(D, H, W)``."""
 
@@ -86,14 +93,10 @@ class ShoeboxEncoder(nn.Module):
             kernel_size=conv1_kernel_size,
             padding=conv1_padding,
         )
-        # self.norm1 = nn.GroupNorm(
-        #     num_groups=norm1_num_groups,
-        #     num_channels=conv1_out_channels,
-        # )
-        self.norm1 = nn.Identity()
-
-        nn.init.kaiming_normal_(self.conv1.weight)
-        nn.init.zeros_(self.conv1.bias)
+        self.norm1 = nn.GroupNorm(
+            num_groups=norm1_num_groups,
+            num_channels=conv1_out_channels,
+        )
         self.pool = operations[data_dim]["max_pool"](
             kernel_size=pool_kernel_size,
             stride=pool_stride,
@@ -120,9 +123,6 @@ class ShoeboxEncoder(nn.Module):
             out_features=encoder_out,
         )
 
-        self.conv1 = nn.utils.weight_norm(self.conv1)
-        self.conv2 = nn.utils.weight_norm(self.conv2)
-
     def _infer_flattened_size(self, input_shape, in_channels):
         # input_shape: (H, W, D)
         with torch.no_grad():
@@ -136,56 +136,12 @@ class ShoeboxEncoder(nn.Module):
             return x.numel()
 
     def forward(self, x):
-        # 0. Check input
-        if torch.isnan(x).any() or torch.isinf(x).any():
-            raise RuntimeError("NaNs/inf in input to ShoeboxEncoder")
-
-        # 1. Check conv1 parameters
-        w = self.conv1.weight
-        b = self.conv1.bias
-        if torch.isnan(w).any() or torch.isinf(w).any():
-            raise RuntimeError("NaNs/inf in conv1.weight")
-        if b is not None and (torch.isnan(b).any() or torch.isinf(b).any()):
-            raise RuntimeError("NaNs/inf in conv1.bias")
-
-        # 2. Check output right after conv1
-        x = self.conv1(x)
-        if torch.isnan(x).any() or torch.isinf(x).any():
-            raise RuntimeError("NaNs/inf right after conv1 (before norm/ReLU)")
-
-        x = self.norm1(x)
-        if torch.isnan(x).any() or torch.isinf(x).any():
-            raise RuntimeError("NaNs/inf right after norm1")
-
-        x = F.relu(x)
-        if torch.isnan(x).any() or torch.isinf(x).any():
-            raise RuntimeError("NaNs/inf after ReLU")
-
+        x = F.relu(self.norm1(self.conv1(x)))
         x = self.pool(x)
-        if torch.isnan(x).any():
-            raise RuntimeError("NaNs after pool")
-
         x = F.relu(self.norm2(self.conv2(x)))
-        if torch.isnan(x).any():
-            raise RuntimeError("NaNs after conv2/norm2")
-
         x = x.view(x.size(0), -1)
-        if torch.isnan(x).any():
-            raise RuntimeError("NaNs after flatten")
-
         x = self.fc(x)
-        if torch.isnan(x).any():
-            raise RuntimeError("NaNs after fc before tanh")
-
         x = torch.tanh(x) * 5.0
-        if torch.isnan(x).any():
-            raise RuntimeError("NaNs after tanh in ShoeboxEncoder")
-        # x = F.relu(self.norm1(self.conv1(x)))
-        # x = self.pool(x)
-        # x = F.relu(self.norm2(self.conv2(x)))
-        # x = x.view(x.size(0), -1)
-        # x = self.fc(x)
-        # x = torch.tanh(x) * 5.0
         return x
 
 
