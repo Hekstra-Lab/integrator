@@ -140,7 +140,9 @@ class ShoeboxEncoder(nn.Module):
         x = self.pool(x)
         x = F.relu(self.norm2(self.conv2(x)))
         x = x.view(x.size(0), -1)
-        return F.relu(self.fc(x))
+        x = self.fc(x)
+        x = torch.tanh(x) * 5.0
+        return x
 
 
 class IntensityEncoder(nn.Module):
@@ -224,7 +226,9 @@ class IntensityEncoder(nn.Module):
         x = self.adaptive_pool(x)
         # x = x.squeeze(-1).squeeze(-1)  # From (B, C, 1, 1) to (B, C)
         x = x.squeeze()  # From (B, C, 1, 1) to (B, C)
-        return F.relu(self.fc(x))
+        x = self.fc(x)
+        x = torch.tanh(x) * 5.0
+        return x
 
 
 if __name__ == "__main__":

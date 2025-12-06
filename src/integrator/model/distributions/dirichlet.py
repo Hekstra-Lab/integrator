@@ -20,7 +20,7 @@ class DirichletDistribution(nn.Module):
         in_features: int = 64,
         out_features: tuple[int, ...] = (3, 21, 21),
         constraint: Literal["exp", "softplus"] | None = "softplus",
-        eps: float = 0.001,
+        eps: float = 0.01,
         beta: int = 1,
     ):
         """

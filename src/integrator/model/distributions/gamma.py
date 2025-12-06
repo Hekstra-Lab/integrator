@@ -16,7 +16,7 @@ class GammaDistribution(nn.Module):
         self,
         in_features: int,
         out_features: int = 2,
-        eps: float = 1e-12,
+        eps: float = 1e-4,
         beta: int = 1,
         constraint: Literal["exp", "softplus"] | None = "softplus",
     ):

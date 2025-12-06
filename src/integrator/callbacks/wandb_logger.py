@@ -481,10 +481,10 @@ class PlotterLD(Callback):
                     try:
                         data.append(
                             [
-                                float(torch.log(i_flat[i])),
-                                float(torch.log(i_var_flat[i])),
-                                float(torch.log(dials_flat[i])),
-                                float(torch.log(dials_var_flat[i])),
+                                i_flat[i],
+                                i_var_flat[i],
+                                dials_flat[i],
+                                dials_var_flat[i],
                                 dials_bg_flat[i],
                                 qbg_flat[i],
                                 renyi_entropy_flat[i],
@@ -573,9 +573,6 @@ class PlotterLD(Callback):
             # Clear memory
             self.preds_val = {}
             torch.cuda.empty_cache()
-
-
-# -
 
 
 # -
