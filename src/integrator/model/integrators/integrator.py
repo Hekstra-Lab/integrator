@@ -339,7 +339,12 @@ class Integrator(LightningModule):
             reference=reference,
         )
         out = _assemble_outputs(out, self.cfg.data_dim)
-        return out
+        return {
+            "model_output": out,
+            "qp": qp,
+            "qi": qi,
+            "qbg": qbg,
+        }
 
     def training_step(self, batch, _batch_idx):
         counts, shoebox, mask, reference = batch
@@ -347,12 +352,12 @@ class Integrator(LightningModule):
 
         # Calculate loss
         loss_dict = self.loss(
-            rate=outputs["rates"],
-            counts=outputs["counts"],
+            rate=outputs["model_output"]["rates"],
+            counts=outputs["model_output"]["counts"],
             qp=outputs["qp"],
             qi=outputs["qi"],
             qbg=outputs["qbg"],
-            mask=outputs["mask"],
+            mask=outputs["model_output"]["mask"],
         )
 
         self.log("Mean(qi.mean)", outputs["qi"].mean.mean())
@@ -393,12 +398,12 @@ class Integrator(LightningModule):
         outputs = self(counts, shoebox, mask, reference)
 
         loss_dict = self.loss(
-            rate=outputs["rates"],
-            counts=outputs["counts"],
+            rate=outputs["model_output"]["rates"],
+            counts=outputs["model_output"]["counts"],
             qp=outputs["qp"],
             qi=outputs["qi"],
             qbg=outputs["qbg"],
-            mask=outputs["mask"],
+            mask=outputs["model_output"]["mask"],
         )
 
         total_loss = loss_dict["loss"]
