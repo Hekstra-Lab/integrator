@@ -133,18 +133,30 @@ class ShoeboxEncoder(nn.Module):
             return x.numel()
 
     def forward(self, x):
+        # 0. Check input
         if torch.isnan(x).any() or torch.isinf(x).any():
-            print("Stats:", torch.min(x), torch.max(x))
-            raise RuntimeError("NaNs or inf in ShoeboxEncoder input")
-        if (
-            torch.isnan(self.conv1.weight).any()
-            or torch.isinf(self.conv1.weight).any()
-        ):
-            raise RuntimeError("conv1 weights corrupted")
+            raise RuntimeError("NaNs/inf in input to ShoeboxEncoder")
 
-        x = F.relu(self.norm1(self.conv1(x)))
-        if torch.isnan(x).any():
-            raise RuntimeError("NaNs after conv1/norm1")
+        # 1. Check conv1 parameters
+        w = self.conv1.weight
+        b = self.conv1.bias
+        if torch.isnan(w).any() or torch.isinf(w).any():
+            raise RuntimeError("NaNs/inf in conv1.weight")
+        if b is not None and (torch.isnan(b).any() or torch.isinf(b).any()):
+            raise RuntimeError("NaNs/inf in conv1.bias")
+
+        # 2. Check output right after conv1
+        x = self.conv1(x)
+        if torch.isnan(x).any() or torch.isinf(x).any():
+            raise RuntimeError("NaNs/inf right after conv1 (before norm/ReLU)")
+
+        x = self.norm1(x)
+        if torch.isnan(x).any() or torch.isinf(x).any():
+            raise RuntimeError("NaNs/inf right after norm1")
+
+        x = F.relu(x)
+        if torch.isnan(x).any() or torch.isinf(x).any():
+            raise RuntimeError("NaNs/inf after ReLU")
 
         x = self.pool(x)
         if torch.isnan(x).any():
