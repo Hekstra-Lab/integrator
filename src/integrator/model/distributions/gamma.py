@@ -2,7 +2,6 @@ from typing import Literal
 
 import torch
 import torch.nn as nn
-from torch import Tensor
 from torch.distributions import Gamma
 
 from integrator.layers import Constrain
@@ -39,22 +38,47 @@ class GammaDistribution(nn.Module):
             beta=beta,
         )
 
-    def forward(
-        self,
-        x: Tensor,
-    ) -> Gamma:
-        """
+        # bounds
+        self.k_min = 0.1
+        self.k_max = 150000.0
+        self.r_min = 0.1
+        self.r_max = 5.0
 
-        Args:
-            x: Input batch of shoeboxes
-        Returns:
-            `torch.distributions.Gamma`
+    def smooth_bound(self, x, a, b):
+        return a + (b - a) * (torch.atan(x) / torch.pi + 0.5)
 
-        """
-        params = self.fc(x)
-        concentration = self.constrain_fn(params[..., 0])
-        rate = self.constrain_fn(params[..., 1])
-        return Gamma(concentration.flatten(), rate.flatten())
+    def smooth_bound_square(self, x, a, b):
+        t = (2 / torch.pi) * torch.atan(x)  # (-1,1)
+        t = 0.5 * (t + 1.0)  # (0,1)
+        return a + (b - a) * (t**2)  # square for large-range stability
+
+    # def forward(
+    #     self,
+    #     x: Tensor,
+    # ) -> Gamma:
+    #     """
+    #
+    #     Args:
+    #         x: Input batch of shoeboxes
+    #     Returns:
+    #         `torch.distributions.Gamma`
+    #
+    #     """
+    #     params = self.fc(x)
+    #     concentration = self.constrain_fn(params[..., 0])
+    #     rate = self.constrain_fn(params[..., 1])
+    #     return Gamma(concentration.flatten(), rate.flatten())
+    #
+    def forward(self, x) -> Gamma:
+        raw_k, raw_r = self.fc(x).chunk(2, dim=-1)
+
+        # shape = slow-saturating large-range mapping
+        k = self.smooth_bound_square(raw_k, self.k_min, self.k_max)
+
+        # rate = simpler mapping because range is small
+        r = self.smooth_bound(raw_r, self.r_min, self.r_max)
+
+        return Gamma(concentration=k.flatten(), rate=r.flatten())
 
 
 if __name__ == "__main__":
