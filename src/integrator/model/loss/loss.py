@@ -10,6 +10,7 @@ from torch.distributions import (
     Distribution,
     Exponential,
     Gamma,
+    HalfCauchy,
     HalfNormal,
     LogNormal,
     Poisson,
@@ -59,6 +60,7 @@ PRIOR_MAP = {
     "gamma": Gamma,
     "log_normal": LogNormal,
     "half_normal": HalfNormal,
+    "half_cauchy": HalfCauchy,
     "exponential": Exponential,
     "dirichlet": Dirichlet,
 }
