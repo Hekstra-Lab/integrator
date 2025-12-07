@@ -90,10 +90,7 @@ class ShoeboxEncoder(nn.Module):
             num_groups=norm1_num_groups,
             num_channels=conv1_out_channels,
         )
-        # self.norm1 = nn.Identity()
 
-        nn.init.kaiming_normal_(self.conv1.weight)
-        nn.init.zeros_(self.conv1.bias)
         self.pool = operations[data_dim]["max_pool"](
             kernel_size=pool_kernel_size,
             stride=pool_stride,
@@ -177,7 +174,7 @@ class ShoeboxEncoder(nn.Module):
         if torch.isnan(x).any():
             raise RuntimeError("NaNs after fc before tanh")
 
-        x = torch.tanh(x) * 5.0
+        x = torch.tanh(x)
         if torch.isnan(x).any():
             raise RuntimeError("NaNs after tanh in ShoeboxEncoder")
         # x = F.relu(self.norm1(self.conv1(x)))
@@ -271,7 +268,7 @@ class IntensityEncoder(nn.Module):
         # x = x.squeeze(-1).squeeze(-1)  # From (B, C, 1, 1) to (B, C)
         x = x.squeeze()  # From (B, C, 1, 1) to (B, C)
         x = self.fc(x)
-        x = torch.tanh(x) * 5.0
+        # x = torch.tanh(x)
         return x
 
 

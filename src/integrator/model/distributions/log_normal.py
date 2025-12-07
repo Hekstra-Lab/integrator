@@ -42,11 +42,9 @@ class LogNormalDistribution(nn.Module):
         x: Tensor,
     ) -> LogNormal:
         raw_loc, raw_scale = self.fc(x).chunk(2, dim=-1)
-        print(raw_loc.shape, raw_scale.shape)
         loc = torch.tanh(raw_loc) * 12
-        scale_unbounded = F.softplus(raw_scale)
-        scale = 0.01 + (2.0 - 0.01) * torch.sigmoid(scale_unbounded)
-        print(loc.shape, scale.shape)
+        scale = F.softplus(raw_scale)
+        # scale = 0.01 + (2.0 - 0.01) * torch.sigmoid(scale_unbounded)
         lognormal = LogNormal(loc=loc.squeeze(), scale=scale.squeeze())
 
         return lognormal
