@@ -204,7 +204,8 @@ def create_trainer(config, callbacks=None, logger=None):
         deterministic=config["trainer"]["args"]["deterministic"],
         callbacks=callbacks,
         enable_checkpointing=config["trainer"]["args"]["enable_checkpointing"],
-        gradient_clip_val=0.5,
+        gradient_clip_val=5.0,
+        gradient_clip_algorithm="norm",
     )
 
 
