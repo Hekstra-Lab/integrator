@@ -268,7 +268,8 @@ class IntensityEncoder(nn.Module):
         # x = x.squeeze(-1).squeeze(-1)  # From (B, C, 1, 1) to (B, C)
         x = x.squeeze()  # From (B, C, 1, 1) to (B, C)
         x = self.fc(x)
-        x = torch.tanh(x)
+        # x = torch.tanh(x)
+        x = F.relu(x)
         return x
 
 

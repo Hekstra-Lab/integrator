@@ -44,7 +44,6 @@ class LogNormalDistribution(nn.Module):
         raw_loc, raw_scale = self.fc(x).chunk(2, dim=-1)
         loc = torch.tanh(raw_loc) * 12
         scale = F.softplus(raw_scale)
-        # scale = 0.01 + (2.0 - 0.01) * torch.sigmoid(scale_unbounded)
         lognormal = LogNormal(loc=loc.squeeze(), scale=scale.squeeze())
 
         return lognormal
