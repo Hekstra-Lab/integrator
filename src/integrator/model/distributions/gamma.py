@@ -52,24 +52,6 @@ class GammaDistribution(nn.Module):
         t = 0.5 * (t + 1.0)  # (0,1)
         return a + (b - a) * (t**2)  # square for large-range stability
 
-    # def forward(
-    #     self,
-    #     x: Tensor,
-    # ) -> Gamma:
-    #     """
-    #
-    #     Args:
-    #         x: Input batch of shoeboxes
-    #     Returns:
-    #         `torch.distributions.Gamma`
-    #
-    #     """
-    #     params = self.fc(x)
-    #     concentration = self.constrain_fn(params[..., 0])
-    #     rate = self.constrain_fn(params[..., 1])
-    #     return Gamma(concentration.flatten(), rate.flatten())
-    #
-
     def forward(self, x) -> Gamma:
         raw_k, raw_r = self.fc(x).chunk(2, dim=-1)
         print("mean raw k", raw_k.mean())
@@ -79,14 +61,8 @@ class GammaDistribution(nn.Module):
         print("min raw r", raw_r.min())
         print("max raw r", raw_r.max())
 
-        # # shape = slow-saturating large-range mapping
-        # k = self.smooth_bound_square(raw_k, self.k_min, self.k_max)
-        #
-        # # rate = simpler mapping because range is small
-        # r = self.smooth_bound(raw_r, self.r_min, self.r_max)
-
-        k = torch.nn.functional.softplus(raw_k)
-        r = torch.nn.functional.softplus(raw_r) + 0.1
+        k = torch.nn.functional.softplus(raw_k) + 0.01
+        r = torch.nn.functional.softplus(raw_r) + 0.01
 
         print("qbg,", self.fc.bias)
 
