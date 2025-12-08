@@ -56,6 +56,7 @@ class ShoeboxDataModule2D(BaseDataModule):
             "standardized_counts": None,
         },
         refl_file=None,
+        D=1,
         H=21,
         W=21,
         get_dxyz=False,

@@ -68,8 +68,8 @@ class GammaDistribution(nn.Module):
         print("min raw r", raw_r.min())
         print("max raw r", raw_r.max())
 
-        k = torch.nn.functional.softplus(raw_k) + 0.5
-        r = torch.nn.functional.softplus(raw_r) + 0.5
+        k = torch.nn.functional.softplus(raw_k) + 1.0
+        r = torch.nn.functional.softplus(raw_r) + 0.1
 
         print("qbg,", self.fc.bias)
 

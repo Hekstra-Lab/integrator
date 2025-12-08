@@ -14,7 +14,9 @@ from .model.distributions import (
 )
 from .model.encoders import (
     IntensityEncoder,
+    IntensityEncoder2DMinimal,
     MLPMetadataEncoder,
+    ProfileEncoder2DMinimal,
     ShoeboxEncoder,
 )
 from .model.integrators import Integrator
@@ -25,6 +27,8 @@ REGISTRY = {
         "shoebox_encoder": ShoeboxEncoder,
         "intensity_encoder": IntensityEncoder,
         "mlp_metadata_encoder": MLPMetadataEncoder,
+        "shoebox_minimal": ProfileEncoder2DMinimal,
+        "intensity_encoder_minimal": IntensityEncoder2DMinimal,
     },
     "loss": {
         "elbo": Loss,

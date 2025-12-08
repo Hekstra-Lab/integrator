@@ -270,8 +270,117 @@ class IntensityEncoder(nn.Module):
         x = self.fc(x)
         x = self.mish(x)
 
-        # x = torch.tanh(x) * 5.0
+        return x
 
+
+class IntensityEncoder2DMinimal(nn.Module):
+    def __init__(
+        self,
+        in_channels: int = 1,
+        encoder_out: int = 64,
+        conv1_out: int = 16,
+        conv2_out: int = 32,
+    ):
+        super().__init__()
+
+        self.conv1 = nn.Conv2d(
+            in_channels=in_channels,
+            out_channels=conv1_out,
+            kernel_size=3,
+            padding=1,
+            bias=True,
+        )
+        self.conv2 = nn.Conv2d(
+            in_channels=conv1_out,
+            out_channels=conv2_out,
+            kernel_size=3,
+            padding=1,
+            bias=True,
+        )
+
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+
+        self.global_pool = nn.AdaptiveAvgPool2d(1)  # (B, C, 1, 1)
+
+        self.fc = nn.Linear(conv2_out, encoder_out, bias=True)
+
+        self.activation = nn.SiLU()  # smooth, non-saturating
+
+        self._init_weights()
+
+    def _init_weights(self):
+        # Kaiming init suited for SiLU
+        nn.init.kaiming_normal_(self.conv1.weight, nonlinearity="relu")
+        nn.init.kaiming_normal_(self.conv2.weight, nonlinearity="relu")
+        nn.init.zeros_(self.conv1.bias)
+        nn.init.zeros_(self.conv2.bias)
+
+        nn.init.kaiming_normal_(self.fc.weight, nonlinearity="linear")
+        nn.init.zeros_(self.fc.bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (B, C, H, W)
+        x = self.activation(self.conv1(x))  # (B, conv1_out, H, W)
+        x = self.pool(x)  # (B, conv1_out, H/2, W/2)
+        x = self.activation(self.conv2(x))  # (B, conv2_out, H/2, W/2)
+        x = self.global_pool(x)  # (B, conv2_out, 1, 1)
+        x = x.view(x.size(0), -1)  # (B, conv2_out)
+        x = self.fc(x)  # (B, encoder_out)
+
+        # no tanh here — let the Gamma head bound/transform as needed
+        return x
+
+
+# %%
+class ProfileEncoder2DMinimal(nn.Module):
+    def __init__(
+        self,
+        in_channels: int = 1,
+        encoder_out: int = 64,
+        conv1_out: int = 16,
+        conv2_out: int = 32,
+    ):
+        super().__init__()
+
+        self.conv1 = nn.Conv2d(
+            in_channels=in_channels,
+            out_channels=conv1_out,
+            kernel_size=3,
+            padding=1,
+            bias=True,
+        )
+        self.conv2 = nn.Conv2d(
+            in_channels=conv1_out,
+            out_channels=conv2_out,
+            kernel_size=3,
+            padding=1,
+            bias=True,
+        )
+
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.global_pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Linear(conv2_out, encoder_out, bias=True)
+        self.activation = nn.SiLU()
+
+        self._init_weights()
+
+    def _init_weights(self):
+        nn.init.kaiming_normal_(self.conv1.weight, nonlinearity="relu")
+        nn.init.kaiming_normal_(self.conv2.weight, nonlinearity="relu")
+        nn.init.zeros_(self.conv1.bias)
+        nn.init.zeros_(self.conv2.bias)
+
+        nn.init.kaiming_normal_(self.fc.weight, nonlinearity="linear")
+        nn.init.zeros_(self.fc.bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (B, C, H, W)
+        x = self.activation(self.conv1(x))
+        x = self.pool(x)
+        x = self.activation(self.conv2(x))
+        x = self.global_pool(x)
+        x = x.view(x.size(0), -1)  # (B, conv2_out)
+        x = self.fc(x)  # (B, encoder_out)
         return x
 
 

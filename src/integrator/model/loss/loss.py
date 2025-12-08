@@ -269,7 +269,7 @@ if __name__ == "__main__":
     )
     from utils import CONFIGS
 
-    cfg = list(CONFIGS.glob("*"))[0]
+    cfg = list(CONFIGS.glob("*"))[-1]
     cfg = load_config(cfg)
 
     integrator = create_integrator(cfg)
@@ -277,21 +277,18 @@ if __name__ == "__main__":
 
     # hyperparameters
     mc_samples = 100
+    shape = (1, 21, 21)
 
     # distributions
     qbg_ = FoldedNormalDistribution(in_features=64)
     qi_ = FoldedNormalDistribution(in_features=64)
-    qp_ = DirichletDistribution(in_features=64, out_features=(3, 21, 21))
+    qp_ = DirichletDistribution(in_features=64, out_features=(1, 21, 21))
 
     # load a batch
     counts, sbox, mask, meta = next(iter(data.train_dataloader()))
 
-    shoebox_rep = integrator.encoder1(
-        sbox.reshape(sbox.shape[0], 1, 3, 21, 21)
-    )
-    intensity_rep = integrator.encoder2(
-        sbox.reshape(sbox.shape[0], 1, 3, 21, 21)
-    )
+    shoebox_rep = integrator.encoder1(sbox.reshape(sbox.shape[0], 1, 21, 21))
+    intensity_rep = integrator.encoder2(sbox.reshape(sbox.shape[0], 1, 21, 21))
 
     # get distributinos
     qbg = qbg_(intensity_rep)
@@ -304,3 +301,4 @@ if __name__ == "__main__":
     zi = qi.rsample([mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
     rate = zi * zprf + zbg  # [B,S,Pix]
+    loss = integrator.loss
