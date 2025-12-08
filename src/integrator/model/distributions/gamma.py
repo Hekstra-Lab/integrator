@@ -72,6 +72,12 @@ class GammaDistribution(nn.Module):
 
     def forward(self, x) -> Gamma:
         raw_k, raw_r = self.fc(x).chunk(2, dim=-1)
+        print("mean raw k", raw_k.mean())
+        print("min raw k", raw_k.min())
+        print("max raw k", raw_k.max())
+        print("mean raw r", raw_r.mean())
+        print("min raw r", raw_r.min())
+        print("max raw r", raw_r.max())
 
         # # shape = slow-saturating large-range mapping
         # k = self.smooth_bound_square(raw_k, self.k_min, self.k_max)
@@ -79,8 +85,17 @@ class GammaDistribution(nn.Module):
         # # rate = simpler mapping because range is small
         # r = self.smooth_bound(raw_r, self.r_min, self.r_max)
 
-        k = torch.nn.functional.softplus(raw_k) + 0.01
-        r = torch.nn.functional.softplus(raw_r) + 0.01
+        k = torch.nn.functional.softplus(raw_k) + 0.1
+        r = torch.nn.functional.softplus(raw_r) + 0.1
+
+        print("qbg,", self.fc.bias)
+
+        print("mean k", k.mean())
+        print("min k", k.min())
+        print("max k", k.max())
+        print("mean r", r.mean())
+        print("min r", r.min())
+        print("max r", r.max())
 
         return Gamma(concentration=k.flatten(), rate=r.flatten())
 

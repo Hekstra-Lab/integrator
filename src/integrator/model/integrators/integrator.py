@@ -324,8 +324,8 @@ class Integrator(LightningModule):
         # print("counts.max:", {counts.max()})
         #
         # # ----- Check encoders -----
-        # stats("x_profile", x_profile)
-        # stats("x_intensity", x_intensity)
+        stats("x_profile", x_profile)
+        stats("x_intensity", x_intensity)
         #
         # # ----- Check LogNormal qbg -----
         # print("\nqbg params:")
@@ -333,24 +333,24 @@ class Integrator(LightningModule):
         # stats("qbg.scale", qbg.scale)
         #
         # # Sample diagnostics
-        # stats("zbg sample", zbg)
+        stats("zbg sample", zbg)
         #
         # # ----- Check LogNormal qi -----
         # print("\nqi params:")
         # stats("qi.loc", qi.loc)
         # stats("qi.scale", qi.scale)
         #
-        # stats("zI sample", zI)
+        stats("zI sample", zI)
         #
         # # ----- Check Dirichlet qp -----
-        # print("\nqp params:")
-        # stats("qp.concentration", qp.concentration)
+        print("\nqp params:")
+        stats("qp.concentration", qp.concentration)
         #
         # stats("zp sample", zp)
         #
         # # ----- Check rate -----
-        # print("\nrate stats:")
-        # stats("rate", rate)
+        print("\nrate stats:")
+        stats("rate", rate)
         #
         # # ----- Check input counts -----
         # stats("counts", counts)
