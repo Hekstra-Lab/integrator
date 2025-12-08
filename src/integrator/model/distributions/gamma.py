@@ -85,7 +85,7 @@ class GammaDistribution(nn.Module):
         # # rate = simpler mapping because range is small
         # r = self.smooth_bound(raw_r, self.r_min, self.r_max)
 
-        k = torch.nn.functional.softplus(raw_k) + 0.1
+        k = torch.nn.functional.softplus(raw_k)
         r = torch.nn.functional.softplus(raw_r) + 0.1
 
         print("qbg,", self.fc.bias)
