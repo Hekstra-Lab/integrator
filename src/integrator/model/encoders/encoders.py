@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+from integrator.layers import Linear
+
 operations = {
     "2d": {
         "conv": nn.Conv2d,
@@ -20,7 +22,7 @@ operations = {
 class ShoeboxEncoder(nn.Module):
     """3D CNN encoder producing a fixed-length embedding from a shoebox volume.
 
-    This module applies two Conv3d + GroupNorm + ReLU blocks with an
+    This module applies two Conv3d + GroupNorm + selu blocks with an
     intermediate MaxPool3d, then flattens and projects to `encoder_out`.
     """
 
@@ -112,7 +114,7 @@ class ShoeboxEncoder(nn.Module):
             input_shape=input_shape,
             in_channels=in_channels,
         )
-        self.fc = nn.Linear(
+        self.fc = Linear(
             in_features=self.flattened_size,
             out_features=encoder_out,
         )
@@ -125,17 +127,17 @@ class ShoeboxEncoder(nn.Module):
                 in_channels,
                 *input_shape,
             )  # (B, C, D, H, W)
-            x = self.pool(F.relu(self.norm1(self.conv1(dummy))))
-            x = F.relu(self.norm2(self.conv2(x)))
+            x = self.pool(F.selu(self.norm1(self.conv1(dummy))))
+            x = F.selu(self.norm2(self.conv2(x)))
             return x.numel()
 
     def forward(self, x):
-        x = F.relu(self.norm1(self.conv1(x)))
+        x = F.selu(self.norm1(self.conv1(x)))
         x = self.pool(x)
-        x = F.relu(self.norm2(self.conv2(x)))
+        x = F.selu(self.norm2(self.conv2(x)))
         x = x.view(x.size(0), -1)
         x = self.fc(x)
-        x = F.relu(x)
+        x = F.selu(x)
 
         return x
 
@@ -208,7 +210,7 @@ class IntensityEncoder(nn.Module):
             1
         )  # Output: (batch, channels, 1, 1)
 
-        self.fc = nn.Linear(
+        self.fc = Linear(
             in_features=conv3_out_channels,
             out_features=encoder_out,
         )
@@ -257,7 +259,7 @@ class IntensityEncoder2DMinimal(nn.Module):
 
         self.global_pool = nn.AdaptiveAvgPool2d(1)  # (B, C, 1, 1)
 
-        self.fc = nn.Linear(conv2_out, encoder_out, bias=True)
+        self.fc = Linear(conv2_out, encoder_out, bias=True)
 
         self.activation = nn.SiLU()
 
@@ -317,7 +319,7 @@ class ProfileEncoder2DMinimal(nn.Module):
         self.flattened_size = self._infer_flattened_size(input_shape)
 
         # linear projection to embedding
-        self.fc = nn.Linear(
+        self.fc = Linear(
             in_features=self.flattened_size,
             out_features=encoder_out,
             bias=True,

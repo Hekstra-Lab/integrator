@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from torch.distributions import Gamma
 
-from integrator.layers import Constrain
+from integrator.layers import Constrain, Linear
 
 
 class GammaDistribution(nn.Module):
@@ -28,7 +28,7 @@ class GammaDistribution(nn.Module):
         """
         super().__init__()
 
-        self.fc = nn.Linear(
+        self.fc = Linear(
             in_features=in_features,
             out_features=out_features,
             bias=False,

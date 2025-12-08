@@ -13,7 +13,7 @@ from torch.distributions.transformed_distribution import (
 )
 from torch.distributions.transforms import AbsTransform
 
-from integrator.layers import Constrain
+from integrator.layers import Constrain, Linear
 
 
 class FoldedNormal(TransformedDistribution):
@@ -283,7 +283,7 @@ class FoldedNormalDistribution(nn.Module):
         beta: int = 1,
     ):
         super().__init__()
-        self.fc = nn.Linear(
+        self.fc = Linear(
             in_features,
             out_features,
             bias=False,
