@@ -1,3 +1,4 @@
+import math
 from typing import Literal
 
 import torch
@@ -13,6 +14,7 @@ class GammaDistribution(nn.Module):
 
     def __init__(
         self,
+        estimand: Literal["background", "intensity"],
         in_features: int,
         out_features: int = 2,
         eps: float = 1e-4,
@@ -37,12 +39,17 @@ class GammaDistribution(nn.Module):
             eps=eps,
             beta=beta,
         )
+        if estimand == "intensity":
+            self.mu_min, self.mu_max = 1e-3, 6e5  # mean in [~0, 600k]
+            self.r_min, self.r_max = 0.5, 10.0  # Fano in [0.1, 2.0]
+        elif estimand == "background":
+            self.mu_min, selfmu_max = 1e-3, 100.0  # mean in [~0, 100]
+            self.r_min, self.r_max = 0.5, 10.0
 
-        # bounds
-        self.k_min = 0.1
-        self.k_max = 1000000.0
-        self.r_min = 0.1
-        self.r_max = 5.0
+        self.log_mu_min = math.log(self.mu_min)
+        self.log_mu_max = math.log(self.mu_max)
+        self.log_r_min = math.log(self.r_min)
+        self.log_r_max = math.log(self.r_max)
 
     def smooth_bound(self, x, a, b):
         return a + (b - a) * (torch.atan(x) / torch.pi + 0.5)
@@ -52,26 +59,48 @@ class GammaDistribution(nn.Module):
         t = 0.5 * (t + 1.0)  # (0,1)
         return a + (b - a) * (t**2)  # square for large-range stability
 
+    # def forward(self, x) -> Gamma:
+    #     raw_k, raw_r = self.fc(x).chunk(2, dim=-1)
+    #     print("mean raw k", raw_k.mean())
+    #     print("min raw k", raw_k.min())
+    #     print("max raw k", raw_k.max())
+    #     print("mean raw r", raw_r.mean())
+    #     print("min raw r", raw_r.min())
+    #     print("max raw r", raw_r.max())
+    #
+    #     k = torch.nn.functional.softplus(raw_k) + 0.01
+    #     r = torch.nn.functional.softplus(raw_r) + 0.01
+    #
+    #     print("qbg,", self.fc.bias)
+    #
+    #     print("mean k", k.mean())
+    #     print("min k", k.min())
+    #     print("max k", k.max())
+    #     print("mean r", r.mean())
+    #     print("min r", r.min())
+    #     print("max r", r.max())
+    #
+    #     return Gamma(concentration=k.flatten(), rate=r.flatten())
+
     def forward(self, x) -> Gamma:
-        raw_k, raw_r = self.fc(x).chunk(2, dim=-1)
-        print("mean raw k", raw_k.mean())
-        print("min raw k", raw_k.min())
-        print("max raw k", raw_k.max())
-        print("mean raw r", raw_r.mean())
-        print("min raw r", raw_r.min())
-        print("max raw r", raw_r.max())
+        raw_m, raw_r = self.fc(x).chunk(2, dim=-1)
 
-        k = torch.nn.functional.softplus(raw_k) + 0.01
-        r = torch.nn.functional.softplus(raw_r) + 0.01
+        # bound log-mean and log-rate
+        log_mu = self.smooth_bound_square(
+            raw_m, self.log_mu_min, self.log_mu_max
+        )
+        log_r = self.smooth_bound_square(raw_r, self.log_r_min, self.log_r_max)
 
-        print("qbg,", self.fc.bias)
+        mu = torch.exp(log_mu)  # mean
+        r = torch.exp(log_r)  # rate
 
-        print("mean k", k.mean())
-        print("min k", k.min())
-        print("max k", k.max())
-        print("mean r", r.mean())
-        print("min r", r.min())
-        print("max r", r.max())
+        # shape
+        k = mu * r
+
+        # OPTIONAL: debug prints
+        # print("mu stats:", mu.min(), mu.max(), mu.mean())
+        # print("r stats:",  r.min(),  r.max(),  r.mean())
+        # print("fano stats:", (1.0 / r).min(), (1.0 / r).max())
 
         return Gamma(concentration=k.flatten(), rate=r.flatten())
 
