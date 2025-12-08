@@ -117,9 +117,6 @@ class ShoeboxEncoder(nn.Module):
             out_features=encoder_out,
         )
 
-        self.conv1 = nn.utils.weight_norm(self.conv1)
-        self.conv2 = nn.utils.weight_norm(self.conv2)
-
     def _infer_flattened_size(self, input_shape, in_channels):
         # input_shape: (H, W, D)
         with torch.no_grad():

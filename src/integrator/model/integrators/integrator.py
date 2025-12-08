@@ -467,7 +467,11 @@ class Integrator(LightningModule):
         counts, shoebox, mask, reference = batch
         outputs = self(counts, shoebox, mask, reference)
 
-        return {k: v for k, v in outputs.items() if k in self.predict_keys}
+        return {
+            k: v
+            for k, v in outputs["forward_base_out"].items()
+            if k in self.predict_keys
+        }
 
 
 if __name__ == "__main__":
