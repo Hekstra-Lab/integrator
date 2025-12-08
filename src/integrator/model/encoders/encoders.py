@@ -22,7 +22,7 @@ operations = {
 class ShoeboxEncoder(nn.Module):
     """3D CNN encoder producing a fixed-length embedding from a shoebox volume.
 
-    This module applies two Conv3d + GroupNorm + selu blocks with an
+    This module applies two Conv3d + GroupNorm + silu blocks with an
     intermediate MaxPool3d, then flattens and projects to `encoder_out`.
     """
 
@@ -127,17 +127,17 @@ class ShoeboxEncoder(nn.Module):
                 in_channels,
                 *input_shape,
             )  # (B, C, D, H, W)
-            x = self.pool(F.selu(self.norm1(self.conv1(dummy))))
-            x = F.selu(self.norm2(self.conv2(x)))
+            x = self.pool(F.silu(self.norm1(self.conv1(dummy))))
+            x = F.silu(self.norm2(self.conv2(x)))
             return x.numel()
 
     def forward(self, x):
-        x = F.selu(self.norm1(self.conv1(x)))
+        x = F.silu(self.norm1(self.conv1(x)))
         x = self.pool(x)
-        x = F.selu(self.norm2(self.conv2(x)))
+        x = F.silu(self.norm2(self.conv2(x)))
         x = x.view(x.size(0), -1)
         x = self.fc(x)
-        x = F.selu(x)
+        x = F.silu(x)
 
         return x
 
