@@ -17,7 +17,7 @@ class GammaDistribution(nn.Module):
         estimand: Literal["background", "intensity"],
         in_features: int,
         out_features: int = 2,
-        eps: float = 1e-4,
+        eps: float = 1e-2,
         beta: int = 1,
         constraint: Literal["exp", "softplus"] | None = "softplus",
     ):
@@ -50,6 +50,8 @@ class GammaDistribution(nn.Module):
         self.log_mu_max = math.log(self.mu_max)
         self.log_r_min = math.log(self.r_min)
         self.log_r_max = math.log(self.r_max)
+        self.register_buffer("eps", torch.tensor(eps))
+        self.register_buffer("beta", torch.tensor(beta))
 
     def smooth_bound(self, x, a, b):
         return a + (b - a) * (torch.atan(x) / torch.pi + 0.5)
@@ -68,8 +70,8 @@ class GammaDistribution(nn.Module):
         print("min raw r", raw_r.min())
         print("max raw r", raw_r.max())
 
-        k = torch.nn.functional.softplus(raw_k) + 1.0
-        r = torch.nn.functional.softplus(raw_r) + 0.1
+        k = torch.nn.functional.softplus(raw_k) + 0.001
+        r = torch.nn.functional.softplus(raw_r) + 0.001
 
         print("qbg,", self.fc.bias)
 
