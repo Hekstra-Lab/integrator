@@ -261,18 +261,6 @@ class IntensityEncoder2DMinimal(nn.Module):
 
         self.activation = nn.SiLU()
 
-        self._init_weights()
-
-    def _init_weights(self):
-        # Kaiming init suited for SiLU
-        nn.init.kaiming_normal_(self.conv1.weight, nonlinearity="relu")
-        nn.init.kaiming_normal_(self.conv2.weight, nonlinearity="relu")
-        nn.init.zeros_(self.conv1.bias)
-        nn.init.zeros_(self.conv2.bias)
-
-        nn.init.kaiming_normal_(self.fc.weight, nonlinearity="linear")
-        nn.init.zeros_(self.fc.bias)
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B, C, H, W)
         x = self.activation(self.conv1(x))  # (B, conv1_out, H, W)
