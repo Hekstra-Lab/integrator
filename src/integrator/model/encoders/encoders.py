@@ -325,15 +325,15 @@ class ProfileEncoder2DMinimal(nn.Module):
         # nonlinearity
         self.activation = nn.SiLU()
 
+        # compute flattened size dynamically
+        self.flattened_size = self._infer_flattened_size(input_shape)
+
         # linear projection to embedding
         self.fc = nn.Linear(
             in_features=self.flattened_size,
             out_features=encoder_out,
             bias=True,
         )
-
-        # compute flattened size dynamically
-        self.flattened_size = self._infer_flattened_size(input_shape)
 
     def _infer_flattened_size(self, input_shape):
         with torch.no_grad():
