@@ -130,51 +130,6 @@ class ShoeboxEncoder(nn.Module):
             return x.numel()
 
     def forward(self, x):
-        # # 0. Check input
-        # if torch.isnan(x).any() or torch.isinf(x).any():
-        #     raise RuntimeError("NaNs/inf in input to ShoeboxEncoder")
-        #
-        # # 1. Check conv1 parameters
-        # w = self.conv1.weight
-        # b = self.conv1.bias
-        # if torch.isnan(w).any() or torch.isinf(w).any():
-        #     raise RuntimeError("NaNs/inf in conv1.weight")
-        # if b is not None and (torch.isnan(b).any() or torch.isinf(b).any()):
-        #     raise RuntimeError("NaNs/inf in conv1.bias")
-        #
-        # # 2. Check output right after conv1
-        # x = self.conv1(x)
-        # if torch.isnan(x).any() or torch.isinf(x).any():
-        #     raise RuntimeError("NaNs/inf right after conv1 (before norm/ReLU)")
-        #
-        # x = self.norm1(x)
-        # if torch.isnan(x).any() or torch.isinf(x).any():
-        #     raise RuntimeError("NaNs/inf right after norm1")
-        #
-        # x = F.relu(x)
-        # if torch.isnan(x).any() or torch.isinf(x).any():
-        #     raise RuntimeError("NaNs/inf after ReLU")
-        #
-        # x = self.pool(x)
-        # if torch.isnan(x).any():
-        #     raise RuntimeError("NaNs after pool")
-        #
-        # x = F.relu(self.norm2(self.conv2(x)))
-        # if torch.isnan(x).any():
-        #     raise RuntimeError("NaNs after conv2/norm2")
-        #
-        # x = x.view(x.size(0), -1)
-        # if torch.isnan(x).any():
-        #     raise RuntimeError("NaNs after flatten")
-        #
-        # x = self.fc(x)
-        # if torch.isnan(x).any():
-        #     raise RuntimeError("NaNs after fc before tanh")
-        #
-        # x = torch.tanh(x)
-        # if torch.isnan(x).any():
-        #     raise RuntimeError("NaNs after tanh in ShoeboxEncoder")
-
         x = F.relu(self.norm1(self.conv1(x)))
         x = self.pool(x)
         x = F.relu(self.norm2(self.conv2(x)))
@@ -304,7 +259,7 @@ class IntensityEncoder2DMinimal(nn.Module):
 
         self.fc = nn.Linear(conv2_out, encoder_out, bias=True)
 
-        self.activation = nn.SiLU()  # smooth, non-saturating
+        self.activation = nn.SiLU()
 
         self._init_weights()
 
@@ -327,7 +282,6 @@ class IntensityEncoder2DMinimal(nn.Module):
         x = x.view(x.size(0), -1)  # (B, conv2_out)
         x = self.fc(x)  # (B, encoder_out)
 
-        # no tanh here — let the Gamma head bound/transform as needed
         return x
 
 
@@ -335,13 +289,21 @@ class IntensityEncoder2DMinimal(nn.Module):
 class ProfileEncoder2DMinimal(nn.Module):
     def __init__(
         self,
-        in_channels: int = 1,
-        encoder_out: int = 64,
-        conv1_out: int = 16,
-        conv2_out: int = 32,
+        in_channels=1,
+        encoder_out=64,
+        conv1_out=16,
+        conv2_out=32,
+        pool_kernel_size=2,
+        input_shape=(21, 21),
     ):
+        """
+        input_shape: (H, W) of shoebox
+        """
         super().__init__()
+        self.in_channels = in_channels
+        self.encoder_out = encoder_out
 
+        # 1st conv block
         self.conv1 = nn.Conv2d(
             in_channels=in_channels,
             out_channels=conv1_out,
@@ -349,6 +311,11 @@ class ProfileEncoder2DMinimal(nn.Module):
             padding=1,
             bias=True,
         )
+
+        # light pooling (optional)
+        self.pool = nn.MaxPool2d(kernel_size=pool_kernel_size)
+
+        # 2nd conv block
         self.conv2 = nn.Conv2d(
             in_channels=conv1_out,
             out_channels=conv2_out,
@@ -357,30 +324,40 @@ class ProfileEncoder2DMinimal(nn.Module):
             bias=True,
         )
 
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.global_pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Linear(conv2_out, encoder_out, bias=True)
+        # compute flattened size dynamically
+        self.flattened_size = self._infer_flattened_size(input_shape)
+
+        # linear projection to embedding
+        self.fc = nn.Linear(
+            in_features=self.flattened_size,
+            out_features=encoder_out,
+            bias=True,
+        )
+
+        # nonlinearity
         self.activation = nn.SiLU()
 
-        self._init_weights()
+    def _infer_flattened_size(self, input_shape):
+        with torch.no_grad():
+            H, W = input_shape
+            dummy = torch.zeros(1, self.in_channels, H, W)
+            x = self.activation(self.conv1(dummy))
+            x = self.pool(x)  # reduces to ~ (H/2, W/2)
+            x = self.activation(self.conv2(x))
+            return x.numel()
 
-    def _init_weights(self):
-        nn.init.kaiming_normal_(self.conv1.weight, nonlinearity="relu")
-        nn.init.kaiming_normal_(self.conv2.weight, nonlinearity="relu")
-        nn.init.zeros_(self.conv1.bias)
-        nn.init.zeros_(self.conv2.bias)
-
-        nn.init.kaiming_normal_(self.fc.weight, nonlinearity="linear")
-        nn.init.zeros_(self.fc.bias)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x):
         # x: (B, C, H, W)
         x = self.activation(self.conv1(x))
         x = self.pool(x)
         x = self.activation(self.conv2(x))
-        x = self.global_pool(x)
-        x = x.view(x.size(0), -1)  # (B, conv2_out)
-        x = self.fc(x)  # (B, encoder_out)
+
+        # preserve spatial info
+        x = x.view(x.size(0), -1)  # (B, flattened_size)
+
+        x = self.fc(x)
+        x = self.activation(x)
+
         return x
 
 
