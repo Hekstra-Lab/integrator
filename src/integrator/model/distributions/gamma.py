@@ -43,7 +43,7 @@ class GammaDistribution(nn.Module):
             self.mu_min, self.mu_max = 1e-3, 6e5  # mean in [~0, 600k]
             self.r_min, self.r_max = 0.5, 10.0  # Fano in [0.1, 2.0]
         elif estimand == "background":
-            self.mu_min, selfmu_max = 1e-3, 100.0  # mean in [~0, 100]
+            self.mu_min, self.mu_max = 1e-3, 100.0  # mean in [~0, 100]
             self.r_min, self.r_max = 0.5, 10.0
 
         self.log_mu_min = math.log(self.mu_min)
