@@ -123,7 +123,7 @@ class DirichletDistribution(nn.Module):
         else:
             raise ValueError("out_features must be (C,H,W) or (H,W)")
 
-        self.alpha_layer = Linear(in_features, self.num_components, bias=True)
+        self.alpha_layer = Linear(in_features, self.num_components, bias=False)
 
         # optional extra head to control total concentration (scalar)
         self.total_layer = Linear(in_features, 1, bias=True)
