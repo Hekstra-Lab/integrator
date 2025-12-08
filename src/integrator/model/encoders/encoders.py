@@ -312,7 +312,6 @@ class ProfileEncoder2DMinimal(nn.Module):
             bias=True,
         )
 
-        # light pooling (optional)
         self.pool = nn.MaxPool2d(kernel_size=pool_kernel_size)
 
         # 2nd conv block
@@ -323,9 +322,8 @@ class ProfileEncoder2DMinimal(nn.Module):
             padding=1,
             bias=True,
         )
-
-        # compute flattened size dynamically
-        self.flattened_size = self._infer_flattened_size(input_shape)
+        # nonlinearity
+        self.activation = nn.SiLU()
 
         # linear projection to embedding
         self.fc = nn.Linear(
@@ -334,8 +332,8 @@ class ProfileEncoder2DMinimal(nn.Module):
             bias=True,
         )
 
-        # nonlinearity
-        self.activation = nn.SiLU()
+        # compute flattened size dynamically
+        self.flattened_size = self._infer_flattened_size(input_shape)
 
     def _infer_flattened_size(self, input_shape):
         with torch.no_grad():
@@ -352,7 +350,6 @@ class ProfileEncoder2DMinimal(nn.Module):
         x = self.pool(x)
         x = self.activation(self.conv2(x))
 
-        # preserve spatial info
         x = x.view(x.size(0), -1)  # (B, flattened_size)
 
         x = self.fc(x)
