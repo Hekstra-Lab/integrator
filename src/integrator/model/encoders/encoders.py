@@ -258,7 +258,7 @@ class IntensityEncoder(nn.Module):
             in_features=conv3_out_channels,
             out_features=encoder_out,
         )
-        self.layernorm = torch.nn.LayerNorm(encoder_out)
+        self.mish = nn.Mish()
 
     def forward(self, x: Tensor) -> Tensor:
         x = F.relu(self.norm1(self.conv1(x)))
@@ -269,8 +269,9 @@ class IntensityEncoder(nn.Module):
         # x = x.squeeze(-1).squeeze(-1)  # From (B, C, 1, 1) to (B, C)
         x = x.squeeze()  # From (B, C, 1, 1) to (B, C)
         x = self.fc(x)
+        x = self.mish(x)
+
         # x = torch.tanh(x) * 5.0
-        x = self.layernorm(x)
 
         return x
 
