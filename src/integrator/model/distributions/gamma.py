@@ -31,7 +31,7 @@ class GammaDistribution(nn.Module):
         self.fc = Linear(
             in_features=in_features,
             out_features=out_features,
-            bias=False,
+            bias=True,
         )
 
         self.constrain_fn = Constrain(
@@ -53,16 +53,9 @@ class GammaDistribution(nn.Module):
         self.register_buffer("eps", torch.tensor(eps))
         self.register_buffer("beta", torch.tensor(beta))
 
-    def smooth_bound(self, x, a, b):
-        return a + (b - a) * (torch.atan(x) / torch.pi + 0.5)
-
-    def smooth_bound_square(self, x, a, b):
-        t = (2 / torch.pi) * torch.atan(x)  # (-1,1)
-        t = 0.5 * (t + 1.0)  # (0,1)
-        return a + (b - a) * (t**2)  # square for large-range stability
-
     def forward(self, x) -> Gamma:
         raw_mu, raw_r = self.fc(x).chunk(2, dim=-1)
+
         print("mean raw_mu", raw_mu.mean())
         print("min raw_mu", raw_mu.min())
         print("max raw_mu", raw_mu.max())
@@ -70,7 +63,7 @@ class GammaDistribution(nn.Module):
         print("min raw r", raw_r.min())
         print("max raw r", raw_r.max())
 
-        mu = torch.nn.functional.softplus(raw_mu) + 0.0001
+        mu = torch.exp(raw_mu)
         r = torch.nn.functional.softplus(raw_r) + 0.0001
         k = mu * r
 
