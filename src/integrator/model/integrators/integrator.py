@@ -401,7 +401,7 @@ class Integrator(LightningModule):
         self.log("Max(qbg.mean)", outputs["qbg"].mean.max())
         self.log("Mean(qbg.variance)", outputs["qbg"].variance.mean())
 
-        lambda_rate = 1e-3
+        lambda_rate = 1e-1
         r_min = 0.1
         r_penalty = (
             lambda_rate * torch.relu(r_min - outputs["r"]).pow(2).mean()
