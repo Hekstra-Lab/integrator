@@ -270,7 +270,7 @@ class LogFano(Callback):
         # group by intensity bin and get mean
         avg_df = df.group_by(pl.col("intensity_bin")).agg(
             fano_sum=pl.col("fano").sum(),
-            isigi=isigi,
+            isigi_sum=isigi.sum(),
             n=pl.len(),
         )
 
@@ -288,7 +288,7 @@ class LogFano(Callback):
         # get avg variance/mean ratio per intensity bin
         epoch_df = self.agg_df.with_columns(
             (pl.col("fano_sum") / pl.col("n")).alias("avg_fano"),
-            (pl.col("isigi") / pl.col("n")).alias("avg_isigi"),
+            (pl.col("isigi_sum") / pl.col("n")).alias("avg_isigi"),
         )
 
         # plot average Fano factor
