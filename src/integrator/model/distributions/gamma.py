@@ -63,24 +63,25 @@ class GammaDistribution(nn.Module):
         self.eps_fano = eps_fano
 
     def forward(self, x) -> Gamma:
-        raw_log_mu, raw_fano = self.mlp(x).chunk(2, dim=-1)
+        # Predict raw_mu, raw_r
+        raw_log_mu, raw_log_fano = self.mlp(x).chunk(2, -1)
 
-        mu = torch.exp(raw_log_mu) + self.eps_mu
+        mu = torch.exp(raw_log_mu)
 
+        # unconstrained Fano proposal
+        Fano_prop = torch.exp(raw_log_fano)
+
+        # compute continuous Fano_max using μ
         Fano_max = self.F_large + (self.F_small - self.F_large) * torch.exp(
-            -mu / self.mu_transition
+            -mu.detach() / self.mu_transition  # <----- detach for stability
         )
 
-        s = torch.sigmoid(raw_fano)
-        Fano = s * Fano_max + self.eps_fano
+        # clamp WITHOUT gradients
+        Fano = torch.clamp(Fano_prop, self.eps_fano, Fano_max)
 
+        # convert
         r = 1.0 / Fano
         k = mu * r
-
-        # remove event dim
-        k = k.squeeze(-1)
-        r = r.squeeze(-1)
-
         return Gamma(concentration=k, rate=r)
 
 
@@ -154,8 +155,8 @@ class GammaDistribution(nn.Module):
 #         print("max r", r.max())
 #
 #         return Gamma(concentration=k.flatten(), rate=r.flatten())
-#
-#
+
+
 if __name__ == "__main__":
     # Example usage
     in_features = 64
