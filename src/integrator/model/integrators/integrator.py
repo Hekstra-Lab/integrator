@@ -96,6 +96,7 @@ class IntegratorHyperParameters:
     mc_samples: int = 4
     renyi_scale: float = 0.0
     predict_keys: Literal["default"] | list[str] = "default"
+    rlambda: float = 10.0
 
 
 @dataclass
@@ -230,6 +231,9 @@ def stats(name, x):
 
 
 # %%
+
+
+# %%
 class Integrator(LightningModule):
     def __init__(
         self,
@@ -246,6 +250,7 @@ class Integrator(LightningModule):
         self.weight_decay = cfg.weight_decay
         self.mc_samples = cfg.mc_samples
         self.renyi_scale = cfg.renyi_scale
+        self.rlambda = cfg.rlambda
 
         # posterior modules
         self.qbg = surrogates.qbg
@@ -401,7 +406,7 @@ class Integrator(LightningModule):
         self.log("Max(qbg.mean)", outputs["qbg"].mean.max())
         self.log("Mean(qbg.variance)", outputs["qbg"].variance.mean())
 
-        lambda_rate = 1e-1
+        lambda_rate = self.rlambda
         r_min = 0.1
         r_penalty = (
             lambda_rate * torch.relu(r_min - outputs["r"]).pow(2).mean()
