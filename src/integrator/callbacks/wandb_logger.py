@@ -199,11 +199,13 @@ def _get_agg_df(bin_labels):
         data={
             "intensity_bin": bin_labels,
             "fano_sum": pl.zeros(len(bin_labels), eager=True),
+            "isigi_sum": pl.zeros(len(bin_labels), eager=True),
             "n": pl.zeros(len(bin_labels), eager=True),
         },
         schema={
             "intensity_bin": pl.Categorical,
             "fano_sum": pl.Float32,
+            "isigi_sum": pl.Float32,
             "n": pl.Int32,
         },
     )
@@ -234,7 +236,7 @@ class LogFano(Callback):
         )
 
         # columns to aggregate
-        self.numeric_cols = ["fano_sum", "n"]
+        self.numeric_cols = ["fano_sum", "n", "isigi"]
 
         # initialize an empty dataframe to aggregate data across steps
         self.agg_df = _get_agg_df(self.bin_labels)
@@ -273,7 +275,9 @@ class LogFano(Callback):
         )
 
         merged_df = self.base_df.join(
-            avg_df, how="left", on="intensity_bin"
+            avg_df,
+            how="left",
+            on="intensity_bin",
         ).fill_null(0)
 
         self.agg_df = self.agg_df.with_columns(
