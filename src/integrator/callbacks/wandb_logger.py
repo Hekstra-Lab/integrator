@@ -236,7 +236,7 @@ class LogFano(Callback):
         )
 
         # columns to aggregate
-        self.numeric_cols = ["fano_sum", "n", "isigi"]
+        self.numeric_cols = ["fano_sum", "n", "isigi_sum"]
 
         # initialize an empty dataframe to aggregate data across steps
         self.agg_df = _get_agg_df(self.bin_labels)
