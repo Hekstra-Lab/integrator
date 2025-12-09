@@ -3,8 +3,7 @@ from typing import Literal
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.distributions import Gamma
+import torch.nn.functional as F from torch.distributions import Gamma
 
 from integrator.layers import Constrain
 
@@ -12,9 +11,9 @@ from integrator.layers import Constrain
 class MLP(nn.Module):
     def __init__(self, in_dim, hidden=64):
         super().__init__()
-        self.fc1 = nn.Linear(in_dim, hidden, bias=True)
+        self.fc1 = nn.Linear(in_dim, hidden, bias=False)
         self.act = nn.SiLU()
-        self.fc2 = nn.Linear(hidden, 2, bias=True)
+        self.fc2 = nn.Linear(hidden, 2, bias=False)
 
     def forward(self, x):
         h = self.act(self.fc1(x))
