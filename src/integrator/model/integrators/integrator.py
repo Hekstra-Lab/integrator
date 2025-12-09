@@ -309,9 +309,9 @@ class Integrator(LightningModule):
             x_profile = torch.cat([x_profile, x_metadata], dim=-1)
             x_profile = self.linear(x_profile)
 
-        qbg = self.qbg(x_intensity)
+        qbg, ri = self.qbg(x_intensity)
         qi, ri = self.qi(x_intensity)
-        qp, rbg = self.qp(x_profile)
+        qp = self.qp(x_profile)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
         zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
