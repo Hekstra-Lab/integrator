@@ -181,12 +181,12 @@ def _get_agg_df(bin_labels):
     return pl.DataFrame(
         data={
             "intensity_bin": bin_labels,
-            "fano_mean": pl.zeros(len(bin_labels), eager=True),
+            "fano_sum": pl.zeros(len(bin_labels), eager=True),
             "n": pl.zeros(len(bin_labels), eager=True),
         },
         schema={
             "intensity_bin": pl.Categorical,
-            "fano_mean": pl.Float32,
+            "fano_sum": pl.Float32,
             "n": pl.Int32,
         },
     )
