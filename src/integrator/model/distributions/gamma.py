@@ -70,19 +70,18 @@ class GammaDistribution(nn.Module):
         self.mlp = MLP(in_dim=in_features)
 
     def forward(self, x) -> Gamma:
-        raw_mu, raw_r = self.mlp(x).chunk(2, dim=-1)
+        raw_k, raw_r = self.mlp(x).chunk(2, dim=-1)
 
         print(f"\n{self.estimand} stats:")
-        print("mean raw_mu", raw_mu.mean())
-        print("min raw_mu", raw_mu.min())
-        print("max raw_mu", raw_mu.max())
+        print("mean raw_k", raw_k.mean())
+        print("min raw_k", raw_k.min())
+        print("max raw_k", raw_k.max())
         print("mean raw r", raw_r.mean())
         print("min raw r", raw_r.min())
         print("max raw r", raw_r.max())
 
-        mu = F.softplus(raw_mu) + 0.001
+        k = F.softplus(raw_k) + 0.001
         r = F.softplus(raw_r) + 0.0001
-        k = mu * r
 
         print("mean k", k.mean())
         print("min k", k.min())
