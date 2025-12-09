@@ -31,12 +31,14 @@ class GammaDistribution(nn.Module):
         estimand: str,  # "intensity" or "background"
         in_features: int,
         hidden_features: int = 64,  # for your MLP
+        out_features: int = 2,
         eps_mu: float = 1e-8,
         eps_fano: float = 1e-8,
         # Fano scheduling hyperparameters:
         F_small: float = 100.0,  # max Fano at tiny μ
         F_large: float = 4.0,  # max Fano at large μ
         mu_transition: float = 100.0,  # μ scale where F_small → F_large
+        constrain: str = "softplus",
     ):
         super().__init__()
 
@@ -46,7 +48,9 @@ class GammaDistribution(nn.Module):
         self.mlp = nn.Sequential(
             nn.Linear(in_features, hidden_features),
             nn.SiLU(),
-            nn.Linear(hidden_features, 2),  # outputs raw_log_mu, raw_fano
+            nn.Linear(
+                hidden_features, out_features
+            ),  # outputs raw_log_mu, raw_fano
         )
 
         # hyperparameters for Fano schedule
