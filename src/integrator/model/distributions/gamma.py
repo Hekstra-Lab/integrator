@@ -63,7 +63,7 @@ class GammaDistribution(nn.Module):
         print("min raw r", raw_r.min())
         print("max raw r", raw_r.max())
 
-        mu = torch.exp(raw_mu)
+        mu = torch.exp(raw_mu) + 0.001
         r = torch.nn.functional.softplus(raw_r) + 0.0001
         k = mu * r
 
