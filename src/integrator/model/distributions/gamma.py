@@ -84,8 +84,6 @@ class GammaDistribution(nn.Module):
         r = F.softplus(raw_r) + 0.0001
         k = mu * r
 
-        print("qbg,", self.fc.bias)
-
         print("mean k", k.mean())
         print("min k", k.min())
         print("max k", k.max())
