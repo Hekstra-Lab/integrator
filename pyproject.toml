@@ -20,14 +20,13 @@ classifiers = [
 
 dependencies = [
   "matplotlib>=3.5",
-  "numpy>=1.21,<2.0",
+  "numpy>=2.3",
   "pandas>=2.3.2",
   "polars>=1.6.0",
-  "pydantic>=2.11.7",
-  "pytorch_lightning>=2.2,<3.0",
+  "pytorch_lightning>=2.2",
   "reciprocalspaceship>=1.0.7",
-  "rs_distributions==0.0.2",
-  "scipy>=1.11,<2.0",
+  "rs_distributions>=0.0.3",
+  "scipy>=1.11",
   "typer>=0.16.1",
 ]
 
@@ -126,5 +125,5 @@ dev = [
     "pytest>=8.4.1",
     "pytest-cov>=6.2.1",
     "ruff>=0.12.9",
-    "wandb>=0.21.1",
+    "wandb>=0.23.1",
 ]
