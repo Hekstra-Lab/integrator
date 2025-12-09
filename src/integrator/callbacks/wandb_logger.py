@@ -177,7 +177,7 @@ def _fano(
     return outputs[var_key] / (outputs[mean_key] + 1e-8)
 
 
-def _get_agg_df():
+def _get_agg_df(bin_labels):
     return pl.DataFrame(
         data={
             "intensity_bin": bin_labels,
@@ -220,7 +220,7 @@ class LogFano(Callback):
         self.numeric_cols = ["fano_mean", "n"]
 
         # initialize an empty dataframe to aggregate data across steps
-        self.agg_df = _get_agg_df()
+        self.agg_df = _get_agg_df(self.bin_labels)
 
     def on_train_batch_end(
         self, trainer, pl_module, outputs, batch, batch_idx
@@ -271,7 +271,7 @@ class LogFano(Callback):
         plt.close(fig)
 
         # reset agg_df
-        self.agg_df = _get_agg_df()
+        self.agg_df = _get_agg_df(self.bin_labels)
 
 
 # -
