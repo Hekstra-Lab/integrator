@@ -404,7 +404,7 @@ class Integrator(LightningModule):
         lambda_rate = 1e-3
         r_min = 0.1
         r_penalty = (
-            lambda_rate * torch.relu(r_min - loss_dict["r"]).pow(2).mean()
+            lambda_rate * torch.relu(r_min - outputs["r"]).pow(2).mean()
         )
         print("r_penalty:", r_penalty)
 
