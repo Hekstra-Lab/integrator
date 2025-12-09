@@ -147,6 +147,7 @@ def train(
         print("Incorrect data_dim value")
 
     fano_logger = LogFano()
+
     # to save checkpoints
     checkpoint_callback = ModelCheckpoint(
         dirpath=logger.experiment.dir
@@ -161,6 +162,7 @@ def train(
     trainer = create_trainer(
         cfg,
         callbacks=[
+            fano_logger,
             pred_writer,
             checkpoint_callback,
             plotter,
