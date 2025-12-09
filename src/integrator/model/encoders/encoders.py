@@ -260,7 +260,7 @@ class IntensityEncoder2DMinimal(nn.Module):
 
         self.global_pool = nn.AdaptiveAvgPool2d(1)  # (B, C, 1, 1)
 
-        self.fc = Linear(conv2_out, encoder_out, bias=True)
+        self.fc = Linear(conv2_out, encoder_out)
 
         self.activation = nn.SiLU()
 
@@ -323,7 +323,7 @@ class ProfileEncoder2DMinimal(nn.Module):
         self.fc = Linear(
             in_features=self.flattened_size,
             out_features=encoder_out,
-            bias=True,
+            bias=False,
         )
 
     def _infer_flattened_size(self, input_shape):
