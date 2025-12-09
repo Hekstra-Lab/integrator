@@ -3,9 +3,22 @@ from typing import Literal
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributions import Gamma
 
-from integrator.layers import Constrain, Linear
+from integrator.layers import Constrain
+
+
+class MLP(nn.Module):
+    def __init__(self, in_dim, hidden=64):
+        super().__init__()
+        self.fc1 = nn.Linear(in_dim, hidden, bias=True)
+        self.act = nn.SiLU()
+        self.fc2 = nn.Linear(hidden, 2, bias=True)
+
+    def forward(self, x):
+        h = self.act(self.fc1(x))
+        return self.fc2(h)
 
 
 class GammaDistribution(nn.Module):
@@ -28,11 +41,11 @@ class GammaDistribution(nn.Module):
         """
         super().__init__()
 
-        self.fc = Linear(
-            in_features=in_features,
-            out_features=out_features,
-            bias=True,
-        )
+        # self.fc = Linear(
+        #     in_features=in_features,
+        #     out_features=out_features,
+        #     bias=True,
+        # )
 
         self.constrain_fn = Constrain(
             constraint_fn=constraint,
@@ -42,9 +55,11 @@ class GammaDistribution(nn.Module):
         if estimand == "intensity":
             self.mu_min, self.mu_max = 1e-3, 6e5  # mean in [~0, 600k]
             self.r_min, self.r_max = 0.2, 50.0  # Fano in [0.1, 2.0]
+            self.estimand = estimand
         elif estimand == "background":
             self.mu_min, self.mu_max = 1e-3, 100.0  # mean in [~0, 100]
             self.r_min, self.r_max = 0.2, 10.0
+            self.estimand = estimand
 
         self.log_mu_min = math.log(self.mu_min)
         self.log_mu_max = math.log(self.mu_max)
@@ -52,10 +67,12 @@ class GammaDistribution(nn.Module):
         self.log_r_max = math.log(self.r_max)
         self.register_buffer("eps", torch.tensor(eps))
         self.register_buffer("beta", torch.tensor(beta))
+        self.mlp = MLP(in_dim=in_features)
 
     def forward(self, x) -> Gamma:
-        raw_mu, raw_r = self.fc(x).chunk(2, dim=-1)
+        raw_mu, raw_r = self.mlp(x).chunk(2, dim=-1)
 
+        print(f"\n{self.estimand} stats:")
         print("mean raw_mu", raw_mu.mean())
         print("min raw_mu", raw_mu.min())
         print("max raw_mu", raw_mu.max())
@@ -63,8 +80,8 @@ class GammaDistribution(nn.Module):
         print("min raw r", raw_r.min())
         print("max raw r", raw_r.max())
 
-        mu = torch.exp(raw_mu) + 0.001
-        r = torch.nn.functional.softplus(raw_r) + 0.0001
+        mu = F.softplus(raw_mu) + 0.001
+        r = F.softplus(raw_r) + 0.0001
         k = mu * r
 
         print("qbg,", self.fc.bias)
