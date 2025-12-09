@@ -36,8 +36,7 @@ class GammaDistribution(nn.Module):
         # Fano scheduling hyperparameters:
         F_small: float = 100.0,  # max Fano at tiny μ
         F_large: float = 4.0,  # max Fano at large μ
-        estimand: ["intensity", "background"] | None = None,
-        mu_transition: float = 1000.0,  # μ scale where F_small → F_large
+        mu_transition: float = 100.0,  # μ scale where F_small → F_large
     ):
         super().__init__()
 
