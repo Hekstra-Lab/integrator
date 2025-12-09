@@ -3,7 +3,8 @@ from typing import Literal
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F from torch.distributions import Gamma
+import torch.nn.functional as F
+from torch.distributions import Gamma
 
 from integrator.layers import Constrain
 
