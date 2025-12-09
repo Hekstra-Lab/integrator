@@ -226,7 +226,7 @@ class LogFano(Callback):
         self, trainer, pl_module, outputs, batch, batch_idx
     ):
         out = outputs["model_output"]
-        fano = fano(out, "qi_mean", "qi_var").detach().cpu()
+        fano = _fano(out, "qi_mean", "qi_var").detach().cpu()
 
         # aggregate
         df = pl.DataFrame(
