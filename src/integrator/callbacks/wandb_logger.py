@@ -197,7 +197,7 @@ class LogFano(Callback):
         super().__init__()
 
         edges = [0, 50, 100, 300, 600, 1000, 1500, 2500]
-        bin_edges = zip(edges[:-1], edges[1:])
+        bin_edges = zip(edges[:-1], edges[1:], strict=False)
 
         bin_labels = []
         for l, r in bin_edges:
@@ -267,7 +267,7 @@ class LogFano(Callback):
 
         # plot
         fig = _plot_avg_fano(epoch_df)
-        wandb.log({"train: qi_vs_dials_symlog": wandb.Image(fig)})
+        wandb.log({"train: avg var/mean": wandb.Image(fig)})
         plt.close(fig)
 
         # reset agg_df
@@ -1684,7 +1684,7 @@ if __name__ == "__main__":
     # %%
     # setting up bin edges
     edges = [0, 50, 100, 300, 600, 1000, 1500, 2500]
-    bin_edges = zip(edges[:-1], edges[1:])
+    bin_edges = zip(edges[:-1], edges[1:], strict=False)
 
     bin_labels = []
     for l, r in bin_edges:
