@@ -73,6 +73,7 @@ def train(
     from pytorch_lightning.loggers import WandbLogger
 
     from integrator.callbacks import (
+        LogFano,
         Plotter,
         PlotterLD,
         PredWriter,
@@ -145,6 +146,7 @@ def train(
     else:
         print("Incorrect data_dim value")
 
+    fano_logger = LogFano()
     # to save checkpoints
     checkpoint_callback = ModelCheckpoint(
         dirpath=logger.experiment.dir

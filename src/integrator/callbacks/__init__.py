@@ -1,5 +1,6 @@
 from .prediction_writer import PredWriter, assign_labels
 from .wandb_logger import (
+    LogFano,
     Plotter,
     PlotterLD,
 )
@@ -7,6 +8,7 @@ from .wandb_logger import (
 __all__ = [
     "Plotter",
     "PlotterLD",
+    "LogFano",
     "PredWriter",
     "assign_labels",
 ]

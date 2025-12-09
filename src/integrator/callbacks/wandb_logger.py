@@ -1,12 +1,15 @@
 import sys
 import traceback
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import polars as pl
 import torch
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from pytorch_lightning.callbacks import Callback
+from torch import Tensor
 
 import wandb
 
@@ -148,6 +151,127 @@ def create_comparison_grid(
     plt.tight_layout()
 
     return fig
+
+
+def _plot_avg_fano(df):
+    fig, ax = plt.subplots()
+
+    labels = df["intensity_bin"].to_list()
+    y = df["avg_fano"].to_list()
+    x = np.linspace(0, len(y), len(y))
+
+    ax.scatter(x, y, color="black")
+    ax.set_xticks(ticks=x, labels=labels)
+    ax.set_xlabel("intensity bin")
+    ax.set_ylabel("avg var/mean ratio")
+    ax.set_title("Average variance/mean per intensity bin")
+    ax.grid()
+    return fig
+
+
+def _fano(
+    outputs: Any,
+    mean_key: str,
+    var_key: str,
+) -> Tensor:
+    return outputs[var_key] / (outputs[mean_key] + 1e-8)
+
+
+def _get_agg_df():
+    return pl.DataFrame(
+        data={
+            "intensity_bin": bin_labels,
+            "fano_mean": pl.zeros(len(bin_labels), eager=True),
+            "n": pl.zeros(len(bin_labels), eager=True),
+        },
+        schema={
+            "intensity_bin": pl.Categorical,
+            "fano_mean": pl.Float32,
+            "n": pl.Float32,
+        },
+    )
+
+
+class LogFano(Callback):
+    def __init__(self):
+        super().__init__()
+
+        edges = [0, 50, 100, 300, 600, 1000, 1500, 2500]
+        bin_edges = zip(edges[:-1], edges[1:])
+
+        bin_labels = []
+        for l, r in bin_edges:
+            bin_labels.append(f"{l} - {r}")
+
+        # add end conditions
+        bin_labels.insert(0, f"<{bin_labels[0].split()[0]}")
+        bin_labels.append(f">{bin_labels[-1].split()[0]}")
+
+        self.bin_edges = edges
+        self.bin_labels = bin_labels
+
+        # dataframe to merge and get all intensity bins
+        self.base_df = pl.DataFrame(
+            {"intensity_bin": bin_labels},
+            schema={"intensity_bin": pl.Categorical},
+        )
+
+        # columns to aggregate
+        self.numeric_cols = ["fano_mean", "n"]
+
+        # initialize an empty dataframe to aggregate data across steps
+        self.agg_df = _get_agg_df()
+
+    def on_train_batch_end(
+        self, trainer, pl_module, outputs, batch, batch_idx
+    ):
+        out = outputs["model_output"]
+        fano = fano(out, "qi_mean", "qi_var").detach().cpu()
+
+        # aggregate
+        df = pl.DataFrame(
+            {
+                "refl_ids": out["refl_ids"],
+                "qi_mean": out["qi_mean"].detach().cpu(),
+                "qi_var": out["qi_var"].detach().cpu(),
+                "fano": fano.detach().cpu(),
+            }
+        )
+
+        # bin by intensity
+        df = df.with_columns(
+            pl.col("qi_mean")
+            .cut(self.bin_edges, labels=self.bin_labels)
+            .alias("intensity_bin")
+        )
+
+        # group by intensity bin and get mean
+        avg_df = df.group_by(pl.col("intensity_bin")).agg(
+            fano_mean=pl.col("fano").mean(),
+            n=pl.len(),
+        )
+
+        merged_df = self.base_df.join(
+            avg_df, how="left", on="intensity_bin"
+        ).fill_null(0)
+
+        self.agg_df = self.agg_df.with_columns(
+            [pl.col(c) + merged_df[c] for c in self.numeric_cols]
+        )
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        # get avg variance/mean ratio per intensity bin
+        epoch_df = self.agg_df.with_columns(
+            (pl.col("fano_mean") / pl.col("n")).alias("avg_fano")
+        )
+
+        # plot
+        fig = _plot_avg_fano(epoch_df)
+        wandb.log({"train: qi_vs_dials_symlog": wandb.Image(fig)})
+        plt.close(fig)
+
+        # reset agg_df
+        self.agg_df = _get_agg_df()
 
 
 # -
@@ -1533,3 +1657,107 @@ class MVNPlotter(Callback):
 
 
 # %%
+if __name__ == "__main__":
+    import polars as pl
+    import torch
+
+    from integrator.utils import (
+        create_data_loader,
+        create_integrator,
+        load_config,
+    )
+    from utils import CONFIGS
+
+    cfg = list(CONFIGS.glob("*"))[-1]
+    cfg = load_config(cfg)
+
+    integrator = create_integrator(cfg)
+    data = create_data_loader(cfg)
+
+    # load a batch
+    counts, sbox, mask, meta = next(iter(data.train_dataloader()))
+
+    # get training step output
+    training_step_out = integrator.training_step((counts, sbox, mask, meta), 0)
+    out = training_step_out["model_output"]
+
+    # %%
+    # setting up bin edges
+    edges = [0, 50, 100, 300, 600, 1000, 1500, 2500]
+    bin_edges = zip(edges[:-1], edges[1:])
+
+    bin_labels = []
+    for l, r in bin_edges:
+        bin_labels.append(f"{l} - {r}")
+
+    # add end conditions
+    bin_labels.insert(0, f"<{bin_labels[0].split()[0]}")
+    bin_labels.append(f">{bin_labels[-1].split()[0]}")
+
+    # %%
+    fano = _fano(out, "qi_mean", "qi_var")
+
+    df = pl.DataFrame(
+        {
+            "refl_ids": out["refl_ids"],
+            "qi_mean": out["qi_mean"].detach().cpu(),
+            "qi_var": out["qi_var"].detach().cpu(),
+            "fano": fano.detach().cpu(),
+        }
+    )
+
+    df = df.with_columns(
+        pl.col("qi_mean").cut(edges, labels=bin_labels).alias("intensity_bin")
+    )
+
+    avg_df = df.group_by(pl.col("intensity_bin")).agg(
+        fano_mean=pl.col("fano").mean(), n=pl.len()
+    )
+
+    base_df = pl.DataFrame(
+        {"intensity_bin": bin_labels}, schema={"intensity_bin": pl.Categorical}
+    )
+
+    merged_df = base_df.join(avg_df, how="left", on="intensity_bin").fill_null(
+        0
+    )
+
+    agg_df = pl.DataFrame(
+        data={
+            "intensity_bin": bin_labels,
+            "fano_mean": pl.zeros(len(bin_labels), eager=True),
+            "n": pl.zeros(len(bin_labels), eager=True),
+        },
+        schema={
+            "intensity_bin": pl.Categorical,
+            "fano_mean": pl.Float32,
+            "n": pl.Float32,
+        },
+    )
+    numeric_cols = ["fano_mean", "n"]
+
+    result = agg_df.with_columns(
+        [pl.col(c) + merged_df[c] for c in numeric_cols]
+    )
+    epoch_df = result.with_columns(
+        (pl.col("fano_mean") / pl.col("n")).alias("avg_fano")
+    )
+
+    # %%
+    def plot_avg_fano(df):
+        fig, ax = plt.subplots()
+
+        labels = df["intensity_bin"].to_list()
+        y = df["avg_fano"].to_list()
+        x = np.linspace(0, len(y), len(y))
+
+        ax.scatter(x, y, color="black")
+        ax.set_xticks(ticks=x, labels=labels)
+        ax.set_xlabel("intensity bin")
+        ax.set_ylabel("avg var/mean ratio")
+        ax.set_title("Average variance/mean per intensity bin")
+        ax.grid()
+        return fig
+
+    fig = plot_avg_fano(epoch_df)
+    pass
