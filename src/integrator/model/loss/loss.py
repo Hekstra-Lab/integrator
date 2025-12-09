@@ -275,6 +275,8 @@ if __name__ == "__main__":
     integrator = create_integrator(cfg)
     data = create_data_loader(cfg)
 
+    losscfg = LossConfig(pprf=None, pi=None, pbg=None, shape=(1, 21, 21))
+
     # hyperparameters
     mc_samples = 100
     shape = (1, 21, 21)
@@ -301,4 +303,15 @@ if __name__ == "__main__":
     zi = qi.rsample([mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
     rate = zi * zprf + zbg  # [B,S,Pix]
-    loss = integrator.loss
+
+    # priors
+    pbg = HalfCauchy(0.5)
+    pi = HalfCauchy(0.5)
+    pprf = Dirichlet(torch.ones(prod(shape)) * 0.01)
+
+    kl_pprf = _kl(qp, pprf, losscfg)
+    kl_pi = _kl(qi, pi, losscfg)
+    kl_pbg = _kl(qbg, pbg, losscfg)
+
+    ll = Poisson(rate + 0.001).log_prob(counts.unsqueeze(1))
+    ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
