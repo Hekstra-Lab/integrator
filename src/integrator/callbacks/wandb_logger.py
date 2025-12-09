@@ -169,6 +169,23 @@ def _plot_avg_fano(df):
     return fig
 
 
+def _plot_avg_isigi(df):
+    fig, ax = plt.subplots()
+
+    labels = df["intensity_bin"].to_list()
+    y = df["avg_isigi"].to_list()
+    x = np.linspace(0, len(y), len(y))
+
+    ax.scatter(x, y, color="black")
+    ax.set_xticks(ticks=x, labels=labels, rotation=55)
+    ax.set_xlabel("intensity bin")
+    ax.set_ylabel("mean i/sigi")
+    ax.set_title("Average signal-to-noise per intensity bin")
+    ax.grid()
+    plt.tight_layout()
+    return fig
+
+
 def _fano(
     outputs: Any,
     mean_key: str,
@@ -245,9 +262,14 @@ class LogFano(Callback):
             .alias("intensity_bin")
         )
 
+        # signal-to-noise expression
+        isigi = pl.col("qi_mean") / pl.col("qi_var").sqrt()
+
         # group by intensity bin and get mean
         avg_df = df.group_by(pl.col("intensity_bin")).agg(
-            fano_sum=pl.col("fano").sum(), n=pl.len()
+            fano_sum=pl.col("fano").sum(),
+            isigi=isigi,
+            n=pl.len(),
         )
 
         merged_df = self.base_df.join(
@@ -261,12 +283,18 @@ class LogFano(Callback):
     def on_train_epoch_end(self, trainer, pl_module):
         # get avg variance/mean ratio per intensity bin
         epoch_df = self.agg_df.with_columns(
-            (pl.col("fano_sum") / pl.col("n")).alias("avg_fano")
+            (pl.col("fano_sum") / pl.col("n")).alias("avg_fano"),
+            (pl.col("isigi") / pl.col("n")).alias("avg_isigi"),
         )
 
-        # plot
+        # plot average Fano factor
         fig = _plot_avg_fano(epoch_df)
         wandb.log({"train: avg var/mean": wandb.Image(fig)})
+        plt.close(fig)
+
+        # plot average signal-to-noise
+        fig = _plot_avg_isigi(epoch_df)
+        wandb.log({"train: avg signal-to-noise": wandb.Image(fig)})
         plt.close(fig)
 
         # reset agg_df
