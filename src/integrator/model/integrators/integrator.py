@@ -310,8 +310,8 @@ class Integrator(LightningModule):
             x_profile = self.linear(x_profile)
 
         qbg = self.qbg(x_intensity)
-        qi = self.qi(x_intensity)
-        qp = self.qp(x_profile)
+        qi, ri = self.qi(x_intensity)
+        qp, rbg = self.qp(x_profile)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
         zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
@@ -376,6 +376,7 @@ class Integrator(LightningModule):
             "qp": qp,
             "qi": qi,
             "qbg": qbg,
+            "r": ri,
         }
 
     def training_step(self, batch, _batch_idx):
@@ -400,7 +401,15 @@ class Integrator(LightningModule):
         self.log("Max(qbg.mean)", outputs["qbg"].mean.max())
         self.log("Mean(qbg.variance)", outputs["qbg"].variance.mean())
 
+        lambda_rate = 1e-3
+        r_min = 0.1
+        r_penalty = (
+            lambda_rate * torch.relu(r_min - loss_dict["r"]).pow(2).mean()
+        )
+        print("r_penalty:", r_penalty)
+
         total_loss = loss_dict["loss"]
+        total_loss += r_penalty
         kl = loss_dict["kl_mean"]
         nll = loss_dict["neg_ll_mean"]
 
