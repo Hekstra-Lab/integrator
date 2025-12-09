@@ -161,7 +161,7 @@ def _plot_avg_fano(df):
     x = np.linspace(0, len(y), len(y))
 
     ax.scatter(x, y, color="black")
-    ax.set_xticks(ticks=x, labels=labels)
+    ax.set_xticks(ticks=x, labels=labels, rotation=55)
     ax.set_xlabel("intensity bin")
     ax.set_ylabel("avg var/mean ratio")
     ax.set_title("Average variance/mean per intensity bin")
@@ -187,7 +187,7 @@ def _get_agg_df(bin_labels):
         schema={
             "intensity_bin": pl.Categorical,
             "fano_mean": pl.Float32,
-            "n": pl.Float32,
+            "n": pl.Int32,
         },
     )
 
@@ -217,7 +217,7 @@ class LogFano(Callback):
         )
 
         # columns to aggregate
-        self.numeric_cols = ["fano_mean", "n"]
+        self.numeric_cols = ["fano_sum", "n"]
 
         # initialize an empty dataframe to aggregate data across steps
         self.agg_df = _get_agg_df(self.bin_labels)
@@ -247,8 +247,7 @@ class LogFano(Callback):
 
         # group by intensity bin and get mean
         avg_df = df.group_by(pl.col("intensity_bin")).agg(
-            fano_mean=pl.col("fano").mean(),
-            n=pl.len(),
+            fano_sum=pl.col("fano").sum(), n=pl.len()
         )
 
         merged_df = self.base_df.join(
@@ -262,7 +261,7 @@ class LogFano(Callback):
     def on_train_epoch_end(self, trainer, pl_module):
         # get avg variance/mean ratio per intensity bin
         epoch_df = self.agg_df.with_columns(
-            (pl.col("fano_mean") / pl.col("n")).alias("avg_fano")
+            (pl.col("fano_sum") / pl.col("n")).alias("avg_fano")
         )
 
         # plot
