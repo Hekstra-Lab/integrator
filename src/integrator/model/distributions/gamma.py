@@ -79,7 +79,7 @@ class GammaDistribution(nn.Module):
         raw_mu = self.mlp(x)
         mu = self._bound(raw_mu, self.log_mu_min, self.log_mu_max)  # (B,1)
 
-        log_phi_img = self.log_phi_table[img_ids[:, 2].int()]
+        log_phi_img = self.log_phi_table[img_ids[:, 2].long()]
 
         phi = torch.exp(log_phi_img).unsqueeze(-1)
         phi = torch.clamp(phi, self.fano_min, self.fano_max)
