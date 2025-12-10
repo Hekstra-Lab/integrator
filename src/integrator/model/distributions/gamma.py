@@ -65,7 +65,9 @@ class GammaDistribution(nn.Module):
         self.mlp = MLP(in_dim=in_features, out_features=1)
 
         self.log_phi_table = nn.Embedding(
-            num_embeddings=n_images, embedding_dim=1
+            num_embeddings=n_images,
+            embedding_dim=1,
+            sparse=False,
         )
         nn.init.constant_(self.log_phi_table.weight, 0.0)  # start φ=1
 
