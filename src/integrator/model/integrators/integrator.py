@@ -317,7 +317,7 @@ class Integrator(LightningModule):
         # qbg, ri = self.qbg(x_intensity)
         # qi, ri = self.qi(x_intensity)
         qbg = self.qbg(x_intensity)
-        qi, fano = self.qi(x_intensity)
+        qi = self.qi(x_intensity, reference)
         qp = self.qp(x_profile)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
@@ -365,7 +365,7 @@ class Integrator(LightningModule):
         # print("max counts total:", counts.sum(-1).max())
         # print("max mask total:", mask.sum(-1).max())
         # print("min mask total:", mask.sum(-1).min())
-        #
+
         out = IntegratorBaseOutputs(
             rates=rate,
             counts=counts,
@@ -383,7 +383,7 @@ class Integrator(LightningModule):
             "qp": qp,
             "qi": qi,
             "qbg": qbg,
-            "fano": fano,
+            # "fano": fano,
             # "corr_penalty": corr_penalty,
         }
 

@@ -35,26 +35,25 @@ class MLP(nn.Module):
 
 class GammaDistribution(nn.Module):
     """
-    Gamma posterior parameterized by (mean, fano).
+    Gamma posterior parameterized by (mean, fano_per_image).
 
-    - Network predicts raw mean and raw fano
-    - Mean and fano are bounded into physically meaningful ranges
-    - Gamma parameters are then alpha = mean / fano, beta = 1 / fano
+    - Network predicts mean μ(x)
+    - Fano φ comes from an embedding indexed by image_id
     """
 
     def __init__(
         self,
         estimand: Literal["background", "intensity"],
         in_features: int,
+        n_images: int,
         eps: float = 1e-6,
-        constraint: Literal["exp", "softplus"] | None = "softplus",
     ):
         super().__init__()
 
         if estimand == "intensity":
-            self.mu_min, self.mu_max = 1e-3, 1e6  # expected intensity
-            self.fano_min, self.fano_max = 0.2, 200.0  # allow +/- ~x2 Poisson
-        elif estimand == "background":
+            self.mu_min, self.mu_max = 1e-3, 1e6
+            self.fano_min, self.fano_max = 0.2, 2.0
+        else:
             self.mu_min, self.mu_max = 1e-3, 100.0
             self.fano_min, self.fano_max = 0.2, 5.0
 
@@ -63,30 +62,36 @@ class GammaDistribution(nn.Module):
         self.log_fano_min = math.log(self.fano_min)
         self.log_fano_max = math.log(self.fano_max)
 
-        self.mlp = MLP(in_dim=in_features, out_features=2)
+        self.mlp = MLP(in_dim=in_features, out_features=1)
+
+        self.log_phi_table = nn.Embedding(
+            num_embeddings=n_images, embedding_dim=1
+        )
+        nn.init.constant_(self.log_phi_table.weight, 0.0)  # start φ=1
 
         self.eps = eps
-        self.estimand = estimand
 
     def _bound(self, raw, log_min, log_max):
-        """Bound a raw unconstrained tensor into [exp(log_min), exp(log_max)]."""
         return torch.exp(log_min + (log_max - log_min) * torch.sigmoid(raw))
 
-    def forward(self, x):
-        raw_mu, raw_fano = self.mlp(x).chunk(2, dim=-1)
+    def forward(self, x, img_ids):
+        """
+        x:      (batch, features)
+        img_ids:(batch,) integer indices 0...n_images-1
+        """
+        raw_mu = self.mlp(x)
+        mu = self._bound(raw_mu, self.log_mu_min, self.log_mu_max)  # (B,1)
 
-        mu = self._bound(raw_mu, self.log_mu_min, self.log_mu_max)
-        fano = self._bound(raw_fano, self.log_fano_min, self.log_fano_max)
+        log_phi_img = self.log_phi_table(img_ids[:, 2].int())
 
-        beta = 1.0 / (fano + self.eps)
+        phi = torch.exp(log_phi_img)
+        phi = torch.clamp(phi, self.fano_min, self.fano_max)
+
+        beta = 1.0 / (phi + self.eps)
         alpha = mu * beta
 
-        alpha = alpha.flatten()
-        beta = beta.flatten()
-
-        dist = Gamma(concentration=alpha, rate=beta)
-
-        return dist, fano
+        dist = Gamma(concentration=alpha.squeeze(-1), rate=beta.squeeze(-1))
+        return dist
 
 
 # class GammaDistribution(nn.Module):
