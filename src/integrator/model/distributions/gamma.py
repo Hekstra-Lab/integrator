@@ -82,7 +82,7 @@ class GammaDistribution(nn.Module):
         log_phi_img = self.log_phi_table[img_ids[:, 2].long()]
 
         phi = torch.exp(log_phi_img).unsqueeze(-1)
-        phi = torch.clamp(phi, self.fano_min, self.fano_max)
+        # phi = torch.clamp(phi, self.fano_min, self.fano_max)
 
         beta = 1.0 / (phi + self.eps)
         alpha = mu * beta
@@ -175,3 +175,4 @@ if __name__ == "__main__":
 
     # use with metadata
     qbg = gamma_dist(representation)
+    import torch
