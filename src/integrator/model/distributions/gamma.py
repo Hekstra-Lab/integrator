@@ -73,19 +73,19 @@ class GammaDistribution(nn.Module):
 
     def forward(self, x, img_ids):
         """
-        x:      (batch, features)
+        x: (batch, features)
         img_ids:(batch,) integer indices 0...n_images-1
         """
-        raw_mu = self.mlp(x)
-        mu = self._bound(raw_mu, self.log_mu_min, self.log_mu_max)  # (B,1)
+        raw_alpha = self.mlp(x)
+        # mu = self._bound(raw_mu, self.log_mu_min, self.log_mu_max)  # (B,1)
+        alpha = torch.nn.functional.softplus(raw_alpha) + 0.0001
 
         log_phi_img = self.log_phi_table[img_ids[:, 2].long()]
-
         phi = torch.exp(log_phi_img).unsqueeze(-1)
         # phi = torch.clamp(phi, self.fano_min, self.fano_max)
 
         beta = 1.0 / (phi + self.eps)
-        alpha = mu * beta
+        # alpha = mu * beta
 
         dist = Gamma(concentration=alpha.flatten(), rate=beta.flatten())
         return dist
