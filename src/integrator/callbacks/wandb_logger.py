@@ -215,7 +215,7 @@ class LogFano(Callback):
     def __init__(self):
         super().__init__()
 
-        edges = [0, 50, 100, 300, 600, 1000, 1500, 2500]
+        edges = [0, 10, 25, 50, 100, 300, 600, 1000, 1500, 2500, 5000, 10000]
         bin_edges = zip(edges[:-1], edges[1:], strict=False)
 
         bin_labels = []
@@ -224,7 +224,7 @@ class LogFano(Callback):
 
         # add end conditions
         bin_labels.insert(0, f"<{bin_labels[0].split()[0]}")
-        bin_labels.append(f">{bin_labels[-1].split()[0]}")
+        bin_labels.append(f">{bin_labels[-1].split()[1]}")
 
         self.bin_edges = edges
         self.bin_labels = bin_labels

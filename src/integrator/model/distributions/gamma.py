@@ -82,7 +82,9 @@ class GammaDistribution(nn.Module):
         k = F.softplus(raw_k) + 0.0001
         r = F.softplus(raw_r) + 0.0001
 
-        return Gamma(concentration=k.flatten(), rate=r.flatten())
+        fano = 1 / r
+
+        return Gamma(concentration=k.flatten(), rate=r.flatten()), fano
         # return Gamma(concentration=k.flatten(), rate=r.flatten()), r.flatten()
 
 

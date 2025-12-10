@@ -316,8 +316,8 @@ class Integrator(LightningModule):
 
         # qbg, ri = self.qbg(x_intensity)
         # qi, ri = self.qi(x_intensity)
-        qbg = self.qbg(x_intensity)
-        qi = self.qi(x_intensity)
+        qbg, fanobg = self.qbg(x_intensity)
+        qi, fano = self.qi(x_intensity)
         qp = self.qp(x_profile)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
@@ -383,7 +383,7 @@ class Integrator(LightningModule):
             "qp": qp,
             "qi": qi,
             "qbg": qbg,
-            # "r": ri,
+            "fano": fano,
         }
 
     def training_step(self, batch, _batch_idx):
@@ -408,6 +408,15 @@ class Integrator(LightningModule):
         self.log("Max(qbg.mean)", outputs["qbg"].mean.max())
         self.log("Mean(qbg.variance)", outputs["qbg"].variance.mean())
 
+        fano = outputs["fano"]
+        lambda_fano = 1e-3  # tune
+
+        fano_penalty = (torch.log(fano) ** 2).mean() * lambda_fano
+
+        self.log("train fano mean", fano.mean())
+        self.log("train fano max", fano.max())
+        self.log("train fano min", fano.min())
+
         # lambda_rate = self.rlambda
         # r_min = 0.1
         # r_penalty = (
@@ -416,7 +425,7 @@ class Integrator(LightningModule):
         # print("r_penalty:", r_penalty)
 
         total_loss = loss_dict["loss"]
-        # total_loss += r_penalty
+        total_loss += fano_penalty
         kl = loss_dict["kl_mean"]
         nll = loss_dict["neg_ll_mean"]
 

@@ -90,7 +90,6 @@ from integrator.layers import Constrain, Linear
 #         qp = Dirichlet(alpha)
 #
 #         return qp
-#
 
 
 class DirichletDistribution(nn.Module):

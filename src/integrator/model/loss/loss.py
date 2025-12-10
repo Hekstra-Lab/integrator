@@ -256,12 +256,15 @@ class Loss(nn.Module):
 
 # %%
 if __name__ == "__main__":
+    from math import prod
+
     import torch
 
     from integrator.model.distributions import (
         DirichletDistribution,
         FoldedNormalDistribution,
     )
+    from integrator.model.loss import LossConfig
     from integrator.utils import (
         create_data_loader,
         create_integrator,
