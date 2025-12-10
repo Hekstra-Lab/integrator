@@ -81,13 +81,13 @@ class GammaDistribution(nn.Module):
 
         log_phi_img = self.log_phi_table[img_ids[:, 2].int()]
 
-        phi = torch.exp(log_phi_img)
+        phi = torch.exp(log_phi_img).unsqueeze(-1)
         phi = torch.clamp(phi, self.fano_min, self.fano_max)
 
         beta = 1.0 / (phi + self.eps)
         alpha = mu * beta
 
-        dist = Gamma(concentration=alpha.squeeze(-1), rate=beta.squeeze(-1))
+        dist = Gamma(concentration=alpha.flatten(), rate=beta.flatten())
         return dist
 
 
