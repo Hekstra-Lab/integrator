@@ -316,7 +316,7 @@ class Integrator(LightningModule):
 
         # qbg, ri = self.qbg(x_intensity)
         # qi, ri = self.qi(x_intensity)
-        qbg, fanobg = self.qbg(x_intensity)
+        qbg, fanobg, corr_penalty = self.qbg(x_intensity)
         qi, fano = self.qi(x_intensity)
         qp = self.qp(x_profile)
 
@@ -384,6 +384,7 @@ class Integrator(LightningModule):
             "qi": qi,
             "qbg": qbg,
             "fano": fano,
+            "corr_penalty": corr_penalty,
         }
 
     def training_step(self, batch, _batch_idx):
@@ -425,7 +426,7 @@ class Integrator(LightningModule):
         # print("r_penalty:", r_penalty)
 
         total_loss = loss_dict["loss"]
-        total_loss += fano_penalty
+        total_loss += fano_penalty + loss_dict["corr_penalty"]
         kl = loss_dict["kl_mean"]
         nll = loss_dict["neg_ll_mean"]
 

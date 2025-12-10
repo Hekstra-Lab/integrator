@@ -84,7 +84,23 @@ class GammaDistribution(nn.Module):
 
         fano = 1 / r
 
-        return Gamma(concentration=k.flatten(), rate=r.flatten()), fano
+        lambda_corr = 1.0
+
+        log_fano = torch.log(1.0 / r + 1e-8)
+        log_mean = torch.log((k / r) + 1e-8)
+
+        log_fano_c = log_fano - log_fano.mean()
+        log_mean_c = log_mean - log_mean.mean()
+
+        corr = (log_fano_c * log_mean_c).mean()
+
+        shape_penalty = lambda_corr * corr**2
+
+        return (
+            Gamma(concentration=k.flatten(), rate=r.flatten()),
+            fano,
+            shape_penalty,
+        )
         # return Gamma(concentration=k.flatten(), rate=r.flatten()), r.flatten()
 
 
