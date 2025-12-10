@@ -316,8 +316,8 @@ class Integrator(LightningModule):
 
         # qbg, ri = self.qbg(x_intensity)
         # qi, ri = self.qi(x_intensity)
-        qbg, fanobg, corr_penalty = self.qbg(x_intensity)
-        qi, fano = self.qi(x_intensity)
+        (qbg,) = self.qbg(x_intensity)
+        qi, fano, corr_penalty = self.qi(x_intensity)
         qp = self.qp(x_profile)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
