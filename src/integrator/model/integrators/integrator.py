@@ -316,7 +316,7 @@ class Integrator(LightningModule):
 
         # qbg, ri = self.qbg(x_intensity)
         # qi, ri = self.qi(x_intensity)
-        (qbg,) = self.qbg(x_intensity)
+        qbg = self.qbg(x_intensity)
         qi, fano, corr_penalty = self.qi(x_intensity)
         qp = self.qp(x_profile)
 
