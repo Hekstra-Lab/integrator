@@ -319,7 +319,9 @@ class Integrator(LightningModule):
         )
         num_images = im_sbox.shape[0]
 
-        im_rep = self.encoder3(im_sbox.reshape(num_images, 1, 21, 21))
+        im_rep = self.encoder3(
+            im_sbox.reshape(num_images, 1, *(self.shoebox_shape))
+        )
 
         # if self.encoder3 is not None:
         #     if reference is None:
