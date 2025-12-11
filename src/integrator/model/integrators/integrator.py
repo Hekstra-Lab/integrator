@@ -322,11 +322,13 @@ class Integrator(LightningModule):
             x_profile = self.linear(x_profile)
 
         #
-        qr = self.qr(x_intensity)
-        rates = qr.rsample([self.mc_samples]).mean(0)
+        qri = self.qr(x_intensity)
+        qrbg = self.qr(x_intensity)
+        rbg = qrbg.rsample([self.mc_samples]).mean(0)
+        ri = qri.rsample([self.mc_samples]).mean(0)
 
-        qbg = self.qbg(x_intensity)
-        qi = self.qi(x_intensity, rates)
+        qbg = self.qbg(x_intensity, rbg)
+        qi = self.qi(x_intensity, ri)
         qp = self.qp(x_profile)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
@@ -392,7 +394,8 @@ class Integrator(LightningModule):
             "qp": qp,
             "qi": qi,
             "qbg": qbg,
-            "qr": qr,
+            "qrbg": qrbg,
+            "qri": qri,
             # "fano": fano,
             # "corr_penalty": corr_penalty,
         }
@@ -408,7 +411,8 @@ class Integrator(LightningModule):
             qp=outputs["qp"],
             qi=outputs["qi"],
             qbg=outputs["qbg"],
-            qr=outputs["qr"],
+            qri=outputs["qri"],
+            qrbg=outputs["qrbg"],
             mask=outputs["forward_base_out"]["mask"],
         )
 
@@ -419,22 +423,6 @@ class Integrator(LightningModule):
         self.log("Min(qbg.mean)", outputs["qbg"].mean.min())
         self.log("Max(qbg.mean)", outputs["qbg"].mean.max())
         self.log("Mean(qbg.variance)", outputs["qbg"].variance.mean())
-
-        # fano = outputs["fano"]
-        # lambda_fano = 1e-3  # tune
-
-        # fano_penalty = (torch.log(fano) ** 2).mean() * lambda_fano
-
-        # self.log("train fano mean", fano.mean())
-        # self.log("train fano max", fano.max())
-        # self.log("train fano min", fano.min())
-
-        # lambda_rate = self.rlambda
-        # r_min = 0.1
-        # r_penalty = (
-        #     lambda_rate * torch.relu(r_min - outputs["r"]).pow(2).mean()
-        # )
-        # print("r_penalty:", r_penalty)
 
         total_loss = loss_dict["loss"]
         # total_loss += fano_penalty + loss_dict["corr_penalty"]
@@ -475,7 +463,8 @@ class Integrator(LightningModule):
             qp=outputs["qp"],
             qi=outputs["qi"],
             qbg=outputs["qbg"],
-            qr=outputs["qr"],
+            qri=outputs["qri"],
+            qrbg=outputs["qrbg"],
             mask=outputs["forward_base_out"]["mask"],
         )
 
