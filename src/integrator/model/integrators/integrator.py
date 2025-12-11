@@ -95,7 +95,8 @@ class IntegratorHyperParameters:
     mc_samples: int = 4
     renyi_scale: float = 0.0
     predict_keys: Literal["default"] | list[str] = "default"
-    rlambda: float = 10.0
+    lambdai: float = 1.0
+    lambdabg: float = 1.0
 
 
 @dataclass
@@ -267,7 +268,6 @@ class Integrator(LightningModule):
         self.weight_decay = cfg.weight_decay
         self.mc_samples = cfg.mc_samples
         self.renyi_scale = cfg.renyi_scale
-        self.rlambda = cfg.rlambda
 
         # posterior modules
         self.qbg = surrogates.qbg
@@ -290,6 +290,10 @@ class Integrator(LightningModule):
             if cfg.predict_keys == "default"
             else cfg.predict_keys
         )
+
+        # fano penalties
+        self.fanobglambda = self.cfg.lambdabg
+        self.fanoilambda = self.cfg.lambdai
 
         if self.encoder3 is not None:
             self.linear = nn.Linear(cfg.encoder_out * 2, cfg.encoder_out)
@@ -454,10 +458,11 @@ class Integrator(LightningModule):
         self.log("Max(qbg.mean)", outputs["qbg"].mean.max())
         self.log("Mean(qbg.variance)", outputs["qbg"].variance.mean())
 
-        fanoi_l2 = (-torch.log(outputs["fanoi"])).pow(2).mean()
-        fanobg_l2 = (-torch.log(outputs["fanobg"])).pow(2).mean()
-        weight_fanoi = 1.0
-        weight_fanobg = 1.0
+        # fano penalty
+        fanoi_l2 = (torch.log(outputs["fanoi"] + 1e-8)).pow(2).mean()
+        fanobg_l2 = (torch.log(outputs["fanobg"] + 1e-8)).pow(2).mean()
+        weight_fanoi = self.fanoilambda
+        weight_fanobg = self.fanobglambda
 
         total_loss = (
             loss_dict["loss"]
