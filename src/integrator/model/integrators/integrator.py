@@ -5,7 +5,6 @@ import torch
 from pytorch_lightning import LightningModule
 from torch import Tensor, nn
 
-from integrator.layers import Linear
 from integrator.model.distributions import (
     DirichletDistribution,
     FoldedNormalDistribution,
@@ -25,23 +24,34 @@ class MLP(nn.Module):
         in_dim: int,
         hidden: int = 64,
         out_features: int = 2,
+        norm: str | None = "layernorm",  # None, 'layernorm', or 'weightnorm'
     ):
         super().__init__()
-        self.fc1 = Linear(
-            in_dim,
-            hidden,
-            bias=False,
-        )
-        self.act = nn.SiLU()
-        self.fc2 = Linear(
-            hidden,
-            out_features,
-            bias=False,
-        )
+
+        fc1 = nn.Linear(in_dim, hidden, bias=True)
+        fc2 = nn.Linear(hidden, out_features, bias=True)
+
+        # Kaiming initialization for SiLU
+        nn.init.kaiming_normal_(fc1.weight, nonlinearity="relu")
+        nn.init.zeros_(fc1.bias)
+        nn.init.kaiming_normal_(fc2.weight, nonlinearity="linear")
+        nn.init.zeros_(fc2.bias)
+
+        norm_layer = nn.LayerNorm(hidden)
+
+        layers = [fc1]
+        if norm_layer is not None:
+            layers.append(norm_layer)
+
+        layers += [
+            nn.SiLU(),
+            fc2,
+        ]
+
+        self.net = nn.Sequential(*layers)
 
     def forward(self, x):
-        h = self.act(self.fc1(x))
-        return self.fc2(h)
+        return self.net(x)
 
 
 def calculate_intensities(counts, qbg, qp, mask, cfg):
@@ -309,7 +319,7 @@ class Integrator(LightningModule):
             self.shoebox_shape = (cfg.h, cfg.w)
 
         # test MLP
-        self.MLP = MLP(in_dim=29 * 29, out_features=32)
+        self.MLP = MLP(in_dim=4, out_features=32)
 
     def forward(
         self,
@@ -324,8 +334,8 @@ class Integrator(LightningModule):
             self.encoder1, self.encoder2, shoebox, self.shoebox_shape
         )
 
-        metadata = None
-        x_mlp = self.MLP(shoebox)
+        metadata = reference[:, [2, 8, 9, 10]].float()
+        x_mlp = self.MLP(metadata)
 
         if self.encoder3 is not None:
             if reference is None:
