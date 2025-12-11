@@ -3,9 +3,84 @@ from typing import Literal
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributions import Gamma
 
 from integrator.layers import Linear
+
+
+class AttentionPoolingPerImage(nn.Module):
+    """
+    Attention pooling that produces one r per image.
+    emb: (B, F)
+    img_ids: (B,) with integer image indices (used only for grouping, not for parameters)
+    """
+
+    def __init__(
+        self,
+        emb_dim=64,
+        hidden_dim=64,
+        out_dim=1,
+    ):
+        super().__init__()
+
+        # attention score per reflection: h -> scalar
+        self.attn = nn.Linear(emb_dim, 1)
+
+        # value transform for pooling: h -> hidden_dim
+        self.value = nn.Linear(emb_dim, hidden_dim)
+
+        # image-level output: hidden_dim -> r_dim
+        self.output = nn.Linear(hidden_dim, out_dim)
+
+    def forward(self, emb, img_ids):
+        """
+        emb: (B, emb_dim)
+        img_ids: (B,) giving group assignments (one image id per reflection)
+
+        Returns:
+            r_reflections: (B, out_dim), r broadcast to each reflection in that image
+            r_images: (N_images_in_batch, out_dim)
+            unique_img_ids: (N_images_in_batch,)
+        """
+
+        unique_ids = torch.unique(img_ids)
+        pooled_reprs = []
+        id_to_index = {}
+
+        # Compute per-image pooled representation
+        for idx, uid in enumerate(unique_ids):
+            id_to_index[uid.item()] = idx
+
+            mask = img_ids == uid
+            emb_img = emb[mask]  # reflections for this image
+
+            # Attention weights within this image
+            attn_scores = self.attn(emb_img)  # (n_reflections, 1)
+            attn_weights = F.softmax(attn_scores, dim=0)
+
+            # Values to pool
+            values = self.value(emb_img)  # (n_reflections, hidden_dim)
+
+            # Weighted sum → pooled representation
+            pooled = torch.sum(attn_weights * values, dim=0)
+            pooled_reprs.append(pooled)
+
+        # Stack pooled image representations
+        pooled_reprs = torch.stack(
+            pooled_reprs, dim=0
+        )  # (N_images_in_batch, hidden_dim)
+        r_images = self.output(pooled_reprs)  # (N_images_in_batch, out_dim)
+
+        # Broadcast r back to each reflection
+        B = emb.size(0)
+        r_reflections = torch.zeros((B, r_images.size(-1)), device=emb.device)
+
+        for uid in unique_ids:
+            j = id_to_index[uid.item()]
+            r_reflections[img_ids == uid] = r_images[j]
+
+        return r_reflections, r_images, unique_ids
 
 
 class MLP(nn.Module):
@@ -34,13 +109,6 @@ class MLP(nn.Module):
 
 
 class GammaDistribution(nn.Module):
-    """
-    Gamma posterior parameterized by (mean, fano_per_image).
-
-    - Network predicts mean μ(x)
-    - Fano φ comes from an embedding indexed by image_id
-    """
-
     def __init__(
         self,
         estimand: Literal["background", "intensity"],
@@ -65,6 +133,7 @@ class GammaDistribution(nn.Module):
         self.mlp = MLP(in_dim=in_features, out_features=1)
 
         self.log_phi_table = nn.Parameter(torch.zeros(n_images))  # (n_images,)
+        self.attn = AttentionPoolingPerImage()
 
         self.eps = eps
 
@@ -76,103 +145,67 @@ class GammaDistribution(nn.Module):
         x: (batch, features)
         img_ids:(batch,) integer indices 0...n_images-1
         """
+
         raw_alpha = self.mlp(x)
+
+        raw_r, _, _ = self.attn(x, img_ids)
+
         # mu = self._bound(raw_mu, self.log_mu_min, self.log_mu_max)  # (B,1)
         alpha = torch.nn.functional.softplus(raw_alpha) + 0.0001
+        rate = torch.nn.functional.softplus(raw_alpha) + 0.0001
 
-        log_phi_img = self.log_phi_table[img_ids[:, 2].long()]
-        phi = torch.exp(log_phi_img).unsqueeze(-1)
+        # log_phi_img = self.log_phi_table[img_ids[:, 2].long()]
+        # phi = torch.exp(log_phi_img).unsqueeze(-1)
         # phi = torch.clamp(phi, self.fano_min, self.fano_max)
 
-        beta = 1.0 / (phi + self.eps)
+        # beta = 1.0 / (phi + self.eps)
         # alpha = mu * beta
 
-        dist = Gamma(concentration=alpha.flatten(), rate=beta.flatten())
+        # dist = Gamma(concentration=alpha.flatten(), rate=beta.flatten())
+        dist = Gamma(concentration=alpha.flatten(), rate=rate.flatten())
         return dist
 
 
-# class GammaDistribution(nn.Module):
-#     fc: nn.Module
-#     """`Linear` layer to map input tensors to distribution parameters"""
-#
-#     def __init__(
-#         self,
-#         estimand: Literal["background", "intensity"],
-#         in_features: int,
-#         out_features: int = 2,
-#         eps: float = 1e-2,
-#         beta: int = 1,
-#         constraint: Literal["exp", "softplus"] | None = "softplus",
-#     ):
-#         """
-#         Args:
-#             in_features: Dimension of input Tensor
-#             out_features: Dimension of the networks parameter Tensor
-#         """
-#         super().__init__()
-#
-#         self.constrain_fn = Constrain(
-#             constraint_fn=constraint,
-#             eps=eps,
-#             beta=beta,
-#         )
-#         if estimand == "intensity":
-#             self.mu_min, self.mu_max = 1e-3, 6e5  # mean in [~0, 600k]
-#             self.r_min, self.r_max = 0.2, 50.0  # Fano in [0.1, 2.0]
-#             self.estimand = estimand
-#         elif estimand == "background":
-#             self.mu_min, self.mu_max = 1e-3, 100.0  # mean in [~0, 100]
-#             self.r_min, self.r_max = 0.2, 10.0
-#             self.estimand = estimand
-#
-#         self.log_mu_min = math.log(self.mu_min)
-#         self.log_mu_max = math.log(self.mu_max)
-#         self.log_r_min = math.log(self.r_min)
-#         self.log_r_max = math.log(self.r_max)
-#         self.register_buffer("eps", torch.tensor(eps))
-#         self.register_buffer("beta", torch.tensor(beta))
-#         self.mlp = MLP(in_dim=in_features, out_features=out_features)
-#
-#     def forward(self, x):
-#         raw_k, raw_r = self.mlp(x).chunk(2, dim=-1)
-#
-#         k = F.softplus(raw_k) + 0.0001
-#         r = F.softplus(raw_r) + 0.0001
-#
-#         fano = 1 / r
-#
-#         lambda_corr = 1.0
-#
-#         log_fano = torch.log(1.0 / r + 1e-8)
-#         log_mean = torch.log((k / r) + 1e-8)
-#
-#         log_fano_c = log_fano - log_fano.mean()
-#         log_mean_c = log_mean - log_mean.mean()
-#
-#         corr = (log_fano_c * log_mean_c).mean()
-#
-#         shape_penalty = lambda_corr * corr**2
-#
-#         return (
-#             Gamma(concentration=k.flatten(), rate=r.flatten()),
-#             fano,
-#             shape_penalty,
-#         )
-#         # return Gamma(concentration=k.flatten(), rate=r.flatten()), r.flatten()
-#
-
 if __name__ == "__main__":
-    # Example usage
-    in_features = 64
-    gamma_dist = GammaDistribution(in_features)
-    representation = torch.randn(10, in_features)  # Example input
-    metarep = torch.randn(
-        10, in_features * 2
-    )  # Example metadata representation
-
-    # use without metadata
-    qbg = gamma_dist(representation)
-
-    # use with metadata
-    qbg = gamma_dist(representation)
     import torch
+
+    from integrator.model.distributions import (
+        DirichletDistribution,
+        FoldedNormalDistribution,
+    )
+    from integrator.model.loss import LossConfig
+    from integrator.utils import (
+        create_data_loader,
+        create_integrator,
+        load_config,
+    )
+    from utils import CONFIGS
+
+    cfg = list(CONFIGS.glob("*"))[-1]
+    cfg = load_config(cfg)
+
+    integrator = create_integrator(cfg)
+    data = create_data_loader(cfg)
+
+    losscfg = LossConfig(pprf=None, pi=None, pbg=None, shape=(1, 21, 21))
+
+    # hyperparameters
+    mc_samples = 100
+    shape = (1, 21, 21)
+
+    # distributions
+    qbg_ = FoldedNormalDistribution(in_features=64)
+    qi_ = FoldedNormalDistribution(in_features=64)
+    qp_ = DirichletDistribution(in_features=64, out_features=(1, 21, 21))
+
+    # load a batch
+    counts, sbox, mask, meta = next(iter(data.train_dataloader()))
+
+    gamma_dist = GammaDistribution(
+        in_features=in_features, n_images=1000, estimand="intensity"
+    )
+
+    x_intensity = torch.randn(100, 64)
+    img_ids = torch.randint(0, 10, (100,))
+
+    qi = gamma_dist(x_intensity, img_ids)
