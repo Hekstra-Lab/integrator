@@ -152,7 +152,7 @@ class GammaDistribution(nn.Module):
 
         # mu = self._bound(raw_mu, self.log_mu_min, self.log_mu_max)  # (B,1)
         alpha = torch.nn.functional.softplus(raw_alpha) + 0.0001
-        rate = torch.nn.functional.softplus(raw_alpha) + 0.0001
+        rate = torch.nn.functional.softplus(raw_r) + 0.0001
 
         # log_phi_img = self.log_phi_table[img_ids[:, 2].long()]
         # phi = torch.exp(log_phi_img).unsqueeze(-1)
