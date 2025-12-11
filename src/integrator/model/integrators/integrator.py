@@ -256,7 +256,8 @@ class Integrator(LightningModule):
         self.qbg = surrogates.qbg
         self.qp = surrogates.qp
         self.qi = surrogates.qi
-        self.qr = LogNormalDistribution(in_features=64)
+        self.qri = LogNormalDistribution(in_features=64)
+        self.qrbg = LogNormalDistribution(in_features=64)
 
         # encoder modules
         self.encoder1 = encoders.encoder1
@@ -321,9 +322,8 @@ class Integrator(LightningModule):
             x_profile = torch.cat([x_profile, x_metadata], dim=-1)
             x_profile = self.linear(x_profile)
 
-        #
-        qri = self.qr(x_intensity)
-        qrbg = self.qr(x_intensity)
+        qri = self.qri(x_intensity)
+        qrbg = self.qrbg(x_intensity)
         rbg = qrbg.rsample([self.mc_samples]).mean(0)
         ri = qri.rsample([self.mc_samples]).mean(0)
 
@@ -336,6 +336,7 @@ class Integrator(LightningModule):
         zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
         rate = zI * zp + zbg
+
         # print("rate.max:", {rate.max()})
         # print("rate.min:", {rate.max()})
         # print("counts.min:", {counts.min()})
@@ -537,3 +538,7 @@ if __name__ == "__main__":
     std = torch.log1p(counts.std(-1)).unsqueeze(-1)
 
     metadata = torch.stack([max, min, mean, std], -1).squeeze(1)
+
+    torch.distributions.LogNormal(torch.zeros(10), torch.ones(10)).rsample(
+        [100]
+    ).mean(0)
