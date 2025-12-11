@@ -311,7 +311,7 @@ class Integrator(LightningModule):
                 mean = torch.log1p(counts.mean(-1)).unsqueeze(-1)
                 std = torch.log1p(counts.std(-1)).unsqueeze(-1)
 
-                metadata = torch.stack([max, min, mean, std], -1)
+                metadata = torch.stack([max, min, mean, std], -1).squeeze(1)
 
             else:
                 metadata = reference[:, [0, 1, 2, 3, 4, 5, 13]]
@@ -539,3 +539,11 @@ if __name__ == "__main__":
     out = integrator.forward(counts, sbox, mask, meta)
 
     out = integrator.training_step((counts, sbox, mask, meta), 0)
+
+    metadata = meta[:, [2, 8, 9, 10]].float()
+    max = torch.log1p(counts.max(-1)[0]).unsqueeze(-1)
+    min = torch.log1p(counts.min(-1)[0]).unsqueeze(-1)
+    mean = torch.log1p(counts.mean(-1)).unsqueeze(-1)
+    std = torch.log1p(counts.std(-1)).unsqueeze(-1)
+
+    metadata = torch.stack([max, min, mean, std], -1).squeeze(1)
