@@ -5,6 +5,7 @@ import torch
 from pytorch_lightning import LightningModule
 from torch import Tensor, nn
 
+from integrator.layers import Linear
 from integrator.model.distributions import (
     DirichletDistribution,
     FoldedNormalDistribution,
@@ -16,6 +17,31 @@ from integrator.model.encoders import (
     MLPMetadataEncoder,
     ShoeboxEncoder,
 )
+
+
+class MLP(nn.Module):
+    def __init__(
+        self,
+        in_dim: int,
+        hidden: int = 64,
+        out_features: int = 2,
+    ):
+        super().__init__()
+        self.fc1 = Linear(
+            in_dim,
+            hidden,
+            bias=False,
+        )
+        self.act = nn.SiLU()
+        self.fc2 = Linear(
+            hidden,
+            out_features,
+            bias=False,
+        )
+
+    def forward(self, x):
+        h = self.act(self.fc1(x))
+        return self.fc2(h)
 
 
 def calculate_intensities(counts, qbg, qp, mask, cfg):
@@ -282,6 +308,9 @@ class Integrator(LightningModule):
         elif cfg.data_dim == "2d":
             self.shoebox_shape = (cfg.h, cfg.w)
 
+        # test MLP
+        self.MLP = MLP(in_dim=29 * 29, out_features=32)
+
     def forward(
         self,
         counts: Tensor,
@@ -296,6 +325,7 @@ class Integrator(LightningModule):
         )
 
         metadata = None
+        x_mlp = self.MLP(shoebox)
 
         if self.encoder3 is not None:
             if reference is None:
@@ -323,7 +353,7 @@ class Integrator(LightningModule):
             x_profile = torch.cat([x_profile, x_metadata], dim=-1)
             x_profile = self.linear(x_profile)
         else:
-            qi = self.qi(x_intensity, reference)
+            qi = self.qi(x_intensity, x_mlp)
 
         # qbg, ri = self.qbg(x_intensity)
         # qi, ri = self.qi(x_intensity)
