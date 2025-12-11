@@ -475,6 +475,7 @@ class Integrator(LightningModule):
             qp=outputs["qp"],
             qi=outputs["qi"],
             qbg=outputs["qbg"],
+            qr=outputs["qr"],
             mask=outputs["forward_base_out"]["mask"],
         )
 
