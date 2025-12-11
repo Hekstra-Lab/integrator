@@ -101,7 +101,7 @@ class GammaDistribution(nn.Module):
         # )
 
         raw_r = self.linear_beta(img_ids)
-        rate_image = torch.nn.functional.softplus(raw_r) + 1e-6
+        rate = torch.nn.functional.softplus(raw_r) + 1e-6
 
         # broadcast back:
         # rate = rate_image[per_ref_idx]  # (B,1)
@@ -110,7 +110,7 @@ class GammaDistribution(nn.Module):
         # raw_r = self.linear_beta(raw_r)
 
         # mu = self._bound(raw_mu, self.log_mu_min, self.log_mu_max)  # (B,1)
-        alpha = mu * rate_image
+        alpha = mu * rate
         # rate = torch.nn.functional.softplus(raw_r) + 0.0001
 
         # log_phi_img = self.log_phi_table[img_ids[:, 2].long()]
