@@ -90,7 +90,9 @@ class GammaDistribution(nn.Module):
         """
 
         raw_alpha = self.linear_alpha(x)
-        pooled, pooled_ids, per_ref_idx = mean_pool_by_image(x, img_ids)
+        pooled, pooled_ids, per_ref_idx = mean_pool_by_image(
+            x, img_ids[:, 2].long()
+        )
 
         raw_r = self.linear_beta(pooled)  # (n_img,1)
         rate_image = torch.nn.functional.softplus(raw_r)  # (n_img,1)
