@@ -148,7 +148,7 @@ class GammaDistribution(nn.Module):
 
         raw_alpha = self.mlp(x)
 
-        raw_r, _, _ = self.attn(x, img_ids)
+        raw_r, _, _ = self.attn(x, img_ids[:, 2].long())
 
         # mu = self._bound(raw_mu, self.log_mu_min, self.log_mu_max)  # (B,1)
         alpha = torch.nn.functional.softplus(raw_alpha) + 0.0001
