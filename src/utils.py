@@ -14,7 +14,6 @@ DATA = ROOT_DIR / "tests/data"
 
 
 def get_configs() -> Mapping[str, Traversable]:
-    """Return packaged config resources (NOT real Paths)."""
     out: dict[str, Traversable] = {}
     for entry in CONFIGS.rglob("*.yaml"):
         if entry.is_file():

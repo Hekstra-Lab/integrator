@@ -1,26 +1,26 @@
 import torch
 
-from .data_loaders import (
+from integrator.data_loaders import (
     ShoeboxDataModule,
     ShoeboxDataModule2,
     ShoeboxDataModule2D,
 )
-from .model.distributions import (
+from integrator.model.distributions import (
     DirichletDistribution,
     FoldedNormalDistribution,
     GammaDistribution,
     HalfNormalDistribution,
     LogNormalDistribution,
 )
-from .model.encoders import (
+from integrator.model.encoders import (
     IntensityEncoder,
     IntensityEncoder2DMinimal,
     MLPMetadataEncoder,
     ProfileEncoder2DMinimal,
     ShoeboxEncoder,
 )
-from .model.integrators import Integrator
-from .model.loss import Loss
+from integrator.model.integrators import Integrator
+from integrator.model.loss import Loss
 
 REGISTRY = {
     "encoders": {

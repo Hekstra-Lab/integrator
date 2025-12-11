@@ -79,13 +79,12 @@ class GammaDistribution(nn.Module):
 
         self.linear_alpha = torch.nn.Linear(in_features, 1)
         self.ln_beta = nn.LayerNorm(in_features)
-        # self.linear_beta_input = torch.nn.Linear(in_features, 8)
-        self.linear_beta = torch.nn.Linear(32, 1)
+        self.linear_beta = torch.nn.Linear(in_features, 1)
 
     def _bound(self, raw, log_min, log_max):
         return torch.exp(log_min + (log_max - log_min) * torch.sigmoid(raw))
 
-    def forward(self, x, img_ids):
+    def forward(self, x, rates):
         """
         x: (batch, features)
         img_ids:(batch,) integer indices 0...n_images-1
@@ -94,34 +93,11 @@ class GammaDistribution(nn.Module):
         raw_alpha = self.linear_alpha(x)
         alpha = torch.nn.functional.softplus(raw_alpha) + 1e-6
 
-        # beta_emb = self.ln_beta(x)
-        # beta_emb = self.linear_beta_input(beta_emb)
-        # pooled, pooled_ids, per_ref_idx = mean_pool_by_image(
-        # beta_emb, img_ids[:, 2].long()
-        # )
-
-        raw_r = self.linear_beta(img_ids)
-        rate = torch.exp(raw_r)
-
-        # broadcast back:
-        # rate = rate_image[per_ref_idx]  # (B,1)
-
-        # raw_r, _, _ = mean_pool_by_image(x, img_ids)
-        # raw_r = self.linear_beta(raw_r)
-
-        # mu = self._bound(raw_mu, self.log_mu_min, self.log_mu_max)  # (B,1)
-        # alpha = mu * rate
-        # rate = torch.nn.functional.softplus(raw_r) + 0.0001
-
-        # log_phi_img = self.log_phi_table[img_ids[:, 2].long()]
-        # phi = torch.exp(log_phi_img).unsqueeze(-1)
-        # phi = torch.clamp(phi, self.fano_min, self.fano_max)
-
-        # beta = 1.0 / (phi + self.eps)
-        # alpha = mu * beta
+        raw_r = self.linear_beta(x)
+        # rate = torch.exp(raw_r)
 
         # dist = Gamma(concentration=alpha.flatten(), rate=beta.flatten())
-        dist = Gamma(concentration=alpha.flatten(), rate=rate.flatten())
+        dist = Gamma(concentration=alpha.flatten(), rate=rates.flatten())
         return dist
 
 

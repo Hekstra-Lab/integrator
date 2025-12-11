@@ -18,42 +18,6 @@ from integrator.model.encoders import (
 )
 
 
-class MLP(nn.Module):
-    def __init__(
-        self,
-        in_dim: int,
-        hidden: int = 64,
-        out_features: int = 2,
-        norm: str | None = "layernorm",  # None, 'layernorm', or 'weightnorm'
-    ):
-        super().__init__()
-
-        fc1 = nn.Linear(in_dim, hidden, bias=True)
-        fc2 = nn.Linear(hidden, out_features, bias=True)
-
-        # Kaiming initialization for SiLU
-        nn.init.kaiming_normal_(fc1.weight, nonlinearity="relu")
-        nn.init.zeros_(fc1.bias)
-        nn.init.kaiming_normal_(fc2.weight, nonlinearity="linear")
-        nn.init.zeros_(fc2.bias)
-
-        norm_layer = nn.LayerNorm(hidden)
-
-        layers = [fc1]
-        if norm_layer is not None:
-            layers.append(norm_layer)
-
-        layers += [
-            nn.SiLU(),
-            fc2,
-        ]
-
-        self.net = nn.Sequential(*layers)
-
-    def forward(self, x):
-        return self.net(x)
-
-
 def calculate_intensities(counts, qbg, qp, mask, cfg):
     with torch.no_grad():
         counts = counts * mask  # [B,P]
@@ -292,6 +256,7 @@ class Integrator(LightningModule):
         self.qbg = surrogates.qbg
         self.qp = surrogates.qp
         self.qi = surrogates.qi
+        self.qr = LogNormalDistribution(in_features=64)
 
         # encoder modules
         self.encoder1 = encoders.encoder1
@@ -318,9 +283,6 @@ class Integrator(LightningModule):
         elif cfg.data_dim == "2d":
             self.shoebox_shape = (cfg.h, cfg.w)
 
-        # test MLP
-        self.MLP = MLP(in_dim=4, out_features=32)
-
     def forward(
         self,
         counts: Tensor,
@@ -333,9 +295,6 @@ class Integrator(LightningModule):
         x_profile, x_intensity = _encode_shoebox(
             self.encoder1, self.encoder2, shoebox, self.shoebox_shape
         )
-
-        metadata = reference[:, [2, 8, 9, 10]].float()
-        x_mlp = self.MLP(metadata)
 
         if self.encoder3 is not None:
             if reference is None:
@@ -357,18 +316,17 @@ class Integrator(LightningModule):
                 metadata = reference[:, [0, 1, 2, 3, 4, 5, 13]]
 
             x_metadata = self.encoder3(metadata)
-            qi = self.qi(x_intensity, x_metadata)
 
             # combining metadata and profile representation
             x_profile = torch.cat([x_profile, x_metadata], dim=-1)
             x_profile = self.linear(x_profile)
-        else:
-            qi = self.qi(x_intensity, x_mlp)
 
-        # qbg, ri = self.qbg(x_intensity)
-        # qi, ri = self.qi(x_intensity)
+        #
+        qr = self.qr(x_intensity)
+        rates = qr.rsample([self.mc_samples]).mean(0)
 
         qbg = self.qbg(x_intensity)
+        qi = self.qi(x_intensity, rates)
         qp = self.qp(x_profile)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
@@ -434,6 +392,7 @@ class Integrator(LightningModule):
             "qp": qp,
             "qi": qi,
             "qbg": qbg,
+            "qr": qr,
             # "fano": fano,
             # "corr_penalty": corr_penalty,
         }
@@ -449,6 +408,7 @@ class Integrator(LightningModule):
             qp=outputs["qp"],
             qi=outputs["qi"],
             qbg=outputs["qbg"],
+            qr=outputs["qr"],
             mask=outputs["forward_base_out"]["mask"],
         )
 
