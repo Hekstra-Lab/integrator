@@ -13,7 +13,6 @@ from integrator.model.distributions import (
 )
 from integrator.model.encoders import (
     IntensityEncoder,
-    MLPMetadataEncoder,
     ShoeboxEncoder,
 )
 
@@ -280,7 +279,7 @@ class Integrator(LightningModule):
         # encoder modules
         self.encoder1 = encoders.encoder1
         self.encoder2 = encoders.encoder2
-        self.encoder3 = MLPMetadataEncoder(encoder_in=29 * 29, encoder_out=64)
+        self.encoder3 = encoders.encoder3
 
         # loss module
         self.loss = loss
@@ -323,10 +322,10 @@ class Integrator(LightningModule):
 
         self.log("Number of images per batch", num_images)
 
-        # im_rep = self.encoder3(
-        #     im_sbox.reshape(num_images, 1, *(self.shoebox_shape))
-        # )
-        im_rep = self.encoder3(im_sbox)
+        im_rep = self.encoder3(
+            im_sbox.reshape(num_images, 1, *(self.shoebox_shape))
+        )
+        # im_rep = self.encoder3(im_sbox)
 
         # if self.encoder3 is not None:
         #     if reference is None:
