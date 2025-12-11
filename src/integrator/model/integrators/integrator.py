@@ -304,7 +304,7 @@ class Integrator(LightningModule):
                     "Please provide a `reference.pt` dataset"
                 )
             if self.cfg.data_dim == "2d":
-                metadata = reference[:, [2, 8, 9, 10]]
+                metadata = reference[:, [2, 8, 9, 10]].float()
             else:
                 metadata = reference[:, [0, 1, 2, 3, 4, 5, 13]]
 
