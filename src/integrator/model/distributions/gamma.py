@@ -33,6 +33,26 @@ class MLP(nn.Module):
         return self.fc2(h)
 
 
+def mean_pool_by_image(emb: torch.Tensor, img_ids: torch.Tensor):
+    device = emb.device
+    B, F = emb.shape
+
+    # 1. Get unique image IDs and mapping
+    pooled_ids, per_ref_idx = torch.unique(img_ids, return_inverse=True)
+    n_img = pooled_ids.size(0)
+
+    # 2. Sum per image using index_add_
+    sums = torch.zeros(n_img, F, device=device)
+    counts = torch.zeros(n_img, 1, device=device)
+
+    sums.index_add_(0, per_ref_idx, emb)  # sum embeddings per image
+    ones = torch.ones(B, 1, device=device)
+    counts.index_add_(0, per_ref_idx, ones)  # count per image
+
+    pooled = sums / counts.clamp_min(1.0)  # mean embedding per image
+    return pooled, pooled_ids, per_ref_idx
+
+
 class GammaDistribution(nn.Module):
     def __init__(
         self,
@@ -55,12 +75,10 @@ class GammaDistribution(nn.Module):
         self.log_fano_min = math.log(self.fano_min)
         self.log_fano_max = math.log(self.fano_max)
 
-        self.log_phi_table = nn.Parameter(torch.zeros(n_images))  # (n_images,)
+        # self.log_phi_table = nn.Parameter(torch.zeros(n_images))  # (n_images,)
 
         self.linear_alpha = torch.nn.Linear(in_features, 1)
         self.linear_beta = torch.nn.Linear(in_features, 1)
-
-        self.eps = eps
 
     def _bound(self, raw, log_min, log_max):
         return torch.exp(log_min + (log_max - log_min) * torch.sigmoid(raw))
@@ -72,11 +90,20 @@ class GammaDistribution(nn.Module):
         """
 
         raw_alpha = self.linear_alpha(x)
-        raw_r = self.linear_beta(img_ids)
+        pooled, pooled_ids, per_ref_idx = mean_pool_by_image(x, img_ids)
+
+        raw_r = self.linear_beta(pooled)  # (n_img,1)
+        rate_image = torch.nn.functional.softplus(raw_r)  # (n_img,1)
+
+        # broadcast back:
+        rate = rate_image[per_ref_idx]  # (B,1)
+
+        # raw_r, _, _ = mean_pool_by_image(x, img_ids)
+        # raw_r = self.linear_beta(raw_r)
 
         # mu = self._bound(raw_mu, self.log_mu_min, self.log_mu_max)  # (B,1)
         alpha = torch.nn.functional.softplus(raw_alpha) + 0.0001
-        rate = torch.nn.functional.softplus(raw_r) + 0.0001
+        # rate = torch.nn.functional.softplus(raw_r) + 0.0001
 
         # log_phi_img = self.log_phi_table[img_ids[:, 2].long()]
         # phi = torch.exp(log_phi_img).unsqueeze(-1)
