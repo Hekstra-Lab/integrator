@@ -92,13 +92,24 @@ class GammaDistribution(nn.Module):
         img_ids:(batch,) integer indices 0...n_images-1
         """
 
-        raw_alpha = self.linear_alpha(x)
-        alpha = torch.nn.functional.softplus(raw_alpha) + 1e-6
+        # raw_alpha = self.linear_alpha(x)
+        # alpha = torch.nn.functional.softplus(raw_alpha) + 1e-6
 
-        raw_r = self.linear_beta(xim)
-        # rate = torch.nn.functional.softplus(raw_r) + 0.001
-        rate = self.rmin + (self.rmax - self.rmin) * torch.sigmoid(raw_r)
-        rate = rate[im_idx]
+        # raw_r = self.linear_beta(xim)
+        # rate = torch.exp(raw_r) + 1e-6
+        # rate = self.rmin + (self.rmax - self.rmin) * torch.sigmoid(raw_r)
+        # rate = rate[im_idx]
+
+        raw_mu = self.linear_alpha(x)
+        mu = torch.nn.functional.softplus(raw_mu) + 1e-6
+
+        raw_fano = self.linear_beta(xim)
+        fano = torch.nn.functional.softplus(raw_fano) + 1e-6
+        fano = fano[im_idx]
+
+        rate = 1 / fano
+
+        alpha = mu * rate
 
         # dist = Gamma(concentration=alpha.flatten(), rate=beta.flatten())
         dist = Gamma(concentration=alpha.flatten(), rate=rate.flatten())
