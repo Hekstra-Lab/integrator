@@ -13,7 +13,6 @@ from integrator.model.distributions import (
 )
 from integrator.model.encoders import (
     IntensityEncoder,
-    MLPMetadataEncoder,
     ShoeboxEncoder,
 )
 
@@ -213,7 +212,7 @@ def _encode_shoebox(encoder1, encoder2, shoebox, shoebox_shape):
 class EncoderModules:
     encoder1: ShoeboxEncoder | IntensityEncoder
     encoder2: ShoeboxEncoder | IntensityEncoder
-    encoder3: MLPMetadataEncoder | None = None
+    encoder3: ShoeboxEncoder
 
 
 @dataclass
@@ -231,6 +230,24 @@ def stats(name, x):
 
 
 # %%
+def mean_pool_by_image(emb: torch.Tensor, img_ids: torch.Tensor):
+    device = emb.device
+    B, F = emb.shape
+
+    # 1. Get unique image IDs and mapping
+    pooled_ids, per_ref_idx = torch.unique(img_ids, return_inverse=True)
+    n_img = pooled_ids.size(0)
+
+    # 2. Sum per image using index_add_
+    sums = torch.zeros(n_img, F, device=device)
+    counts = torch.zeros(n_img, 1, device=device)
+
+    sums.index_add_(0, per_ref_idx, emb)  # sum embeddings per image
+    ones = torch.ones(B, 1, device=device)
+    counts.index_add_(0, per_ref_idx, ones)  # count per image
+
+    pooled = sums / counts.clamp_min(1.0)  # mean embedding per image
+    return pooled, pooled_ids, per_ref_idx
 
 
 # %%
@@ -256,8 +273,8 @@ class Integrator(LightningModule):
         self.qbg = surrogates.qbg
         self.qp = surrogates.qp
         self.qi = surrogates.qi
-        self.qri = LogNormalDistribution(in_features=64)
-        self.qrbg = LogNormalDistribution(in_features=64)
+        # self.qri = LogNormalDistribution(in_features=64)
+        # self.qrbg = LogNormalDistribution(in_features=64)
 
         # encoder modules
         self.encoder1 = encoders.encoder1
@@ -297,38 +314,45 @@ class Integrator(LightningModule):
             self.encoder1, self.encoder2, shoebox, self.shoebox_shape
         )
 
-        if self.encoder3 is not None:
-            if reference is None:
-                raise ValueError(
-                    "A metadata encoder (encoder 3) was provided, but no reference data was found. "
-                    "Please provide a `reference.pt` dataset"
-                )
-            if self.cfg.data_dim == "2d":
-                metadata = reference[:, [2, 8, 9, 10]].float()
-                # %%
-                max = torch.log1p(counts.max(-1)[0]).unsqueeze(-1)
-                min = torch.log1p(counts.min(-1)[0]).unsqueeze(-1)
-                mean = torch.log1p(counts.mean(-1)).unsqueeze(-1)
-                std = torch.log1p(counts.std(-1)).unsqueeze(-1)
+        im_sbox, pooled_ids, per_image_idx = mean_pool_by_image(
+            shoebox, reference[:, 2].float()
+        )
+        num_images = im_sbox.shape[0]
 
-                metadata = torch.stack([max, min, mean, std], -1).squeeze(1)
+        im_rep = self.encoder3(im_sbox.reshape(num_images, 1, 21, 21))
 
-            else:
-                metadata = reference[:, [0, 1, 2, 3, 4, 5, 13]]
+        # if self.encoder3 is not None:
+        #     if reference is None:
+        #         raise ValueError(
+        #             "A metadata encoder (encoder 3) was provided, but no reference data was found. "
+        #             "Please provide a `reference.pt` dataset"
+        #         )
+        #     if self.cfg.data_dim == "2d":
+        #         metadata = reference[:, [2, 8, 9, 10]].float()
+        #         # %%
+        #         max = torch.log1p(counts.max(-1)[0]).unsqueeze(-1)
+        #         min = torch.log1p(counts.min(-1)[0]).unsqueeze(-1)
+        #         mean = torch.log1p(counts.mean(-1)).unsqueeze(-1)
+        #         std = torch.log1p(counts.std(-1)).unsqueeze(-1)
+        #
+        #         metadata = torch.stack([max, min, mean, std], -1).squeeze(1)
+        #
+        #     else:
+        #         metadata = reference[:, [0, 1, 2, 3, 4, 5, 13]]
+        #
+        #     x_metadata = self.encoder3(metadata)
+        #
+        #     # combining metadata and profile representation
+        #     x_profile = torch.cat([x_profile, x_metadata], dim=-1)
+        #     x_profile = self.linear(x_profile)
+        #
+        # qri = self.qri(x_intensity)
+        # qrbg = self.qrbg(x_intensity)
+        # rbg = qrbg.rsample([self.mc_samples]).mean(0)
+        # ri = qri.rsample([self.mc_samples]).mean(0)
 
-            x_metadata = self.encoder3(metadata)
-
-            # combining metadata and profile representation
-            x_profile = torch.cat([x_profile, x_metadata], dim=-1)
-            x_profile = self.linear(x_profile)
-
-        qri = self.qri(x_intensity)
-        qrbg = self.qrbg(x_intensity)
-        rbg = qrbg.rsample([self.mc_samples]).mean(0)
-        ri = qri.rsample([self.mc_samples]).mean(0)
-
-        qbg = self.qbg(x_intensity, rbg)
-        qi = self.qi(x_intensity, ri)
+        qbg = self.qbg(x_intensity, im_rep, per_image_idx)
+        qi = self.qi(x_intensity, im_rep, per_image_idx)
         qp = self.qp(x_profile)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
@@ -395,8 +419,8 @@ class Integrator(LightningModule):
             "qp": qp,
             "qi": qi,
             "qbg": qbg,
-            "qrbg": qrbg,
-            "qri": qri,
+            # "qrbg": qrbg,
+            # "qri": qri,
             # "fano": fano,
             # "corr_penalty": corr_penalty,
         }
@@ -412,8 +436,8 @@ class Integrator(LightningModule):
             qp=outputs["qp"],
             qi=outputs["qi"],
             qbg=outputs["qbg"],
-            qri=outputs["qri"],
-            qrbg=outputs["qrbg"],
+            # qri=outputs["qri"],
+            # qrbg=outputs["qrbg"],
             mask=outputs["forward_base_out"]["mask"],
         )
 
@@ -464,8 +488,8 @@ class Integrator(LightningModule):
             qp=outputs["qp"],
             qi=outputs["qi"],
             qbg=outputs["qbg"],
-            qri=outputs["qri"],
-            qrbg=outputs["qrbg"],
+            # # qri=outputs["qri"],
+            # qrbg=outputs["qrbg"],
             mask=outputs["forward_base_out"]["mask"],
         )
 

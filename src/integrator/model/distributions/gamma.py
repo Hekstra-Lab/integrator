@@ -58,7 +58,6 @@ class GammaDistribution(nn.Module):
         self,
         estimand: Literal["background", "intensity"],
         in_features: int,
-        n_images: int,
         eps: float = 1e-6,
     ):
         super().__init__()
@@ -84,7 +83,7 @@ class GammaDistribution(nn.Module):
     def _bound(self, raw, log_min, log_max):
         return torch.exp(log_min + (log_max - log_min) * torch.sigmoid(raw))
 
-    def forward(self, x, rates):
+    def forward(self, x, xim, im_idx):
         """
         x: (batch, features)
         img_ids:(batch,) integer indices 0...n_images-1
@@ -94,10 +93,11 @@ class GammaDistribution(nn.Module):
         alpha = torch.nn.functional.softplus(raw_alpha) + 1e-6
 
         raw_r = self.linear_beta(x)
-        # rate = torch.exp(raw_r)
+        rate = torch.exp(raw_r)
+        rate = rate[im_idx]
 
         # dist = Gamma(concentration=alpha.flatten(), rate=beta.flatten())
-        dist = Gamma(concentration=alpha.flatten(), rate=rates.flatten())
+        dist = Gamma(concentration=alpha.flatten(), rate=rate.flatten())
         return dist
 
 
@@ -141,8 +141,20 @@ if __name__ == "__main__":
     )
 
     x_intensity = torch.randn(10, 64)
-    img_ids = torch.randint(0, 10, (100,))
+    img_ids = torch.randint(0, 10, (10,))
 
-    qi = gamma_dist(x_intensity, img_ids)
+    mean_pool_by_image(x_intensity, img_ids)
 
-    mean_pool_by_image(x_intensity, meta[:, 2].long())
+    # %%
+    r_linear = Linear(64, 1)
+
+    im_sbox, pooled_ids, per_image_idx = mean_pool_by_image(
+        sbox, meta[:, 2].float()
+    )
+    num_images = im_sbox.shape[0]
+    im_rep = integrator.encoder1(im_sbox.reshape(num_images, 1, 21, 21))
+
+    raw_r = r_linear(im_rep)  # (num_ims,1)
+
+    # now we get should have some shoeboxes using the same r?
+    raw_r[per_image_idx]

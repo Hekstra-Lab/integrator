@@ -179,8 +179,6 @@ class Loss(nn.Module):
         qp: Distribution,
         qi: Distribution,
         qbg: Distribution,
-        qrbg: Distribution,
-        qri: Distribution,
         mask: Tensor,
     ):
         # batch metadata
@@ -204,9 +202,6 @@ class Loss(nn.Module):
             torch.tensor([0.0]).to(device),
             torch.tensor(0.5).to(device),
         )
-        kl_ri = torch.distributions.kl_divergence(qri, pr)
-        kl_rbg = torch.distributions.kl_divergence(qrbg, pr)
-        kl += kl_ri * 0.5 + kl_rbg * 0.5
 
         if self.cfg.pprf is not None and self.prf_params is not None:
             kl_prf = _prior_kl(
