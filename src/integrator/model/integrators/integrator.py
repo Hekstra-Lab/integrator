@@ -323,7 +323,7 @@ class Integrator(LightningModule):
             x_profile = torch.cat([x_profile, x_metadata], dim=-1)
             x_profile = self.linear(x_profile)
         else:
-            qi = self.qi(x_intensity, reference)
+            qi = self.qi(x_intensity, x_profile)
 
         # qbg, ri = self.qbg(x_intensity)
         # qi, ri = self.qi(x_intensity)
