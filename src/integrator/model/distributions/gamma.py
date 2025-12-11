@@ -80,6 +80,9 @@ class GammaDistribution(nn.Module):
         self.ln_beta = nn.LayerNorm(in_features)
         self.linear_beta = torch.nn.Linear(in_features, 1)
 
+        self.rmin = 0.01
+        self.rmax = 5.0
+
     def _bound(self, raw, log_min, log_max):
         return torch.exp(log_min + (log_max - log_min) * torch.sigmoid(raw))
 
@@ -92,8 +95,9 @@ class GammaDistribution(nn.Module):
         raw_alpha = self.linear_alpha(x)
         alpha = torch.nn.functional.softplus(raw_alpha) + 1e-6
 
-        raw_r = self.linear_beta(x)
+        raw_r = self.linear_beta(xim)
         rate = torch.nn.functional.softplus(raw_r) + 0.001
+        # rate = self.rmin + (self.rmax - self.rmin) * torch.sigmoig(raw_r)
         rate = rate[im_idx]
 
         # dist = Gamma(concentration=alpha.flatten(), rate=beta.flatten())
