@@ -101,7 +101,7 @@ class GammaDistribution(nn.Module):
         # )
 
         raw_r = self.linear_beta(img_ids)
-        rate = torch.nn.functional.softplus(raw_r) + 1e-3
+        rate = torch.exp(raw_r)
 
         # broadcast back:
         # rate = rate_image[per_ref_idx]  # (B,1)
