@@ -91,8 +91,8 @@ class GammaDistribution(nn.Module):
         img_ids:(batch,) integer indices 0...n_images-1
         """
 
-        raw_mu = self.linear_alpha(x)
-        mu = torch.nn.functional.softplus(raw_mu) + 1e-6
+        raw_alpha = self.linear_alpha(x)
+        alpha = torch.nn.functional.softplus(raw_alpha) + 1e-6
 
         # beta_emb = self.ln_beta(x)
         # beta_emb = self.linear_beta_input(beta_emb)
@@ -110,7 +110,7 @@ class GammaDistribution(nn.Module):
         # raw_r = self.linear_beta(raw_r)
 
         # mu = self._bound(raw_mu, self.log_mu_min, self.log_mu_max)  # (B,1)
-        alpha = mu * rate
+        # alpha = mu * rate
         # rate = torch.nn.functional.softplus(raw_r) + 0.0001
 
         # log_phi_img = self.log_phi_table[img_ids[:, 2].long()]
