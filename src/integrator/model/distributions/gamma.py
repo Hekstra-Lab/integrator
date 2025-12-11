@@ -93,7 +93,7 @@ class GammaDistribution(nn.Module):
         alpha = torch.nn.functional.softplus(raw_alpha) + 1e-6
 
         raw_r = self.linear_beta(x)
-        rate = torch.exp(raw_r)
+        rate = torch.nn.functional.softplus(raw_r) + 0.001
         rate = rate[im_idx]
 
         # dist = Gamma(concentration=alpha.flatten(), rate=beta.flatten())

@@ -317,7 +317,10 @@ class Integrator(LightningModule):
         im_sbox, pooled_ids, per_image_idx = mean_pool_by_image(
             shoebox, reference[:, 2].float()
         )
+
         num_images = im_sbox.shape[0]
+
+        self.log("Number of images per batch", num_images)
 
         im_rep = self.encoder3(
             im_sbox.reshape(num_images, 1, *(self.shoebox_shape))

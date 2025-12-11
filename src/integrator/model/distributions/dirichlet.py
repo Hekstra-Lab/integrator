@@ -93,12 +93,6 @@ from integrator.layers import Constrain, Linear
 
 
 class DirichletDistribution(nn.Module):
-    """
-    Dirichlet distribution with parameters predicted by a linear layer.
-    """
-
-    input_shape: tuple[int, ...]
-
     def __init__(
         self,
         in_features: int = 64,
@@ -124,7 +118,6 @@ class DirichletDistribution(nn.Module):
 
         self.alpha_layer = Linear(in_features, self.num_components, bias=False)
 
-        # optional extra head to control total concentration (scalar)
         self.total_layer = Linear(in_features, 1, bias=True)
 
         self.constrain_fn = Constrain(
@@ -142,20 +135,16 @@ class DirichletDistribution(nn.Module):
         if torch.isnan(x).any():
             raise RuntimeError("NaNs in Dirichlet input x")
 
-        # Base logits for the *shape* of the profile
         logits = self.alpha_layer(x)  # (B, K)
         if torch.isnan(logits).any():
             raise RuntimeError("NaNs right after Dirichlet fc")
 
-        # Convert to probabilities π over pixels
         pi = torch.softmax(logits, dim=-1)  # (B, K)
 
-        # Predict a scalar total concentration s in [total_min, total_max]
         total_raw = self.total_layer(x)  # (B, 1)
         s = torch.sigmoid(total_raw)  # (0,1)
         s = self.total_min + (self.total_max - self.total_min) * s  # (B,1)
 
-        # α = s * π, then clip each component to [alpha_min, alpha_max]
         alpha = s * pi
         alpha = alpha.clamp(self.alpha_min, self.alpha_max)
 
