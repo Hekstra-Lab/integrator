@@ -304,20 +304,23 @@ class Integrator(LightningModule):
                     "Please provide a `reference.pt` dataset"
                 )
             if self.cfg.data_dim == "2d":
-                metadata = reference[:, [8, 9, 10]].float()
+                metadata = reference[:, [2, 8, 9, 10]].float()
             else:
                 metadata = reference[:, [0, 1, 2, 3, 4, 5, 13]]
 
             x_metadata = self.encoder3(metadata)
+            qi = self.qi(x_intensity, x_metadata)
 
             # combining metadata and profile representation
             x_profile = torch.cat([x_profile, x_metadata], dim=-1)
             x_profile = self.linear(x_profile)
+        else:
+            qi = self.qi(x_intensity, reference)
 
         # qbg, ri = self.qbg(x_intensity)
         # qi, ri = self.qi(x_intensity)
+
         qbg = self.qbg(x_intensity)
-        qi = self.qi(x_intensity, reference)
         qp = self.qp(x_profile)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
@@ -447,12 +450,6 @@ class Integrator(LightningModule):
         }
 
     def configure_optimizers(self):
-        # optimizer = torch.optim.Adam(
-        #     self.parameters(),
-        #     lr=3e-4,
-        #     betas=(0.9, 0.95),
-        # )
-        # return optimizer
         return torch.optim.Adam(
             self.parameters(),
             lr=self.lr,
