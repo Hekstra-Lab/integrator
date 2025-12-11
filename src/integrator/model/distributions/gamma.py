@@ -107,13 +107,12 @@ class GammaDistribution(nn.Module):
         fano = torch.nn.functional.softplus(raw_fano) + 1e-6
         fano = fano[im_idx]
 
-        rate = 1 / fano
-
+        rate = 1 / (fano + 1e-6)
         alpha = mu * rate
 
         # dist = Gamma(concentration=alpha.flatten(), rate=beta.flatten())
         dist = Gamma(concentration=alpha.flatten(), rate=rate.flatten())
-        return dist
+        return dist, fano
 
 
 if __name__ == "__main__":

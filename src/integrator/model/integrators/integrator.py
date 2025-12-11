@@ -357,8 +357,8 @@ class Integrator(LightningModule):
         # rbg = qrbg.rsample([self.mc_samples]).mean(0)
         # ri = qri.rsample([self.mc_samples]).mean(0)
 
-        qbg = self.qbg(x_intensity, im_rep, per_image_idx)
-        qi = self.qi(x_intensity, im_rep, per_image_idx)
+        qbg, fanobg = self.qbg(x_intensity, im_rep, per_image_idx)
+        qi, fanoi = self.qi(x_intensity, im_rep, per_image_idx)
         qp = self.qp(x_profile)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
@@ -425,9 +425,8 @@ class Integrator(LightningModule):
             "qp": qp,
             "qi": qi,
             "qbg": qbg,
-            # "qrbg": qrbg,
-            # "qri": qri,
-            # "fano": fano,
+            "fanoi": fanoi,
+            "fanobg": fanobg,
             # "corr_penalty": corr_penalty,
         }
 
@@ -455,8 +454,16 @@ class Integrator(LightningModule):
         self.log("Max(qbg.mean)", outputs["qbg"].mean.max())
         self.log("Mean(qbg.variance)", outputs["qbg"].variance.mean())
 
-        total_loss = loss_dict["loss"]
-        # total_loss += fano_penalty + loss_dict["corr_penalty"]
+        fanoi_l2 = (-torch.log(outputs["fanoi"])).pow(2).mean()
+        fanobg_l2 = (-torch.log(outputs["fanobg"])).pow(2).mean()
+        weight_fanoi = 1.0
+        weight_fanobg = 1.0
+
+        total_loss = (
+            loss_dict["loss"]
+            + weight_fanoi * fanoi_l2
+            + weight_fanobg * fanobg_l2
+        )
         kl = loss_dict["kl_mean"]
         nll = loss_dict["neg_ll_mean"]
 
@@ -499,7 +506,16 @@ class Integrator(LightningModule):
             mask=outputs["forward_base_out"]["mask"],
         )
 
-        total_loss = loss_dict["loss"]
+        fanoi_l2 = (-torch.log(outputs["fanoi"])).pow(2).mean()
+        fanobg_l2 = (-torch.log(outputs["fanobg"])).pow(2).mean()
+        weight_fanoi = 1.0
+        weight_fanobg = 1.0
+
+        total_loss = (
+            loss_dict["loss"]
+            + weight_fanoi * fanoi_l2
+            + weight_fanobg * fanobg_l2
+        )
         kl = loss_dict["kl_mean"]
         nll = loss_dict["neg_ll_mean"]
 
