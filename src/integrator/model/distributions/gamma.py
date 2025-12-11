@@ -158,7 +158,9 @@ if __name__ == "__main__":
         in_features=in_features, n_images=1000, estimand="intensity"
     )
 
-    x_intensity = torch.randn(100, 64)
+    x_intensity = torch.randn(10, 64)
     img_ids = torch.randint(0, 10, (100,))
 
     qi = gamma_dist(x_intensity, img_ids)
+
+    mean_pool_by_image(x_intensity, meta[:, 2].long())
