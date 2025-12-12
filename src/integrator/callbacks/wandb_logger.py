@@ -1699,7 +1699,7 @@ if __name__ == "__main__":
     )
     from utils import CONFIGS
 
-    cfg = list(CONFIGS.glob("*"))[-1]
+    cfg = list(CONFIGS.glob("*"))[1]
     cfg = load_config(cfg)
 
     integrator = create_integrator(cfg)
@@ -1710,9 +1710,14 @@ if __name__ == "__main__":
 
     # get training step output
     training_step_out = integrator.training_step((counts, sbox, mask, meta), 0)
+
     out = training_step_out["model_output"]
 
     # %%
+    integrator.qi.log_phi_table(meta[:, 2].int())
+
+    # %%
+
     # setting up bin edges
     edges = [0, 50, 100, 300, 600, 1000, 1500, 2500]
     bin_edges = zip(edges[:-1], edges[1:], strict=False)

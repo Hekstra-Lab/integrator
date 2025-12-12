@@ -86,7 +86,8 @@ class GammaDistribution(nn.Module):
     def _bound(self, raw, log_min, log_max):
         return torch.exp(log_min + (log_max - log_min) * torch.sigmoid(raw))
 
-    def forward(self, x, xim, im_idx):
+    # def forward(self, x, xim, im_idx):
+    def forward(self, x):
         """
         x: (batch, features)
         img_ids:(batch,) integer indices 0...n_images-1
@@ -103,16 +104,19 @@ class GammaDistribution(nn.Module):
         raw_mu = self.linear_alpha(x)
         mu = torch.nn.functional.softplus(raw_mu) + 1e-6
 
-        raw_fano = self.linear_beta(xim)
+        raw_fano = self.linear_beta(x)
         fano = torch.nn.functional.softplus(raw_fano) + 1e-6
-        fano = fano[im_idx]
+
+        # raw_fano = self.linear_beta(xim)
+        # fano = torch.nn.functional.softplus(raw_fano) + 1e-6
+        # fano = fano[im_idx]
 
         rate = 1 / (fano + 1e-6)
         alpha = mu * rate
 
         # dist = Gamma(concentration=alpha.flatten(), rate=beta.flatten())
         dist = Gamma(concentration=alpha.flatten(), rate=rate.flatten())
-        return dist, fano
+        return dist, 0.0
 
 
 if __name__ == "__main__":

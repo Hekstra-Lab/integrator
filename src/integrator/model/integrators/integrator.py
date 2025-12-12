@@ -318,17 +318,19 @@ class Integrator(LightningModule):
             self.encoder1, self.encoder2, shoebox, self.shoebox_shape
         )
 
-        im_sbox, pooled_ids, per_image_idx = mean_pool_by_image(
-            shoebox, reference[:, 2].float()
-        )
+        # im_sbox, pooled_ids, per_image_idx = mean_pool_by_image(
+        #     shoebox, reference[:, 2].float()
+        # )
+        #
+        # num_images = im_sbox.shape[0]
+        #
+        # self.log("Number of images per batch", num_images)
 
-        num_images = im_sbox.shape[0]
+        # NOTE: temporarily commenting out
+        # im_rep = self.encoder3(
+        #     im_sbox.reshape(num_images, 1, *(self.shoebox_shape))
+        # )
 
-        self.log("Number of images per batch", num_images)
-
-        im_rep = self.encoder3(
-            im_sbox.reshape(num_images, 1, *(self.shoebox_shape))
-        )
         # im_rep = self.encoder3(im_sbox)
 
         # if self.encoder3 is not None:
@@ -361,8 +363,11 @@ class Integrator(LightningModule):
         # rbg = qrbg.rsample([self.mc_samples]).mean(0)
         # ri = qri.rsample([self.mc_samples]).mean(0)
 
-        qbg, fanobg = self.qbg(x_intensity, im_rep, per_image_idx)
-        qi, fanoi = self.qi(x_intensity, im_rep, per_image_idx)
+        # qbg, fanobg = self.qbg(x_intensity, im_rep, per_image_idx)
+        # qi, fanoi = self.qi(x_intensity, im_rep, per_image_idx)
+
+        qbg, fanobg = self.qbg(x_intensity)
+        qi, fanoi = self.qi(x_intensity)
         qp = self.qp(x_profile)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
@@ -458,17 +463,20 @@ class Integrator(LightningModule):
         self.log("Max(qbg.mean)", outputs["qbg"].mean.max())
         self.log("Mean(qbg.variance)", outputs["qbg"].variance.mean())
 
-        # fano penalty
-        fanoi_l2 = (torch.log(outputs["fanoi"] + 1e-8)).pow(2).mean()
-        fanobg_l2 = (torch.log(outputs["fanobg"] + 1e-8)).pow(2).mean()
-        weight_fanoi = self.fanoilambda
-        weight_fanobg = self.fanobglambda
+        # # fano penalty
+        # fanoi_l2 = (torch.log(outputs["fanoi"] + 1e-8)).pow(2).mean()
+        # fanobg_l2 = (torch.log(outputs["fanobg"] + 1e-8)).pow(2).mean()
+        # weight_fanoi = self.fanoilambda
+        # weight_fanobg = self.fanobglambda
+        #
+        # total_loss = (
+        #     loss_dict["loss"]
+        #     + weight_fanoi * fanoi_l2
+        #     + weight_fanobg * fanobg_l2
+        # )
 
-        total_loss = (
-            loss_dict["loss"]
-            + weight_fanoi * fanoi_l2
-            + weight_fanobg * fanobg_l2
-        )
+        total_loss = loss_dict["loss"]
+
         kl = loss_dict["kl_mean"]
         nll = loss_dict["neg_ll_mean"]
 
