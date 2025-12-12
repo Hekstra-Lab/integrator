@@ -213,7 +213,7 @@ def _encode_shoebox(encoder1, encoder2, shoebox, shoebox_shape):
 class EncoderModules:
     encoder1: ShoeboxEncoder | IntensityEncoder
     encoder2: ShoeboxEncoder | IntensityEncoder
-    encoder3: ShoeboxEncoder | IntensityEncoder | None
+    encoder3: None
 
 
 @dataclass
