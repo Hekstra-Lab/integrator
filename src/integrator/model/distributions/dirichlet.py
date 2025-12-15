@@ -1,3 +1,4 @@
+from math import prod
 from typing import Literal
 
 import torch
@@ -168,9 +169,9 @@ class DirichletDistribution(torch.nn.Module):
         beta: int = 1,
     ):
         super().__init__()
-        self.num_components = input_shape[0] * input_shape[1] * input_shape[2]
+        self.n_pixels = prod(input_shape)
         if dmodel is not None:
-            self.alpha_layer = nn.Linear(dmodel, self.num_components)
+            self.alpha_layer = nn.Linear(dmodel, self.n_pixels)
         self.dmodel = dmodel
         self.eps = eps
 
