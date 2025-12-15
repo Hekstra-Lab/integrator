@@ -1,7 +1,7 @@
 global_vars:
   encoder_out: &encoder_out 32
   mc_samples: &mc_samples 100
-  data_dir: &data "/Users/luis/integratorv4/tests/data/2d/hewl_1118/"
+  data_dir: &data "/Users/luis/integrator/tests/data/2d/hewl_1118/"
 integrator:
   name: integrator
   args:
@@ -15,49 +15,64 @@ integrator:
     w: &w 21
     weight_decay: 0.0
     predict_keys: default
-components:
-  encoders:
-    - encoder1:
-        name: shoebox_encoder
-        args:
-          data_dim: 2d
-          input_shape: [*h, *w]
-          in_channels: 1
-          encoder_out: *encoder_out
-          conv1_out_channels: 16
-          conv1_kernel_size: [3, 3]
-          conv1_padding: [1, 1]
-          pool_kernel_size: [2, 2]
-          pool_stride: [2, 2]
-          conv2_out_channels: 32
-          conv2_kernel_size: [3, 3]
-          conv2_padding: [0, 0]
-          norm2_num_groups: 4
-    - encoder2:
-        name: intensity_encoder
-        args:
-          data_dim: 2d
-          in_channels: 1
-          encoder_out: *encoder_out
-          conv1_out_channels: 16
-          conv1_kernel_size: [3, 3]
-          conv1_padding: [1, 1]
-          norm1_num_groups: 4
-          pool_kernel_size: [2, 2]
-          pool_stride: [2, 2]
-          conv2_out_channels: 32
-          conv2_kernel_size: [3, 3]
-          conv2_padding: [0, 0]
-          norm2_num_groups: 4
-          conv3_out_channels: 64
-          conv3_kernel_size: [3, 3]
-          conv3_padding: [1, 1]
-          norm3_num_groups: 8
-    - encoder3:
-        name: mlp_metadata_encoder
-        args:
-          encoder_in: 6 #number of features
-          encoder_out: *encoder_out
+encoders:
+  - encoder1:
+      name: shoebox_encoder
+      args:
+        data_dim: 2d
+        input_shape: [*h, *w]
+        in_channels: 1
+        encoder_out: *encoder_out
+        conv1_out_channels: 16
+        conv1_kernel_size: [3, 3]
+        conv1_padding: [1, 1]
+        pool_kernel_size: [2, 2]
+        pool_stride: [2, 2]
+        conv2_out_channels: 32
+        conv2_kernel_size: [3, 3]
+        conv2_padding: [0, 0]
+        norm2_num_groups: 4
+  - encoder2:
+      name: intensity_encoder
+      args:
+        data_dim: 2d
+        in_channels: 1
+        encoder_out: *encoder_out
+        conv1_out_channels: 16
+        conv1_kernel_size: [3, 3]
+        conv1_padding: [1, 1]
+        norm1_num_groups: 4
+        pool_kernel_size: [2, 2]
+        pool_stride: [2, 2]
+        conv2_out_channels: 32
+        conv2_kernel_size: [3, 3]
+        conv2_padding: [0, 0]
+        norm2_num_groups: 4
+        conv3_out_channels: 64
+        conv3_kernel_size: [3, 3]
+        conv3_padding: [1, 1]
+        norm3_num_groups: 8
+  - encoder3:
+      name: intensity_encoder
+      args:
+        data_dim: 2d
+        in_channels: 1
+        encoder_out: *encoder_out
+        conv1_out_channels: 16
+        conv1_kernel_size: [3, 3]
+        conv1_padding: [1, 1]
+        norm1_num_groups: 4
+        pool_kernel_size: [2, 2]
+        pool_stride: [2, 2]
+        conv2_out_channels: 32
+        conv2_kernel_size: [3, 3]
+        conv2_padding: [0, 0]
+        norm2_num_groups: 4
+        conv3_out_channels: 64
+        conv3_kernel_size: [3, 3]
+        conv3_padding: [1, 1]
+        norm3_num_groups: 8
+surrogates:
   qp:
     name: dirichlet
     args:
@@ -65,34 +80,42 @@ components:
       out_features: [*h, *w]
       constraint: softplus
   qbg:
-    name: folded_normal
+    name: gamma
     args:
       in_features: *encoder_out
-      out_features: 2
-      constraint: softplus
+      # out_features: 2
+      # constraint: softplus
+      estimand: background
   qi:
-    name: folded_normal
+    name: gamma
     args:
       in_features: *encoder_out
-      out_features: 2
-      constraint: softplus
-  loss:
-    name: loss
-    args:
-      pi_name: half_normal
-      pi_params:
-        scale: 0.5
-      pbg_name: half_normal
-      pbg_params:
-        scale: 1.0
-      pprf_name: dirichlet
-      pprf_params: null
-      pprf_weight: 0.0001
-      pbg_weight: 0.5
-      pi_weight: 1.0
-      use_robust: true
-      data_dir: *data
-      prior_tensor: 'concentration_2d.pt'
+      estimand: intensity
+      # out_features: 2
+      # constraint: softplus
+loss:
+  name: 'loss'
+  args:
+    mc_smpls: 100
+    eps: 0.000001
+  priors:
+    intensity:
+      name: 'gamma'
+      params:
+        concentration: 1.0
+        rate: 0.5
+      weight: 0.01
+    background:
+      name: 'gamma'
+      params:
+        concentration: 1.0
+        rate: 0.5
+      weight: 0.5
+    profile:
+      name: 'dirichlet'
+      params:
+        concentration: '/Users/luis/integrator/tests/data/2d/hewl_1118/concentration_2d.pt'
+      weight: 0.5
 data_loader:
   name: shoebox_data_module_2d
   args:
@@ -110,7 +133,13 @@ data_loader:
       masks: "masks_2d_subset.pt"
       stats: "stats_2d.pt"
       reference: "reference_2d_subset.pt"
+      x_coords: null
+      y_coords: null
       standardized_counts: null
+    D: 1
+    H: 21
+    W: 21
+    anscombe: true
 trainer:
   args:
     max_epochs: 5

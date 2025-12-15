@@ -186,8 +186,12 @@ def _assemble_outputs(
 
 def _encode_shoebox(encoder1, encoder2, shoebox, shoebox_shape):
     if shoebox.dim() == 2:
-        x_profile = encoder1(shoebox.reshape(shoebox.shape[0], 1, *(shoebox_shape)))
-        x_intensity = encoder2(shoebox.reshape(shoebox.shape[0], 1, *(shoebox_shape)))
+        x_profile = encoder1(
+            shoebox.reshape(shoebox.shape[0], 1, *(shoebox_shape))
+        )
+        x_intensity = encoder2(
+            shoebox.reshape(shoebox.shape[0], 1, *(shoebox_shape))
+        )
 
         return x_profile, x_intensity
 
@@ -209,7 +213,7 @@ def _encode_shoebox(encoder1, encoder2, shoebox, shoebox_shape):
 class EncoderModules:
     encoder1: ShoeboxEncoder | IntensityEncoder
     encoder2: ShoeboxEncoder | IntensityEncoder
-    encoder3: None
+    encoder3: None = None
 
 
 @dataclass
@@ -468,20 +472,30 @@ class Integrator(LightningModule):
         self.log("validation: max(qi.mean)", outputs["qi"].mean.max())
         self.log("validation: max(qi.variance)", outputs["qi"].variance.max())
         self.log("validation: min(qi.variance)", outputs["qi"].variance.min())
-        self.log("validation: mean(qi.variance)", outputs["qi"].variance.mean())
+        self.log(
+            "validation: mean(qi.variance)", outputs["qi"].variance.mean()
+        )
 
         self.log("validation: mean(qbg.mean)", outputs["qbg"].mean.mean())
         self.log("validation: min(qbg.mean)", outputs["qbg"].mean.min())
         self.log("validation: max(qbg.mean)", outputs["qbg"].mean.max())
-        self.log("validation: mean(qbg.variance)", outputs["qbg"].variance.mean())
-        self.log("validation: max(qbg.variance)", outputs["qbg"].variance.max())
-        self.log("validation: min(qbg.variance)", outputs["qbg"].variance.min())
+        self.log(
+            "validation: mean(qbg.variance)", outputs["qbg"].variance.mean()
+        )
+        self.log(
+            "validation: max(qbg.variance)", outputs["qbg"].variance.max()
+        )
+        self.log(
+            "validation: min(qbg.variance)", outputs["qbg"].variance.min()
+        )
 
         total_loss = loss_dict["loss"]
         kl = loss_dict["kl_mean"]
         nll = loss_dict["neg_ll_mean"]
 
-        self.log("val/loss", total_loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log(
+            "val/loss", total_loss, on_step=False, on_epoch=True, prog_bar=True
+        )
         self.log("val/kl", kl, on_step=False, on_epoch=True)
         self.log("val/nll", nll, on_step=False, on_epoch=True)
 
@@ -547,6 +561,6 @@ if __name__ == "__main__":
 
     metadata = torch.stack([max, min, mean, std], -1).squeeze(1)
 
-    torch.distributions.LogNormal(torch.zeros(10), torch.ones(10)).rsample([100]).mean(
-        0
-    )
+    torch.distributions.LogNormal(torch.zeros(10), torch.ones(10)).rsample(
+        [100]
+    ).mean(0)
