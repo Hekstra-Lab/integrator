@@ -8,8 +8,6 @@ from torch import Tensor, nn
 from integrator.model.distributions import (
     DirichletDistribution,
     FoldedNormalDistribution,
-    GammaDistribution,
-    LogNormalDistribution,
 )
 from integrator.model.encoders import (
     IntensityEncoder,
@@ -213,14 +211,14 @@ def _encode_shoebox(encoder1, encoder2, shoebox, shoebox_shape):
 class EncoderModules:
     encoder1: ShoeboxEncoder | IntensityEncoder
     encoder2: ShoeboxEncoder | IntensityEncoder
-    encoder3: None = None
+    encoder3: ShoeboxEncoder | IntensityEncoder | None = None
 
 
 @dataclass
 class SurrogateModules:
-    qbg: LogNormalDistribution | GammaDistribution | FoldedNormalDistribution
-    qi: LogNormalDistribution | GammaDistribution | FoldedNormalDistribution
-    qp: DirichletDistribution
+    qbg: nn.Module
+    qi: nn.Module
+    qp: nn.Module
 
 
 def stats(name, x):
@@ -273,8 +271,6 @@ class Integrator(LightningModule):
         self.qbg = surrogates.qbg
         self.qp = surrogates.qp
         self.qi = surrogates.qi
-        # self.qri = LogNormalDistribution(in_features=64)
-        # self.qrbg = LogNormalDistribution(in_features=64)
 
         # encoder modules
         self.encoder1 = encoders.encoder1
@@ -516,6 +512,230 @@ class Integrator(LightningModule):
         }
 
 
+# %%
+class IntegratorModelB(LightningModule):
+    def __init__(
+        self,
+        cfg: IntegratorHyperParameters,
+        loss: nn.Module,
+        surrogates: SurrogateModules,
+        encoders: EncoderModules,
+    ):
+        super().__init__()
+        self.cfg = cfg
+
+        # hyperparams
+        self.lr = cfg.lr
+        self.weight_decay = cfg.weight_decay
+        self.mc_samples = cfg.mc_samples
+        self.renyi_scale = cfg.renyi_scale
+
+        # posterior modules
+        self.qbg = surrogates.qbg
+        self.qp = surrogates.qp
+        self.qi = surrogates.qi
+
+        # encoder modules
+        self.encoder1 = encoders.encoder1
+        self.encoder2 = encoders.encoder2
+        self.encoder3 = encoders.encoder3
+
+        # loss module
+        self.loss = loss
+
+        # predict keys
+        self.predict_keys = (
+            _default_predict_keys()
+            if cfg.predict_keys == "default"
+            else cfg.predict_keys
+        )
+
+        # fano penalties
+        self.fanobglambda = self.cfg.lambdabg
+        self.fanoilambda = self.cfg.lambdai
+
+        if self.encoder3 is not None:
+            self.linear = nn.Linear(cfg.encoder_out * 2, cfg.encoder_out)
+
+        self.automatic_optimization = True
+
+        if cfg.data_dim == "3d":
+            self.shoebox_shape = (cfg.d, cfg.h, cfg.w)
+        elif cfg.data_dim == "2d":
+            self.shoebox_shape = (cfg.h, cfg.w)
+
+    def forward(
+        self,
+        counts: Tensor,
+        shoebox: Tensor,
+        mask: Tensor,
+        reference: Tensor | None = None,
+    ) -> dict[str, Any]:
+        counts = torch.clamp(counts, min=0)
+
+        x_profile = self.encoder1(
+            shoebox.reshape(shoebox.shape[0], 1, *(self.shoebox_shape))
+        )
+
+        x_k = self.encoder2(
+            shoebox.reshape(shoebox.shape[0], 1, *(self.shoebox_shape))
+        )
+
+        assert self.encoder3 is not None
+        x_r = self.encoder3(
+            shoebox.reshape(shoebox.shape[0], 1, *(self.shoebox_shape))
+        )
+        qbg = self.qbg(x_k, x_r)
+        qi = self.qi(x_k, x_r)
+        qp = self.qp(x_profile)
+
+        zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
+        zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+
+        rate = zI * zp + zbg
+
+        out = IntegratorBaseOutputs(
+            rates=rate,
+            counts=counts,
+            mask=mask,
+            qbg=qbg,
+            qp=qp,
+            qi=qi,
+            zp=zp,
+            concentration=qp.concentration,  # if using Dirichlet
+            reference=reference,
+        )
+        out = _assemble_outputs(out, self.cfg.data_dim)
+        return {
+            "forward_base_out": out,
+            "qp": qp,
+            "qi": qi,
+            "qbg": qbg,
+        }
+
+    def training_step(self, batch, _batch_idx):
+        counts, shoebox, mask, reference = batch
+        outputs = self(counts, shoebox, mask, reference)
+
+        # Calculate loss
+        loss_dict = self.loss(
+            rate=outputs["forward_base_out"]["rates"],
+            counts=outputs["forward_base_out"]["counts"],
+            qp=outputs["qp"],
+            qi=outputs["qi"],
+            qbg=outputs["qbg"],
+            mask=outputs["forward_base_out"]["mask"],
+        )
+
+        self.log("train: mean(qi.mean)", outputs["qi"].mean.mean())
+        self.log("train: min(qi.mean)", outputs["qi"].mean.min())
+        self.log("train: max(qi.mean)", outputs["qi"].mean.max())
+        self.log("train: max(qi.variance)", outputs["qi"].variance.max())
+        self.log("train: min(qi.variance)", outputs["qi"].variance.min())
+        self.log("train: mean(qi.variance)", outputs["qi"].variance.mean())
+
+        self.log("train: mean(qbg.mean)", outputs["qbg"].mean.mean())
+        self.log("train: min(qbg.mean)", outputs["qbg"].mean.min())
+        self.log("train: max(qbg.mean)", outputs["qbg"].mean.max())
+        self.log("train: mean(qbg.variance)", outputs["qbg"].variance.mean())
+        self.log("train: max(qbg.variance)", outputs["qbg"].variance.max())
+        self.log("train: min(qbg.variance)", outputs["qbg"].variance.min())
+
+        total_loss = loss_dict["loss"]
+
+        kl = loss_dict["kl_mean"]
+        nll = loss_dict["neg_ll_mean"]
+
+        self.log(
+            "train/loss",
+            total_loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+        )
+        self.log("train/kl", kl, on_step=False, on_epoch=True)
+        self.log("train/nll", nll, on_step=False, on_epoch=True)
+
+        outputs["loss"] = total_loss
+        return {
+            "loss": total_loss,
+            "model_output": outputs["forward_base_out"],
+        }
+
+    def configure_optimizers(self):
+        return torch.optim.Adam(
+            self.parameters(),
+            lr=self.lr,
+            weight_decay=self.weight_decay,
+        )
+
+    def validation_step(self, batch, _batch_idx):
+        # Unpack batch
+        counts, shoebox, mask, reference = batch
+        outputs = self(counts, shoebox, mask, reference)
+
+        loss_dict = self.loss(
+            rate=outputs["forward_base_out"]["rates"],
+            counts=outputs["forward_base_out"]["counts"],
+            qp=outputs["qp"],
+            qi=outputs["qi"],
+            qbg=outputs["qbg"],
+            # # qri=outputs["qri"],
+            # qrbg=outputs["qrbg"],
+            mask=outputs["forward_base_out"]["mask"],
+        )
+
+        self.log("validation: mean(qi.mean)", outputs["qi"].mean.mean())
+        self.log("validation: min(qi.mean)", outputs["qi"].mean.min())
+        self.log("validation: max(qi.mean)", outputs["qi"].mean.max())
+        self.log("validation: max(qi.variance)", outputs["qi"].variance.max())
+        self.log("validation: min(qi.variance)", outputs["qi"].variance.min())
+        self.log(
+            "validation: mean(qi.variance)", outputs["qi"].variance.mean()
+        )
+
+        self.log("validation: mean(qbg.mean)", outputs["qbg"].mean.mean())
+        self.log("validation: min(qbg.mean)", outputs["qbg"].mean.min())
+        self.log("validation: max(qbg.mean)", outputs["qbg"].mean.max())
+        self.log(
+            "validation: mean(qbg.variance)", outputs["qbg"].variance.mean()
+        )
+        self.log(
+            "validation: max(qbg.variance)", outputs["qbg"].variance.max()
+        )
+        self.log(
+            "validation: min(qbg.variance)", outputs["qbg"].variance.min()
+        )
+
+        total_loss = loss_dict["loss"]
+        kl = loss_dict["kl_mean"]
+        nll = loss_dict["neg_ll_mean"]
+
+        self.log(
+            "val/loss", total_loss, on_step=False, on_epoch=True, prog_bar=True
+        )
+        self.log("val/kl", kl, on_step=False, on_epoch=True)
+        self.log("val/nll", nll, on_step=False, on_epoch=True)
+
+        outputs["loss"] = total_loss
+        return {
+            "loss": total_loss,
+            "model_output": outputs["forward_base_out"],
+        }
+
+    def predict_step(self, batch: Tensor, _batch_idx):
+        counts, shoebox, mask, reference = batch
+        outputs = self(counts, shoebox, mask, reference)
+
+        return {
+            k: v
+            for k, v in outputs["forward_base_out"].items()
+            if k in self.predict_keys
+        }
+
+
+# %%
 if __name__ == "__main__":
     import torch
 

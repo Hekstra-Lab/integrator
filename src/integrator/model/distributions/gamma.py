@@ -3,6 +3,7 @@ from typing import Literal
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributions import Gamma
 
 from integrator.layers import Linear
@@ -37,11 +38,11 @@ def mean_pool_by_image(emb: torch.Tensor, img_ids: torch.Tensor):
     device = emb.device
     B, F = emb.shape
 
-    # 1. Get unique image IDs and mapping
+    # 1Get unique image IDs and mapping
     pooled_ids, per_ref_idx = torch.unique(img_ids, return_inverse=True)
     n_img = pooled_ids.size(0)
 
-    # 2. Sum per image using index_add_
+    # Sum per image using index_add_
     sums = torch.zeros(n_img, F, device=device)
     counts = torch.zeros(n_img, 1, device=device)
 
@@ -53,11 +54,92 @@ def mean_pool_by_image(emb: torch.Tensor, img_ids: torch.Tensor):
     return pooled, pooled_ids, per_ref_idx
 
 
+def _get_gamma_params(
+    x: torch.Tensor,
+    parameterization: str,
+    linear_k: torch.nn.Linear,
+    linear_r: torch.nn.Linear | None = None,
+    eps: float = 1e-6,
+):
+    if parameterization == "a":
+        assert linear_r is not None
+        k = F.softplus(linear_k(x)) + eps
+        r = F.softplus(linear_r(x)) + eps
+        return k, r
+
+    if parameterization == "b":
+        k, r = F.softplus(linear_k(x)) + eps
+        return k, r  # assuming this is intentional
+
+    if parameterization == "c":
+        assert linear_r is not None
+        mu = F.softplus(linear_k(x)) + eps
+        fano = F.softplus(linear_r(x)) + eps
+        r = 1 / (fano + eps)
+        k = r * mu
+        return k, r
+
+    if parameterization == "d":
+        assert linear_r is not None
+        k = F.softplus(linear_k(x)) + eps
+        fano = F.softplus(linear_r(x)) + eps
+        r = 1 / (fano + eps)
+        return k, r
+
+    raise ValueError(f"Unknown parameterization: {parameterization}")
+
+
+def _x_to_params(x, parameterization, linear_k, linear_r=None):
+    return _get_gamma_params(
+        x=x,
+        linear_k=linear_k,
+        linear_r=linear_r,
+        parameterization=parameterization,
+    )
+
+
+# %%
+class GammaDistributionRepamA(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        estimand: Literal["background", "intensity"],
+        parameterization: str = "a",
+        eps: float = 1e-6,
+    ):
+        super().__init__()
+
+        self.name = "Gamma"
+
+        self.linear_k = Linear(in_features, 1)
+        self.linear_r = nn.Linear(in_features, 1)
+
+    def _bound(self, raw, log_min, log_max):
+        return torch.exp(log_min + (log_max - log_min) * torch.sigmoid(raw))
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        x_: torch.Tensor | None = None,
+    ):
+        raw_k = self.linear_k(x)
+        k = F.softplus(raw_k) + 1e-6
+
+        raw_r = self.linear_r(x_)
+        r = F.softplus(raw_r) + 1e-6
+
+        q = Gamma(concentration=k.flatten(), rate=r.flatten())
+
+        return q
+
+
+# %%
 class GammaDistribution(nn.Module):
     def __init__(
         self,
-        estimand: Literal["background", "intensity"],
         in_features: int,
+        estimand: Literal["background", "intensity"],
+        parameterization: str = "a",
         eps: float = 1e-6,
     ):
         super().__init__()
@@ -75,43 +157,41 @@ class GammaDistribution(nn.Module):
         self.log_fano_min = math.log(self.fano_min)
         self.log_fano_max = math.log(self.fano_max)
 
+        if parameterization == "b":
+            self.linear_k = torch.nn.Linear(in_features, 2)
+            pass
+
+        else:
+            self.linear_k = torch.nn.Linear(in_features, 1)
+            self.linear_r = torch.nn.Linear(in_features, 1)
+            pass
+
+        # managed to amortize it
         # self.log_phi_table = nn.Parameter(torch.zeros(n_images))  # (n_images,)
 
-        self.linear_alpha = torch.nn.Linear(in_features, 1)
+        self.linear_k = torch.nn.Linear(in_features, 1)
         self.ln_beta = nn.LayerNorm(in_features)
-        self.linear_beta = torch.nn.Linear(in_features, 1)
+        self.linear_r = torch.nn.Linear(in_features, 1)
 
         self.rmin = 0.01
         self.rmax = 5.0
+        self.parameterization = parameterization
 
     def _bound(self, raw, log_min, log_max):
         return torch.exp(log_min + (log_max - log_min) * torch.sigmoid(raw))
 
     # def forward(self, x, xim, im_idx):
-    def forward(self, x):
+    def forward(self, x, x_=None):
         """
         x: (batch, features)
         img_ids:(batch,) integer indices 0...n_images-1
         """
 
-        # raw_alpha = self.linear_alpha(x)
-        # alpha = torch.nn.functional.softplus(raw_alpha) + 1e-6
-
-        # raw_r = self.linear_beta(xim)
-        # rate = torch.exp(raw_r) + 1e-6
-        # rate = self.rmin + (self.rmax - self.rmin) * torch.sigmoid(raw_r)
-        # rate = rate[im_idx]
-
-        raw_mu = self.linear_alpha(x)
+        raw_mu = self.linear_k(x)
         mu = torch.nn.functional.softplus(raw_mu) + 1e-6
 
-        raw_fano = self.linear_beta(x)
+        raw_fano = self.linear_r(x)
         fano = torch.nn.functional.softplus(raw_fano) + 1e-6
-
-        # raw_fano = self.linear_beta(xim)
-        # fano = torch.nn.functional.softplus(raw_fano) + 1e-6
-        # fano = fano[im_idx]
-
         rate = 1 / (fano + 1e-6)
         alpha = mu * rate
 
@@ -154,24 +234,3 @@ if __name__ == "__main__":
 
     # load a batch
     counts, sbox, mask, meta = next(iter(data.train_dataloader()))
-
-    gamma_dist = GammaDistribution(
-        in_features=in_features, n_images=1000, estimand="intensity"
-    )
-
-    x_intensity = torch.randn(10, 64)
-    img_ids = torch.randint(0, 10, (10,))
-
-    mean_pool_by_image(x_intensity, img_ids)
-
-    # %%
-    r_linear = Linear(64, 1)
-
-    im_sbox, pooled_ids, per_image_idx = mean_pool_by_image(sbox, meta[:, 2].float())
-    num_images = im_sbox.shape[0]
-    im_rep = integrator.encoder1(im_sbox.reshape(num_images, 1, 21, 21))
-
-    raw_r = r_linear(im_rep)  # (num_ims,1)
-
-    # now we get should have some shoeboxes using the same r?
-    raw_r[per_image_idx]

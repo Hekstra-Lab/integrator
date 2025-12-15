@@ -190,7 +190,7 @@ def create_data_loader(config):
 
 def create_trainer(config, callbacks=None, logger=None):
     return pl.Trainer(
-        max_epochs=config["trainer"]["args"]["max_epochs"],
+        epochs=config["trainer"]["args"]["epochs"],
         accelerator=create_argument(
             "trainer", "accelerator", config["trainer"]["args"]["accelerator"]
         ),
@@ -204,8 +204,6 @@ def create_trainer(config, callbacks=None, logger=None):
         deterministic=config["trainer"]["args"]["deterministic"],
         callbacks=callbacks,
         enable_checkpointing=config["trainer"]["args"]["enable_checkpointing"],
-        # gradient_clip_val=5.0,
-        # gradient_clip_algorithm="norm",
     )
 
 
@@ -214,7 +212,7 @@ def override_config(args, config):
     if args.batch_size:
         config["data_loader"]["args"]["batch_size"] = args.batch_size
     if args.epochs:
-        config["trainer"]["args"]["max_epochs"] = args.epochs
+        config["trainer"]["args"]["epochs"] = args.epochs
 
 
 def clean_from_memory(
@@ -311,18 +309,14 @@ if __name__ == "__main__":
     create_integrator(config3d.dict())
 
     updates = {
-        "trainer": {"args": {"max_epochs": 100}},
+        "trainer": {"args": {"epochs": 100}},
     }
 
     updates = dict()
-    updates.setdefault("trainer", {}).setdefault("args", {})["max_epochs"] = (
-        100
-    )
+    updates.setdefault("trainer", {}).setdefault("args", {})["epochs"] = 100
 
     config3d.dict()["trainer"]
 
-    updates.setdefault("trainer", {}).setdefault("args", {})["max_epochs"] = (
-        100
-    )
+    updates.setdefault("trainer", {}).setdefault("args", {})["epochs"] = 100
 
     config3d.model_copy(update=updates).dict()["trainer"]

@@ -9,6 +9,7 @@ from integrator.model.distributions import (
     DirichletDistribution,
     FoldedNormalDistribution,
     GammaDistribution,
+    GammaDistributionRepamA,
     HalfNormalDistribution,
     LogNormalDistribution,
 )
@@ -19,7 +20,7 @@ from integrator.model.encoders import (
     ProfileEncoder2DMinimal,
     ShoeboxEncoder,
 )
-from integrator.model.integrators import Integrator
+from integrator.model.integrators import Integrator, IntegratorModelB
 from integrator.model.loss import Loss
 
 REGISTRY = {
@@ -34,9 +35,13 @@ REGISTRY = {
         "elbo": Loss,
         "loss": Loss,
     },
-    "integrator": {"integrator": Integrator},
+    "integrator": {
+        "integrator": Integrator,
+        "modelb": IntegratorModelB,
+    },
     "qi": {
         "gamma": GammaDistribution,
+        "gammaA": GammaDistributionRepamA,
         "log_normal": LogNormalDistribution,
         "folded_normal": FoldedNormalDistribution,
     },
@@ -45,6 +50,7 @@ REGISTRY = {
     },
     "qbg": {
         "gamma": GammaDistribution,
+        "gammaA": GammaDistributionRepamA,
         "half_normal": HalfNormalDistribution,
         "log_normal": LogNormalDistribution,
         "folded_normal": FoldedNormalDistribution,
