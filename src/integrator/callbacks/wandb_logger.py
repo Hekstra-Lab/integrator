@@ -827,7 +827,7 @@ class Plotter(Callback):
                     "counts": count_images[idx].cpu(),
                     "rates": rate_images[idx].cpu(),
                     "bg_mean": preds["qbg_mean"][idx].cpu(),
-                    "bg_var": preds["qbgvar"][idx].cpu(),
+                    "bg_var": preds["qbg_var"][idx].cpu(),
                     "qi_mean": preds["qi_mean"][idx].cpu(),
                     "qi_var": preds["qi_var"][idx].cpu(),
                     "dials_I_prf_value": preds["dials_I_prf_value"][idx],
