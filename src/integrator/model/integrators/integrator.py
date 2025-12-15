@@ -186,12 +186,8 @@ def _assemble_outputs(
 
 def _encode_shoebox(encoder1, encoder2, shoebox, shoebox_shape):
     if shoebox.dim() == 2:
-        x_profile = encoder1(
-            shoebox.reshape(shoebox.shape[0], 1, *(shoebox_shape))
-        )
-        x_intensity = encoder2(
-            shoebox.reshape(shoebox.shape[0], 1, *(shoebox_shape))
-        )
+        x_profile = encoder1(shoebox.reshape(shoebox.shape[0], 1, *(shoebox_shape)))
+        x_intensity = encoder2(shoebox.reshape(shoebox.shape[0], 1, *(shoebox_shape)))
 
         return x_profile, x_intensity
 
@@ -366,8 +362,8 @@ class Integrator(LightningModule):
         # qbg, fanobg = self.qbg(x_intensity, im_rep, per_image_idx)
         # qi, fanoi = self.qi(x_intensity, im_rep, per_image_idx)
 
-        qbg, fanobg = self.qbg(x_intensity)
-        qi, fanoi = self.qi(x_intensity)
+        qbg = self.qbg(x_intensity)
+        qi = self.qi(x_intensity)
         qp = self.qp(x_profile)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
@@ -375,47 +371,6 @@ class Integrator(LightningModule):
         zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
         rate = zI * zp + zbg
-
-        # print("rate.max:", {rate.max()})
-        # print("rate.min:", {rate.max()})
-        # print("counts.min:", {counts.min()})
-        # print("counts.max:", {counts.max()})
-        #
-        # # ----- Check encoders -----
-        stats("x_profile", x_profile)
-        stats("x_intensity", x_intensity)
-        #
-        # # ----- Check LogNormal qbg -----
-        # print("\nqbg params:")
-        # stats("qbg.loc", qbg.loc)
-        # stats("qbg.scale", qbg.scale)
-        #
-        # # Sample diagnostics
-        stats("zbg sample", zbg)
-        #
-        # # ----- Check LogNormal qi -----
-        # print("\nqi params:")
-        # stats("qi.loc", qi.loc)
-        # stats("qi.scale", qi.scale)
-        #
-        stats("zI sample", zI)
-        #
-        # # ----- Check Dirichlet qp -----
-        print("\nqp params:")
-        stats("qp.concentration", qp.concentration)
-        #
-        # stats("zp sample", zp)
-        #
-        # # ----- Check rate -----
-        print("\nrate stats:")
-        stats("rate", rate)
-        #
-        # # ----- Check input counts -----
-        # stats("counts", counts)
-        #
-        # print("max counts total:", counts.sum(-1).max())
-        # print("max mask total:", mask.sum(-1).max())
-        # print("min mask total:", mask.sum(-1).min())
 
         out = IntegratorBaseOutputs(
             rates=rate,
@@ -434,9 +389,6 @@ class Integrator(LightningModule):
             "qp": qp,
             "qi": qi,
             "qbg": qbg,
-            "fanoi": fanoi,
-            "fanobg": fanobg,
-            # "corr_penalty": corr_penalty,
         }
 
     def training_step(self, batch, _batch_idx):
@@ -450,30 +402,22 @@ class Integrator(LightningModule):
             qp=outputs["qp"],
             qi=outputs["qi"],
             qbg=outputs["qbg"],
-            # qri=outputs["qri"],
-            # qrbg=outputs["qrbg"],
             mask=outputs["forward_base_out"]["mask"],
         )
 
-        self.log("Mean(qi.mean)", outputs["qi"].mean.mean())
-        self.log("Min(qi.mean)", outputs["qi"].mean.min())
-        self.log("Max(qi.mean)", outputs["qi"].mean.max())
-        self.log("Mean(qbg.mean)", outputs["qbg"].mean.mean())
-        self.log("Min(qbg.mean)", outputs["qbg"].mean.min())
-        self.log("Max(qbg.mean)", outputs["qbg"].mean.max())
-        self.log("Mean(qbg.variance)", outputs["qbg"].variance.mean())
+        self.log("train: mean(qi.mean)", outputs["qi"].mean.mean())
+        self.log("train: min(qi.mean)", outputs["qi"].mean.min())
+        self.log("train: max(qi.mean)", outputs["qi"].mean.max())
+        self.log("train: max(qi.variance)", outputs["qi"].variance.max())
+        self.log("train: min(qi.variance)", outputs["qi"].variance.min())
+        self.log("train: mean(qi.variance)", outputs["qi"].variance.mean())
 
-        # # fano penalty
-        # fanoi_l2 = (torch.log(outputs["fanoi"] + 1e-8)).pow(2).mean()
-        # fanobg_l2 = (torch.log(outputs["fanobg"] + 1e-8)).pow(2).mean()
-        # weight_fanoi = self.fanoilambda
-        # weight_fanobg = self.fanobglambda
-        #
-        # total_loss = (
-        #     loss_dict["loss"]
-        #     + weight_fanoi * fanoi_l2
-        #     + weight_fanobg * fanobg_l2
-        # )
+        self.log("train: mean(qbg.mean)", outputs["qbg"].mean.mean())
+        self.log("train: min(qbg.mean)", outputs["qbg"].mean.min())
+        self.log("train: max(qbg.mean)", outputs["qbg"].mean.max())
+        self.log("train: mean(qbg.variance)", outputs["qbg"].variance.mean())
+        self.log("train: max(qbg.variance)", outputs["qbg"].variance.max())
+        self.log("train: min(qbg.variance)", outputs["qbg"].variance.min())
 
         total_loss = loss_dict["loss"]
 
@@ -519,22 +463,25 @@ class Integrator(LightningModule):
             mask=outputs["forward_base_out"]["mask"],
         )
 
-        fanoi_l2 = (-torch.log(outputs["fanoi"])).pow(2).mean()
-        fanobg_l2 = (-torch.log(outputs["fanobg"])).pow(2).mean()
-        weight_fanoi = 1.0
-        weight_fanobg = 1.0
+        self.log("validation: mean(qi.mean)", outputs["qi"].mean.mean())
+        self.log("validation: min(qi.mean)", outputs["qi"].mean.min())
+        self.log("validation: max(qi.mean)", outputs["qi"].mean.max())
+        self.log("validation: max(qi.variance)", outputs["qi"].variance.max())
+        self.log("validation: min(qi.variance)", outputs["qi"].variance.min())
+        self.log("validation: mean(qi.variance)", outputs["qi"].variance.mean())
 
-        total_loss = (
-            loss_dict["loss"]
-            + weight_fanoi * fanoi_l2
-            + weight_fanobg * fanobg_l2
-        )
+        self.log("validation: mean(qbg.mean)", outputs["qbg"].mean.mean())
+        self.log("validation: min(qbg.mean)", outputs["qbg"].mean.min())
+        self.log("validation: max(qbg.mean)", outputs["qbg"].mean.max())
+        self.log("validation: mean(qbg.variance)", outputs["qbg"].variance.mean())
+        self.log("validation: max(qbg.variance)", outputs["qbg"].variance.max())
+        self.log("validation: min(qbg.variance)", outputs["qbg"].variance.min())
+
+        total_loss = loss_dict["loss"]
         kl = loss_dict["kl_mean"]
         nll = loss_dict["neg_ll_mean"]
 
-        self.log(
-            "val/loss", total_loss, on_step=False, on_epoch=True, prog_bar=True
-        )
+        self.log("val/loss", total_loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log("val/kl", kl, on_step=False, on_epoch=True)
         self.log("val/nll", nll, on_step=False, on_epoch=True)
 
@@ -583,6 +530,8 @@ if __name__ == "__main__":
     qi_ = FoldedNormalDistribution(in_features=64)
     qp_ = DirichletDistribution(in_features=64, out_features=(3, 21, 21))
 
+    integrator.qi
+
     # load a batch
     counts, sbox, mask, meta = next(iter(data.train_dataloader()))
 
@@ -598,6 +547,6 @@ if __name__ == "__main__":
 
     metadata = torch.stack([max, min, mean, std], -1).squeeze(1)
 
-    torch.distributions.LogNormal(torch.zeros(10), torch.ones(10)).rsample(
-        [100]
-    ).mean(0)
+    torch.distributions.LogNormal(torch.zeros(10), torch.ones(10)).rsample([100]).mean(
+        0
+    )

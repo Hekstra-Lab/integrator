@@ -21,9 +21,7 @@ class FoldedNormal(TransformedDistribution):
 
     def __init__(self, loc, scale, validate_args=None):
         self._normal = Normal(loc, scale, validate_args=validate_args)
-        super().__init__(
-            self._normal, AbsTransform(), validate_args=validate_args
-        )
+        super().__init__(self._normal, AbsTransform(), validate_args=validate_args)
 
     @property
     def has_rsample(self) -> bool:
@@ -112,9 +110,7 @@ class FoldedNormal(Distribution):
     support = torch.distributions.constraints.nonnegative
 
     def __init__(self, loc, scale, var_thresh=5, validate_args=None):
-        self.loc, self.scale = torch.distributions.utils.broadcast_all(
-            loc, scale
-        )
+        self.loc, self.scale = torch.distributions.utils.broadcast_all(loc, scale)
         batch_shape = self.loc.shape
         super().__init__(batch_shape, validate_args=validate_args)
         self._irsample = NormalIRSample.apply
@@ -221,9 +217,7 @@ class FoldedNormal(Distribution):
         """
         if self._validate_args:
             self._validate_sample(value)
-        value = torch.as_tensor(
-            value, dtype=self.loc.dtype, device=self.loc.device
-        )
+        value = torch.as_tensor(value, dtype=self.loc.dtype, device=self.loc.device)
         # return dist.Normal(loc, scale).cdf(value) - dist.Normal(-loc, scale).cdf(-value)
         return 0.5 * (
             torch.erf((value + self.loc) / (self.scale * np.sqrt(2.0)))
@@ -264,9 +258,7 @@ class FoldedNormal(Distribution):
         q = self.pdf(samples)
         dFdmu = self.dcdfdmu(samples)
         dFdsigma = self.dcdfdsigma(samples)
-        return self._irsample(
-            self.loc, self.scale, samples, dFdmu, dFdsigma, q
-        )
+        return self._irsample(self.loc, self.scale, samples, dFdmu, dFdsigma, q)
 
 
 class FoldedNormalDistribution(nn.Module):

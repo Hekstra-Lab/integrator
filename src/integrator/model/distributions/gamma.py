@@ -69,6 +69,7 @@ class GammaDistribution(nn.Module):
             self.mu_min, self.mu_max = 1e-3, 100.0
             self.fano_min, self.fano_max = 0.2, 5.0
 
+        self.name = "Gamma"
         self.log_mu_min = math.log(self.mu_min)
         self.log_mu_max = math.log(self.mu_max)
         self.log_fano_min = math.log(self.fano_min)
@@ -114,9 +115,9 @@ class GammaDistribution(nn.Module):
         rate = 1 / (fano + 1e-6)
         alpha = mu * rate
 
-        # dist = Gamma(concentration=alpha.flatten(), rate=beta.flatten())
-        dist = Gamma(concentration=alpha.flatten(), rate=rate.flatten())
-        return dist, 0.0
+        q = Gamma(concentration=alpha.flatten(), rate=rate.flatten())
+
+        return q
 
 
 if __name__ == "__main__":
@@ -166,9 +167,7 @@ if __name__ == "__main__":
     # %%
     r_linear = Linear(64, 1)
 
-    im_sbox, pooled_ids, per_image_idx = mean_pool_by_image(
-        sbox, meta[:, 2].float()
-    )
+    im_sbox, pooled_ids, per_image_idx = mean_pool_by_image(sbox, meta[:, 2].float())
     num_images = im_sbox.shape[0]
     im_rep = integrator.encoder1(im_sbox.reshape(num_images, 1, 21, 21))
 

@@ -108,14 +108,13 @@ class DirichletDistribution(nn.Module):
         super().__init__()
 
         if len(out_features) == 3:
-            self.num_components = (
-                out_features[0] * out_features[1] * out_features[2]
-            )
+            self.num_components = out_features[0] * out_features[1] * out_features[2]
         elif len(out_features) == 2:
             self.num_components = out_features[0] * out_features[1]
         else:
             raise ValueError("out_features must be (C,H,W) or (H,W)")
 
+        self.name = "Dirichlet"
         self.alpha_layer = Linear(in_features, self.num_components, bias=False)
 
         self.total_layer = Linear(in_features, 1, bias=True)
