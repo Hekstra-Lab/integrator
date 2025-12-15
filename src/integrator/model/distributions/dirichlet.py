@@ -155,7 +155,7 @@ import torch.nn.functional as F
 class DirichletDistribution(torch.nn.Module):
     def __init__(
         self,
-        dmodel=None,
+        dmodel=64,
         input_shape=(3, 21, 21),
         in_features: int = 64,
         out_features: tuple[int, ...] = (3, 21, 21),

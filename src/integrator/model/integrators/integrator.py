@@ -197,7 +197,7 @@ def _encode_shoebox(encoder1, encoder2, shoebox, shoebox_shape):
 
     elif shoebox.dim() == 3:
         x_profile = encoder1(
-            shoebox.reshape(shoebox.size(0), shoebox.size(1), *(shoebox_shape))
+            shoebox.reshape(shoebox.size(0), 1, *(shoebox_shape))
         )
         x_intensity = encoder2(
             shoebox[:, 0, :].reshape(shoebox.size(0), 1, *(shoebox_shape))
