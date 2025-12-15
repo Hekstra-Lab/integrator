@@ -114,7 +114,7 @@ class ShoeboxEncoder(nn.Module):
             input_shape=input_shape,
             in_channels=in_channels,
         )
-        self.fc = Linear(
+        self.fc = torch.nn.Linear(
             in_features=self.flattened_size,
             out_features=encoder_out,
         )
@@ -212,7 +212,7 @@ class IntensityEncoder(nn.Module):
             1
         )  # Output: (batch, channels, 1, 1)
 
-        self.fc = Linear(
+        self.fc = torch.nn.Linear(
             in_features=conv3_out_channels,
             out_features=encoder_out,
         )
@@ -262,7 +262,7 @@ class IntensityEncoder2DMinimal(nn.Module):
 
         self.global_pool = nn.AdaptiveAvgPool2d(1)  # (B, C, 1, 1)
 
-        self.fc = Linear(conv2_out, encoder_out)
+        self.fc = torch.nn.Linear(conv2_out, encoder_out)
 
         self.activation = nn.SiLU()
 
