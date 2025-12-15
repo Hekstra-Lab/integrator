@@ -847,8 +847,7 @@ class Plotter(Callback):
     ):
         with torch.no_grad():
             # get forward outputs
-            shoebox, dials, masks, counts = batch
-            base_output = pl_module(shoebox, dials, masks, counts)
+            base_output = outputs["model_output"]
 
             # additional metrics to log
 
@@ -1054,8 +1053,7 @@ class Plotter(Callback):
     ):
         with torch.no_grad():
             # get forward outputs
-            shoebox, dials, masks, counts = batch
-            base_output = pl_module(shoebox, dials, masks, counts)
+            base_output = outputs["model_output"]
 
             # additional metrics to log
 
@@ -1699,7 +1697,8 @@ if __name__ == "__main__":
     )
     from utils import CONFIGS
 
-    cfg = list(CONFIGS.glob("*"))[1]
+    cfg = list(CONFIGS.glob("*"))[0]
+
     cfg = load_config(cfg)
 
     integrator = create_integrator(cfg)
@@ -1714,7 +1713,6 @@ if __name__ == "__main__":
     out = training_step_out["model_output"]
 
     # %%
-    integrator.qi.log_phi_table(meta[:, 2].int())
 
     # %%
 
