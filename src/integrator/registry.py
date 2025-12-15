@@ -10,6 +10,7 @@ from integrator.model.distributions import (
     FoldedNormalDistribution,
     GammaDistribution,
     GammaDistributionRepamA,
+    GammaDistributionRepamB,
     HalfNormalDistribution,
     LogNormalDistribution,
 )
@@ -42,6 +43,7 @@ REGISTRY = {
     "qi": {
         "gamma": GammaDistribution,
         "gammaA": GammaDistributionRepamA,
+        "gammaB": GammaDistributionRepamB,
         "log_normal": LogNormalDistribution,
         "folded_normal": FoldedNormalDistribution,
     },

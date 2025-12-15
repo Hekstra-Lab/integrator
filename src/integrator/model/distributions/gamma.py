@@ -134,6 +134,45 @@ class GammaDistributionRepamA(nn.Module):
 
 
 # %%
+class GammaDistributionRepamB(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        estimand: Literal["background", "intensity"],
+        parameterization: str = "a",
+        eps: float = 1e-6,
+    ):
+        super().__init__()
+
+        self.name = "Gamma"
+
+        self.linear_mu = Linear(in_features, 1)
+        self.linear_fano = nn.Linear(in_features, 1)
+        self.eps = eps
+
+    def _bound(self, raw, log_min, log_max):
+        return torch.exp(log_min + (log_max - log_min) * torch.sigmoid(raw))
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        x_: torch.Tensor | None = None,
+    ):
+        raw_mu = self.linear_mu(x)
+        mu = F.softplus(raw_mu) + self.eps
+
+        raw_fano = self.linear_fano(x_)
+        fano = F.softplus(raw_fano) + self.eps
+
+        r = 1 / (fano + self.eps)
+        k = mu * r
+
+        q = Gamma(concentration=k.flatten(), rate=r.flatten())
+
+        return q
+
+
+# %%
 class GammaDistribution(nn.Module):
     def __init__(
         self,

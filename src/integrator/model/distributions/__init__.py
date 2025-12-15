@@ -1,6 +1,10 @@
 from .dirichlet import DirichletDistribution
 from .folded_normal import FoldedNormalDistribution
-from .gamma import GammaDistribution, GammaDistributionRepamA
+from .gamma import (
+    GammaDistribution,
+    GammaDistributionRepamA,
+    GammaDistributionRepamB,
+)
 from .half_normal import HalfNormalDistribution
 from .log_normal import LogNormalDistribution
 
@@ -11,4 +15,5 @@ __all__ = [
     "LogNormalDistribution",
     "FoldedNormalDistribution",
     "GammaDistributionRepamA",
+    "GammaDistributionRepamB",
 ]
