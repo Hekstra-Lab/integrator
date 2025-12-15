@@ -90,7 +90,7 @@ def create_comparison_grid(
         )
 
         # row 2: predicted profile
-        im1 = axes[1, i].imshow(profile_data.detach().cpu().numpy(), cmap=cmap)
+        im1 = axes[1, i].imshow(profile_data, cmap=cmap)
         axes[1, i].set_title(
             f"x_c: {pred_dict[id_str]['x_c']:.2f}\n"
             f"y_c: {pred_dict[id_str]['y_c']:.2f}\n"
@@ -115,7 +115,7 @@ def create_comparison_grid(
             f"Bg: {float(pred_dict[id_str]['bg_mean']):.2f}\n"
             f"I: {pred_dict[id_str]['qi_mean']:.2f}\n"
             f"I_var: {pred_dict[id_str]['qi_var']:.2f}\n"
-            f"I_std: {np.sqrt(pred_dict[id_str]['qi_var'].detach().cpu().numpy()):.2f}"
+            f"I_std: {np.sqrt(pred_dict[id_str]['qi_var']):.2f}"
         )
 
         axes[2, i].set_ylabel(
@@ -245,15 +245,15 @@ class LogFano(Callback):
         self, trainer, pl_module, outputs, batch, batch_idx
     ):
         out = outputs["model_output"]
-        fano = _fano(out, "qi_mean", "qi_var").detach().cpu()
+        fano = _fano(out, "qi_mean", "qi_var").detach()
 
         # aggregate
         df = pl.DataFrame(
             {
                 "refl_ids": out["refl_ids"],
-                "qi_mean": out["qi_mean"].detach().cpu(),
-                "qi_var": out["qi_var"].detach().cpu(),
-                "fano": fano.detach().cpu(),
+                "qi_mean": out["qi_mean"].detach(),
+                "qi_var": out["qi_var"].detach(),
+                "fano": fano.detach(),
             }
         )
 
@@ -560,7 +560,7 @@ class PlotterLD(Callback):
                 wandb.log(log_dict)
 
                 fig = plot_symlog_qi_vs_dials(
-                    i_flat.detach().cpu().numpy(), dials_flat.cpu().numpy()
+                    i_flat.detach().numpy(), dials_flat.cpu().numpy()
                 )
                 wandb.log({"train: qi_vs_dials_symlog": wandb.Image(fig)})
                 plt.close(fig)
@@ -743,7 +743,7 @@ class PlotterLD(Callback):
                 plt.close(comparison_fig)
 
                 fig = plot_symlog_qi_vs_dials(
-                    i_flat.detach().cpu().numpy(), dials_flat.cpu().numpy()
+                    i_flat.cpu().numpy(), dials_flat.cpu().numpy()
                 )
                 wandb.log({"validation: qi_vs_dials_symlog": wandb.Image(fig)})
                 plt.close(fig)
