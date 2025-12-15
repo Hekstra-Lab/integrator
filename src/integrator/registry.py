@@ -53,6 +53,7 @@ REGISTRY = {
     "qbg": {
         "gamma": GammaDistribution,
         "gammaA": GammaDistributionRepamA,
+        "gammaB": GammaDistributionRepamB,
         "half_normal": HalfNormalDistribution,
         "log_normal": LogNormalDistribution,
         "folded_normal": FoldedNormalDistribution,
