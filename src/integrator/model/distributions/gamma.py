@@ -111,7 +111,7 @@ class GammaDistributionRepamA(nn.Module):
 
         self.name = "Gamma"
 
-        self.linear_k = Linear(in_features, 1)
+        self.linear_k = nn.Linear(in_features, 1)
         self.linear_r = nn.Linear(in_features, 1)
 
     def _bound(self, raw, log_min, log_max):
@@ -146,7 +146,7 @@ class GammaDistributionRepamB(nn.Module):
 
         self.name = "Gamma"
 
-        self.linear_mu = Linear(in_features, 1)
+        self.linear_mu = nn.Linear(in_features, 1)
         self.linear_fano = nn.Linear(in_features, 1)
         self.eps = eps
 

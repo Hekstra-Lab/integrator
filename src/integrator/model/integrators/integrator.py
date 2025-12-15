@@ -554,9 +554,6 @@ class IntegratorModelB(LightningModule):
         self.fanobglambda = self.cfg.lambdabg
         self.fanoilambda = self.cfg.lambdai
 
-        if self.encoder3 is not None:
-            self.linear = nn.Linear(cfg.encoder_out * 2, cfg.encoder_out)
-
         self.automatic_optimization = True
 
         if cfg.data_dim == "3d":
@@ -763,8 +760,6 @@ if __name__ == "__main__":
     qbg_ = FoldedNormalDistribution(in_features=64)
     qi_ = FoldedNormalDistribution(in_features=64)
     qp_ = DirichletDistribution(in_features=64, out_features=(3, 21, 21))
-
-    integrator.qi
 
     # load a batch
     counts, sbox, mask, meta = next(iter(data.train_dataloader()))
