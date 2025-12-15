@@ -90,7 +90,7 @@ def create_comparison_grid(
         )
 
         # row 2: predicted profile
-        im1 = axes[1, i].imshow(profile_data, cmap=cmap)
+        im1 = axes[1, i].imshow(profile_data.detach().cpu().numpy(), cmap=cmap)
         axes[1, i].set_title(
             f"x_c: {pred_dict[id_str]['x_c']:.2f}\n"
             f"y_c: {pred_dict[id_str]['y_c']:.2f}\n"
@@ -115,7 +115,7 @@ def create_comparison_grid(
             f"Bg: {float(pred_dict[id_str]['bg_mean']):.2f}\n"
             f"I: {pred_dict[id_str]['qi_mean']:.2f}\n"
             f"I_var: {pred_dict[id_str]['qi_var']:.2f}\n"
-            f"I_std: {np.sqrt(pred_dict[id_str]['qi_var']):.2f}"
+            f"I_std: {np.sqrt(pred_dict[id_str]['qi_var'].detach().cpu().numpy()):.2f}"
         )
 
         axes[2, i].set_ylabel(
@@ -560,7 +560,7 @@ class PlotterLD(Callback):
                 wandb.log(log_dict)
 
                 fig = plot_symlog_qi_vs_dials(
-                    i_flat.cpu().numpy(), dials_flat.cpu().numpy()
+                    i_flat.detach().cpu().numpy(), dials_flat.cpu().numpy()
                 )
                 wandb.log({"train: qi_vs_dials_symlog": wandb.Image(fig)})
                 plt.close(fig)
@@ -743,7 +743,7 @@ class PlotterLD(Callback):
                 plt.close(comparison_fig)
 
                 fig = plot_symlog_qi_vs_dials(
-                    i_flat.cpu().numpy(), dials_flat.cpu().numpy()
+                    i_flat.detach().cpu().numpy(), dials_flat.cpu().numpy()
                 )
                 wandb.log({"validation: qi_vs_dials_symlog": wandb.Image(fig)})
                 plt.close(fig)
@@ -868,7 +868,7 @@ class Plotter(Callback):
                 "dials_I_prf_value",
                 "dials_I_prf_var",
                 "profile",
-                "qbg",
+                "qbg_mean",
                 "x_c",
                 "y_c",
                 "z_c",
@@ -908,7 +908,7 @@ class Plotter(Callback):
                 dials_bg_flat = (
                     self.preds_train["dials_bg_mean"].flatten() + 1e-8
                 )
-                qbg_flat = self.preds_train["qbg"].flatten() + 1e-8
+                qbg_flat = self.preds_train["qbg_mean"].flatten() + 1e-8
 
                 x_c_flat = self.preds_train["x_c"].flatten()
                 y_c_flat = self.preds_train["y_c"].flatten()
@@ -1013,10 +1013,14 @@ class Plotter(Callback):
                 }
 
                 log_dict["mean(qbg.mean)"] = torch.mean(
-                    self.preds_train["qbg"]
+                    self.preds_train["qbg_mean"]
                 )
-                log_dict["min(qbg.mean)"] = torch.min(self.preds_train["qbg"])
-                log_dict["max(qbg.mean)"] = torch.max(self.preds_train["qbg"])
+                log_dict["min(qbg.mean)"] = torch.min(
+                    self.preds_train["qbg_mean"]
+                )
+                log_dict["max(qbg.mean)"] = torch.max(
+                    self.preds_train["qbg_mean"]
+                )
 
                 # plot every n user-specified epochs
                 if self.current_epoch % self.plot_every_n_epochs == 0:
@@ -1073,7 +1077,7 @@ class Plotter(Callback):
                 "dials_I_prf_value",
                 "dials_I_prf_var",
                 "profile",
-                "qbg",
+                "qbg_mean",
                 "x_c",
                 "y_c",
                 "z_c",
@@ -1117,7 +1121,7 @@ class Plotter(Callback):
                 dials_bg_flat = (
                     self.preds_validation["dials_bg_mean"].flatten() + 1e-8
                 )
-                qbg_flat = self.preds_validation["qbg"].flatten() + 1e-8
+                qbg_flat = self.preds_validation["qbg_mean"].flatten() + 1e-8
 
                 x_c_flat = self.preds_validation["x_c"].flatten()
                 y_c_flat = self.preds_validation["y_c"].flatten()
@@ -1222,13 +1226,13 @@ class Plotter(Callback):
                     "validation: Min var(I)": torch.min(i_var_flat),
                     "validation: Max var(I)": torch.max(i_var_flat),
                     "validation: mean(qbg.mean)": torch.mean(
-                        self.preds_validation["qbg"]
+                        self.preds_validation["qbg_mean"]
                     ),
                     "validation: min(qbg.mean)": torch.min(
-                        self.preds_validation["qbg"]
+                        self.preds_validation["qbg_mean"]
                     ),
                     "validation: max(qbg.mean)": torch.max(
-                        self.preds_validation["qbg"]
+                        self.preds_validation["qbg_mean"]
                     ),
                 }
 
@@ -1270,7 +1274,7 @@ class MVNPlotter(Callback):
         self.tracked_predictions = {
             "profile": {},
             "counts": {},
-            "qbg": {},
+            "qbg_mean": {},
             "rates": {},
         }
         self.epoch_predictions = None
@@ -1287,14 +1291,14 @@ class MVNPlotter(Callback):
             "dials_I_prf_value": [],
             "weighted_sum_mean": [],
             "thresholded_mean": [],
-            "qbg": [],
+            "qbg_mean": [],
             "rates": [],
         }
 
         self.tracked_predictions = {
             "profile": {},
             "counts": {},
-            "qbg": {},
+            "qbg_mean": {},
             "rates": {},
             "qi_mean": {},
             # "qI_var": {},
@@ -1346,7 +1350,9 @@ class MVNPlotter(Callback):
                 self.tracked_predictions["rates"][ref_id] = rate_images[
                     idx
                 ].cpu()
-                self.tracked_predictions["qbg"][ref_id] = bg_mean[idx].cpu()
+                self.tracked_predictions["qbg_mean"][ref_id] = bg_mean[
+                    idx
+                ].cpu()
                 self.tracked_predictions["qi_mean"][ref_id] = qi_mean[idx]
                 # self.tracked_predictions["qI_var"][ref_id] = qi_var[idx].cpu()
                 self.tracked_predictions["qbg_var"][ref_id] = bg_var[idx].cpu()
@@ -1408,7 +1414,7 @@ class MVNPlotter(Callback):
                 rates_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13
             )
             axes[2, i].set_title(
-                f"Bg: {self.tracked_predictions['qbg'][refl_id]:.2f}\n qi_mean: {self.tracked_predictions['qi_mean'][refl_id]:.2f}"
+                f"Bg: {self.tracked_predictions['qbg_mean'][refl_id]:.2f}\n qi_mean: {self.tracked_predictions['qi_mean'][refl_id]:.2f}"
             )
 
             axes[2, i].set_ylabel("rate = I*pij + Bg", labelpad=5)
@@ -1450,7 +1456,7 @@ class MVNPlotter(Callback):
             # 2) Call calculate_intensities with the relevant fields
             intensities = pl_module.calculate_intensities(
                 counts=base_output["counts"],
-                qbg=base_output["qbg"],
+                qbg=base_output["qbg_mean"],
                 profile=base_output["profile"],
                 dead_pixel_mask=base_output["masks"],
             )
@@ -1469,7 +1475,7 @@ class MVNPlotter(Callback):
             if self.current_epoch % self.plot_every_n_epochs == 0:
                 self.update_tracked_predictions(
                     predictions["profile"],
-                    predictions["qbg"],
+                    predictions["qbg_mean"],
                     predictions["rates"],
                     predictions["counts"],
                     predictions["refl_ids"],
@@ -1487,7 +1493,7 @@ class MVNPlotter(Callback):
                 "weighted_sum_mean",
                 "thresholded_mean",
                 "profile",
-                "qbg",
+                "qbg_mean",
             ]:
                 if key in predictions:
                     if key == "profile":
@@ -1611,15 +1617,15 @@ class MVNPlotter(Callback):
                 }
 
                 # Add mean background if available
-                if "qbg" in self.train_predictions:
+                if "qbg_mean" in self.train_predictions:
                     log_dict["mean_bg"] = torch.mean(
-                        self.train_predictions["qbg"]
+                        self.train_predictions["qbg_mean"]
                     )
                     log_dict["min_bg"] = torch.min(
-                        self.train_predictions["qbg"]
+                        self.train_predictions["qbg_mean"]
                     )
                     log_dict["max_bg"] = torch.max(
-                        self.train_predictions["qbg"]
+                        self.train_predictions["qbg_mean"]
                     )
 
                 # Only create and log comparison grid on specified epochs
@@ -1659,7 +1665,7 @@ class MVNPlotter(Callback):
 
             intensities = pl_module.calculate_intensities(
                 counts=base_output["counts"],
-                qbg=base_output["qbg"],
+                qbg=base_output["qbg_mean"],
                 profile=base_output["profile"],
                 dead_pixel_mask=base_output["masks"],
             )
