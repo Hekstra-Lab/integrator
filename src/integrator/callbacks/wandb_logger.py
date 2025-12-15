@@ -90,7 +90,7 @@ def create_comparison_grid(
         )
 
         # row 2: predicted profile
-        im1 = axes[1, i].imshow(profile_data, cmap=cmap)
+        im1 = axes[1, i].imshow(profile_data.detach(), cmap=cmap)
         axes[1, i].set_title(
             f"x_c: {pred_dict[id_str]['x_c']:.2f}\n"
             f"y_c: {pred_dict[id_str]['y_c']:.2f}\n"
@@ -112,10 +112,10 @@ def create_comparison_grid(
             rates_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13
         )
         axes[2, i].set_title(
-            f"Bg: {float(pred_dict[id_str]['bg_mean']):.2f}\n"
-            f"I: {pred_dict[id_str]['qi_mean']:.2f}\n"
-            f"I_var: {pred_dict[id_str]['qi_var']:.2f}\n"
-            f"I_std: {np.sqrt(pred_dict[id_str]['qi_var']):.2f}"
+            f"Bg: {float(pred_dict[id_str]['bg_mean'].detach()):.2f}\n"
+            f"I: {pred_dict[id_str]['qi_mean'].detach():.2f}\n"
+            f"I_var: {pred_dict[id_str]['qi_var'].detach():.2f}\n"
+            f"I_std: {np.sqrt(pred_dict[id_str]['qi_var'].detach()):.2f}"
         )
 
         axes[2, i].set_ylabel(

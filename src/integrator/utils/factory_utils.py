@@ -190,7 +190,7 @@ def create_data_loader(config):
 
 def create_trainer(config, callbacks=None, logger=None):
     return pl.Trainer(
-        epochs=config["trainer"]["args"]["epochs"],
+        max_epochs=config["trainer"]["args"]["epochs"],
         accelerator=create_argument(
             "trainer", "accelerator", config["trainer"]["args"]["accelerator"]
         ),
