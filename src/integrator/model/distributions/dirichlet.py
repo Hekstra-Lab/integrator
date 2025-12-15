@@ -2,9 +2,8 @@ from typing import Literal
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributions import Dirichlet
-
-from integrator.layers import Constrain
 
 # class DirichletDistribution(nn.Module):
 #     """
@@ -91,109 +90,96 @@ from integrator.layers import Constrain
 #         return qp
 
 
-class DirichletDistribution(nn.Module):
-    def __init__(
-        self,
-        in_features: int = 64,
-        out_features: tuple[int, ...] = (3, 21, 21),
-        constraint: Literal["exp", "softplus"] | None = "softplus",
-        eps: float = 0.01,
-        beta: int = 1,
-        alpha_min: float = 0.05,
-        alpha_max: float = 30.0,
-        total_min: float = 10.0,
-        total_max: float = 200.0,
-    ):
-        super().__init__()
-
-        if len(out_features) == 3:
-            self.num_components = (
-                out_features[0] * out_features[1] * out_features[2]
-            )
-        elif len(out_features) == 2:
-            self.num_components = out_features[0] * out_features[1]
-        else:
-            raise ValueError("out_features must be (C,H,W) or (H,W)")
-
-        self.name = "Dirichlet"
-        self.alpha_layer = nn.Linear(
-            in_features, self.num_components, bias=False
-        )
-
-        self.total_layer = nn.Linear(in_features, 1, bias=True)
-
-        self.constrain_fn = Constrain(
-            constraint_fn=constraint,
-            eps=eps,
-            beta=beta,
-        )
-
-        self.alpha_min = alpha_min
-        self.alpha_max = alpha_max
-        self.total_min = total_min
-        self.total_max = total_max
-
-    def forward(self, x: torch.Tensor) -> Dirichlet:
-        if torch.isnan(x).any():
-            raise RuntimeError("NaNs in Dirichlet input x")
-
-        logits = self.alpha_layer(x)
-        if torch.isnan(logits).any():
-            raise RuntimeError("NaNs right after Dirichlet fc")
-
-        pi = torch.softmax(logits, dim=-1)  # (B, K)
-
-        total_raw = self.total_layer(x)  # (B, 1)
-        s = torch.sigmoid(total_raw)  # (0,1)
-        s = self.total_min + (self.total_max - self.total_min) * s  # (B,1)
-
-        alpha = s * pi
-        alpha = alpha.clamp(self.alpha_min, self.alpha_max)
-
-        if torch.isnan(alpha).any() or (alpha <= 0).any():
-            raise RuntimeError("NaNs or nonpositive alpha before Dirichlet")
-
-        return Dirichlet(alpha)
-
-
-# class DirichletDistribution(torch.nn.Module):
+# class DirichletDistribution(nn.Module):
 #     def __init__(
 #         self,
-#         dmodel=64,
-#         input_shape=(3, 21, 21),
 #         in_features: int = 64,
 #         out_features: tuple[int, ...] = (3, 21, 21),
 #         constraint: Literal["exp", "softplus"] | None = "softplus",
 #         eps: float = 0.01,
 #         beta: int = 1,
+#         alpha_min: float = 0.05,
+#         alpha_max: float = 30.0,
+#         total_min: float = 10.0,
+#         total_max: float = 200.0,
 #     ):
-#         """
-#
-#         Args:
-#             dmodel (int): Integer specifying the dimensions of the shoebox representation
-#             input_shape (tuple): Tuple of integers specifying the depth, height, and width of the input shoebox
-#         """
 #         super().__init__()
-#         self.num_components = input_shape[0] * input_shape[1] * input_shape[2]
-#         if dmodel is not None:
-#             self.alpha_layer = torch.nn.Linear(dmodel, self.num_components)
-#         self.dmodel = dmodel
-#         self.eps = 1e-6
 #
-#     def forward(self, x):
-#         """
-#         Args:
-#             x (torch.tensor): input representation tensor
+#         if len(out_features) == 3:
+#             self.num_components = (
+#                 out_features[0] * out_features[1] * out_features[2]
+#             )
+#         elif len(out_features) == 2:
+#             self.num_components = out_features[0] * out_features[1]
+#         else:
+#             raise ValueError("out_features must be (C,H,W) or (H,W)")
 #
-#         Returns: `torch.distributions.Dirichlet`
+#         self.name = "Dirichlet"
+#         self.alpha_layer = nn.Linear(
+#             in_features, self.num_components, bias=False
+#         )
 #
-#         """
-#         x = self.alpha_layer(x)
-#         x = F.softplus(x) + self.eps
-#         q_p = torch.distributions.Dirichlet(x)
+#         self.total_layer = nn.Linear(in_features, 1, bias=True)
 #
-#         return q_p
+#         self.constrain_fn = Constrain(
+#             constraint_fn=constraint,
+#             eps=eps,
+#             beta=beta,
+#         )
 #
+#         self.alpha_min = alpha_min
+#         self.alpha_max = alpha_max
+#         self.total_min = total_min
+#         self.total_max = total_max
 #
+#     def forward(self, x: torch.Tensor) -> Dirichlet:
+#         if torch.isnan(x).any():
+#             raise RuntimeError("NaNs in Dirichlet input x")
+#
+#         logits = self.alpha_layer(x)
+#         if torch.isnan(logits).any():
+#             raise RuntimeError("NaNs right after Dirichlet fc")
+#
+#         pi = torch.softmax(logits, dim=-1)  # (B, K)
+#
+#         total_raw = self.total_layer(x)  # (B, 1)
+#         s = torch.sigmoid(total_raw)  # (0,1)
+#         s = self.total_min + (self.total_max - self.total_min) * s  # (B,1)
+#
+#         alpha = s * pi
+#         alpha = alpha.clamp(self.alpha_min, self.alpha_max)
+#
+#         if torch.isnan(alpha).any() or (alpha <= 0).any():
+#             raise RuntimeError("NaNs or nonpositive alpha before Dirichlet")
+#
+#         return Dirichlet(alpha)
+#
+
+
+class DirichletDistribution(torch.nn.Module):
+    def __init__(
+        self,
+        dmodel=64,
+        input_shape=(3, 21, 21),
+        in_features: int = 64,
+        out_features: tuple[int, ...] = (3, 21, 21),
+        constraint: Literal["exp", "softplus"] | None = "softplus",
+        eps: float = 1e-6,
+        beta: int = 1,
+    ):
+        super().__init__()
+        self.num_components = input_shape[0] * input_shape[1] * input_shape[2]
+        if dmodel is not None:
+            self.alpha_layer = nn.Linear(dmodel, self.num_components)
+        self.dmodel = dmodel
+        self.eps = eps
+
+    def forward(self, x):
+        x = self.alpha_layer(x)
+        x = F.softplus(x) + self.eps
+        q = Dirichlet(x)
+        return q
+
+
 if __name__ == "__main__":
     pass
