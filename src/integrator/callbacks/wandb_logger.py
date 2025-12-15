@@ -191,7 +191,9 @@ def _fano(
     mean_key: str,
     var_key: str,
 ) -> Tensor:
-    return outputs[var_key] / (outputs[mean_key] + 1e-8)
+    return outputs[var_key].detach().cpu() / (
+        outputs[mean_key].detach().cpu() + 1e-8
+    )
 
 
 def _get_agg_df(bin_labels):
@@ -245,15 +247,15 @@ class LogFano(Callback):
         self, trainer, pl_module, outputs, batch, batch_idx
     ):
         out = outputs["model_output"]
-        fano = _fano(out, "qi_mean", "qi_var").detach()
+        fano = _fano(out, "qi_mean", "qi_var").detach().cpu()
 
         # aggregate
         df = pl.DataFrame(
             {
                 "refl_ids": out["refl_ids"],
-                "qi_mean": out["qi_mean"].detach(),
-                "qi_var": out["qi_var"].detach(),
-                "fano": fano.detach(),
+                "qi_mean": out["qi_mean"].detach().cpu(),
+                "qi_var": out["qi_var"].detach().cpu(),
+                "fano": fano.detach().cpu(),
             }
         )
 
@@ -560,7 +562,7 @@ class PlotterLD(Callback):
                 wandb.log(log_dict)
 
                 fig = plot_symlog_qi_vs_dials(
-                    i_flat.detach().numpy(), dials_flat.cpu().numpy()
+                    i_flat.detach().cpu().numpy(), dials_flat.cpu().numpy()
                 )
                 wandb.log({"train: qi_vs_dials_symlog": wandb.Image(fig)})
                 plt.close(fig)
