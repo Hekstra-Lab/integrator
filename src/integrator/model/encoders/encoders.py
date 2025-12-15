@@ -135,7 +135,9 @@ class ShoeboxEncoder(nn.Module):
         x = F.relu(self.norm1(self.conv1(x)))
         x = self.pool(x)
         x = F.relu(self.norm2(self.conv2(x)))
+
         x = x.view(x.size(0), -1)
+
         x = self.fc(x)
         x = F.relu(x)
 

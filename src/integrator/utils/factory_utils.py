@@ -193,7 +193,7 @@ def create_trainer(config, callbacks=None, logger=None):
         max_epochs=config["trainer"]["args"]["max_epochs"],
         accelerator=create_argument(
             "trainer", "accelerator", config["trainer"]["args"]["accelerator"]
-        )(),
+        ),
         devices=config["trainer"]["args"]["devices"],
         logger=logger,
         precision=config["trainer"]["args"]["precision"],

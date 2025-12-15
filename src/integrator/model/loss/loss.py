@@ -98,6 +98,8 @@ def get_dirichlet_prior(
 
     if isinstance(conc, str):
         loaded = torch.load(conc)
+        loaded[loaded > 2] *= 40
+        loaded /= loaded.sum()
         return {"concentration": loaded.reshape(-1)}
 
     if isinstance(conc, torch.Tensor):
