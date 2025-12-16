@@ -4,6 +4,7 @@ from .gamma import (
     GammaDistribution,
     GammaDistributionRepamA,
     GammaDistributionRepamB,
+    GammaDistributionRepamC,
 )
 from .half_normal import HalfNormalDistribution
 from .log_normal import LogNormalDistribution
@@ -16,4 +17,5 @@ __all__ = [
     "FoldedNormalDistribution",
     "GammaDistributionRepamA",
     "GammaDistributionRepamB",
+    "GammaDistributionRepamC",
 ]
