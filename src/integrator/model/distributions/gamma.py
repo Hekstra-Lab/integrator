@@ -145,7 +145,6 @@ class GammaDistributionRepamB(nn.Module):
         super().__init__()
 
         self.name = "Gamma"
-
         self.linear_mu = nn.Linear(in_features, 1)
         self.linear_fano = nn.Linear(in_features, 1)
         self.eps = eps
@@ -168,6 +167,109 @@ class GammaDistributionRepamB(nn.Module):
         k = mu * r
 
         q = Gamma(concentration=k.flatten(), rate=r.flatten())
+
+        return q
+
+
+class GammaDistributionRepamC(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        estimand: Literal["background", "intensity"],
+        parameterization: str = "a",
+        eps: float = 1e-6,
+    ):
+        super().__init__()
+
+        self.name = "Gamma"
+        self.linear_k = nn.Linear(in_features, 1)
+        self.linear_fano = nn.Linear(in_features, 1)
+        self.eps = eps
+
+    def _bound(self, raw, log_min, log_max):
+        return torch.exp(log_min + (log_max - log_min) * torch.sigmoid(raw))
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        x_: torch.Tensor | None = None,
+    ):
+        raw_k = self.linear_k(x)
+        k = F.softplus(raw_k) + self.eps
+
+        raw_fano = self.linear_fano(x_)
+        fano = F.softplus(raw_fano) + self.eps
+
+        r = 1 / (fano + self.eps)
+
+        q = Gamma(concentration=k.flatten(), rate=r.flatten())
+
+        return q
+
+
+# %%
+class GammaDistribution(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        estimand: Literal["background", "intensity"],
+        parameterization: str = "a",
+        eps: float = 1e-6,
+    ):
+        super().__init__()
+
+        if estimand == "intensity":
+            self.mu_min, self.mu_max = 1e-3, 1e6
+            self.fano_min, self.fano_max = 0.2, 2.0
+        else:
+            self.mu_min, self.mu_max = 1e-3, 100.0
+            self.fano_min, self.fano_max = 0.2, 5.0
+
+        self.name = "Gamma"
+        self.log_mu_min = math.log(self.mu_min)
+        self.log_mu_max = math.log(self.mu_max)
+        self.log_fano_min = math.log(self.fano_min)
+        self.log_fano_max = math.log(self.fano_max)
+
+        if parameterization == "b":
+            self.linear_k = torch.nn.Linear(in_features, 2)
+            pass
+
+        else:
+            self.linear_k = torch.nn.Linear(in_features, 1)
+            self.linear_r = torch.nn.Linear(in_features, 1)
+            pass
+
+        # managed to amortize it
+        # self.log_phi_table = nn.Parameter(torch.zeros(n_images))  # (n_images,)
+
+        self.linear_k = torch.nn.Linear(in_features, 1)
+        self.ln_beta = nn.LayerNorm(in_features)
+        self.linear_r = torch.nn.Linear(in_features, 1)
+
+        self.rmin = 0.01
+        self.rmax = 5.0
+        self.parameterization = parameterization
+
+    def _bound(self, raw, log_min, log_max):
+        return torch.exp(log_min + (log_max - log_min) * torch.sigmoid(raw))
+
+    # def forward(self, x, xim, im_idx):
+    def forward(self, x, x_=None):
+        """
+        x: (batch, features)
+        img_ids:(batch,) integer indices 0...n_images-1
+        """
+
+        raw_mu = self.linear_k(x)
+        mu = torch.nn.functional.softplus(raw_mu) + 1e-6
+
+        raw_fano = self.linear_r(x)
+        fano = torch.nn.functional.softplus(raw_fano) + 1e-6
+        rate = 1 / (fano + 1e-6)
+        alpha = mu * rate
+
+        q = Gamma(concentration=alpha.flatten(), rate=rate.flatten())
 
         return q
 
