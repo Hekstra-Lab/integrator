@@ -26,6 +26,7 @@ def reflection_file_writer(
     else:
         for pred_dir in prediction_directories:
             # Reinitialize empty_df for each prediction directory
+            pred_dir = pred_dir.as_posix()
             empty_df = plr.DataFrame()
 
             # store all predictions in a dataframe
@@ -41,14 +42,16 @@ def reflection_file_writer(
 
             # create a boolean array to select reflections used during training
             sel = np.asarray([False] * len(refl_tbl))
-            reflection_ids = empty_df["refl_ids"].explode().cast(plr.Int32).to_list()
+            reflection_ids = (
+                empty_df["refl_ids"].explode().cast(plr.Int32).to_list()
+            )
 
             try:
-                qI_mean_list = empty_df["intensity_mean"].explode().to_list()
-                qI_variance_list = empty_df["intensity_var"].explode().to_list()
+                qI_mean_list = empty_df["qi_mean"].explode().to_list()
+                qI_variance_list = empty_df["qi_var"].explode().to_list()
             except KeyError:
-                qI_mean_list = empty_df["qI_mean"].explode().to_list()
-                qI_variance_list = empty_df["qI_variance"].explode().to_list()
+                qI_mean_list = empty_df["qi_mean"].explode().to_list()
+                qI_variance_list = empty_df["qi_variance"].explode().to_list()
 
             for id in reflection_ids:
                 sel[id] = True
