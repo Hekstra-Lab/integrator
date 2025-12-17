@@ -269,6 +269,44 @@ class FoldedNormal(Distribution):
         )
 
 
+# class FoldedNormalDistribution(nn.Module):
+#     """
+#     FoldedNormal distribution with parameters predicted by a linear layer.
+#     """
+#
+#     def __init__(
+#         self,
+#         in_features: int = 64,
+#         constraint: Literal["exp", "softplus"] | None = "softplus",
+#         out_features: int = 2,
+#         eps: float = 0.1,
+#         beta: int = 1,
+#     ):
+#         super().__init__()
+#         self.fc = torch.nn.Linear(
+#             in_features,
+#             out_features,
+#         )
+#         self.constrain_fn = Constrain(
+#             constraint_fn=constraint,
+#             eps=eps,
+#             beta=beta,
+#         )
+#
+#     def forward(
+#         self,
+#         x: Tensor,
+#     ) -> FoldedNormal:
+#         # raw params
+#         raw_loc, raw_scale = self.fc(x).unbind(-1)
+#
+#         # transform
+#         loc = torch.exp(raw_loc)
+#         scale = self.constrain_fn(raw_scale)
+#
+#         return FoldedNormal(loc, scale)
+
+
 class FoldedNormalDistribution(nn.Module):
     """
     FoldedNormal distribution with parameters predicted by a linear layer.
@@ -276,17 +314,15 @@ class FoldedNormalDistribution(nn.Module):
 
     def __init__(
         self,
-        in_features: int,
+        in_features: int = 64,
         constraint: Literal["exp", "softplus"] | None = "softplus",
         out_features: int = 2,
         eps: float = 0.1,
         beta: int = 1,
     ):
         super().__init__()
-        self.fc = torch.nn.Linear(
-            in_features,
-            out_features,
-        )
+        self.linear_loc = torch.nn.Linear(in_features, 1)
+        self.linear_scale = torch.nn.Linear(in_features, 1)
         self.constrain_fn = Constrain(
             constraint_fn=constraint,
             eps=eps,
@@ -296,9 +332,12 @@ class FoldedNormalDistribution(nn.Module):
     def forward(
         self,
         x: Tensor,
+        x_: Tensor,
     ) -> FoldedNormal:
         # raw params
-        raw_loc, raw_scale = self.fc(x).unbind(-1)
+
+        raw_loc = self.linear_loc(x).unbind(-1)
+        raw_scale = self.linear_scale(x_).unbind(-1)
 
         # transform
         loc = torch.exp(raw_loc)
