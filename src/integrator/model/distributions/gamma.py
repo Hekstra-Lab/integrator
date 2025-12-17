@@ -102,20 +102,17 @@ def _x_to_params(x, parameterization, linear_k, linear_r=None):
 class GammaDistributionRepamA(nn.Module):
     def __init__(
         self,
-        in_features: int,
-        estimand: Literal["background", "intensity"],
-        parameterization: str = "a",
         eps: float = 1e-6,
+        in_features: int = 64,
     ):
         super().__init__()
 
-        self.name = "Gamma"
-
+        # Linear layers
         self.linear_k = nn.Linear(in_features, 1)
         self.linear_r = nn.Linear(in_features, 1)
 
-    def _bound(self, raw, log_min, log_max):
-        return torch.exp(log_min + (log_max - log_min) * torch.sigmoid(raw))
+        # buffers
+        self.eps = eps
 
     def forward(
         self,
@@ -123,39 +120,28 @@ class GammaDistributionRepamA(nn.Module):
         x_: torch.Tensor | None = None,
     ):
         raw_k = self.linear_k(x)
-        k = F.softplus(raw_k) + 1e-6
+        k = F.softplus(raw_k) + self.eps
 
         raw_r = self.linear_r(x_)
-        r = F.softplus(raw_r) + 1e-6
+        r = F.softplus(raw_r) + self.eps
 
-        q = Gamma(concentration=k.flatten(), rate=r.flatten())
-
-        return q
+        return Gamma(concentration=k.flatten(), rate=r.flatten())
 
 
 # %%
 class GammaDistributionRepamB(nn.Module):
-    def __init__(
-        self,
-        in_features: int,
-        estimand: Literal["background", "intensity"],
-        parameterization: str = "a",
-        eps: float = 1e-6,
-    ):
+    def __init__(self, in_features: int, eps: float = 1e-6):
         super().__init__()
-
-        self.name = "Gamma"
-        self.linear_mu = nn.Linear(in_features, 1)
-        self.linear_fano = nn.Linear(in_features, 1)
         self.eps = eps
 
-    def _bound(self, raw, log_min, log_max):
-        return torch.exp(log_min + (log_max - log_min) * torch.sigmoid(raw))
+        # Linear layers
+        self.linear_mu = nn.Linear(in_features, 1)
+        self.linear_fano = nn.Linear(in_features, 1)
 
     def forward(
         self,
         x: torch.Tensor,
-        x_: torch.Tensor | None = None,
+        x_: torch.Tensor,
     ):
         raw_mu = self.linear_mu(x)
         mu = F.softplus(raw_mu) + self.eps
@@ -166,33 +152,26 @@ class GammaDistributionRepamB(nn.Module):
         r = 1 / (fano + self.eps)
         k = mu * r
 
-        q = Gamma(concentration=k.flatten(), rate=r.flatten())
-
-        return q
+        return Gamma(concentration=k.flatten(), rate=r.flatten())
 
 
+# %%
 class GammaDistributionRepamC(nn.Module):
     def __init__(
         self,
         in_features: int,
-        estimand: Literal["background", "intensity"],
-        parameterization: str = "a",
         eps: float = 1e-6,
     ):
         super().__init__()
-
-        self.name = "Gamma"
+        self.eps = eps
+        # Linear layers
         self.linear_k = nn.Linear(in_features, 1)
         self.linear_fano = nn.Linear(in_features, 1)
-        self.eps = eps
-
-    def _bound(self, raw, log_min, log_max):
-        return torch.exp(log_min + (log_max - log_min) * torch.sigmoid(raw))
 
     def forward(
         self,
-        x: torch.Tensor,
-        x_: torch.Tensor | None = None,
+        x,
+        x_,
     ):
         raw_k = self.linear_k(x)
         k = F.softplus(raw_k) + self.eps
@@ -202,9 +181,36 @@ class GammaDistributionRepamC(nn.Module):
 
         r = 1 / (fano + self.eps)
 
-        q = Gamma(concentration=k.flatten(), rate=r.flatten())
+        return Gamma(concentration=k.flatten(), rate=r.flatten())
 
-        return q
+
+class GammaDistributionRepamD(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        eps: float = 1e-6,
+    ):
+        super().__init__()
+        self.eps = eps
+        # Linear layers
+        self.linear_mu = nn.Linear(in_features, 1)
+        self.linear_phi = nn.Linear(in_features, 1)
+
+    def forward(
+        self,
+        x,
+        x_,
+    ):
+        raw_mu = self.linear_mu(x)
+        mu = F.softplus(raw_mu) + self.eps
+
+        raw_phi = self.linear_phi(x_)
+        phi = F.softplus(raw_phi) + self.eps
+
+        k = 1 / (phi + self.eps)
+        r = 1 / (phi * mu + self.eps)
+
+        return Gamma(concentration=k.flatten(), rate=r.flatten())
 
 
 # %%
