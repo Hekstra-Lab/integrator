@@ -165,34 +165,6 @@ class GammaDistributionRepamC(nn.Module):
         super().__init__()
         self.eps = eps
         # Linear layers
-        self.linear_k = nn.Linear(in_features, 1)
-        self.linear_fano = nn.Linear(in_features, 1)
-
-    def forward(
-        self,
-        x,
-        x_,
-    ):
-        raw_k = self.linear_k(x)
-        k = F.softplus(raw_k) + self.eps
-
-        raw_fano = self.linear_fano(x_)
-        fano = F.softplus(raw_fano) + self.eps
-
-        r = 1 / (fano + self.eps)
-
-        return Gamma(concentration=k.flatten(), rate=r.flatten())
-
-
-class GammaDistributionRepamD(nn.Module):
-    def __init__(
-        self,
-        in_features: int,
-        eps: float = 1e-6,
-    ):
-        super().__init__()
-        self.eps = eps
-        # Linear layers
         self.linear_mu = nn.Linear(in_features, 1)
         self.linear_phi = nn.Linear(in_features, 1)
 
@@ -209,6 +181,35 @@ class GammaDistributionRepamD(nn.Module):
 
         k = 1 / (phi + self.eps)
         r = 1 / (phi * mu + self.eps)
+
+        return Gamma(concentration=k.flatten(), rate=r.flatten())
+
+
+# %%
+class GammaDistributionRepamD(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        eps: float = 1e-6,
+    ):
+        super().__init__()
+        self.eps = eps
+        # Linear layers
+        self.linear_k = nn.Linear(in_features, 1)
+        self.linear_fano = nn.Linear(in_features, 1)
+
+    def forward(
+        self,
+        x,
+        x_,
+    ):
+        raw_k = self.linear_k(x)
+        k = F.softplus(raw_k) + self.eps
+
+        raw_fano = self.linear_fano(x_)
+        fano = F.softplus(raw_fano) + self.eps
+
+        r = 1 / (fano + self.eps)
 
         return Gamma(concentration=k.flatten(), rate=r.flatten())
 
