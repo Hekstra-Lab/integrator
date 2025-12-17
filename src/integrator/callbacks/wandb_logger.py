@@ -230,12 +230,14 @@ def _get_agg_df(bin_labels):
             "intensity_bin": bin_labels,
             "fano_sum": pl.zeros(len(bin_labels), eager=True),
             "isigi_sum": pl.zeros(len(bin_labels), eager=True),
+            "cv_sum": pl.zeros(len(bin_labels), eager=True),
             "n": pl.zeros(len(bin_labels), eager=True),
         },
         schema={
             "intensity_bin": pl.Categorical,
             "fano_sum": pl.Float32,
             "isigi_sum": pl.Float32,
+            "cv_sum": pl.Float32,
             "n": pl.Int32,
         },
     )
