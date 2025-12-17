@@ -166,6 +166,24 @@ def _plot_avg_fano(df):
     ax.set_ylabel("avg var/mean ratio")
     ax.set_title("Average variance/mean per intensity bin")
     ax.grid()
+    plt.tight_layout()
+    return fig
+
+
+def _plot_avg_cv(df):
+    fig, ax = plt.subplots()
+
+    labels = df["intensity_bin"].to_list()
+    y = df["avg_cv"].to_list()
+    x = np.linspace(0, len(y), len(y))
+
+    ax.scatter(x, y, color="black")
+    ax.set_xticks(ticks=x, labels=labels, rotation=55)
+    ax.set_xlabel("intensity bin")
+    ax.set_ylabel("avg coefficient of variation")
+    ax.set_title("Average variance/mean per intensity bin")
+    ax.grid()
+    plt.tight_layout()
     return fig
 
 
@@ -192,6 +210,16 @@ def _fano(
     var_key: str,
 ) -> Tensor:
     return outputs[var_key].detach().cpu() / (
+        outputs[mean_key].detach().cpu() + 1e-8
+    )
+
+
+def _cv(
+    outputs: Any,
+    mean_key: str,
+    var_key: str,
+) -> Tensor:
+    return outputs[var_key].sqrt().detach().cpu() / (
         outputs[mean_key].detach().cpu() + 1e-8
     )
 
@@ -238,7 +266,7 @@ class LogFano(Callback):
         )
 
         # columns to aggregate
-        self.numeric_cols = ["fano_sum", "n", "isigi_sum"]
+        self.numeric_cols = ["fano_sum", "n", "isigi_sum", "cv_sum"]
 
         # initialize an empty dataframe to aggregate data across steps
         self.agg_df = _get_agg_df(self.bin_labels)
@@ -248,6 +276,7 @@ class LogFano(Callback):
     ):
         out = outputs["model_output"]
         fano = _fano(out, "qi_mean", "qi_var").detach().cpu()
+        cv = _cv(out, "qi_mean", "qi_var").detach().cpu()
 
         # aggregate
         df = pl.DataFrame(
@@ -256,6 +285,7 @@ class LogFano(Callback):
                 "qi_mean": out["qi_mean"].detach().cpu(),
                 "qi_var": out["qi_var"].detach().cpu(),
                 "fano": fano.detach().cpu(),
+                "cv": cv.detach().cpu(),
             }
         )
 
@@ -272,6 +302,7 @@ class LogFano(Callback):
         # group by intensity bin and get mean
         avg_df = df.group_by(pl.col("intensity_bin")).agg(
             fano_sum=pl.col("fano").sum(),
+            cv_sum=pl.col("cv").sum(),
             isigi_sum=isigi.sum(),
             n=pl.len(),
         )
@@ -291,11 +322,17 @@ class LogFano(Callback):
         epoch_df = self.agg_df.with_columns(
             (pl.col("fano_sum") / pl.col("n")).alias("avg_fano"),
             (pl.col("isigi_sum") / pl.col("n")).alias("avg_isigi"),
+            (pl.col("cv_sum") / pl.col("n")).alias("avg_cv"),
         )
 
         # plot average Fano factor
         fig = _plot_avg_fano(epoch_df)
         wandb.log({"train: avg var/mean": wandb.Image(fig)})
+        plt.close(fig)
+
+        # plot average Coefficient of variation
+        fig = _plot_avg_cv(epoch_df)
+        wandb.log({"train: avg CV": wandb.Image(fig)})
         plt.close(fig)
 
         # plot average signal-to-noise
