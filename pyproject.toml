@@ -27,7 +27,6 @@ dependencies = [
   "reciprocalspaceship>=1.0.7",
   "rs_distributions>=0.0.3",
   "scipy>=1.11",
-  "typer>=0.16.1",
 ]
 
 [project.optional-dependencies]
