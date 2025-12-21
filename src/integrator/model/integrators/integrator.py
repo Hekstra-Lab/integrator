@@ -116,21 +116,24 @@ def extract_reference_fields(
 ) -> dict[str, Any]:
     if data_dim == "3d":
         return {
-            "dials_I_sum_value": ref[:, 6],
-            "dials_I_sum_var": ref[:, 7],
-            "dials_I_prf_value": ref[:, 8],
-            "dials_I_prf_var": ref[:, 9],
-            "refl_ids": ref[:, -1].int().tolist(),
             "x_c": ref[:, 0],
             "y_c": ref[:, 1],
             "z_c": ref[:, 2],
             "x_c_mm": ref[:, 3],
             "y_c_mm": ref[:, 4],
             "z_c_mm": ref[:, 5],
-            "dials_bg_mean": ref[:, 10],
-            "dials_bg_sum_value": ref[:, 11],
-            "dials_bg_sum_var": ref[:, 12],
-            "d": ref[:, 13],
+            "h": ref[:, 6],
+            "k": ref[:, 7],
+            "l": ref[:, 8],
+            "dials_I_sum_value": ref[:, 9],
+            "dials_I_sum_var": ref[:, 10],
+            "dials_I_prf_value": ref[:, 11],
+            "dials_I_prf_var": ref[:, 12],
+            "dials_bg_mean": ref[:, 13],
+            "dials_bg_sum_value": ref[:, 14],
+            "dials_bg_sum_var": ref[:, 15],
+            "d": ref[:, 16],
+            "refl_ids": ref[:, -1].int().tolist(),
         }
     elif data_dim == "2d":
         return {
