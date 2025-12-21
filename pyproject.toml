@@ -34,7 +34,7 @@ dependencies = [
 dev = ['pytest','ruff','mypy','wandb>=0.17']
 
 [project.scripts]
-"integrator.train" = "integrator.cli.train:app"
+"integrator.train" = "integrator.cli.train:main"
 
 [project.urls]
 Homepage = "https://github.com/Hekstra-Lab/integrator/tree/integrator_mvn"
