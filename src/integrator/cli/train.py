@@ -66,6 +66,7 @@ def parse_args():
     parser.add_argument(
         "--data-path",
         type=str,
+        default=None,
         help="Path to directory cotaining TensorDatasets",
     )
     parser.add_argument(
