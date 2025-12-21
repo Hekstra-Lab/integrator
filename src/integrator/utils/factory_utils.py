@@ -190,7 +190,7 @@ def create_data_loader(config):
 
 def create_trainer(config, callbacks=None, logger=None):
     return pl.Trainer(
-        max_epochs=config["trainer"]["args"]["epochs"],
+        max_epochs=config["trainer"]["args"]["max_epochs"],
         accelerator=create_argument(
             "trainer", "accelerator", config["trainer"]["args"]["accelerator"]
         ),
@@ -212,7 +212,7 @@ def override_config(args, config):
     if args.batch_size:
         config["data_loader"]["args"]["batch_size"] = args.batch_size
     if args.epochs:
-        config["trainer"]["args"]["epochs"] = args.epochs
+        config["trainer"]["args"]["max_epochs"] = args.epochs
 
 
 def clean_from_memory(
