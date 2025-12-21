@@ -3,11 +3,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Annotated, Any
 
-import reciprocalspaceship as rs
 import typer
 import yaml
-
-from integrator.utils import clean_from_memory, mtz_writer
 
 app = typer.Typer()
 
@@ -36,11 +33,11 @@ def apply_cli_overrides(
             "max_epochs"
         ] = epochs
     if batch_size is not None:
-        updates.setdefault("data_loader", {}).setdefault("params", {})[
+        updates.setdefault("data_loader", {}).setdefault("args", {})[
             "batch_size"
         ] = batch_size
     if data_path is not None:
-        updates.setdefault("data_loader", {}).setdefault("params", {})[
+        updates.setdefault("data_loader", {}).setdefault("args", {})[
             "data_dir"
         ] = str(data_path)
 
@@ -50,24 +47,33 @@ def apply_cli_overrides(
 
 @app.command()
 def train(
-    config: Annotated[Path, typer.Option(help="Path to YAML config file")],
+    config: Annotated[
+        Path,
+        typer.Argument(help="Path to YAML config file"),
+    ],
     epochs: Annotated[
-        int | None, typer.Option(help="Number of epochs to train for")
-    ] = None,
+        int | None,
+        typer.Argument(
+            help="Number of epochs to train for",
+        ),
+    ] = 2,
     batch_size: Annotated[
-        int | None, typer.Option(help="The size of a train batch")
-    ] = None,
+        int,
+        typer.Argument(help="The size of a train batch"),
+    ] = 64,
     data_path: Annotated[
         Path | None,
-        typer.Option(help="Override data path in config.yaml file"),
+        typer.Argument(help="Override data path in config.yaml file"),
     ] = None,
     wandb_project: Annotated[
         str, typer.Option(help="The name of W&B project")
     ] = "default",
     save_dir: Annotated[
-        str, typer.Option(help="Path to logging directory")
+        str,
+        typer.Option(help="Path to logging directory"),
     ] = "/n/netscratch/hekstra_lab/Lab/laldama/lightning_logs/",
 ):
+    import reciprocalspaceship as rs
     import torch
     from pytorch_lightning.callbacks import ModelCheckpoint, RichProgressBar
     from pytorch_lightning.loggers import WandbLogger
@@ -80,10 +86,12 @@ def train(
         assign_labels,
     )
     from integrator.utils import (
+        clean_from_memory,
         create_data_loader,
         create_integrator,
         create_trainer,
         load_config,
+        mtz_writer,
     )
 
     torch.set_float32_matmul_precision("medium")
@@ -108,6 +116,9 @@ def train(
 
     # get logging directory
     logdir = logger.experiment.dir
+
+    path = Path("wandb_log_dir.txt")
+    path.write_text(logdir)
 
     config_out = Path(logdir) / "config_copy.yaml"
     cfg_json = deepcopy(cfg)
@@ -201,7 +212,7 @@ def train(
             out_dir = pred_dir.parent.as_posix() + f"/predictions/{epoch}"
             Path(out_dir).mkdir(exist_ok=True)
             pred_writer = PredWriter(
-                output_dir=out_dir, write_interval="epoch"
+                output_dir=out_dir, write_interval="max_epochs"
             )
             trainer = create_trainer(
                 cfg,
@@ -230,6 +241,7 @@ def train(
             epoch = groups[0]
             pred_file = list(p.glob("preds.pt"))[0].as_posix()
             mtz_path = Path(p.as_posix() + "/preds.mtz").as_posix()
+
             mtz_writer(pred_path=pred_file, file_name=mtz_path)
             ds = rs.read_mtz(mtz_path)
 
