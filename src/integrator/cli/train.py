@@ -224,7 +224,8 @@ def main():
             out_dir = pred_dir.parent.as_posix() + f"/predictions/{epoch}"
             Path(out_dir).mkdir(exist_ok=True)
             pred_writer = PredWriter(
-                output_dir=out_dir, write_interval="max_epochs"
+                output_dir=out_dir,
+                write_interval="epoch",
             )
             trainer = create_trainer(
                 cfg,
