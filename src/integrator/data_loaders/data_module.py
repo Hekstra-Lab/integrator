@@ -226,7 +226,7 @@ def _remove_flagged_variance(
     masks = masks[~filter_]
     metadata = metadata[~filter_]
 
-    return metadata, counts, masks
+    return counts, masks, metadata
 
 
 class ShoeboxDataModule(BaseDataModule):
