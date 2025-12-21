@@ -88,7 +88,7 @@ def main():
 
     import reciprocalspaceship as rs
     import torch
-    from pytorch_lightning.callbacks import ModelCheckpoint, RichProgressBar
+    from pytorch_lightning.callbacks import ModelCheckpoint
     from pytorch_lightning.loggers import WandbLogger
 
     from integrator.callbacks import (
@@ -190,7 +190,6 @@ def main():
             pred_writer,
             checkpoint_callback,
             plotter,
-            RichProgressBar(),
         ],
         logger=logger,
     )
