@@ -392,7 +392,7 @@ class PlotterLD(Callback):
         tracked_ids,
         tracked_shoeboxes,
     ):
-        current_refl_ids = preds["refl_ids"]
+        current_refl_ids = preds["refl_ids"].int()
 
         if tracked_ids is None:
             tracked_ids = current_refl_ids[: self.n_profiles]
@@ -840,7 +840,7 @@ class Plotter(Callback):
         tracked_ids,
         tracked_shoeboxes,
     ):
-        current_refl_ids = preds["refl_ids"]
+        current_refl_ids = preds["refl_ids"].int()
 
         if tracked_ids is None:
             # tracked_ids = current_refl_ids[: self.n_profiles]
