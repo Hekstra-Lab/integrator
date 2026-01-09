@@ -5,6 +5,8 @@ import torch
 from pytorch_lightning import LightningModule
 from torch import Tensor, nn
 
+from integrator import configs
+from integrator.configs.integrator import IntegratorArgs
 from integrator.model.distributions import (
     DirichletDistribution,
     FoldedNormalDistribution,
@@ -13,6 +15,7 @@ from integrator.model.encoders import (
     IntensityEncoder,
     ShoeboxEncoder,
 )
+from integrator.utils.refl_utils import DEFAULT_DS_COLS
 
 
 def calculate_intensities(counts, qbg, qp, mask, cfg):
@@ -62,22 +65,25 @@ def calculate_intensities(counts, qbg, qp, mask, cfg):
         return intensities
 
 
-def _default_predict_keys() -> list["str"]:
-    return [
-        "qi_mean",
-        "qi_var",
-        "refl_ids",
-        "dials_I_sum_value",
-        "dials_I_sum_var",
-        "dials_I_prf_value",
-        "dials_I_prf_var",
-        "dials_bg_mean",
-        "qbg_mean",
-        "qbg_scale",
-        "x_c",
-        "y_c",
-        "z_c",
-    ]
+DEFAULT_PREDICT_KEYS = [
+    "qi_mean",
+    "qi_var",
+    "refl_ids",
+    "qbg_mean",
+    "qbg_var",
+    "qbg_scale",
+    "intensity.prf.value",
+    "intensity.prf.variance",
+    "intensity.sum.value",
+    "intensity.sum.variance",
+    "background.mean",
+    "xyzcal.px.0",
+    "xyzcal.px.1",
+    "xyzcal.px.2",
+    "H",
+    "K",
+    "L",
+]
 
 
 # config classes
@@ -93,8 +99,6 @@ class IntegratorHyperParameters:
     mc_samples: int = 4
     renyi_scale: float = 0.0
     predict_keys: Literal["default"] | list[str] = "default"
-    lambdai: float = 1.0
-    lambdabg: float = 1.0
 
 
 @dataclass
@@ -107,34 +111,15 @@ class IntegratorBaseOutputs:
     qi: Any
     zp: Tensor
     concentration: Tensor | None = None
-    reference: Tensor | None = None
+    metadata: Tensor | None = None
 
 
-def extract_reference_fields(
+def extract_metadata_fields(
     ref: Tensor,
     data_dim: str,
-) -> dict[str, Any]:
+):
     if data_dim == "3d":
-        return {
-            "x_c": ref[:, 0],
-            "y_c": ref[:, 1],
-            "z_c": ref[:, 2],
-            "x_c_mm": ref[:, 3],
-            "y_c_mm": ref[:, 4],
-            "z_c_mm": ref[:, 5],
-            "h": ref[:, 6],
-            "k": ref[:, 7],
-            "l": ref[:, 8],
-            "dials_I_sum_value": ref[:, 9],
-            "dials_I_sum_var": ref[:, 10],
-            "dials_I_prf_value": ref[:, 11],
-            "dials_I_prf_var": ref[:, 12],
-            "dials_bg_mean": ref[:, 13],
-            "dials_bg_sum_value": ref[:, 14],
-            "dials_bg_sum_var": ref[:, 15],
-            "d": ref[:, 16],
-            "refl_ids": ref[:, -1].int().tolist(),
-        }
+        return ref
     elif data_dim == "2d":
         return {
             "dials_I_sum_value": ref[:, 3],
@@ -176,10 +161,10 @@ def _assemble_outputs(
         "concentration": out.concentration,
     }
 
-    if out.reference is None:
+    if out.metadata is None:
         return base
 
-    ref_fields = extract_reference_fields(out.reference, data_dim)
+    ref_fields = extract_metadata_fields(out.metadata, data_dim)
 
     base.update(ref_fields)
     return base
@@ -290,10 +275,6 @@ class Integrator(LightningModule):
             else cfg.predict_keys
         )
 
-        # fano penalties
-        self.fanobglambda = self.cfg.lambdabg
-        self.fanoilambda = self.cfg.lambdai
-
         if self.encoder3 is not None:
             self.linear = nn.Linear(cfg.encoder_out * 2, cfg.encoder_out)
 
@@ -309,7 +290,7 @@ class Integrator(LightningModule):
         counts: Tensor,
         shoebox: Tensor,
         mask: Tensor,
-        reference: Tensor | None = None,
+        metadata: Tensor | None = None,
     ) -> dict[str, Any]:
         counts = torch.clamp(counts, min=0)
 
@@ -318,7 +299,7 @@ class Integrator(LightningModule):
         )
 
         # im_sbox, pooled_ids, per_image_idx = mean_pool_by_image(
-        #     shoebox, reference[:, 2].float()
+        #     shoebox, metadata[:, 2].float()
         # )
         #
         # num_images = im_sbox.shape[0]
@@ -333,13 +314,13 @@ class Integrator(LightningModule):
         # im_rep = self.encoder3(im_sbox)
 
         # if self.encoder3 is not None:
-        #     if reference is None:
+        #     if metadata is None:
         #         raise ValueError(
-        #             "A metadata encoder (encoder 3) was provided, but no reference data was found. "
-        #             "Please provide a `reference.pt` dataset"
+        #             "A metadata encoder (encoder 3) was provided, but no metadata data was found. "
+        #             "Please provide a `metadata.pt` dataset"
         #         )
         #     if self.cfg.data_dim == "2d":
-        #         metadata = reference[:, [2, 8, 9, 10]].float()
+        #         metadata = metadata[:, [2, 8, 9, 10]].float()
         #         # %%
         #         max = torch.log1p(counts.max(-1)[0]).unsqueeze(-1)
         #         min = torch.log1p(counts.min(-1)[0]).unsqueeze(-1)
@@ -349,7 +330,7 @@ class Integrator(LightningModule):
         #         metadata = torch.stack([max, min, mean, std], -1).squeeze(1)
         #
         #     else:
-        #         metadata = reference[:, [0, 1, 2, 3, 4, 5, 13]]
+        #         metadata = metadata[:, [0, 1, 2, 3, 4, 5, 13]]
         #
         #     x_metadata = self.encoder3(metadata)
         #
@@ -361,9 +342,6 @@ class Integrator(LightningModule):
         # qrbg = self.qrbg(x_intensity)
         # rbg = qrbg.rsample([self.mc_samples]).mean(0)
         # ri = qri.rsample([self.mc_samples]).mean(0)
-
-        # qbg, fanobg = self.qbg(x_intensity, im_rep, per_image_idx)
-        # qi, fanoi = self.qi(x_intensity, im_rep, per_image_idx)
 
         qbg = self.qbg(x_intensity)
         qi = self.qi(x_intensity)
@@ -384,7 +362,7 @@ class Integrator(LightningModule):
             qi=qi,
             zp=zp,
             concentration=qp.concentration,  # if using Dirichlet
-            reference=reference,
+            metadata=metadata,
         )
         out = _assemble_outputs(out, self.cfg.data_dim)
         return {
@@ -395,8 +373,8 @@ class Integrator(LightningModule):
         }
 
     def training_step(self, batch, _batch_idx):
-        counts, shoebox, mask, reference = batch
-        outputs = self(counts, shoebox, mask, reference)
+        counts, shoebox, mask, metadata = batch
+        outputs = self(counts, shoebox, mask, metadata)
 
         # Calculate loss
         loss_dict = self.loss(
@@ -452,8 +430,8 @@ class Integrator(LightningModule):
 
     def validation_step(self, batch, _batch_idx):
         # Unpack batch
-        counts, shoebox, mask, reference = batch
-        outputs = self(counts, shoebox, mask, reference)
+        counts, shoebox, mask, metadata = batch
+        outputs = self(counts, shoebox, mask, metadata)
 
         loss_dict = self.loss(
             rate=outputs["forward_base_out"]["rates"],
@@ -505,8 +483,8 @@ class Integrator(LightningModule):
         }
 
     def predict_step(self, batch: Tensor, _batch_idx):
-        counts, shoebox, mask, reference = batch
-        outputs = self(counts, shoebox, mask, reference)
+        counts, shoebox, mask, metadata = batch
+        outputs = self(counts, shoebox, mask, metadata)
 
         return {
             k: v
@@ -515,14 +493,56 @@ class Integrator(LightningModule):
         }
 
 
+# to use:
+# log_validation_distributions()
+def log_validation_distributions(
+    logger,
+    outputs: dict,
+    stage: str = "validation",
+):
+    qi = outputs["qi"]
+    qbg = outputs["qbg"]
+
+    logger.log(f"{stage}/qi/mean", qi.mean.mean())
+    logger.log(f"{stage}/qi/mean_min", qi.mean.min())
+    logger.log(f"{stage}/qi/mean_max", qi.mean.max())
+
+    logger.log(f"{stage}/qi/var_mean", qi.variance.mean())
+    logger.log(f"{stage}/qi/var_min", qi.variance.min())
+    logger.log(f"{stage}/qi/var_max", qi.variance.max())
+
+    logger.log(f"{stage}/qbg/mean", qbg.mean.mean())
+    logger.log(f"{stage}/qbg/mean_min", qbg.mean.min())
+    logger.log(f"{stage}/qbg/mean_max", qbg.mean.max())
+
+    logger.log(f"{stage}/qbg/var_mean", qbg.variance.mean())
+    logger.log(f"{stage}/qbg/var_min", qbg.variance.min())
+    logger.log(f"{stage}/qbg/var_max", qbg.variance.max())
+
+
+@dataclass
+class IntegratorModelBArgs:
+    cfg: IntegratorArgs
+    loss: nn.Module
+    surrogates: dict[str, nn.Module]
+    encoders: dict[str, nn.Module]
+
+
 # %%
 class IntegratorModelB(LightningModule):
+    REQUIRED_ENCODERS = {
+        "encoder1": configs.ShoeboxEncoderArgs,
+        "encoder2": configs.IntensityEncoderArgs,
+        "encoder3": configs.IntensityEncoderArgs,
+    }
+    ARGS = IntegratorModelBArgs
+
     def __init__(
         self,
-        cfg: IntegratorHyperParameters,
+        cfg: IntegratorArgs,
         loss: nn.Module,
-        surrogates: SurrogateModules,
-        encoders: EncoderModules,
+        surrogates: dict[str, nn.Module],
+        encoders: dict[str, nn.Module],
     ):
         super().__init__()
         self.cfg = cfg
@@ -534,28 +554,24 @@ class IntegratorModelB(LightningModule):
         self.renyi_scale = cfg.renyi_scale
 
         # posterior modules
-        self.qbg = surrogates.qbg
-        self.qp = surrogates.qp
-        self.qi = surrogates.qi
+        self.qbg = surrogates["qbg"]
+        self.qp = surrogates["qp"]
+        self.qi = surrogates["qi"]
 
         # encoder modules
-        self.encoder1 = encoders.encoder1
-        self.encoder2 = encoders.encoder2
-        self.encoder3 = encoders.encoder3
+        self.encoder1 = encoders["encoder1"]
+        self.encoder2 = encoders["encoder2"]
+        self.encoder3 = encoders["encoder3"]
 
         # loss module
         self.loss = loss
 
         # predict keys
         self.predict_keys = (
-            _default_predict_keys()
+            DEFAULT_PREDICT_KEYS
             if cfg.predict_keys == "default"
             else cfg.predict_keys
         )
-
-        # fano penalties
-        self.fanobglambda = self.cfg.lambdabg
-        self.fanoilambda = self.cfg.lambdai
 
         self.automatic_optimization = True
 
@@ -569,7 +585,7 @@ class IntegratorModelB(LightningModule):
         counts: Tensor,
         shoebox: Tensor,
         mask: Tensor,
-        reference: Tensor | None = None,
+        metadata: dict,
     ) -> dict[str, Any]:
         counts = torch.clamp(counts, min=0)
 
@@ -604,7 +620,7 @@ class IntegratorModelB(LightningModule):
             qi=qi,
             zp=zp,
             concentration=qp.concentration,  # if using Dirichlet
-            reference=reference,
+            metadata=metadata,
         )
         out = _assemble_outputs(out, self.cfg.data_dim)
         return {
@@ -615,8 +631,8 @@ class IntegratorModelB(LightningModule):
         }
 
     def training_step(self, batch, _batch_idx):
-        counts, shoebox, mask, reference = batch
-        outputs = self(counts, shoebox, mask, reference)
+        counts, shoebox, mask, metadata = batch
+        outputs = self(counts, shoebox, mask, metadata)
 
         # Calculate loss
         loss_dict = self.loss(
@@ -672,8 +688,8 @@ class IntegratorModelB(LightningModule):
 
     def validation_step(self, batch, _batch_idx):
         # Unpack batch
-        counts, shoebox, mask, reference = batch
-        outputs = self(counts, shoebox, mask, reference)
+        counts, shoebox, mask, metadata = batch
+        outputs = self(counts, shoebox, mask, metadata)
 
         loss_dict = self.loss(
             rate=outputs["forward_base_out"]["rates"],
@@ -681,8 +697,6 @@ class IntegratorModelB(LightningModule):
             qp=outputs["qp"],
             qi=outputs["qi"],
             qbg=outputs["qbg"],
-            # # qri=outputs["qri"],
-            # qrbg=outputs["qrbg"],
             mask=outputs["forward_base_out"]["mask"],
         )
 
@@ -725,8 +739,8 @@ class IntegratorModelB(LightningModule):
         }
 
     def predict_step(self, batch: Tensor, _batch_idx):
-        counts, shoebox, mask, reference = batch
-        outputs = self(counts, shoebox, mask, reference)
+        counts, shoebox, mask, metadata = batch
+        outputs = self(counts, shoebox, mask, metadata)
 
         return {
             k: v
@@ -735,8 +749,11 @@ class IntegratorModelB(LightningModule):
         }
 
 
-# %%
 if __name__ == "__main__":
+    # %%
+    import tempfile
+    from pathlib import Path
+
     import torch
 
     from integrator.model.distributions import (
@@ -753,32 +770,47 @@ if __name__ == "__main__":
     cfg = list(CONFIGS.glob("*"))[0]
     cfg = load_config(cfg)
 
-    integrator = create_integrator(cfg)
-    data = create_data_loader(cfg)
+    # generating sample data
+    dataset_size = 1000
+    batch_size = 10
 
-    # hyperparameters
-    mc_samples = 100
+    # shoebox dimensions
+    depth = 3
+    height = 21
+    width = 21
+    n_pix = depth * height * width
 
-    # distributions
-    qbg_ = FoldedNormalDistribution(in_features=64)
-    qi_ = FoldedNormalDistribution(in_features=64)
-    qp_ = DirichletDistribution(in_features=64, out_features=(3, 21, 21))
+    counts = torch.randint(0, 10, (dataset_size, n_pix), dtype=torch.float32)
+    masks = torch.randint(0, 2, (dataset_size, n_pix))
+    stats = torch.tensor([0.0, 1.0])
+    concentration = counts.mean(0)
 
-    # load a batch
-    counts, sbox, mask, meta = next(iter(data.train_dataloader()))
+    data = {}
+    for c in DEFAULT_DS_COLS:
+        data[c] = torch.randn(dataset_size)
 
-    out = integrator.forward(counts, sbox, mask, meta)
+    with tempfile.TemporaryDirectory() as tdir:
+        tdir = Path(tdir)
+        cfg["data_dir"] = tdir
+        cfg["data_loader"]["args"]["data_dir"] = tdir
+        torch.save(counts, tdir / "counts_3d_subset.pt")
+        torch.save(masks, tdir / "masks_3d_subset.pt")
+        torch.save(data, tdir / "reference_3d_subset.pt")
+        torch.save(stats, tdir / "stats_3d.pt")
+        torch.save(stats, tdir / "concentration_3d.pt")
 
-    out = integrator.training_step((counts, sbox, mask, meta), 0)
+        integrator = create_integrator(cfg)
+        data = create_data_loader(cfg)
+        # hyperparameters
+        mc_samples = 100
 
-    metadata = meta[:, [2, 8, 9, 10]].float()
-    max = torch.log1p(counts.max(-1)[0]).unsqueeze(-1)
-    min = torch.log1p(counts.min(-1)[0]).unsqueeze(-1)
-    mean = torch.log1p(counts.mean(-1)).unsqueeze(-1)
-    std = torch.log1p(counts.std(-1)).unsqueeze(-1)
+        # distributions
+        qbg_ = FoldedNormalDistribution(in_features=64)
+        qi_ = FoldedNormalDistribution(in_features=64)
+        qp_ = DirichletDistribution(in_features=64, out_features=(3, 21, 21))
 
-    metadata = torch.stack([max, min, mean, std], -1).squeeze(1)
+        # load a batch
+        counts, sbox, mask, meta = next(iter(data.train_dataloader()))
 
-    torch.distributions.LogNormal(torch.zeros(10), torch.ones(10)).rsample(
-        [100]
-    ).mean(0)
+        out = integrator.forward(counts, sbox, mask, meta)
+        out = integrator.training_step((counts, sbox, mask, meta), 0)

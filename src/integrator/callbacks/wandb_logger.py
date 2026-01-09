@@ -8,6 +8,7 @@ import pandas as pd
 import polars as pl
 import torch
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import Callback
 from torch import Tensor
 
@@ -52,8 +53,8 @@ def create_comparison_grid(
     Returns: a matplotlib figure
 
     """
-    if not refl_ids:
-        return None
+    # if not refl_ids:
+    #     return None
 
     # Create figure with proper subplot layout
     fig, axes = plt.subplots(3, n_profiles, figsize=(5 * n_profiles, 8))
@@ -75,9 +76,9 @@ def create_comparison_grid(
         )
         axes[0, i].set_title(
             f"reflection ID: {id_str}\n"
-            f"DIALS I_prf: {pred_dict[id_str]['dials_I_prf_value']:.2f}\n"
-            f"DIALS var: {pred_dict[id_str]['dials_I_prf_var']:.2f}\n"
-            f"DIALS bg mean: {pred_dict[id_str]['dials_bg_mean']:.2f}"
+            f"DIALS I_prf: {pred_dict[id_str]['intensity.prf.value']:.2f}\n"
+            f"DIALS var: {pred_dict[id_str]['intensity.prf.variance']:.2f}\n"
+            f"DIALS bg mean: {pred_dict[id_str]['background.mean']:.2f}"
         )
         axes[0, i].set_ylabel("raw image", labelpad=5)
 
@@ -92,9 +93,9 @@ def create_comparison_grid(
         # row 2: predicted profile
         im1 = axes[1, i].imshow(profile_data.detach(), cmap=cmap)
         axes[1, i].set_title(
-            f"x_c: {pred_dict[id_str]['x_c']:.2f}\n"
-            f"y_c: {pred_dict[id_str]['y_c']:.2f}\n"
-            f"z_c: {pred_dict[id_str]['z_c']:.2f}"
+            f"xyzcal.px.0: {pred_dict[id_str]['xyzcal.px.0']:.2f}\n"
+            f"xyzcal.px.1: {pred_dict[id_str]['xyzcal.px.1']:.2f}\n"
+            f"xyzcal.px.2: {pred_dict[id_str]['xyzcal.px.2']:.2f}"
         )
         axes[1, i].set_ylabel(
             "profile",
@@ -319,7 +320,11 @@ class LogFano(Callback):
             [pl.col(c) + merged_df[c] for c in self.numeric_cols]
         )
 
-    def on_train_epoch_end(self, trainer, pl_module):
+    def on_train_epoch_end(
+        self,
+        trainer: Trainer,
+        pl_module,
+    ):
         # get avg variance/mean ratio per intensity bin
         epoch_df = self.agg_df.with_columns(
             (pl.col("fano_sum") / pl.col("n")).alias("avg_fano"),
@@ -342,11 +347,17 @@ class LogFano(Callback):
         wandb.log({"train: avg signal-to-noise": wandb.Image(fig)})
         plt.close(fig)
 
+        log_dir = trainer.logger.experiment.dir
+
+        csv_fname = (
+            log_dir + f"/log_fano_csv_epoch_{trainer.current_epoch}.csv"
+        )
+        epoch_df.write_csv(csv_fname)
+
         # reset agg_df
         self.agg_df = _get_agg_df(self.bin_labels)
 
 
-# -
 class PlotterLD(Callback):
     def __init__(
         self,
@@ -803,16 +814,14 @@ class PlotterLD(Callback):
             torch.cuda.empty_cache()
 
 
-# -
 class Plotter(Callback):
     def __init__(
         self,
-        n_profiles=5,
-        plot_every_n_epochs=5,
-        d=3,
-        h=21,
-        w=21,
-        d_vectors=None,
+        n_profiles: int = 5,
+        plot_every_n_epochs: int = 5,
+        d: int = 3,
+        h: int = 21,
+        w: int = 21,
     ):
         super().__init__()
         self.d = d
@@ -826,7 +835,6 @@ class Plotter(Callback):
         self.epoch_preds = None
         self.plot_every_n_epochs = plot_every_n_epochs
         self.current_epoch = 0
-        self.d_vectors = d_vectors
         self.tracked_shoeboxes_val = dict()
         self.tracked_shoeboxes_train = dict()
 
@@ -871,12 +879,14 @@ class Plotter(Callback):
                     "bg_var": preds["qbg_var"][idx].cpu(),
                     "qi_mean": preds["qi_mean"][idx].cpu(),
                     "qi_var": preds["qi_var"][idx].cpu(),
-                    "dials_I_prf_value": preds["dials_I_prf_value"][idx],
-                    "dials_I_prf_var": preds["dials_I_prf_var"][idx],
-                    "dials_bg_mean": preds["dials_bg_mean"][idx].cpu(),
-                    "x_c": preds["x_c"][idx].cpu(),
-                    "y_c": preds["y_c"][idx].cpu(),
-                    "z_c": preds["z_c"][idx].cpu(),
+                    "intensity.prf.value": preds["intensity.prf.value"][idx],
+                    "intensity.prf.variance": preds["intensity.prf.variance"][
+                        idx
+                    ],
+                    "background.mean": preds["background.mean"][idx].cpu(),
+                    "xyzcal.px.0": preds["xyzcal.px.0"][idx].cpu(),
+                    "xyzcal.px.1": preds["xyzcal.px.1"][idx].cpu(),
+                    "xyzcal.px.2": preds["xyzcal.px.2"][idx].cpu(),
                     "d": preds["d"][idx].cpu(),
                 }
 
@@ -906,14 +916,14 @@ class Plotter(Callback):
             for key in [
                 "qi_mean",
                 "qi_var",
-                "dials_I_prf_value",
-                "dials_I_prf_var",
+                "intensity.prf.value",
+                "intensity.prf.variance",
                 "profile",
                 "qbg_mean",
-                "x_c",
-                "y_c",
-                "z_c",
-                "dials_bg_mean",
+                "xyzcal.px.0",
+                "xyzcal.px.1",
+                "xyzcal.px.2",
+                "background.mean",
                 "dials_bg_sum_value",
                 "d",
             ]:
@@ -941,19 +951,19 @@ class Plotter(Callback):
                 i_var_flat = self.preds_train["qi_var"].flatten() + 1e-8
 
                 dials_flat = (
-                    self.preds_train["dials_I_prf_value"].flatten() + 1e-8
+                    self.preds_train["intensity.prf.value"].flatten() + 1e-8
                 )
                 dials_var_flat = (
-                    self.preds_train["dials_I_prf_var"].flatten() + 1e-8
+                    self.preds_train["intensity.prf.variance"].flatten() + 1e-8
                 )
                 dials_bg_flat = (
-                    self.preds_train["dials_bg_mean"].flatten() + 1e-8
+                    self.preds_train["background.mean"].flatten() + 1e-8
                 )
                 qbg_flat = self.preds_train["qbg_mean"].flatten() + 1e-8
 
-                x_c_flat = self.preds_train["x_c"].flatten()
-                y_c_flat = self.preds_train["y_c"].flatten()
-                z_c_flat = self.preds_train["z_c"].flatten()
+                x_c_flat = self.preds_train["xyzcal.px.0"].flatten()
+                y_c_flat = self.preds_train["xyzcal.px.1"].flatten()
+                z_c_flat = self.preds_train["xyzcal.px.2"].flatten()
                 d_flat = 1 / self.preds_train["d"].flatten().pow(2)
                 d_ = self.preds_train["d"]
 
@@ -989,8 +999,8 @@ class Plotter(Callback):
                         "DIALS intensity.prf.variance",
                         "DIALS background.mean",
                         "mean(qbg)",
-                        "x_c",
-                        "y_c",
+                        "xyzcal.px.0",
+                        "xyzcal.px.1",
                         "d",
                         "d_",
                     ],
@@ -1115,14 +1125,14 @@ class Plotter(Callback):
             for key in [
                 "qi_mean",
                 "qi_var",
-                "dials_I_prf_value",
-                "dials_I_prf_var",
+                "intensity.prf.value",
+                "intensity.prf.variance",
                 "profile",
                 "qbg_mean",
-                "x_c",
-                "y_c",
-                "z_c",
-                "dials_bg_mean",
+                "xyzcal.px.0",
+                "xyzcal.px.1",
+                "xyzcal.px.2",
+                "background.mean",
                 "dials_bg_sum_value",
                 "d",
             ]:
@@ -1144,7 +1154,11 @@ class Plotter(Callback):
             del base_output
             torch.cuda.empty_cache()
 
-    def on_validation_epoch_end(self, trainer, pl_module):
+    def on_validation_epoch_end(
+        self,
+        trainer,
+        pl_module,
+    ):
         if self.preds_validation:
             try:
                 data = []
@@ -1154,19 +1168,21 @@ class Plotter(Callback):
                 i_var_flat = self.preds_validation["qi_var"].flatten() + 1e-8
 
                 dials_flat = (
-                    self.preds_validation["dials_I_prf_value"].flatten() + 1e-8
+                    self.preds_validation["intensity.prf.value"].flatten()
+                    + 1e-8
                 )
                 dials_var_flat = (
-                    self.preds_validation["dials_I_prf_var"].flatten() + 1e-8
+                    self.preds_validation["intensity.prf.variance"].flatten()
+                    + 1e-8
                 )
                 dials_bg_flat = (
-                    self.preds_validation["dials_bg_mean"].flatten() + 1e-8
+                    self.preds_validation["background.mean"].flatten() + 1e-8
                 )
                 qbg_flat = self.preds_validation["qbg_mean"].flatten() + 1e-8
 
-                x_c_flat = self.preds_validation["x_c"].flatten()
-                y_c_flat = self.preds_validation["y_c"].flatten()
-                z_c_flat = self.preds_validation["z_c"].flatten()
+                x_c_flat = self.preds_validation["xyzcal.px.0"].flatten()
+                y_c_flat = self.preds_validation["xyzcal.px.1"].flatten()
+                z_c_flat = self.preds_validation["xyzcal.px.2"].flatten()
                 d_flat = 1 / self.preds_validation["d"].flatten().pow(2)
                 d_ = self.preds_validation["d"]
 
@@ -1202,8 +1218,8 @@ class Plotter(Callback):
                         "DIALS intensity.prf.variance",
                         "DIALS background.mean",
                         "validation: mean(qbg)",
-                        "x_c",
-                        "y_c",
+                        "xyzcal.px.0",
+                        "xyzcal.px.1",
                         "d",
                         "d_",
                     ],

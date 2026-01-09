@@ -35,12 +35,22 @@ REGISTRY = {
         "intensity_encoder_minimal": IntensityEncoder2DMinimal,
     },
     "loss": {
-        "elbo": Loss,
-        "loss": Loss,
+        "default": Loss,
     },
     "integrator": {
         "integrator": Integrator,
         "modelb": IntegratorModelB,
+    },
+    "surrogates": {
+        "gamma": GammaDistribution,
+        "gammaA": GammaDistributionRepamA,
+        "gammaB": GammaDistributionRepamB,
+        "gammaC": GammaDistributionRepamC,
+        "gammaD": GammaDistributionRepamD,
+        "log_normal": LogNormalDistribution,
+        "folded_normal": FoldedNormalDistribution,
+        "half_normal": HalfNormalDistribution,
+        "dirichlet": DirichletDistribution,
     },
     "qi": {
         "gamma": GammaDistribution,

@@ -12,7 +12,6 @@ class HalfNormalDistribution(nn.Module):
     def __init__(
         self,
         in_features: int,
-        out_features: int = 1,
         eps: float = 1e-12,
         beta: int = 1,
         constraint: Literal["exp", "softplus"] | None = "softplus",
@@ -20,7 +19,7 @@ class HalfNormalDistribution(nn.Module):
         super().__init__()
         self.fc = Linear(
             in_features=in_features,
-            out_features=out_features,
+            out_features=1,
         )
 
         self.constrain_fn = Constrain(

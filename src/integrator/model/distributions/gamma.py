@@ -34,26 +34,6 @@ class MLP(nn.Module):
         return self.fc2(h)
 
 
-def mean_pool_by_image(emb: torch.Tensor, img_ids: torch.Tensor):
-    device = emb.device
-    B, F = emb.shape
-
-    # 1Get unique image IDs and mapping
-    pooled_ids, per_ref_idx = torch.unique(img_ids, return_inverse=True)
-    n_img = pooled_ids.size(0)
-
-    # Sum per image using index_add_
-    sums = torch.zeros(n_img, F, device=device)
-    counts = torch.zeros(n_img, 1, device=device)
-
-    sums.index_add_(0, per_ref_idx, emb)  # sum embeddings per image
-    ones = torch.ones(B, 1, device=device)
-    counts.index_add_(0, per_ref_idx, ones)  # count per image
-
-    pooled = sums / counts.clamp_min(1.0)  # mean embedding per image
-    return pooled, pooled_ids, per_ref_idx
-
-
 def _get_gamma_params(
     x: torch.Tensor,
     parameterization: str,
@@ -130,7 +110,11 @@ class GammaDistributionRepamA(nn.Module):
 
 # %%
 class GammaDistributionRepamB(nn.Module):
-    def __init__(self, in_features: int, eps: float = 1e-6):
+    def __init__(
+        self,
+        in_features: int,
+        eps: float = 1e-6,
+    ):
         super().__init__()
         self.eps = eps
 
@@ -246,9 +230,6 @@ class GammaDistribution(nn.Module):
             self.linear_k = torch.nn.Linear(in_features, 1)
             self.linear_r = torch.nn.Linear(in_features, 1)
             pass
-
-        # managed to amortize it
-        # self.log_phi_table = nn.Parameter(torch.zeros(n_images))  # (n_images,)
 
         self.linear_k = torch.nn.Linear(in_features, 1)
         self.ln_beta = nn.LayerNorm(in_features)

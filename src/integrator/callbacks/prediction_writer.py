@@ -6,7 +6,10 @@ import torch
 from pytorch_lightning.callbacks import BasePredictionWriter, Callback
 
 
-def assign_labels(dataset, save_dir: str):
+def assign_labels(
+    dataset,
+    save_dir: str,
+):
     train_id_df = plr.DataFrame(schema=[("train_ids", int)])
     val_id_df = plr.DataFrame(schema=[("val_ids", int)])
 
@@ -14,14 +17,14 @@ def assign_labels(dataset, save_dir: str):
         for batch in dataset.train_dataloader():
             _, _, _, reference = batch
             train_ids = plr.DataFrame(
-                {"train_ids": (reference[:, -1].int()).tolist()}
+                {"train_ids": (reference["refl_ids"].int()).tolist()}
             )
             train_id_df = plr.concat([train_id_df, train_ids])
 
         for batch in dataset.val_dataloader():
             _, _, _, reference = batch
             val_ids = plr.DataFrame(
-                {"val_ids": (reference[:, -1].int()).tolist()}
+                {"val_ids": (reference["refl_ids"].int()).tolist()}
             )
             val_id_df = plr.concat([val_id_df, val_ids])
 
@@ -85,12 +88,9 @@ class PredWriter(BasePredictionWriter):
         self, trainer, pl_module, predictions, batch_indices
     ):
         if self.output_dir is None:
-            # Default to logger directory
-            # self.output_dir = trainer.logger.log_dir
             self.output_dir = trainer.logger.experiment.dir
             Path(self.output_dir).mkdir(parents=True, exist_ok=True)
 
-        # Initialize a merged dictionary where each key accumulates all values in a list
         merged_predictions = {}
 
         for batch_prediction in predictions:
@@ -103,12 +103,8 @@ class PredWriter(BasePredictionWriter):
 
             for key, value in batch_cpu.items():
                 if key not in merged_predictions:
-                    merged_predictions[
-                        key
-                    ] = []  # Initialize list for this key
-                merged_predictions[key].append(
-                    value
-                )  # Append batch values to list
+                    merged_predictions[key] = []
+                merged_predictions[key].append(value)
 
         # Save the merged predictions as a single .pt file
         torch.save(

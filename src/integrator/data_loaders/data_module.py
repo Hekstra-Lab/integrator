@@ -2,9 +2,95 @@ import os
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader, Subset, TensorDataset, random_split
+from torch.utils.data import (
+    DataLoader,
+    Dataset,
+    Subset,
+    TensorDataset,
+    random_split,
+)
 
 from integrator.data_loaders import BaseDataModule
+
+# Default columns from rs.io.read_dials_stills
+DEFAULT_DS_COLS = [
+    "zeta",
+    "xyzobs.px.variance.0",
+    "xyzobs.px.variance.1",
+    "xyzobs.px.variance.2",
+    "xyzobs.px.value.0",
+    "xyzobs.px.value.1",
+    "xyzobs.px.value.2",
+    "xyzobs.mm.variance.0",
+    "xyzobs.mm.variance.1",
+    "xyzobs.mm.variance.2",
+    "xyzobs.mm.value.0",
+    "xyzobs.mm.value.1",
+    "xyzobs.mm.value.2",
+    "xyzcal.mm.0",
+    "xyzcal.mm.1",
+    "xyzcal.mm.2",
+    "refl_ids",
+    "qe",
+    "profile.correlation",
+    "partiality",
+    "partial_id",
+    "panel",
+    "num_pixels.valid",
+    "num_pixels.foreground",
+    "num_pixels.background_used",
+    "num_pixels.background",
+    "lp",
+    "intensity.prf.variance",
+    "intensity.prf.value",
+    "imageset_id",
+    "flags",
+    "entering",
+    "d",
+    "bbox.0",
+    "bbox.1",
+    "bbox.2",
+    "bbox.3",
+    "bbox.4",
+    "bbox.5",
+    "background.sum.variance",
+    "background.sum.value",
+    "background.mean",
+    "s1.0",
+    "s1.1",
+    "s1.2",
+    "xyzcal.px.0",
+    "xyzcal.px.1",
+    "xyzcal.px.2",
+    "intensity.sum.variance",
+    "intensity.sum.value",
+    "H",
+    "K",
+    "L",
+]
+
+
+class IntegratorDataset(Dataset):
+    def __init__(self, counts, standardized_counts, masks, reference):
+        self.counts = counts
+        self.standardized_counts = standardized_counts
+        self.masks = masks
+        self.reference = reference
+
+    def __len__(self):
+        return len(self.counts)
+
+    def __getitem__(self, idx):
+        if torch.is_tensor(idx):
+            idx = idx.item()
+
+        counts = self.counts[idx]
+        standardized_counts = self.standardized_counts[idx]
+        masks = self.masks[idx]
+
+        meta = {k: self.reference[k][idx] for k in DEFAULT_DS_COLS}
+
+        return counts, standardized_counts, masks, meta
 
 
 class ShoeboxDataModule2D(BaseDataModule):
@@ -100,8 +186,6 @@ class ShoeboxDataModule2D(BaseDataModule):
         self.dataset_mean = stats[0]
         self.dataset_var = stats[1]
         all_dead = masks.sum(-1) < 10
-
-        # print("all_dead", all_dead.sum())
 
         # filter out samples with all dead pixels
         counts = counts[~all_dead]
@@ -217,14 +301,14 @@ class ShoeboxDataModule2D(BaseDataModule):
 def _remove_flagged_variance(
     counts: torch.Tensor,
     masks: torch.Tensor,
-    metadata: torch.Tensor,
-    filter_idx: int = 12,
-) -> torch.Tensor:
-    filter_ = metadata[:, filter_idx] == -1
+    metadata: dict,
+    filter_key: str = "intensity.prf.variance",
+) -> tuple[torch.Tensor, torch.Tensor, dict]:
+    filter_ = metadata[filter_key] == -1
 
     counts = counts[~filter_]
     masks = masks[~filter_]
-    metadata = metadata[~filter_]
+    metadata = {k: v[~filter_] for k, v in metadata.items()}
 
     return counts, masks, metadata
 
@@ -247,7 +331,7 @@ class ShoeboxDataModule(BaseDataModule):
         shoebox_file_names:
         H:
         W:
-        Z:
+        D:
         standardized_counts:
         get_dxyz:
         anscombe: Boolean indicating whether to use Anscome transformation
@@ -257,7 +341,7 @@ class ShoeboxDataModule(BaseDataModule):
     def __init__(
         self,
         data_dir: Path,
-        batch_size: int = 100,
+        batch_size: int = 10,
         val_split: float = 0.2,
         test_split: float = 0.1,
         num_workers: int = 3,
@@ -277,7 +361,7 @@ class ShoeboxDataModule(BaseDataModule):
         refl_file: Path | None = None,
         H: int = 21,
         W: int = 21,
-        Z: int = 3,
+        D: int = 3,
         get_dxyz: bool = False,
         anscombe: bool = False,
     ):
@@ -296,7 +380,7 @@ class ShoeboxDataModule(BaseDataModule):
         self.shoebox_file_names = shoebox_file_names
         self.H = H
         self.W = W
-        self.Z = Z
+        self.D = D
         self.standardized_counts = shoebox_file_names["standardized_counts"]
         self.get_dxyz = get_dxyz
         self.anscombe = False
@@ -322,7 +406,7 @@ class ShoeboxDataModule(BaseDataModule):
         # filter out samples with all dead pixels
         counts = counts[~all_dead]
         masks = masks[~all_dead]
-        reference = reference[~all_dead]
+        reference = {k: v[~all_dead] for k, v in reference.items()}
 
         counts, masks, reference = _remove_flagged_variance(
             counts, masks, reference
@@ -374,7 +458,7 @@ class ShoeboxDataModule(BaseDataModule):
                         - 1
                     )
 
-        self.full_dataset = TensorDataset(
+        self.full_dataset = IntegratorDataset(
             counts, standardized_counts, masks, reference
         )
 
@@ -609,11 +693,39 @@ class ShoeboxDataModule2(BaseDataModule):
 
 # %%
 if __name__ == "__main__":
-    shoebox_file_names = {
-        "counts": "counts.pt",
-        # "metadata": "metadata.pt",
-        "masks": "masks.pt",
-        "stats": "stats.pt",
-        "reference": "reference.pt",
-        "standardized_counts": None,
-    }
+    import tempfile
+    from pathlib import Path
+
+    import torch
+
+    # generating sample data
+    dataset_size = 1000
+    batch_size = 10
+
+    # shoebox dimensions
+    depth = 3
+    height = 21
+    width = 21
+    n_pix = depth * height * width
+
+    counts = torch.randint(0, 1000, (dataset_size, n_pix))
+    masks = torch.randint(0, 2, (dataset_size, n_pix))
+    stats = torch.tensor([0.0, 1.0])
+
+    data = {}
+    for c in DEFAULT_DS_COLS:
+        data[c] = torch.randn(dataset_size)
+
+    with tempfile.TemporaryDirectory() as tdir:
+        tdir = Path(tdir)
+        torch.save(counts, tdir / "counts.pt")
+        torch.save(masks, tdir / "masks.pt")
+        torch.save(data, tdir / "reference.pt")
+        torch.save(stats, tdir / "stats.pt")
+        dataloader = ShoeboxDataModule(
+            data_dir=tdir,
+            num_workers=0,
+            batch_size=batch_size,
+        )
+        dataloader.setup()
+        counts, sbox, masks, meta = next(iter(dataloader.train_dataloader()))

@@ -1,13 +1,10 @@
-from typing import Literal
-
 import numpy as np
 import torch
 import torch.distributions as dist
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import Tensor
 from torch.distributions import Distribution
-
-from integrator.layers import Constrain
 
 
 # class FoldedNormal(TransformedDistribution):
@@ -271,21 +268,14 @@ class FoldedNormalDistribution(nn.Module):
     def __init__(
         self,
         in_features: int = 64,
-        constraint: Literal["exp", "softplus"] | None = "softplus",
-        out_features: int = 2,
         eps: float = 0.1,
-        beta: int = 1,
     ):
         super().__init__()
         self.fc = torch.nn.Linear(
             in_features,
-            out_features,
+            2,
         )
-        self.constrain_fn = Constrain(
-            constraint_fn=constraint,
-            eps=eps,
-            beta=beta,
-        )
+        self.eps = eps
 
     def forward(
         self,
@@ -296,8 +286,7 @@ class FoldedNormalDistribution(nn.Module):
 
         # transform
         loc = torch.exp(raw_loc)
-        scale = self.constrain_fn(raw_scale)
-
+        scale = F.softplus(raw_scale) + self.eps
         return FoldedNormal(loc, scale)
 
 

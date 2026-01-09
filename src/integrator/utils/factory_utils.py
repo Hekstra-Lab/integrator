@@ -1,209 +1,241 @@
 import gc
 import glob
 import re
+from dataclasses import asdict
 from importlib.resources import as_file
 from pathlib import Path
+from typing import Any
 
 import pytorch_lightning as pl
 import torch
+import torch.nn as nn
 import yaml
 from pytorch_lightning import LightningModule
+from pytorch_lightning.callbacks import Callback
+from pytorch_lightning.loggers import Logger
 
+from integrator import configs
 from integrator.callbacks import PredWriter
-from integrator.model.integrators import (
-    EncoderModules,
-    IntegratorHyperParameters,
-    SurrogateModules,
-)
-from integrator.model.loss import LossConfig, PriorConfig
-from integrator.registry import ARGUMENT_RESOLVER, REGISTRY
+from integrator.configs import shallow_dict
+from integrator.registry import REGISTRY
+
+PRIOR_PARAMS = {
+    "gamma": configs.GammaParams,
+    "dirichlet": configs.DirichletParams,
+    "exponential": configs.ExponentialParams,
+    "half_cauchy": configs.HalfCauchyParams,
+    "log_normal": configs.LogNormalParams,
+}
+
+TUPLE_FIELDS = {
+    "input_shape",
+    "conv1_kernel_size",
+    "conv1_padding",
+    "pool_kernel_size",
+    "pool_stride",
+    "conv2_kernel_size",
+    "conv2_padding",
+    "conv3_kernel_size",
+    "conv3_padding",
+    "shape",
+    "sbox_shape",
+}
 
 
-def create_module(module_type: str, module_name: str, **kwargs):
-    try:
-        cls = REGISTRY[module_type][module_name]
-        return cls(**kwargs)
-    except KeyError as e:
+def _get_integrator_cls(name: str) -> nn.Module:
+    return REGISTRY["integrator"][name]
+
+
+def _get_encoder_cls(name: str) -> nn.Module:
+    return REGISTRY["encoders"][name]
+
+
+def _get_loss_cls(name: str) -> nn.Module:
+    return REGISTRY["loss"][name]
+
+
+def _get_dataloader_cls(name: str) -> nn.Module:
+    return REGISTRY["data_loader"][name]
+
+
+def _normalize_tuples(d: dict) -> dict:
+    out = dict(d)
+    for k in TUPLE_FIELDS:
+        if k in out:
+            v = out[k]
+            if isinstance(v, list):
+                out[k] = tuple(v)
+            elif not isinstance(v, tuple):
+                raise TypeError(f"{k} must be list or tuple, got {type(v)}")
+    return out
+
+
+def _construct_loss_args(
+    cfg: dict,
+    prior_configs: dict,
+) -> configs.LossArgs:
+    loss_cfg = dict(cfg["loss"])
+    loss_args = _normalize_tuples(loss_cfg["args"])
+
+    args_cls = configs.LossArgs(
+        mc_samples=loss_args["mc_samples"],
+        eps=loss_args["eps"],
+        pbg_cfg=prior_configs["pbg_cfg"],
+        pi_cfg=prior_configs["pi_cfg"],
+        pprf_cfg=prior_configs["pprf_cfg"],
+    )
+
+    return args_cls
+
+
+def _construct_surrogate_modules(
+    cfg: dict,
+) -> dict:
+    qp_args = configs.DirichletArgs(**cfg["surrogates"]["qp"]["args"])
+    qp_cls = REGISTRY["surrogates"][cfg["surrogates"]["qp"]["name"]]
+    qp = qp_cls(**asdict(qp_args))
+
+    qbg_args = configs.SurrogateArgs(**cfg["surrogates"]["qbg"]["args"])
+    qbg_cls = REGISTRY["surrogates"][cfg["surrogates"]["qbg"]["name"]]
+    qbg = qbg_cls(**asdict(qbg_args))
+
+    qi_args = configs.SurrogateArgs(**cfg["surrogates"]["qi"]["args"])
+    qi_cls = REGISTRY["surrogates"][cfg["surrogates"]["qi"]["name"]]
+    qi = qi_cls(**asdict(qi_args))
+
+    return {
+        "qp": qp,
+        "qbg": qbg,
+        "qi": qi,
+    }
+
+
+def _construct_priors(
+    cfg: dict,
+    pprf_cfg: str = "pprf_cfg",
+    pbg_cfg: str = "pbg_cfg",
+    pi_cfg: str = "pi_cfg",
+) -> dict[str, Any]:
+    # Building loss class
+    priors = {}
+    prior_cfgs = dict(cfg)
+    for p in (pprf_cfg, pbg_cfg, pi_cfg):
+        if p in prior_cfgs["loss"]["args"]:
+            p_dict = prior_cfgs["loss"]["args"][p]
+            p_name = p_dict["name"]
+            p_params = PRIOR_PARAMS[p_name](**p_dict["params"])
+            p_prior_cfgs = configs.PriorConfig(
+                name=p_name,
+                params=p_params,
+                weight=p_dict["weight"],
+            )
+            priors[p] = p_prior_cfgs
+        else:
+            priors[p] = None
+    return priors
+
+
+def _construct_encoder_modules(
+    cfg: dict,
+) -> dict[str, object]:
+    model = cfg["integrator"]["name"]
+    required_encoders = REGISTRY["integrator"][model].REQUIRED_ENCODERS
+
+    # Verify config has the correct number of encoders for specified model
+    if len(required_encoders) != len(cfg["encoders"]):
         raise ValueError(
-            f"Unknown {module_type}: {module_name}. Available: {list(REGISTRY[module_type].keys())}"
-        ) from e
-
-
-def _build_modules(components: dict) -> dict:
-    modules: dict[str, object] = {}
-
-    enc_field = components.get("encoders", [])
-    if isinstance(enc_field, dict):
-        enc_iter = [{k: v} for k, v in enc_field.items()]
-    elif isinstance(enc_field, list):
-        enc_iter = enc_field
-    elif enc_field in (None, []):
-        enc_iter = []
-    else:
-        raise TypeError("components.encoders must be a list or dict")
-
-    for enc_dict in enc_iter:
-        for enc_key, sub in enc_dict.items():  # (name, sub-config)
-            modules[enc_key] = create_module(
-                "encoders", sub["name"], **(sub.get("args"))
-            )
-
-    for k, v in components.items():
-        if k == "encoders":
-            continue
-        modules[k] = create_module(k, v["name"], **(v.get("args") or {}))
-
-    return modules
-
-
-def _build_encoders(config: dict) -> dict:
+            f"""
+            Integration model '{model}' requires {len(required_encoders)}
+            encoders, but {len(cfg["encoders"])} were passed
+            """
+        )
+    # loading encoder arguments in corresponding dataclasses
     encoders = {}
-    enc_field = config.get("encoders", [])
-    if isinstance(enc_field, dict):
-        enc_iter = [{k: v} for k, v in enc_field.items()]
-    elif isinstance(enc_field, list):
-        enc_iter = enc_field
-    elif enc_field in (None, []):
-        enc_iter = []
-    else:
-        raise TypeError("components.encoders must be a list or dict")
-
-    for enc_dict in enc_iter:
-        for enc_key, sub in enc_dict.items():  # (name, sub-config)
-            encoders[enc_key] = create_module(
-                "encoders", sub["name"], **(sub.get("args"))
-            )
+    for items, encoder_cfg in zip(
+        required_encoders.items(), cfg["encoders"], strict=False
+    ):
+        name, args = items
+        encoder_args = args(**encoder_cfg["args"])
+        encoders[name] = REGISTRY["encoders"][encoder_cfg["name"]](
+            **asdict(encoder_args)
+        )
     return encoders
 
 
-def _build_surrogates(config: dict) -> dict:
-    surrogates = {}
-    surr_dict = config.get("surrogates", [])
-
-    for k, v in surr_dict.items():
-        surrogates[k] = create_module(
-            k,
-            v.get("name"),
-            **(v.get("args")),
-        )
-
-    return surrogates
-
-
-def build_prior(prior_cfg: dict | None) -> PriorConfig | None:
-    if prior_cfg is None:
-        return None
-    return PriorConfig(**prior_cfg)
-
-
-def create_integrator(
-    config: dict,
-    checkpoint: str | None = None,
-) -> LightningModule:
-    # load integrator class
-    integrator_cls = REGISTRY["integrator"][config["integrator"]["name"]]
-    modules = {}
-
-    # build encoders
-    encoders = _build_encoders(config)
-    encoders = EncoderModules(**encoders)
-
-    # build surrogates
-    surrogates = _build_surrogates(config)
-    surrogates = SurrogateModules(**surrogates)
-
-    # build loss
-    priors_config = config["loss"]["priors"]
-    pi = build_prior(priors_config.get("intensity"))
-    pprf = build_prior(priors_config.get("profile"))
-    pbg = build_prior(priors_config.get("background"))
-
-    # loss module
-    loss_cfg = LossConfig(
-        pprf=pprf,
-        pbg=pbg,
-        pi=pi,
-        **config["loss"]["args"],
+def _construct_loss_module(
+    cfg: dict,
+) -> nn.Module:
+    # get loss cls
+    loss_cls = _get_loss_cls(cfg["loss"]["name"])
+    # construct priors
+    prior_configs = _construct_priors(cfg)
+    # construct loss args
+    loss_args = _construct_loss_args(
+        cfg=cfg,
+        prior_configs=prior_configs,
     )
-    loss_name = config["loss"]["name"]
-    loss_cls = REGISTRY["loss"][loss_name](cfg=loss_cfg)
-    modules["loss"] = loss_cls
-
-    # integrator hyperparameters
-    cfg = IntegratorHyperParameters(**config["integrator"]["args"])
-
-    # integrator arguments
-    args = {
-        "loss": loss_cls,
-        "encoders": encoders,
-        "surrogates": surrogates,
-        "cfg": cfg,
-    }
-
-    # load from checkpoint
-    if checkpoint is not None:
-        return integrator_cls.load_from_checkpoint(checkpoint, **args)
-    return integrator_cls(**args)
+    return loss_cls(**shallow_dict(loss_args))
 
 
-def create_argument(module_type, argument_name, argument_value):
-    try:
-        arg = ARGUMENT_RESOLVER[module_type][argument_name][argument_value]
-        return arg
-    except KeyError as e:
-        raise ValueError(
-            f"Unknown {module_type}: {argument_name}. Available options: {list(ARGUMENT_RESOLVER[module_type].keys())}"
-        ) from e
+def construct_integrator(
+    cfg: dict,
+) -> LightningModule:
+    # integrator class
+    integrator_cls = _get_integrator_cls(cfg["integrator"]["name"])
+
+    # get integrator components
+    integrator_args = configs.IntegratorArgs(**cfg["integrator"]["args"])
+    encoders = _construct_encoder_modules(cfg)
+    surrogates = _construct_surrogate_modules(cfg)
+    loss = _construct_loss_module(cfg)
+
+    return integrator_cls(
+        cfg=integrator_args,
+        encoders=encoders,
+        surrogates=surrogates,
+        loss=loss,
+    )
 
 
-def create_data_loader(config):
-    data_loader_name = config["data_loader"]["name"]
-    data_loader_class = REGISTRY["data_loader"][data_loader_name]
-
-    if data_loader_name in {
-        "default",
-        "shoebox_data_module",
-        "shoebox_data_module_2d",
-    }:
-        data_module = data_loader_class(
-            data_dir=config["data_loader"]["args"]["data_dir"],
-            batch_size=config["data_loader"]["args"]["batch_size"],
-            val_split=config["data_loader"]["args"]["val_split"],
-            test_split=config["data_loader"]["args"]["test_split"],
-            num_workers=config["data_loader"]["args"]["num_workers"],
-            include_test=config["data_loader"]["args"]["include_test"],
-            subset_size=config["data_loader"]["args"]["subset_size"],
-            cutoff=config["data_loader"]["args"]["cutoff"],
-            use_metadata=config["data_loader"]["args"]["use_metadata"],
-            shoebox_file_names=config["data_loader"]["args"][
-                "shoebox_file_names"
-            ],
-            H=config["data_loader"]["args"]["H"],
-            W=config["data_loader"]["args"]["W"],
-            anscombe=config["data_loader"]["args"]["anscombe"],
-        )
-        data_module.setup()
-        return data_module
-    else:
-        raise ValueError(f"Unknown data loader name: {data_loader_name}")
+def construct_data_loader(cfg):
+    data_loader_cls = _get_dataloader_cls(cfg["data_loader"]["name"])
+    data_loader_args = configs.DataLoaderArgs(**cfg["data_loader"]["args"])
+    return data_loader_cls(
+        data_dir=data_loader_args.data_dir,
+        batch_size=data_loader_args.batch_size,
+        val_split=data_loader_args.val_split,
+        test_split=data_loader_args.test_split,
+        num_workers=data_loader_args.num_workers,
+        include_test=data_loader_args.include_test,
+        subset_size=data_loader_args.subset_size,
+        cutoff=data_loader_args.cutoff,
+        use_metadata=data_loader_args.use_metadata,
+        shoebox_file_names=data_loader_args.shoebox_file_names,
+        D=data_loader_args.D,
+        H=data_loader_args.H,
+        W=data_loader_args.W,
+        anscombe=data_loader_args.anscombe,
+    )
 
 
-def create_trainer(config, callbacks=None, logger=None):
+def construct_trainer(
+    cfg: dict,
+    logger: Logger | None = None,
+    callbacks: list[Callback] | Callback | None = None,
+) -> pl.Trainer:
+    tr_cfg = configs.TrainerConfig(**cfg["trainer"])
+
     return pl.Trainer(
-        max_epochs=config["trainer"]["args"]["max_epochs"],
-        accelerator=create_argument(
-            "trainer", "accelerator", config["trainer"]["args"]["accelerator"]
-        ),
-        devices=config["trainer"]["args"]["devices"],
+        max_epochs=tr_cfg.max_epochs,
+        accelerator=tr_cfg.accelerator,
+        devices=tr_cfg.devices,
         logger=logger,
-        precision=config["trainer"]["args"]["precision"],
-        check_val_every_n_epoch=config["trainer"]["args"][
-            "check_val_every_n_epoch"
-        ],
-        log_every_n_steps=config["trainer"]["args"]["log_every_n_steps"],
-        deterministic=config["trainer"]["args"]["deterministic"],
+        precision=tr_cfg.precision,
+        check_val_every_n_epoch=tr_cfg.check_val_every_n_epoch,
+        log_every_n_steps=tr_cfg.log_every_n_steps,
+        deterministic=tr_cfg.deterministic,
+        enable_checkpointing=tr_cfg.enable_checkpointing,
         callbacks=callbacks,
-        enable_checkpointing=config["trainer"]["args"]["enable_checkpointing"],
     )
 
 
@@ -287,36 +319,14 @@ def load_config(resource: str | Path) -> dict:
     return raw
 
 
-# assign train/val labels
-if __name__ == "__main__":
-    from integrator.utils import load_config
-    from utils import CONFIGS
-
-    cfg = list(CONFIGS.glob("*"))[0]
-    cfg = load_config(cfg)
-
-    for k, v in cfg["surrogates"].items():
-        print(k, v)
-
-    _build_encoders(cfg)
-
-    # Laue model config
-    config2d = load_config(CONFIGS["config2d"])
-    create_integrator(config2d.dict())
-
-    # Two encoder config
-    config3d = load_config(CONFIGS["config3d"])
-    create_integrator(config3d.dict())
-
-    updates = {
-        "trainer": {"args": {"epochs": 100}},
-    }
-
-    updates = dict()
-    updates.setdefault("trainer", {}).setdefault("args", {})["epochs"] = 100
-
-    config3d.dict()["trainer"]
-
-    updates.setdefault("trainer", {}).setdefault("args", {})["epochs"] = 100
-
-    config3d.model_copy(update=updates).dict()["trainer"]
+def dump_yaml_config(
+    cfg: configs.YAMLConfig,
+    path: str,
+):
+    with open(path, "w") as f:
+        yaml.safe_dump(
+            asdict(cfg),
+            f,
+            sort_keys=False,
+            default_flow_style=False,
+        )

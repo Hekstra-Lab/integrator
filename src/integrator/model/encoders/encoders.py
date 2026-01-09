@@ -5,7 +5,7 @@ from torch import Tensor
 
 from integrator.layers import Linear
 
-operations = {
+OPERATIONS = {
     "2d": {
         "conv": nn.Conv2d,
         "max_pool": nn.MaxPool2d,
@@ -20,32 +20,11 @@ operations = {
 
 
 class ShoeboxEncoder(nn.Module):
-    """3D CNN encoder producing a fixed-length embedding from a shoebox volume.
+    """CNN encoder producing a fixed-length embedding from a shoebox volume.
 
     This module applies two Conv3d + GroupNorm + relu blocks with an
     intermediate MaxPool3d, then flattens and projects to `encoder_out`.
     """
-
-    input_shape: tuple[int, int, int]
-    """Shoebox shape as ``(D, H, W)``."""
-
-    in_channels: int
-    """Number of input channels (C) in the 3D volume."""
-
-    encoder_out: int
-    """Dimensionality of the output embedding."""
-
-    conv1_out_channels: int
-    """Number of output channels for the first convolution."""
-
-    conv1_kernel_size: tuple[int, int, int]
-    """Kernel size for the first convolution as ``(kD, kH, kW)``."""
-
-    conv1_padding: tuple[int, int, int]
-    """Padding for the first convolution as ``(pD, pH, pW)``."""
-
-    flattened_size: int
-    """Internal: flattened feature size inferred from a dummy pass."""
 
     def __init__(
         self,
@@ -64,25 +43,10 @@ class ShoeboxEncoder(nn.Module):
         conv2_padding: tuple[int, int, int] = (0, 0, 0),
         norm2_num_groups: int = 4,
     ):
-        """
-        Args:
-            input_shape: Shoebox spatial dimensions as ``(D, H, W)``.
-            in_channels: Number of input channels (`C`).
-            encoder_out: Output embedding dimension.
-            conv1_out_channels: Output channels of the first 3D convolution.
-            conv1_kernel_size: Kernel size for the first 3D convolution.
-            conv1_padding: Padding for the first 3D convolution.
-            norm1_num_groups: Number of groups for the first GroupNorm.
-            pool_kernel_size: MaxPool3d kernel size.
-            pool_stride: MaxPool3d stride.
-            conv2_out_channels: Output channels of the second 3D convolution.
-            conv2_kernel_size: Kernel size for the second 3D convolution.
-            conv2_padding: Padding for the second 3D convolution.
-            norm2_num_groups: Number of groups for the second GroupNorm."""
         super().__init__()
 
         self.encoder_out = encoder_out
-        self.conv1 = operations[data_dim]["conv"](
+        self.conv1 = OPERATIONS[data_dim]["conv"](
             in_channels=in_channels,
             out_channels=conv1_out_channels,
             kernel_size=conv1_kernel_size,
@@ -93,12 +57,12 @@ class ShoeboxEncoder(nn.Module):
             num_channels=conv1_out_channels,
         )
 
-        self.pool = operations[data_dim]["max_pool"](
+        self.pool = OPERATIONS[data_dim]["max_pool"](
             kernel_size=pool_kernel_size,
             stride=pool_stride,
             ceil_mode=True,
         )
-        self.conv2 = operations[data_dim]["conv"](
+        self.conv2 = OPERATIONS[data_dim]["conv"](
             in_channels=conv1_out_channels,
             out_channels=conv2_out_channels,
             kernel_size=conv2_kernel_size,
@@ -167,7 +131,7 @@ class IntensityEncoder(nn.Module):
     ):
         super().__init__()
 
-        self.conv1 = operations[data_dim]["conv"](
+        self.conv1 = OPERATIONS[data_dim]["conv"](
             in_channels=in_channels,
             out_channels=conv1_out_channels,
             kernel_size=conv1_kernel_size,
@@ -179,14 +143,14 @@ class IntensityEncoder(nn.Module):
         )
 
         # self.pool = nn.MaxPool2d(
-        self.pool = operations[data_dim]["max_pool"](
+        self.pool = OPERATIONS[data_dim]["max_pool"](
             kernel_size=pool_kernel_size,
             stride=pool_stride,
             ceil_mode=True,
         )
 
         # self.conv2 = nn.Conv2d(
-        self.conv2 = operations[data_dim]["conv"](
+        self.conv2 = OPERATIONS[data_dim]["conv"](
             in_channels=conv1_out_channels,
             out_channels=conv2_out_channels,
             kernel_size=conv2_kernel_size,
@@ -197,7 +161,7 @@ class IntensityEncoder(nn.Module):
             num_channels=conv2_out_channels,
         )
 
-        self.conv3 = operations[data_dim]["conv"](
+        self.conv3 = OPERATIONS[data_dim]["conv"](
             in_channels=conv2_out_channels,
             out_channels=conv3_out_channels,
             kernel_size=conv3_kernel_size,
@@ -208,7 +172,7 @@ class IntensityEncoder(nn.Module):
             num_channels=conv3_out_channels,
         )
 
-        self.adaptive_pool = operations[data_dim]["adaptive_pool"](
+        self.adaptive_pool = OPERATIONS[data_dim]["adaptive_pool"](
             1
         )  # Output: (batch, channels, 1, 1)
 

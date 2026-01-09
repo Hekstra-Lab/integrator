@@ -1,5 +1,4 @@
 from math import prod
-from typing import Literal
 
 import torch
 import torch.nn as nn
@@ -160,27 +159,23 @@ from torch.distributions import Dirichlet
 class DirichletDistribution(torch.nn.Module):
     def __init__(
         self,
-        dmodel=64,
-        input_shape=(3, 21, 21),
         in_features: int = 64,
-        out_features: tuple[int, ...] = (3, 21, 21),
-        constraint: Literal["exp", "softplus"] | None = "softplus",
+        sbox_shape: tuple[int, ...] = (3, 21, 21),
         eps: float = 1e-6,
-        beta: int = 1,
     ):
         super().__init__()
-        self.n_pixels = prod(input_shape)
-        if dmodel is not None:
-            self.alpha_layer = nn.Linear(dmodel, self.n_pixels)
-        self.dmodel = dmodel
+        self.n_pixels = prod(sbox_shape)
+        if in_features is not None:
+            self.alpha_layer = nn.Linear(in_features, self.n_pixels)
         self.eps = eps
 
     def forward(self, x):
         x = self.alpha_layer(x)
+
         x = F.softplus(x) + self.eps
         q = Dirichlet(x)
         return q
 
 
 if __name__ == "__main__":
-    pass
+    import torch
