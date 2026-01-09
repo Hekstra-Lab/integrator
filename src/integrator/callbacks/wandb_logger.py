@@ -868,7 +868,7 @@ class Plotter(Callback):
         )
 
         for ref_id in tracked_ids:
-            id_str = str int(ref_id))
+            id_str = str(int(ref_id))
             matches = torch.where(current_refl_ids == ref_id)[0]
 
             if len(matches) > 0:
