@@ -15,6 +15,12 @@ from torch import Tensor
 import wandb
 
 
+def to_cpu(x):
+    if torch.is_tensor(x):
+        return to_cpu(x)
+    return x
+
+
 def plot_symlog_qi_vs_dials(
     qi_mean,
     dials_prf,
@@ -210,9 +216,7 @@ def _fano(
     mean_key: str,
     var_key: str,
 ) -> Tensor:
-    return outputs[var_key].detach().cpu() / (
-        outputs[mean_key].detach().cpu() + 1e-8
-    )
+    return to_cpu(outputs[var_key]) / (to_cpu(outputs[mean_key]) + 1e-8)
 
 
 def _cv(
@@ -220,9 +224,7 @@ def _cv(
     mean_key: str,
     var_key: str,
 ) -> Tensor:
-    return outputs[var_key].sqrt().detach().cpu() / (
-        outputs[mean_key].detach().cpu() + 1e-8
-    )
+    return to_cpu(outputs[var_key].sqrt()) / (to_cpu(outputs[mean_key]) + 1e-8)
 
 
 def _get_agg_df(bin_labels):
@@ -277,18 +279,18 @@ class LogFano(Callback):
     def on_train_batch_end(
         self, trainer, pl_module, outputs, batch, batch_idx
     ):
-        out = outputs["model_output"]
-        fano = _fano(out, "qi_mean", "qi_var").detach().cpu()
-        cv = _cv(out, "qi_mean", "qi_var").detach().cpu()
+        out = to_cpu(outputs["model_output"])
+        fano = to_cpu(_fano(out, "qi_mean", "qi_var"))
+        cv = to_cpu(_cv(out, "qi_mean", "qi_var"))
 
         # aggregate
         df = pl.DataFrame(
             {
-                "refl_ids": out["refl_ids"],
-                "qi_mean": out["qi_mean"].detach().cpu(),
-                "qi_var": out["qi_var"].detach().cpu(),
-                "fano": fano.detach().cpu(),
-                "cv": cv.detach().cpu(),
+                "refl_ids": to_cpu(out["refl_ids"]),
+                "qi_mean": to_cpu(out["qi_mean"]),
+                "qi_var": to_cpu(out["qi_var"]),
+                "fano": to_cpu(fano),
+                "cv": to_cpu(cv),
             }
         )
 
@@ -478,13 +480,11 @@ class PlotterLD(Callback):
             ]:
                 if key in base_output:
                     if key == "profile":
-                        self.preds_train[key] = base_output[key].detach().cpu()
+                        self.preds_train[key] = to_cpu(base_output[key])
                     elif hasattr(base_output[key], "sample"):
-                        self.preds_train[key] = (
-                            base_output[key].mean.detach().cpu()
-                        )
+                        self.preds_train[key] = to_cpu(base_output[key].mean)
                     else:
-                        self.preds_train[key] = base_output[key].detach().cpu()
+                        self.preds_train[key] = to_cpu(base_output[key])
 
             # Clean up
             torch.cuda.empty_cache()
@@ -612,7 +612,7 @@ class PlotterLD(Callback):
                 wandb.log(log_dict)
 
                 fig = plot_symlog_qi_vs_dials(
-                    i_flat.detach().cpu().numpy(), dials_flat.cpu().numpy()
+                    to_cpu(i_flat).numpy(), dials_flat.cpu().numpy()
                 )
                 wandb.log({"train: qi_vs_dials_symlog": wandb.Image(fig)})
                 plt.close(fig)
@@ -662,17 +662,13 @@ class PlotterLD(Callback):
             ]:
                 if key in base_output:
                     if hasattr(base_output[key], "sample"):
-                        self.preds_validation[key] = (
-                            base_output[key].mean.detach().cpu()
+                        self.preds_validation[key] = to_cpu(
+                            base_output[key].mean
                         )
                     else:
-                        self.preds_validation[key] = (
-                            base_output[key].detach().cpu()
-                        )
+                        self.preds_validation[key] = to_cpu(base_output[key])
                 elif key in base_output:
-                    self.preds_validation[key] = (
-                        base_output[key].detach().cpu()
-                    )
+                    self.preds_validation[key] = to_cpu(base_output[key])
 
             # Clean up
             torch.cuda.empty_cache()
@@ -848,9 +844,8 @@ class Plotter(Callback):
 
         if tracked_ids is None:
             # tracked_ids = current_refl_ids[: self.n_profiles]
-            tracked_ids = (
-                current_refl_ids[: self.n_profiles].detach().cpu().tolist()
-            )
+            tracked_ids = to_cpu(current_refl_ids[: self.n_profiles]).tolist()
+
             print(
                 f"Selected {self.n_profiles} refl_ids to track: {tracked_ids}"
             )
@@ -932,13 +927,12 @@ class Plotter(Callback):
             ]:
                 if key in base_output:
                     if key == "profile":
-                        self.preds_train[key] = base_output[key].detach().cpu()
+                        self.preds_train[key] = to_cpu(base_output[key])
                     elif hasattr(base_output[key], "sample"):
-                        self.preds_train[key] = (
-                            base_output[key].mean.detach().cpu()
-                        )
+                        self.preds_train[key] = to_cpu(base_output[key].mean)
+
                     else:
-                        self.preds_train[key] = base_output[key].detach().cpu()
+                        self.preds_train[key] = to_cpu(base_output[key])
 
             # Clean up
             torch.cuda.empty_cache()
@@ -1141,17 +1135,15 @@ class Plotter(Callback):
             ]:
                 if key in base_output:
                     if hasattr(base_output[key], "sample"):
-                        self.preds_validation[key] = (
-                            base_output[key].mean.detach().cpu()
+                        self.preds_validation[key] = to_cpu(
+                            base_output[key].mean
                         )
+
                     else:
-                        self.preds_validation[key] = (
-                            base_output[key].detach().cpu()
-                        )
+                        self.preds_validation[key] = to_cpu(base_output[key])
+
                 elif key in base_output:
-                    self.preds_validation[key] = (
-                        base_output[key].detach().cpu()
-                    )
+                    self.preds_validation[key] = to_cpu(base_output[key])
 
             # Clean up
             del base_output
