@@ -105,7 +105,6 @@ def main():
         assign_labels,
     )
     from integrator.utils import (
-        clean_from_memory,
         construct_data_loader,
         construct_integrator,
         construct_trainer,
@@ -225,47 +224,46 @@ def main():
 
     print("Traning complete!")
 
-    cfg["trainer"]["args"]["logger"] = False
-
-    clean_from_memory(
-        pred_writer, pred_writer, pred_writer, checkpoint_callback
-    )
-
-    # prediction
-    logdir = Path(logdir)
-    pred_dir = logdir.parent / "predictions"
-    pred_dir.mkdir(exist_ok=True)
-
-    checkpoints = list(logdir.glob("**/*.ckpt"))
-
-    pattern = re.compile(r"epoch=\d+")
-    for ckpt in checkpoints:
-        if re.search(pattern, ckpt.as_posix()):
-            groups = re.findall(pattern, ckpt.as_posix())
-            epoch = groups[0].replace("=", "_")
-            out_dir = pred_dir.parent.as_posix() + f"/predictions/{epoch}"
-            Path(out_dir).mkdir(exist_ok=True)
-
-            pred_writer = PredWriter(
-                output_dir=out_dir,
-                write_interval="epoch",
-            )
-            trainer = construct_trainer(
-                cfg,
-                callbacks=[pred_writer],
-                logger=None,
-            )
-            ckpt_ = torch.load(ckpt.as_posix())
-            integrator = construct_integrator(cfg)
-            integrator.load_state_dict(ckpt_["state_dict"])
-            if torch.cuda.is_available():
-                integrator.to(torch.device("cuda"))
-            integrator.eval()
-            trainer.predict(
-                integrator,
-                return_predictions=False,
-                dataloaders=data_loader.predict_dataloader(),
-            )
+    # clean_from_memory(
+    #     pred_writer, pred_writer, pred_writer, checkpoint_callback
+    # )
+    #
+    # # prediction
+    # logdir = Path(logdir)
+    # pred_dir = logdir.parent / "predictions"
+    # pred_dir.mkdir(exist_ok=True)
+    #
+    # checkpoints = list(logdir.glob("**/*.ckpt"))
+    #
+    # pattern = re.compile(r"epoch=\d+")
+    # for ckpt in checkpoints:
+    #     if re.search(pattern, ckpt.as_posix()):
+    #         groups = re.findall(pattern, ckpt.as_posix())
+    #         epoch = groups[0].replace("=", "_")
+    #         out_dir = pred_dir.parent.as_posix() + f"/predictions/{epoch}"
+    #         Path(out_dir).mkdir(exist_ok=True)
+    #
+    #         pred_writer = PredWriter(
+    #             output_dir=out_dir,
+    #             write_interval="epoch",
+    #         )
+    #         trainer = construct_trainer(
+    #             cfg,
+    #             callbacks=[pred_writer],
+    #             logger=None,
+    #         )
+    #         ckpt_ = torch.load(ckpt.as_posix())
+    #         integrator = construct_integrator(cfg)
+    #         integrator.load_state_dict(ckpt_["state_dict"])
+    #         if torch.cuda.is_available():
+    #             integrator.to(torch.device("cuda"))
+    #         integrator.eval()
+    #         trainer.predict(
+    #             integrator,
+    #             return_predictions=False,
+    #             dataloaders=data_loader.predict_dataloader(),
+    #         )
+    #
 
 
 def write_mtz_files():

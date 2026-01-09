@@ -72,6 +72,7 @@ def main():
     from pathlib import Path
 
     import torch
+    import yaml
 
     from integrator.callbacks import PredWriter
     from integrator.utils import (
@@ -87,7 +88,8 @@ def main():
     # run dir
     run_dir = Path(args.run_dir)
 
-    # Reading in pred.yaml meta = yaml.safe_load((run_dir / "run_metadata.yaml").read_text())
+    # Reading in pred.yaml
+    meta = yaml.safe_load((run_dir / "run_metadata.yaml").read_text())
     config = load_config(meta["config"])
     wandb_info = meta["wandb"]
     slurm_info = meta["slurm"]
