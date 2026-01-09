@@ -17,7 +17,7 @@ import wandb
 
 def to_cpu(x):
     if torch.is_tensor(x):
-        return to_cpu(x)
+        return x.detach().cpu()
     return x
 
 
