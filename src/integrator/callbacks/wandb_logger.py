@@ -847,7 +847,10 @@ class Plotter(Callback):
         current_refl_ids = preds["refl_ids"]
 
         if tracked_ids is None:
-            tracked_ids = current_refl_ids[: self.n_profiles]
+            # tracked_ids = current_refl_ids[: self.n_profiles]
+            tracked_ids = (
+                current_refl_ids[: self.n_profiles].detach().cpu().tolist()
+            )
             print(
                 f"Selected {self.n_profiles} refl_ids to track: {tracked_ids}"
             )
@@ -865,11 +868,11 @@ class Plotter(Callback):
         )
 
         for ref_id in tracked_ids:
-            id_str = str(ref_id)
-            matches = np.where(np.array(current_refl_ids.cpu()) == ref_id)[0]
+            id_str = str int(ref_id))
+            matches = torch.where(current_refl_ids == ref_id)[0]
 
             if len(matches) > 0:
-                idx = matches[0]
+                idx = matches[0].item()
 
                 tracked_shoeboxes[id_str] = {
                     "profile": profile_images[idx].cpu(),
