@@ -866,7 +866,7 @@ class Plotter(Callback):
 
         for ref_id in tracked_ids:
             id_str = str(ref_id)
-            matches = np.where(np.array(current_refl_ids) == ref_id)[0]
+            matches = np.where(np.array(current_refl_ids.cpu()) == ref_id)[0]
 
             if len(matches) > 0:
                 idx = matches[0]
