@@ -17,6 +17,55 @@ from integrator.model.encoders import (
 )
 from integrator.utils.refl_utils import DEFAULT_DS_COLS
 
+# Default keys to return for prediction
+DEFAULT_PREDICT_KEYS = [
+    "qi_mean",
+    "qi_var",
+    "refl_ids",
+    "qbg_mean",
+    "qbg_var",
+    "qbg_scale",
+    "intensity.prf.value",
+    "intensity.prf.variance",
+    "intensity.sum.value",
+    "intensity.sum.variance",
+    "background.mean",
+    "xyzcal.px.0",
+    "xyzcal.px.1",
+    "xyzcal.px.2",
+    "H",
+    "K",
+    "L",
+]
+
+
+# config classes
+@dataclass
+class IntegratorHyperParameters:
+    data_dim: Literal["2d", "3d"]
+    d: int
+    h: int
+    w: int
+    lr: float = 0.001
+    encoder_out: int = 64
+    weight_decay: float = 0.0
+    mc_samples: int = 4
+    renyi_scale: float = 0.0
+    predict_keys: Literal["default"] | list[str] = "default"
+
+
+@dataclass
+class IntegratorBaseOutputs:
+    rates: Tensor
+    counts: Tensor
+    mask: Tensor
+    qbg: Any
+    qp: Any
+    qi: Any
+    zp: Tensor
+    metadata: dict[str, torch.Tensor]
+    concentration: Tensor | None = None
+
 
 def calculate_intensities(counts, qbg, qp, mask, cfg):
     with torch.no_grad():
@@ -65,55 +114,6 @@ def calculate_intensities(counts, qbg, qp, mask, cfg):
         return intensities
 
 
-DEFAULT_PREDICT_KEYS = [
-    "qi_mean",
-    "qi_var",
-    "refl_ids",
-    "qbg_mean",
-    "qbg_var",
-    "qbg_scale",
-    "intensity.prf.value",
-    "intensity.prf.variance",
-    "intensity.sum.value",
-    "intensity.sum.variance",
-    "background.mean",
-    "xyzcal.px.0",
-    "xyzcal.px.1",
-    "xyzcal.px.2",
-    "H",
-    "K",
-    "L",
-]
-
-
-# config classes
-@dataclass
-class IntegratorHyperParameters:
-    data_dim: Literal["2d", "3d"]
-    d: int
-    h: int
-    w: int
-    lr: float = 0.001
-    encoder_out: int = 64
-    weight_decay: float = 0.0
-    mc_samples: int = 4
-    renyi_scale: float = 0.0
-    predict_keys: Literal["default"] | list[str] = "default"
-
-
-@dataclass
-class IntegratorBaseOutputs:
-    rates: Tensor
-    counts: Tensor
-    mask: Tensor
-    qbg: Any
-    qp: Any
-    qi: Any
-    zp: Tensor
-    concentration: Tensor | None = None
-    metadata: Tensor | None = None
-
-
 def extract_metadata_fields(
     ref: Tensor,
     data_dim: str,
@@ -141,6 +141,25 @@ def extract_metadata_fields(
         }
     else:
         raise ValueError(f"Unsupported data_dim: {data_dim}")
+
+
+class OutputHandler:
+    def __init__(
+        self,
+    ):
+        self.base = {
+            "rates": out.rates,
+            "counts": out.counts,
+            "mask": out.mask,
+            "zp": out.zp,
+            "qbg_mean": out.qbg.mean,
+            "qbg_var": out.qbg.variance,
+            "qp_mean": out.qp.mean,
+            "qi_mean": out.qi.mean,
+            "qi_var": out.qi.variance,
+            "profile": out.qp.mean,
+            "concentration": out.concentration,
+        }
 
 
 def _assemble_outputs(
@@ -366,7 +385,7 @@ class Integrator(LightningModule):
         )
         out = _assemble_outputs(out, self.cfg.data_dim)
         return {
-            "forward_base_out": out,
+            "forward_out": out,
             "qp": qp,
             "qi": qi,
             "qbg": qbg,
@@ -378,12 +397,12 @@ class Integrator(LightningModule):
 
         # Calculate loss
         loss_dict = self.loss(
-            rate=outputs["forward_base_out"]["rates"],
-            counts=outputs["forward_base_out"]["counts"],
+            rate=outputs["forward_out"]["rates"],
+            counts=outputs["forward_out"]["counts"],
             qp=outputs["qp"],
             qi=outputs["qi"],
             qbg=outputs["qbg"],
-            mask=outputs["forward_base_out"]["mask"],
+            mask=outputs["forward_out"]["mask"],
         )
 
         self.log("train: mean(qi.mean)", outputs["qi"].mean.mean())
@@ -418,7 +437,7 @@ class Integrator(LightningModule):
         outputs["loss"] = total_loss
         return {
             "loss": total_loss,
-            "model_output": outputs["forward_base_out"],
+            "forward_out": outputs["forward_out"],
         }
 
     def configure_optimizers(self):
@@ -434,14 +453,14 @@ class Integrator(LightningModule):
         outputs = self(counts, shoebox, mask, metadata)
 
         loss_dict = self.loss(
-            rate=outputs["forward_base_out"]["rates"],
-            counts=outputs["forward_base_out"]["counts"],
+            rate=outputs["forward_out"]["rates"],
+            counts=outputs["forward_out"]["counts"],
             qp=outputs["qp"],
             qi=outputs["qi"],
             qbg=outputs["qbg"],
             # # qri=outputs["qri"],
             # qrbg=outputs["qrbg"],
-            mask=outputs["forward_base_out"]["mask"],
+            mask=outputs["forward_out"]["mask"],
         )
 
         self.log("validation: mean(qi.mean)", outputs["qi"].mean.mean())
@@ -479,7 +498,7 @@ class Integrator(LightningModule):
         outputs["loss"] = total_loss
         return {
             "loss": total_loss,
-            "model_output": outputs["forward_base_out"],
+            "forward_out": outputs["forward_out"],
         }
 
     def predict_step(self, batch: Tensor, _batch_idx):
@@ -488,7 +507,7 @@ class Integrator(LightningModule):
 
         return {
             k: v
-            for k, v in outputs["forward_base_out"].items()
+            for k, v in outputs["forward_out"].items()
             if k in self.predict_keys
         }
 
@@ -528,6 +547,43 @@ class IntegratorModelBArgs:
     encoders: dict[str, nn.Module]
 
 
+def _log_forward_out(
+    self,
+    forward_out: dict,
+    step: Literal["train", "val"],
+):
+    self.log(f"{step}: mean(qi.mean)", forward_out["qi_mean"].mean())
+    self.log(f"{step}: min(qi.mean)", forward_out["qi_mean"].min())
+    self.log(f"{step}: max(qi.mean)", forward_out["qi_mean"].max())
+    self.log(f"{step}: max(qi.variance)", forward_out["qi_var"].max())
+    self.log(f"{step}: min(qi.variance)", forward_out["qi_var"].min())
+    self.log(f"{step}: mean(qi.variance)", forward_out["qi_var"].mean())
+    self.log(f"{step}: mean(qbg.mean)", forward_out["qbg_mean"].mean())
+    self.log(f"{step}: min(qbg.mean)", forward_out["qbg_mean"].min())
+    self.log(f"{step}: max(qbg.mean)", forward_out["qbg_mean"].max())
+    self.log(f"{step}: mean(qbg.variance)", forward_out["qbg_var"].mean())
+    self.log(f"{step}: max(qbg.variance)", forward_out["qbg_var"].max())
+    self.log(f"{step}: min(qbg.variance)", forward_out["qbg_var"].min())
+
+
+def _log_loss(
+    self,
+    kl,
+    nll,
+    total_loss,
+    step: Literal["train", "val"],
+):
+    self.log(
+        "train/loss",
+        total_loss,
+        on_step=False,
+        on_epoch=True,
+        prog_bar=True,
+    )
+    self.log(f"{step} kl", kl, on_step=False, on_epoch=True)
+    self.log(f"{step} nll", nll, on_step=False, on_epoch=True)
+
+
 # %%
 class IntegratorModelB(LightningModule):
     REQUIRED_ENCODERS = {
@@ -552,6 +608,7 @@ class IntegratorModelB(LightningModule):
         self.weight_decay = cfg.weight_decay
         self.mc_samples = cfg.mc_samples
         self.renyi_scale = cfg.renyi_scale
+        self.shoebox_shape = (cfg.d, cfg.h, cfg.w)
 
         # posterior modules
         self.qbg = surrogates["qbg"]
@@ -573,12 +630,8 @@ class IntegratorModelB(LightningModule):
             else cfg.predict_keys
         )
 
+        # additional hyperparameters
         self.automatic_optimization = True
-
-        if cfg.data_dim == "3d":
-            self.shoebox_shape = (cfg.d, cfg.h, cfg.w)
-        elif cfg.data_dim == "2d":
-            self.shoebox_shape = (cfg.h, cfg.w)
 
     def forward(
         self,
@@ -587,8 +640,10 @@ class IntegratorModelB(LightningModule):
         mask: Tensor,
         metadata: dict,
     ) -> dict[str, Any]:
+        # removing negative valued pixels from raw counts
         counts = torch.clamp(counts, min=0)
 
+        # representations
         x_profile = self.encoder1(
             shoebox.reshape(shoebox.shape[0], 1, *(self.shoebox_shape))
         )
@@ -597,20 +652,24 @@ class IntegratorModelB(LightningModule):
             shoebox.reshape(shoebox.shape[0], 1, *(self.shoebox_shape))
         )
 
-        assert self.encoder3 is not None
         x_r = self.encoder3(
             shoebox.reshape(shoebox.shape[0], 1, *(self.shoebox_shape))
         )
+
+        # surrogate distributions
         qbg = self.qbg(x_k, x_r)
         qi = self.qi(x_k, x_r)
         qp = self.qp(x_profile)
 
+        # Monte carlo samples
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
         zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
         zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
+        # Poisson rate
         rate = zI * zp + zbg
 
+        # outputs
         out = IntegratorBaseOutputs(
             rates=rate,
             counts=counts,
@@ -619,12 +678,13 @@ class IntegratorModelB(LightningModule):
             qp=qp,
             qi=qi,
             zp=zp,
-            concentration=qp.concentration,  # if using Dirichlet
             metadata=metadata,
+            concentration=qp.concentration,
         )
         out = _assemble_outputs(out, self.cfg.data_dim)
+
         return {
-            "forward_base_out": out,
+            "forward_out": out,
             "qp": qp,
             "qi": qi,
             "qbg": qbg,
@@ -633,50 +693,31 @@ class IntegratorModelB(LightningModule):
     def training_step(self, batch, _batch_idx):
         counts, shoebox, mask, metadata = batch
         outputs = self(counts, shoebox, mask, metadata)
+        forward_out = outputs["forward_out"]
 
         # Calculate loss
         loss_dict = self.loss(
-            rate=outputs["forward_base_out"]["rates"],
-            counts=outputs["forward_base_out"]["counts"],
+            rate=forward_out["rates"],
+            counts=forward_out["counts"],
             qp=outputs["qp"],
             qi=outputs["qi"],
             qbg=outputs["qbg"],
-            mask=outputs["forward_base_out"]["mask"],
+            mask=forward_out["mask"],
         )
 
-        self.log("train: mean(qi.mean)", outputs["qi"].mean.mean())
-        self.log("train: min(qi.mean)", outputs["qi"].mean.min())
-        self.log("train: max(qi.mean)", outputs["qi"].mean.max())
-        self.log("train: max(qi.variance)", outputs["qi"].variance.max())
-        self.log("train: min(qi.variance)", outputs["qi"].variance.min())
-        self.log("train: mean(qi.variance)", outputs["qi"].variance.mean())
-
-        self.log("train: mean(qbg.mean)", outputs["qbg"].mean.mean())
-        self.log("train: min(qbg.mean)", outputs["qbg"].mean.min())
-        self.log("train: max(qbg.mean)", outputs["qbg"].mean.max())
-        self.log("train: mean(qbg.variance)", outputs["qbg"].variance.mean())
-        self.log("train: max(qbg.variance)", outputs["qbg"].variance.max())
-        self.log("train: min(qbg.variance)", outputs["qbg"].variance.min())
-
+        # Loss components
         total_loss = loss_dict["loss"]
-
         kl = loss_dict["kl_mean"]
         nll = loss_dict["neg_ll_mean"]
-
-        self.log(
-            "train/loss",
-            total_loss,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-        )
-        self.log("train/kl", kl, on_step=False, on_epoch=True)
-        self.log("train/nll", nll, on_step=False, on_epoch=True)
-
         outputs["loss"] = total_loss
+
+        # Logging outputs to W&B
+        _log_forward_out(self, forward_out=forward_out, step="train")
+        _log_loss(self, kl=kl, nll=nll, total_loss=total_loss, step="train")
+
         return {
             "loss": total_loss,
-            "model_output": outputs["forward_base_out"],
+            "forward_out": forward_out,
         }
 
     def configure_optimizers(self):
@@ -690,52 +731,29 @@ class IntegratorModelB(LightningModule):
         # Unpack batch
         counts, shoebox, mask, metadata = batch
         outputs = self(counts, shoebox, mask, metadata)
+        forward_out = outputs["forward_out"]
 
+        # Calculate loss
         loss_dict = self.loss(
-            rate=outputs["forward_base_out"]["rates"],
-            counts=outputs["forward_base_out"]["counts"],
+            rate=forward_out["rates"],
+            counts=forward_out["counts"],
             qp=outputs["qp"],
             qi=outputs["qi"],
             qbg=outputs["qbg"],
-            mask=outputs["forward_base_out"]["mask"],
-        )
-
-        self.log("validation: mean(qi.mean)", outputs["qi"].mean.mean())
-        self.log("validation: min(qi.mean)", outputs["qi"].mean.min())
-        self.log("validation: max(qi.mean)", outputs["qi"].mean.max())
-        self.log("validation: max(qi.variance)", outputs["qi"].variance.max())
-        self.log("validation: min(qi.variance)", outputs["qi"].variance.min())
-        self.log(
-            "validation: mean(qi.variance)", outputs["qi"].variance.mean()
-        )
-
-        self.log("validation: mean(qbg.mean)", outputs["qbg"].mean.mean())
-        self.log("validation: min(qbg.mean)", outputs["qbg"].mean.min())
-        self.log("validation: max(qbg.mean)", outputs["qbg"].mean.max())
-        self.log(
-            "validation: mean(qbg.variance)", outputs["qbg"].variance.mean()
-        )
-        self.log(
-            "validation: max(qbg.variance)", outputs["qbg"].variance.max()
-        )
-        self.log(
-            "validation: min(qbg.variance)", outputs["qbg"].variance.min()
+            mask=forward_out["mask"],
         )
 
         total_loss = loss_dict["loss"]
         kl = loss_dict["kl_mean"]
         nll = loss_dict["neg_ll_mean"]
-
-        self.log(
-            "val/loss", total_loss, on_step=False, on_epoch=True, prog_bar=True
-        )
-        self.log("val/kl", kl, on_step=False, on_epoch=True)
-        self.log("val/nll", nll, on_step=False, on_epoch=True)
-
         outputs["loss"] = total_loss
+
+        _log_forward_out(self, forward_out=forward_out, step="val")
+        _log_loss(self, kl=kl, nll=nll, total_loss=total_loss, step="val")
+
         return {
             "loss": total_loss,
-            "model_output": outputs["forward_base_out"],
+            "forward_out": forward_out,
         }
 
     def predict_step(self, batch: Tensor, _batch_idx):
@@ -744,7 +762,7 @@ class IntegratorModelB(LightningModule):
 
         return {
             k: v
-            for k, v in outputs["forward_base_out"].items()
+            for k, v in outputs["forward_out"].items()
             if k in self.predict_keys
         }
 
@@ -814,3 +832,4 @@ if __name__ == "__main__":
 
         out = integrator.forward(counts, sbox, mask, meta)
         out = integrator.training_step((counts, sbox, mask, meta), 0)
+# %%

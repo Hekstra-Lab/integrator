@@ -17,7 +17,9 @@ class IntegratorArgs:
 
     def __post_init__(self):
         if self.data_dim not in ("2d", "3d"):
-            raise ValueError(f"data_dim must be '2d' or '3d', got {self.data_dim!r}")
+            raise ValueError(
+                f"data_dim must be '2d' or '3d', got {self.data_dim!r}"
+            )
 
         for name in ("d", "h", "w"):
             v = getattr(self, name)

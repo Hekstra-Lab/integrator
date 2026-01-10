@@ -20,16 +20,18 @@ from .global_config import GlobalConfig
 from .integrator import IntegratorArgs, IntegratorConfig
 from .logger import LoggerConfig
 from .loss import (
+    LossArgs,
+    LossConfig,
+)
+from .output import OutputConfig
+from .priors import (
     DirichletParams,
     ExponentialParams,
     GammaParams,
     HalfCauchyParams,
     LogNormalParams,
-    LossArgs,
-    LossConfig,
     PriorConfig,
 )
-from .output import OutputConfig
 from .trainer import TrainerConfig
 from .yaml_config import YAMLConfig
 

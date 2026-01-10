@@ -164,7 +164,7 @@ def main():
 
 if __name__ == "__main__":
     main()
-
+    #
     # import argparse
     # import re
     # from pathlib import Path
@@ -181,7 +181,7 @@ if __name__ == "__main__":
     # )
     #
     # # Path to run-dir
-    # run_dir = Path("/Users/luis/integrator/dir_test_run/")
+    # run_dir = Path("/Users/luis/integrator/temp_run_dir/")
     #
     # # Reading in pred.yaml
     # meta = yaml.safe_load((run_dir / "run_metadata.yaml").read_text())

@@ -16,11 +16,7 @@ from torch.distributions import (
 )
 
 from integrator.configs.config_utils import shallow_dict
-from integrator.configs.loss import (
-    DirichletParams,
-    LossConfig,
-    PriorConfig,
-)
+from integrator.configs.priors import DirichletParams, PriorConfig
 
 PRIOR_MAP = {
     "gamma": Gamma,
@@ -55,7 +51,9 @@ def create_center_focused_dirichlet_prior(
                 dist_c = abs(c - center_c) / (channels / 2)
                 dist_h = abs(h - center_h) / (height / 2)
                 dist_w = abs(w - center_w) / (width / 2)
-                distance = np.sqrt(dist_c**2 + dist_h**2 + dist_w**2) / np.sqrt(3)
+                distance = np.sqrt(
+                    dist_c**2 + dist_h**2 + dist_w**2
+                ) / np.sqrt(3)
 
                 if distance < peak_percentage * 5:
                     alpha_value = (
@@ -248,74 +246,3 @@ class Loss(nn.Module):
             "kl_i_mean": kl_i.mean(),
             "kl_bg_mean": kl_bg.mean(),
         }
-
-
-# %%
-if __name__ == "__main__":
-    from math import prod
-
-    import torch
-
-    from integrator.model.distributions import (
-        DirichletDistribution,
-        GammaDistributionRepamA,
-    )
-    from integrator.model.loss import LossConfig
-    from integrator.utils import (
-        create_data_loader,
-        create_integrator,
-        load_config,
-    )
-    from utils import CONFIGS
-
-    cfg = list(CONFIGS.glob("*"))[0]
-    cfg = load_config(cfg)
-
-    integrator = create_integrator(cfg)
-    data = create_data_loader(cfg)
-
-    losscfg = LossConfig(
-        pprf=None,
-        pi=None,
-        pbg=None,
-        shape=(1, 21, 21),
-    )
-
-    # hyperparameters
-    mc_samples = 100
-    shape = (1, 21, 21)
-
-    # distributions
-    qbg_ = GammaDistributionRepamA(in_features=64)
-    qi_ = GammaDistributionRepamA(in_features=64)
-    qp_ = DirichletDistribution(in_features=64, sbox_shape=(3, 21, 21))
-
-    # load a batch
-    counts, sbox, mask, meta = next(iter(data.train_dataloader()))
-
-    shoebox_rep = integrator.encoder1(sbox.reshape(sbox.shape[0], 1, 21, 21))
-    intensity_rep = integrator.encoder2(sbox.reshape(sbox.shape[0], 1, 21, 21))
-
-    # get distributinos
-    qbg = qbg_(intensity_rep)
-    qi = qi_(intensity_rep)
-    qp = qp_(shoebox_rep)
-
-    # get samples
-    zbg = qbg.rsample([mc_samples]).unsqueeze(-1).permute(1, 0, 2)
-    zprf = qp.rsample([mc_samples]).permute(1, 0, 2)
-    zi = qi.rsample([mc_samples]).unsqueeze(-1).permute(1, 0, 2)
-
-    rate = zi * zprf + zbg  # [B,S,Pix]
-
-    # priors
-    pbg = HalfCauchy(0.5)
-    pi = HalfCauchy(0.5)
-    pprf = Dirichlet(torch.ones(prod(shape)) * 0.01)
-
-    kl_pprf = _kl(qp, pprf, losscfg)
-    kl_pi = _kl(qi, pi, losscfg)
-    kl_pbg = _kl(qbg, pbg, losscfg)
-
-    ll = Poisson(rate + 0.001).log_prob(counts.unsqueeze(1))
-    ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)

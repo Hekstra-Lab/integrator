@@ -3,8 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from integrator.layers import Linear
-
 OPERATIONS = {
     "2d": {
         "conv": nn.Conv2d,
@@ -192,125 +190,6 @@ class IntensityEncoder(nn.Module):
         x = x.squeeze()  # From (B, C, 1, 1) to (B, C)
         x = self.fc(x)
         x = F.relu(x)
-
-        return x
-
-
-# %%
-class IntensityEncoder2DMinimal(nn.Module):
-    def __init__(
-        self,
-        in_channels: int = 1,
-        encoder_out: int = 64,
-        conv1_out: int = 16,
-        conv2_out: int = 32,
-    ):
-        super().__init__()
-
-        self.conv1 = nn.Conv2d(
-            in_channels=in_channels,
-            out_channels=conv1_out,
-            kernel_size=3,
-            padding=1,
-            bias=True,
-        )
-        self.conv2 = nn.Conv2d(
-            in_channels=conv1_out,
-            out_channels=conv2_out,
-            kernel_size=3,
-            padding=1,
-            bias=True,
-        )
-
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-
-        self.global_pool = nn.AdaptiveAvgPool2d(1)  # (B, C, 1, 1)
-
-        self.fc = torch.nn.Linear(conv2_out, encoder_out)
-
-        self.activation = nn.SiLU()
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (B, C, H, W)
-        x = self.activation(self.conv1(x))  # (B, conv1_out, H, W)
-        x = self.pool(x)  # (B, conv1_out, H/2, W/2)
-        x = self.activation(self.conv2(x))  # (B, conv2_out, H/2, W/2)
-        x = self.global_pool(x)  # (B, conv2_out, 1, 1)
-        x = x.view(x.size(0), -1)  # (B, conv2_out)
-        x = self.fc(x)  # (B, encoder_out)
-
-        return x
-
-
-# %%
-class ProfileEncoder2DMinimal(nn.Module):
-    def __init__(
-        self,
-        in_channels=1,
-        encoder_out=64,
-        conv1_out=16,
-        conv2_out=32,
-        pool_kernel_size=2,
-        input_shape=(21, 21),
-    ):
-        """
-        input_shape: (H, W) of shoebox
-        """
-        super().__init__()
-        self.in_channels = in_channels
-        self.encoder_out = encoder_out
-
-        # 1st conv block
-        self.conv1 = nn.Conv2d(
-            in_channels=in_channels,
-            out_channels=conv1_out,
-            kernel_size=3,
-            padding=1,
-            bias=True,
-        )
-
-        self.pool = nn.MaxPool2d(kernel_size=pool_kernel_size)
-
-        # 2nd conv block
-        self.conv2 = nn.Conv2d(
-            in_channels=conv1_out,
-            out_channels=conv2_out,
-            kernel_size=3,
-            padding=1,
-            bias=True,
-        )
-        # nonlinearity
-        self.activation = nn.SiLU()
-
-        # compute flattened size dynamically
-        self.flattened_size = self._infer_flattened_size(input_shape)
-
-        # linear projection to embedding
-        self.fc = Linear(
-            in_features=self.flattened_size,
-            out_features=encoder_out,
-            bias=False,
-        )
-
-    def _infer_flattened_size(self, input_shape):
-        with torch.no_grad():
-            H, W = input_shape
-            dummy = torch.zeros(1, self.in_channels, H, W)
-            x = self.activation(self.conv1(dummy))
-            x = self.pool(x)  # reduces to ~ (H/2, W/2)
-            x = self.activation(self.conv2(x))
-            return x.numel()
-
-    def forward(self, x):
-        # x: (B, C, H, W)
-        x = self.activation(self.conv1(x))
-        x = self.pool(x)
-        x = self.activation(self.conv2(x))
-
-        x = x.view(x.size(0), -1)  # (B, flattened_size)
-
-        x = self.fc(x)
-        x = self.activation(x)
 
         return x
 

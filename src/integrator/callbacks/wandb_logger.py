@@ -1,5 +1,6 @@
 import sys
 import traceback
+from collections.abc import Mapping
 from typing import Any
 
 import matplotlib.pyplot as plt
@@ -7,15 +8,17 @@ import numpy as np
 import pandas as pd
 import polars as pl
 import torch
+import wandb
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import Callback
+from pytorch_lightning.loggers import WandbLogger
 from torch import Tensor
 
-import wandb
+## The callbacks assume a W&B logger with logger.experiment.dir
 
 
-def to_cpu(x):
+def to_cpu(x) -> torch.Tensor:
     if torch.is_tensor(x):
         return x.detach().cpu()
     return x
@@ -254,8 +257,8 @@ class LogFano(Callback):
         bin_edges = zip(edges[:-1], edges[1:], strict=False)
 
         bin_labels = []
-        for l, r in bin_edges:
-            bin_labels.append(f"{l} - {r}")
+        for a, b in bin_edges:
+            bin_labels.append(f"{a} - {b}")
 
         # add end conditions
         bin_labels.insert(0, f"<{bin_labels[0].split()[0]}")
@@ -277,9 +280,26 @@ class LogFano(Callback):
         self.agg_df = _get_agg_df(self.bin_labels)
 
     def on_train_batch_end(
-        self, trainer, pl_module, outputs, batch, batch_idx
+        self,
+        trainer: Trainer,
+        pl_module,
+        outputs,
+        batch,
+        batch_idx,
     ):
-        out = to_cpu(outputs["model_output"])
+        # do nothing if outputs is None
+        if outputs is None:
+            return
+
+        if not isinstance(outputs, Mapping):
+            raise TypeError("Outputs should be a dictionary type")
+
+        if "forward_out" not in outputs:
+            raise KeyError(
+                "outputs dictionary should contain a 'forward_out' key"
+            )
+
+        out = outputs["forward_out"]
         fano = to_cpu(_fano(out, "qi_mean", "qi_var"))
         cv = to_cpu(_cv(out, "qi_mean", "qi_var"))
 
@@ -289,8 +309,8 @@ class LogFano(Callback):
                 "refl_ids": to_cpu(out["refl_ids"]),
                 "qi_mean": to_cpu(out["qi_mean"]),
                 "qi_var": to_cpu(out["qi_var"]),
-                "fano": to_cpu(fano),
-                "cv": to_cpu(cv),
+                "fano": fano,
+                "cv": cv,
             }
         )
 
@@ -349,7 +369,12 @@ class LogFano(Callback):
         wandb.log({"train: avg signal-to-noise": wandb.Image(fig)})
         plt.close(fig)
 
-        log_dir = trainer.logger.experiment.dir
+        # Getting log direcotory
+        logger = trainer.logger
+        if isinstance(logger, WandbLogger):
+            log_dir = logger.experiment.dir
+        else:
+            log_dir = trainer.default_root_dir
 
         csv_fname = (
             log_dir + f"/log_fano_csv_epoch_{trainer.current_epoch}.csv"
@@ -450,14 +475,14 @@ class PlotterLD(Callback):
     ):
         with torch.no_grad():
             # get forward outputs
-            base_output = outputs["model_output"]
+            forward_out = outputs["forward_out"]
 
             # additional metrics to log
 
             if self.current_epoch % self.plot_every_n_epochs == 0:
                 self.tracked_ids_train, self.tracked_shoeboxes_train = (
                     self.update_tracked_shoeboxes(
-                        base_output,
+                        forward_out,
                         self.tracked_ids_train,
                         self.tracked_shoeboxes_train,
                     )
@@ -478,13 +503,13 @@ class PlotterLD(Callback):
                 "dials_bg_mean",
                 "dials_bg_sum_value",
             ]:
-                if key in base_output:
+                if key in forward_out:
                     if key == "profile":
-                        self.preds_train[key] = to_cpu(base_output[key])
-                    elif hasattr(base_output[key], "sample"):
-                        self.preds_train[key] = to_cpu(base_output[key].mean)
+                        self.preds_train[key] = to_cpu(forward_out[key])
+                    elif hasattr(forward_out[key], "sample"):
+                        self.preds_train[key] = to_cpu(forward_out[key].mean)
                     else:
-                        self.preds_train[key] = to_cpu(base_output[key])
+                        self.preds_train[key] = to_cpu(forward_out[key])
 
             # Clean up
             torch.cuda.empty_cache()
@@ -635,12 +660,12 @@ class PlotterLD(Callback):
     ):
         with torch.no_grad():
             # get forward outputs
-            base_output = outputs["model_output"]
+            forward_out = outputs["forward_out"]
 
             # updated tracked shoeboxes
             self.tracked_ids_val, self.tracked_shoeboxes_val = (
                 self.update_tracked_shoeboxes(
-                    base_output,
+                    forward_out,
                     tracked_ids=self.tracked_ids_val,
                     tracked_shoeboxes=self.tracked_shoeboxes_val,
                 )
@@ -660,15 +685,15 @@ class PlotterLD(Callback):
                 "dials_bg_mean",
                 "dials_bg_sum_value",
             ]:
-                if key in base_output:
-                    if hasattr(base_output[key], "sample"):
+                if key in forward_out:
+                    if hasattr(forward_out[key], "sample"):
                         self.preds_validation[key] = to_cpu(
-                            base_output[key].mean
+                            forward_out[key].mean
                         )
                     else:
-                        self.preds_validation[key] = to_cpu(base_output[key])
-                elif key in base_output:
-                    self.preds_validation[key] = to_cpu(base_output[key])
+                        self.preds_validation[key] = to_cpu(forward_out[key])
+                elif key in forward_out:
+                    self.preds_validation[key] = to_cpu(forward_out[key])
 
             # Clean up
             torch.cuda.empty_cache()
@@ -818,6 +843,7 @@ class Plotter(Callback):
         d: int = 3,
         h: int = 21,
         w: int = 21,
+        eps: float = 1e-8,
     ):
         super().__init__()
         self.d = d
@@ -833,6 +859,7 @@ class Plotter(Callback):
         self.current_epoch = 0
         self.tracked_shoeboxes_val = dict()
         self.tracked_shoeboxes_train = dict()
+        self.eps = eps
 
     def update_tracked_shoeboxes(
         self,
@@ -894,45 +921,52 @@ class Plotter(Callback):
     def on_train_batch_end(
         self, trainer, pl_module, outputs, batch, batch_idx
     ):
+        # do nothing if outputs is None
+        if outputs is None:
+            return
+
+        if not isinstance(outputs, Mapping):
+            raise TypeError("Outputs should be a dictionary type")
+
+        if "forward_out" not in outputs:
+            raise KeyError(
+                "outputs dictionary should contain a 'forward_out' key"
+            )
+
         with torch.no_grad():
             # get forward outputs
-            base_output = outputs["model_output"]
+            forward_out = outputs["forward_out"]
 
-            # additional metrics to log
-
+            # Plot every n epochs
             if self.current_epoch % self.plot_every_n_epochs == 0:
                 self.tracked_ids_train, self.tracked_shoeboxes_train = (
                     self.update_tracked_shoeboxes(
-                        base_output,
+                        forward_out,
                         self.tracked_ids_train,
                         self.tracked_shoeboxes_train,
                     )
                 )
 
             # Create CPU tensor versions to avoid keeping GPU memory
-            self.preds_train = {}
-            for key in [
-                "qi_mean",
-                "qi_var",
-                "intensity.prf.value",
-                "intensity.prf.variance",
-                "profile",
-                "qbg_mean",
-                "xyzcal.px.0",
-                "xyzcal.px.1",
-                "xyzcal.px.2",
-                "background.mean",
-                "dials_bg_sum_value",
-                "d",
-            ]:
-                if key in base_output:
-                    if key == "profile":
-                        self.preds_train[key] = to_cpu(base_output[key])
-                    elif hasattr(base_output[key], "sample"):
-                        self.preds_train[key] = to_cpu(base_output[key].mean)
+            self.preds_train = {k: to_cpu(v) for k, v in forward_out.items()}
 
-                    else:
-                        self.preds_train[key] = to_cpu(base_output[key])
+            #
+            # for key in [
+            #     "qi_mean",
+            #     "qi_var",
+            #     "intensity.prf.value",
+            #     "intensity.prf.variance",
+            #     "profile",
+            #     "qbg_mean",
+            #     "xyzcal.px.0",
+            #     "xyzcal.px.1",
+            #     "xyzcal.px.2",
+            #     "background.mean",
+            #     "dials_bg_sum_value",
+            #     "d",
+            # ]:
+            #     if key in forward_out:
+            #         self.preds_train[key] = to_cpu(forward_out[key])
 
             # Clean up
             torch.cuda.empty_cache()
@@ -943,24 +977,26 @@ class Plotter(Callback):
                 # Create data for scatter plots
                 data = []
 
-                i_flat = self.preds_train["qi_mean"].flatten() + 1e-8
-
-                i_var_flat = self.preds_train["qi_var"].flatten() + 1e-8
+                i_flat = self.preds_train["qi_mean"].flatten() + self.eps
+                i_var_flat = self.preds_train["qi_var"].flatten() + self.eps
 
                 dials_flat = (
-                    self.preds_train["intensity.prf.value"].flatten() + 1e-8
+                    self.preds_train["intensity.prf.value"].flatten()
+                    + self.eps
                 )
                 dials_var_flat = (
-                    self.preds_train["intensity.prf.variance"].flatten() + 1e-8
+                    self.preds_train["intensity.prf.variance"].flatten()
+                    + self.eps
                 )
                 dials_bg_flat = (
-                    self.preds_train["background.mean"].flatten() + 1e-8
+                    self.preds_train["background.mean"].flatten() + self.eps
                 )
-                qbg_flat = self.preds_train["qbg_mean"].flatten() + 1e-8
+                qbg_flat = self.preds_train["qbg_mean"].flatten() + self.eps
 
                 x_c_flat = self.preds_train["xyzcal.px.0"].flatten()
                 y_c_flat = self.preds_train["xyzcal.px.1"].flatten()
                 z_c_flat = self.preds_train["xyzcal.px.2"].flatten()
+
                 d_flat = 1 / self.preds_train["d"].flatten().pow(2)
                 d_ = self.preds_train["d"]
 
@@ -969,10 +1005,10 @@ class Plotter(Callback):
                     try:
                         data.append(
                             [
-                                float(torch.log(i_flat[i])),
-                                float(torch.log(i_var_flat[i])),
-                                float(torch.log(dials_flat[i])),
-                                float(torch.log(dials_var_flat[i])),
+                                float(i_flat[i]),
+                                float(i_var_flat[i]),
+                                float(dials_flat[i]),
+                                float(dials_var_flat[i]),
                                 dials_bg_flat[i],
                                 qbg_flat[i],
                                 x_c_flat[i],
@@ -1051,13 +1087,13 @@ class Plotter(Callback):
                     "Train: Bg vs DIALS bg": wandb.plot.scatter(
                         table, "mean(qbg)", "DIALS background.mean"
                     ),
-                    "Correlation Coefficient: qi": corr_I,
-                    "Correlation Coefficient: bg": corr_bg,
-                    "Max mean(I)": torch.max(i_flat),
-                    "Mean mean(I)": torch.mean(i_flat),
-                    "Mean var(I) ": torch.mean(i_var_flat),
-                    "Min var(I)": torch.min(i_var_flat),
-                    "Max var(I)": torch.max(i_var_flat),
+                    "Train correlation coefficient: qi": corr_I,
+                    "Train correlation coefficient: bg": corr_bg,
+                    "Train max mean(I)": torch.max(i_flat),
+                    "Train mean mean(I)": torch.mean(i_flat),
+                    "Train mean var(I) ": torch.mean(i_var_flat),
+                    "Train min var(I)": torch.min(i_var_flat),
+                    "Train max var(I)": torch.max(i_var_flat),
                 }
 
                 log_dict["mean(qbg.mean)"] = torch.mean(
@@ -1101,18 +1137,21 @@ class Plotter(Callback):
         self.current_epoch += 1
 
     def on_validation_batch_end(
-        self, trainer, pl_module, outputs, batch, batch_idx
+        self,
+        trainer,
+        pl_module,
+        outputs,
+        batch,
+        batch_idx,
     ):
         with torch.no_grad():
             # get forward outputs
-            base_output = outputs["model_output"]
-
-            # additional metrics to log
+            forward_out = outputs["forward_out"]
 
             # updated tracked shoeboxes
             self.tracked_ids_val, self.tracked_shoeboxes_val = (
                 self.update_tracked_shoeboxes(
-                    base_output,
+                    forward_out,
                     tracked_ids=self.tracked_ids_val,
                     tracked_shoeboxes=self.tracked_shoeboxes_val,
                 )
@@ -1133,20 +1172,20 @@ class Plotter(Callback):
                 "dials_bg_sum_value",
                 "d",
             ]:
-                if key in base_output:
-                    if hasattr(base_output[key], "sample"):
+                if key in forward_out:
+                    if hasattr(forward_out[key], "sample"):
                         self.preds_validation[key] = to_cpu(
-                            base_output[key].mean
+                            forward_out[key].mean
                         )
 
                     else:
-                        self.preds_validation[key] = to_cpu(base_output[key])
+                        self.preds_validation[key] = to_cpu(forward_out[key])
 
-                elif key in base_output:
-                    self.preds_validation[key] = to_cpu(base_output[key])
+                elif key in forward_out:
+                    self.preds_validation[key] = to_cpu(forward_out[key])
 
             # Clean up
-            del base_output
+            del forward_out
             torch.cuda.empty_cache()
 
     def on_validation_epoch_end(
@@ -1158,22 +1197,27 @@ class Plotter(Callback):
             try:
                 data = []
 
-                i_flat = self.preds_validation["qi_mean"].flatten() + 1e-8
+                i_flat = self.preds_validation["qi_mean"].flatten() + self.eps
 
-                i_var_flat = self.preds_validation["qi_var"].flatten() + 1e-8
+                i_var_flat = (
+                    self.preds_validation["qi_var"].flatten() + self.eps
+                )
 
                 dials_flat = (
                     self.preds_validation["intensity.prf.value"].flatten()
-                    + 1e-8
+                    + self.eps
                 )
                 dials_var_flat = (
                     self.preds_validation["intensity.prf.variance"].flatten()
-                    + 1e-8
+                    + self.eps
                 )
                 dials_bg_flat = (
-                    self.preds_validation["background.mean"].flatten() + 1e-8
+                    self.preds_validation["background.mean"].flatten()
+                    + self.eps
                 )
-                qbg_flat = self.preds_validation["qbg_mean"].flatten() + 1e-8
+                qbg_flat = (
+                    self.preds_validation["qbg_mean"].flatten() + self.eps
+                )
 
                 x_c_flat = self.preds_validation["xyzcal.px.0"].flatten()
                 y_c_flat = self.preds_validation["xyzcal.px.1"].flatten()
@@ -1503,20 +1547,20 @@ class MVNPlotter(Callback):
         with torch.no_grad():
             # 1) Forward pass (no intensities yet)
             shoebox, dials, masks, metadata, counts = batch
-            base_output = pl_module(shoebox, dials, masks, metadata, counts)
+            forward_out = pl_module(shoebox, dials, masks, metadata, counts)
 
             # 2) Call calculate_intensities with the relevant fields
             intensities = pl_module.calculate_intensities(
-                counts=base_output["counts"],
-                qbg=base_output["qbg_mean"],
-                profile=base_output["profile"],
-                dead_pixel_mask=base_output["masks"],
+                counts=forward_out["counts"],
+                qbg=forward_out["qbg_mean"],
+                profile=forward_out["profile"],
+                dead_pixel_mask=forward_out["masks"],
             )
 
             # 3) Merge intensities into a new dictionary
             #    so that "weighted_sum_mean", "thresholded_mean", etc. are available
             predictions = {
-                **base_output,
+                **forward_out,
                 "weighted_sum_mean": intensities["weighted_sum_mean"],
                 "weighted_sum_var": intensities["weighted_sum_var"],
                 "thresholded_mean": intensities["thresholded_mean"],
@@ -1548,11 +1592,8 @@ class MVNPlotter(Callback):
                 "qbg_mean",
             ]:
                 if key in predictions:
-                    if key == "profile":
-                        self.train_predictions[key] = (
-                            predictions[key].detach().cpu()
-                        )
-                    elif hasattr(predictions[key], "sample"):
+                    # Check if distribution
+                    if hasattr(predictions[key], "sample"):
                         self.train_predictions[key] = (
                             predictions[key].mean.detach().cpu()
                         )
@@ -1562,7 +1603,7 @@ class MVNPlotter(Callback):
                         )
 
             # Clean up
-            del base_output, intensities, predictions
+            del forward_out, intensities, predictions
             torch.cuda.empty_cache()
 
     def on_train_epoch_end(self, trainer, pl_module):
@@ -1713,13 +1754,13 @@ class MVNPlotter(Callback):
         # Only track the last validation batch to save memory
 
         with torch.no_grad():
-            base_output = outputs
+            forward_out = outputs
 
             intensities = pl_module.calculate_intensities(
-                counts=base_output["counts"],
-                qbg=base_output["qbg_mean"],
-                profile=base_output["profile"],
-                dead_pixel_mask=base_output["masks"],
+                counts=forward_out["counts"],
+                qbg=forward_out["qbg_mean"],
+                profile=forward_out["profile"],
+                dead_pixel_mask=forward_out["masks"],
             )
 
             # Store only minimal data needed for metrics
@@ -1730,130 +1771,18 @@ class MVNPlotter(Callback):
                 "weighted_sum_mean",
                 "thresholded_mean",
             ]:
-                if key in base_output:
-                    if hasattr(base_output[key], "sample"):
+                if key in forward_out:
+                    if hasattr(forward_out[key], "sample"):
                         self.val_predictions[key] = (
-                            base_output[key].mean.detach().cpu()
+                            forward_out[key].mean.detach().cpu()
                         )
                     else:
                         self.val_predictions[key] = (
-                            base_output[key].detach().cpu()
+                            forward_out[key].detach().cpu()
                         )
                 elif key in intensities:
                     self.val_predictions[key] = intensities[key].detach().cpu()
 
             # Clean up
-            del base_output, intensities
+            del forward_out, intensities
             torch.cuda.empty_cache()
-
-
-# %%
-if __name__ == "__main__":
-    import polars as pl
-    import torch
-
-    from integrator.utils import (
-        create_data_loader,
-        create_integrator,
-        load_config,
-    )
-    from utils import CONFIGS
-
-    cfg = list(CONFIGS.glob("*"))[0]
-
-    cfg = load_config(cfg)
-
-    integrator = create_integrator(cfg)
-    data = create_data_loader(cfg)
-
-    # load a batch
-    counts, sbox, mask, meta = next(iter(data.train_dataloader()))
-
-    # get training step output
-    training_step_out = integrator.training_step((counts, sbox, mask, meta), 0)
-
-    out = training_step_out["model_output"]
-
-    # %%
-
-    # %%
-
-    # setting up bin edges
-    edges = [0, 50, 100, 300, 600, 1000, 1500, 2500]
-    bin_edges = zip(edges[:-1], edges[1:], strict=False)
-
-    bin_labels = []
-    for l, r in bin_edges:
-        bin_labels.append(f"{l} - {r}")
-
-    # add end conditions
-    bin_labels.insert(0, f"<{bin_labels[0].split()[0]}")
-    bin_labels.append(f">{bin_labels[-1].split()[0]}")
-
-    # %%
-    fano = _fano(out, "qi_mean", "qi_var")
-
-    df = pl.DataFrame(
-        {
-            "refl_ids": out["refl_ids"],
-            "qi_mean": out["qi_mean"].detach().cpu(),
-            "qi_var": out["qi_var"].detach().cpu(),
-            "fano": fano.detach().cpu(),
-        }
-    )
-
-    df = df.with_columns(
-        pl.col("qi_mean").cut(edges, labels=bin_labels).alias("intensity_bin")
-    )
-
-    avg_df = df.group_by(pl.col("intensity_bin")).agg(
-        fano_mean=pl.col("fano").mean(), n=pl.len()
-    )
-
-    base_df = pl.DataFrame(
-        {"intensity_bin": bin_labels}, schema={"intensity_bin": pl.Categorical}
-    )
-
-    merged_df = base_df.join(avg_df, how="left", on="intensity_bin").fill_null(
-        0
-    )
-
-    agg_df = pl.DataFrame(
-        data={
-            "intensity_bin": bin_labels,
-            "fano_mean": pl.zeros(len(bin_labels), eager=True),
-            "n": pl.zeros(len(bin_labels), eager=True),
-        },
-        schema={
-            "intensity_bin": pl.Categorical,
-            "fano_mean": pl.Float32,
-            "n": pl.Float32,
-        },
-    )
-    numeric_cols = ["fano_mean", "n"]
-
-    result = agg_df.with_columns(
-        [pl.col(c) + merged_df[c] for c in numeric_cols]
-    )
-    epoch_df = result.with_columns(
-        (pl.col("fano_mean") / pl.col("n")).alias("avg_fano")
-    )
-
-    # %%
-    def plot_avg_fano(df):
-        fig, ax = plt.subplots()
-
-        labels = df["intensity_bin"].to_list()
-        y = df["avg_fano"].to_list()
-        x = np.linspace(0, len(y), len(y))
-
-        ax.scatter(x, y, color="black")
-        ax.set_xticks(ticks=x, labels=labels)
-        ax.set_xlabel("intensity bin")
-        ax.set_ylabel("avg var/mean ratio")
-        ax.set_title("Average variance/mean per intensity bin")
-        ax.grid()
-        return fig
-
-    fig = plot_avg_fano(epoch_df)
-    pass

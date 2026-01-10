@@ -18,9 +18,7 @@ from integrator.model.distributions import (
 )
 from integrator.model.encoders import (
     IntensityEncoder,
-    IntensityEncoder2DMinimal,
     MLPMetadataEncoder,
-    ProfileEncoder2DMinimal,
     ShoeboxEncoder,
 )
 from integrator.model.integrators import Integrator, IntegratorModelB
@@ -31,8 +29,6 @@ REGISTRY = {
         "shoebox_encoder": ShoeboxEncoder,
         "intensity_encoder": IntensityEncoder,
         "mlp_metadata_encoder": MLPMetadataEncoder,
-        "shoebox_minimal": ProfileEncoder2DMinimal,
-        "intensity_encoder_minimal": IntensityEncoder2DMinimal,
     },
     "loss": {
         "default": Loss,

@@ -5,7 +5,6 @@ from collections.abc import Mapping
 from importlib.resources.abc import Traversable
 from pathlib import Path
 
-# -
 # ROOT_DIR = files("integrator")
 ROOT_DIR = Path(__file__).parents[1]
 # RESOURCES = ROOT_DIR / "resources"
