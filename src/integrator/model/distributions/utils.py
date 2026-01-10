@@ -39,7 +39,3 @@ class Constrain(nn.Module):
             raise ValueError(
                 f"Unknown constraint kind: {self.constraint_fn!r}"
             )
-
-
-if __name__ == "__main__":
-    pass

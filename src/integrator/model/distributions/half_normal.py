@@ -1,6 +1,5 @@
 from typing import Literal
 
-import torch
 import torch.nn as nn
 from torch import Tensor
 from torch.distributions.half_normal import HalfNormal
@@ -35,13 +34,3 @@ class HalfNormalDistribution(nn.Module):
         scale = self.fc(x)
         scale = self.constrain_fn(scale)
         return HalfNormal(scale=scale)
-
-
-if __name__ == "__main__":
-    # Example usage
-
-    in_features = 64
-    half_normal_dist = HalfNormalDistribution(in_features, out_features=1)
-
-    representation = torch.randn(10, in_features)
-    qbg = half_normal_dist(representation)

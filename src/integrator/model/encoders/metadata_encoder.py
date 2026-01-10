@@ -1,19 +1,11 @@
 import torch.nn as nn
 from torch import Tensor
-from torch.nn import Linear, Sequential
+from torch.nn import Linear
 
 from integrator.layers import ResidualLayer
 
 
 class MLPMetadataEncoder(nn.Module):
-    """Encoder to be used with experimental metadata associated with each shoebox, such as predicted centroid coordinates,
-    Miller indices, average shoebox intensity, etc.
-    The architecture is based off a Residual Network.
-    """
-
-    model: Sequential
-    """A `torch.nn.Sequential` container containing the sequence of layers applied to the input shoebox."""
-
     def __init__(
         self,
         encoder_in: int,

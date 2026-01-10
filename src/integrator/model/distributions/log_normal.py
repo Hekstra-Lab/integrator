@@ -8,10 +8,6 @@ from integrator.layers import Linear
 
 
 class LogNormalDistribution(nn.Module):
-    """
-    LogNormal distribution with parameters predicted by a linear layer.
-    """
-
     def __init__(
         self,
         in_features: int,
@@ -24,20 +20,15 @@ class LogNormalDistribution(nn.Module):
             out_features=2,
             bias=False,
         )
+        self.eps = eps
 
     def forward(
         self,
         x: Tensor,
     ) -> LogNormal:
         raw_loc, raw_scale = self.fc(x).chunk(2, dim=-1)
-        loc = torch.tanh(raw_loc) * 12
-        scale = F.softplus(raw_scale)
+        loc = torch.exp(raw_loc) + self.eps
+        scale = F.softplus(raw_scale) + self.eps
         lognormal = LogNormal(loc=loc.squeeze(), scale=scale.squeeze())
 
         return lognormal
-
-
-if __name__ == "__main__":
-    # generate a batch of 10 representation vectors
-    representation = torch.randn(10, 64)
-    metarep = torch.randn(10, 64)

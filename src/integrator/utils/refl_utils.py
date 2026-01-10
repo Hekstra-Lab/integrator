@@ -1,53 +1,40 @@
 import msgpack
 import numpy as np
 
-SCALAR_DTYPES = {
-    "zeta": "double",
-    "qe": "double",
-    "profile.correlation": "double",
-    "partiality": "double",
-    "partial_id": "std::size_t",
-    "panel": "std::size_t",
-    "flags": "std::size_t",
-    "num_pixels.valid": "int",
-    "num_pixels.foreground": "int",
-    "num_pixels.background_used": "int",
-    "num_pixels.background": "int",
-    "lp": "double",
-    "intensity.prf.value": "double",
-    "intensity.prf.variance": "double",
-    "intensity.sum.value": "double",
-    "intensity.sum.variance": "double",
-    "imageset_id": "int",
-    "entering": "bool",
-    "d": "double",
-    "background.mean": "double",
-    "background.sum.value": "double",
-    "background.sum.variance": "double",
-    "refl_ids": "int",
-}
-
-VECTOR_COLUMNS = {
-    "bbox": ("int6", 6),
-    "s1": ("vec3<double>", 3),
-    "xyzcal.mm": ("vec3<double>", 3),
-    "xyzcal.px": ("vec3<double>", 3),
-    "xyzobs.mm.value": ("vec3<double>", 3),
-    "xyzobs.mm.variance": ("vec3<double>", 3),
-    "xyzobs.px.value": ("vec3<double>", 3),
-    "xyzobs.px.variance": ("vec3<double>", 3),
-    "miller_index": ("cctbx::miller::index<>", 3),
-}
-
-DEFAULT_REFL_COLS = list(SCALAR_DTYPES.keys()) + list(VECTOR_COLUMNS.keys())
-
-# unique from the model
 MODEL_OUT_KEYS = [
     "qbg_mean",
     "qbg_var",
     "qi_mean",
     "qi_var",
 ]
+
+# refl table headers
+REFL_TAG = "dials::af::reflection_table"
+REFL_VERSION = 1
+
+# byte sizes of dtypes
+DTYPE_SIZES = {
+    "double": 8,
+    "std::size_t": 8,
+    "int": 4,
+    "vec3<double>": 24,
+    "cctbx::miller::index<>": 12,
+    "bool": 1,
+}
+BOOL_COLS = [
+    "entering",
+]
+
+DTYPE_TO_NUMPY = {
+    "double": np.float64,
+    "vec3<double>": np.float64,  # (N,3)
+    "int": np.int32,
+    "int6": np.int32,  # (N,6)
+    "bool": np.uint8,  # 1 byte each
+    "std::size_t": np.uint64,  # 8 bytes each
+    "cctbx::miller::index<>": np.int32,  # (N,3) int32
+}
+
 
 # Default columns from rs.io.read_dials_stills
 # out will contain the following
@@ -88,6 +75,7 @@ FLOAT_COLS = [
     "intensity.sum.value",
 ]
 
+
 INT_COLS = [
     "refl_ids",
     "partial_id",
@@ -109,25 +97,7 @@ INT_COLS = [
     "L",
 ]
 
-BOOL_COLS = [
-    "entering",
-]
 
-ALL_COLS = FLOAT_COLS + INT_COLS + BOOL_COLS
-REFL_TAG = "dials::af::reflection_table"
-REFL_VERSION = 1
-
-DTYPE_TO_NUMPY = {
-    "double": np.float64,
-    "vec3<double>": np.float64,  # (N,3)
-    "int": np.int32,
-    "int6": np.int32,  # (N,6)
-    "bool": np.uint8,  # 1 byte each
-    "std::size_t": np.uint64,  # 8 bytes each
-    "cctbx::miller::index<>": np.int32,  # (N,3) int32
-}
-
-# Mappings to invert DataFrame
 SCALAR_DTYPES = {
     "zeta": "double",
     "qe": "double",
@@ -154,6 +124,7 @@ SCALAR_DTYPES = {
     "refl_ids": "int",
 }
 
+
 VECTOR_COLUMNS = {
     "bbox": ("int6", 6),
     "s1": ("vec3<double>", 3),
@@ -168,6 +139,8 @@ VECTOR_COLUMNS = {
 
 
 DEFAULT_EXCLUDED_COLS = ["BATCH", "PARTIAL"]
+DEFAULT_REFL_COLS = list(SCALAR_DTYPES.keys()) + list(VECTOR_COLUMNS.keys())
+ALL_COLS = FLOAT_COLS + INT_COLS + BOOL_COLS
 
 DEFAULT_DS_COLS = [
     "zeta",
@@ -229,24 +202,20 @@ DEFAULT_DS_COLS = [
 def unstack_preds(
     preds: dict[str, list[np.ndarray]],
 ) -> dict:
-    out = dict(preds)
+    # out dictionary structure
+    out: dict[str, np.ndarray] = {}
+
     # combine epochs into a single array
-    for k, v in out.items():
+    for k, v in preds.items():
         out[k] = np.concatenate(v)
     return out
 
-
-def _extract_vector(
-    preds: dict,
-    base,
-    n,
-):
-    out = dict(preds)
-    cols = [f"{base}.{i}" for i in range(n)]
-    return np.stack([out[c] for c in cols], axis=1)
+    return out
 
 
-def _extract_miller_index(preds: dict):
+def _extract_miller_index(
+    preds: dict[str, list[np.ndarray]],
+) -> np.ndarray:
     out = dict(preds)
     return np.stack(
         [out["H"], out["K"], out["L"]],
@@ -281,120 +250,14 @@ def dict_to_refl_columns(preds):
     return columns
 
 
-def write_refl(filename, data, identifiers=None):
-    """
-    Write a DIALS-compatible .refl file.
-
-    Parameters
-    ----------
-    filename : str
-        Output path
-    columns : dict[str, tuple[np.ndarray, str]]
-        Mapping: name -> (array, dials_dtype)
-    """
-    nrows = None
-    data = unstack_preds(data)
-    data = dict_to_refl_columns(data)
-
-    for key, val in data.items():
-        arr, dtype_name = val
-        arr = np.ascontiguousarray(arr)
-
-        if nrows is None:
-            nrows = arr.shape[0]
-        elif arr.shape[0] != nrows:
-            raise ValueError(
-                f"Column '{key}' has {arr.shape[0]} rows, expected {nrows}"
-            )
-
-        data[key] = (
-            dtype_name,
-            (nrows, arr.tobytes(order="C")),
-        )
-
-    pack = {
-        "data": data,
-        "nrows": nrows,
-        "identifiers": identifiers or {},
-    }
-
-    outer = (REFL_TAG, REFL_VERSION, pack)
-
-    with open(filename, "wb") as f:
-        f.write(msgpack.packb(outer, use_bin_type=True))
-
-
-# refl table headers
-REFL_TAG = "dials::af::reflection_table"
-REFL_VERSION = 1
-
-# byte sizes of dtypes
-DTYPE_SIZES = {
-    "double": 8,
-    "std::size_t": 8,
-    "int": 4,
-    "vec3<double>": 24,
-    "cctbx::miller::index<>": 12,
-    "bool": 1,
-}
-
-# Mappings from .refl column names to dtypes
-SCALAR_DTYPES = {
-    "zeta": "double",
-    "qe": "double",
-    "profile.correlation": "double",
-    "partiality": "double",
-    "partial_id": "std::size_t",
-    "panel": "std::size_t",
-    "flags": "std::size_t",
-    "num_pixels.valid": "int",
-    "num_pixels.foreground": "int",
-    "num_pixels.background_used": "int",
-    "num_pixels.background": "int",
-    "lp": "double",
-    "intensity.prf.value": "double",
-    "intensity.prf.variance": "double",
-    "intensity.sum.value": "double",
-    "intensity.sum.variance": "double",
-    "imageset_id": "int",
-    "entering": "bool",
-    "d": "double",
-    "background.mean": "double",
-    "background.sum.value": "double",
-    "background.sum.variance": "double",
-    "refl_ids": "int",
-}
-
-# Mapping from .refl column name to (dtype,num_elements)
-VECTOR_COLUMNS = {
-    "bbox": ("int6", 6),
-    "s1": ("vec3<double>", 3),
-    "xyzcal.mm": ("vec3<double>", 3),
-    "xyzcal.px": ("vec3<double>", 3),
-    "xyzobs.mm.value": ("vec3<double>", 3),
-    "xyzobs.mm.variance": ("vec3<double>", 3),
-    "xyzobs.px.value": ("vec3<double>", 3),
-    "xyzobs.px.variance": ("vec3<double>", 3),
-    "miller_index": ("cctbx::miller::index<>", 3),
-}
-
-
-# assumes naming scheme from rs.io.read_dials_stills
-def _extract_vector(ds, base, n):
-    cols = [f"{base}.{i}" for i in range(n)]
-    return np.stack([ds[c].to_numpy() for c in cols], axis=1)
-
-
-def _extract_miller_index(
-    ds,
-    h_key="H",
-    k_key="K",
-    l_key="L",
+def _extract_vector(
+    preds: dict,
+    base: str,
+    n: int,
 ):
-    return np.stack(
-        [ds[h_key].to_numpy(), ds[l_key].to_numpy(), ds[l_key].to_numpy()],
-        axis=1,
-    )
+    out = dict(preds)
+    cols = [f"{base}.{i}" for i in range(n)]
+    return np.stack([out[c] for c in cols], axis=1)
 
 
 def _dataset_to_refl_columns(ds):
@@ -456,3 +319,46 @@ def write_refl_from_ds(
 
     with open(filename, "wb") as f:
         f.write(msgpack.packb(out, use_bin_type=True))
+
+
+def write_refl(filename, data, identifiers=None):
+    """
+    Write a DIALS-compatible .refl file.
+
+    Parameters
+    ----------
+    filename : str
+        Output path
+    columns : dict[str, tuple[np.ndarray, str]]
+        Mapping: name -> (array, dials_dtype)
+    """
+    nrows = None
+    data = unstack_preds(data)
+    data = dict_to_refl_columns(data)
+
+    for key, val in data.items():
+        arr, dtype_name = val
+        arr = np.ascontiguousarray(arr)
+
+        if nrows is None:
+            nrows = arr.shape[0]
+        elif arr.shape[0] != nrows:
+            raise ValueError(
+                f"Column '{key}' has {arr.shape[0]} rows, expected {nrows}"
+            )
+
+        data[key] = (
+            dtype_name,
+            (nrows, arr.tobytes(order="C")),
+        )
+
+    pack = {
+        "data": data,
+        "nrows": nrows,
+        "identifiers": identifiers or {},
+    }
+
+    outer = (REFL_TAG, REFL_VERSION, pack)
+
+    with open(filename, "wb") as f:
+        f.write(msgpack.packb(outer, use_bin_type=True))
