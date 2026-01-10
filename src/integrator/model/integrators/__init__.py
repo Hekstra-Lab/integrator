@@ -1,15 +1,11 @@
+from .base_integrator import BaseIntegrator
 from .integrator import (
-    EncoderModules,
-    Integrator,
-    IntegratorHyperParameters,
+    IntegratorModelA,
     IntegratorModelB,
-    SurrogateModules,
 )
 
 __all__ = [
-    "Integrator",
-    "IntegratorHyperParameters",
-    "SurrogateModules",
+    "BaseIntegrator",
+    "IntegratorModelA",
     "IntegratorModelB",
-    "EncoderModules",
 ]

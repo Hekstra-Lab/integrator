@@ -147,7 +147,6 @@ class Loss(nn.Module):
         pprf_cfg: PriorConfig | None,
         pi_cfg: PriorConfig | None,
         pbg_cfg: PriorConfig | None,
-        shape: tuple = (3, 21, 21),
         mc_samples: int = 100,
         eps: float = 1e-6,
     ):

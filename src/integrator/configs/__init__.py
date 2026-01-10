@@ -17,7 +17,7 @@ from .encoder import (
     ShoeboxEncoderArgs,
 )
 from .global_config import GlobalConfig
-from .integrator import IntegratorArgs, IntegratorConfig
+from .integrator import IntegratorCfg, IntegratorConfig
 from .logger import LoggerConfig
 from .loss import (
     LossArgs,
@@ -46,7 +46,7 @@ __all__ = [
     "DataFileNames",
     "DataLoaderConfig",
     "DataLoaderArgs",
-    "IntegratorArgs",
+    "IntegratorCfg",
     "Encoders",
     "EncoderConfig",
     "IntensityEncoderArgs",

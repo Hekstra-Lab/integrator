@@ -2,7 +2,6 @@ import torch
 
 from integrator.data_loaders import (
     ShoeboxDataModule,
-    ShoeboxDataModule2,
     ShoeboxDataModule2D,
 )
 from integrator.model.distributions import (
@@ -21,7 +20,7 @@ from integrator.model.encoders import (
     MLPMetadataEncoder,
     ShoeboxEncoder,
 )
-from integrator.model.integrators import Integrator, IntegratorModelB
+from integrator.model.integrators import IntegratorModelA, IntegratorModelB
 from integrator.model.loss import Loss
 
 REGISTRY = {
@@ -34,7 +33,7 @@ REGISTRY = {
         "default": Loss,
     },
     "integrator": {
-        "integrator": Integrator,
+        "modela": IntegratorModelA,
         "modelb": IntegratorModelB,
     },
     "surrogates": {
@@ -72,7 +71,6 @@ REGISTRY = {
     },
     "data_loader": {
         "default": ShoeboxDataModule,
-        "shoebox_data_module": ShoeboxDataModule2,
         "shoebox_data_module_2d": ShoeboxDataModule2D,
     },
 }

@@ -3,7 +3,7 @@ from typing import Literal
 
 
 @dataclass
-class IntegratorArgs:
+class IntegratorCfg:
     data_dim: Literal["2d", "3d"]
     d: int
     h: int
@@ -41,7 +41,7 @@ class IntegratorArgs:
 @dataclass
 class IntegratorConfig:
     name: str
-    args: IntegratorArgs
+    args: IntegratorCfg
 
     def __post_init__(self):
         from integrator.registry import REGISTRY

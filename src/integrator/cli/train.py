@@ -308,145 +308,145 @@ def write_mtz_files():
 if __name__ == "__main__":
     main()
 
-    # import os
-    # from pathlib import Path
-    #
-    # import torch
-    # from pytorch_lightning.callbacks import ModelCheckpoint
-    # from pytorch_lightning.loggers import WandbLogger
-    #
-    # from integrator.callbacks import (
-    #     LogFano,
-    #     Plotter,
-    #     PlotterLD,
-    #     PredWriter,
-    #     assign_labels,
-    # )
-    # from integrator.utils import (
-    #     construct_data_loader,
-    #     construct_integrator,
-    #     construct_trainer,
-    #     load_config,
-    # )
-    #
-    # torch.set_float32_matmul_precision("medium")
-    #
-    # # load configuration file
-    # path = "/Users/luis/temp/data/test_yaml.yaml"
-    # cfg = load_config(path)
-    #
-    # # cfg = apply_cli_overrides(
-    # #     cfg,
-    # #     epochs=args.epochs,
-    # #     batch_size=args.batch_size,
-    # #     data_path=args.data_path,
-    # # )
-    #
-    # # load data
-    # data_loader = construct_data_loader(cfg)
-    # data_loader.setup()
-    #
-    # # load wandb logger
-    # logger = WandbLogger(
-    #     project="local-default",
-    #     save_dir="/Users/luis/temp/wandb/",
-    # )
-    #
-    # # get logging directory
-    # logdir = Path(logger.experiment.dir)
-    #
-    # run_dir = Path("/Users/luis/integrator/temp_run_dir/")
-    #
-    # config_copy = logdir / "config_copy.yaml"
-    # cfg_json = deepcopy(cfg)
-    #
-    # logger.log_hyperparams(cfg_json)
-    #
-    # with open(config_copy, "w") as f:
-    #     yaml.safe_dump(cfg_json, f, sort_keys=False)
-    #
-    # metadata = {
-    #     "config": config_copy.as_posix(),
-    #     "slurm": {
-    #         "job_id": os.environ.get("SLURM_JOB_ID"),
-    #     },
-    #     "wandb": {
-    #         "project": "local-default",
-    #         "run_id": logger.experiment.id,
-    #         "entity": logger.experiment.entity,
-    #         "log_dir": logger.experiment.dir,
-    #     },
-    # }
-    #
-    # (run_dir / "run_metadata.yaml").write_text(yaml.safe_dump(metadata))
-    #
-    # # assign validation/train labels to each shoebox
-    # assign_labels(dataset=data_loader, save_dir=logdir.as_posix())
-    #
-    # # %%
-    # # create integrator
-    # integrator = construct_integrator(cfg)
-    #
-    # # create prediction writer
-    # pred_writer = PredWriter(
-    #     output_dir=None,
-    #     write_interval="epoch",
-    # )
-    #
-    # # to generate plots
-    # data_dim = cfg["integrator"]["args"]["data_dim"]
-    # if data_dim == "3d":
-    #     plotter = Plotter(n_profiles=10)
-    # elif data_dim == "2d":
-    #     plotter = PlotterLD(
-    #         n_profiles=10,
-    #         plot_every_n_epochs=1,
-    #         d=cfg["logger"]["d"],
-    #         h=cfg["logger"]["h"],
-    #         w=cfg["logger"]["w"],
-    #     )
-    # else:
-    #     raise ValueError(
-    #         f"Specified shoebox data dimension is incompatible: data_dim={data_dim}"
-    #     )
-    #
-    # fano_logger = LogFano()
-    #
-    # ckpt_dir = logdir / "checkpoints"
-    #
-    # # to save checkpoints
-    # checkpoint_callback = ModelCheckpoint(
-    #     dirpath=ckpt_dir,
-    #     filename="{epoch:04d}-{val_loss:.2f}",
-    #     every_n_epochs=1,
-    #     save_top_k=-1,
-    #     save_last="link",
-    # )
-    #
-    # # to train integrator
-    # trainer = construct_trainer(
+    import os
+    from pathlib import Path
+
+    import torch
+    from pytorch_lightning.callbacks import ModelCheckpoint
+    from pytorch_lightning.loggers import WandbLogger
+
+    from integrator.callbacks import (
+        LogFano,
+        Plotter,
+        PlotterLD,
+        PredWriter,
+        assign_labels,
+    )
+    from integrator.utils import (
+        construct_data_loader,
+        construct_integrator,
+        construct_trainer,
+        load_config,
+    )
+
+    torch.set_float32_matmul_precision("medium")
+
+    # load configuration file
+    path = "/Users/luis/temp/data/test_yaml.yaml"
+    cfg = load_config(path)
+
+    # cfg = apply_cli_overrides(
     #     cfg,
-    #     callbacks=[
-    #         fano_logger,
-    #         pred_writer,
-    #         checkpoint_callback,
-    #         plotter,
-    #     ],
-    #     logger=logger,
+    #     epochs=args.epochs,
+    #     batch_size=args.batch_size,
+    #     data_path=args.data_path,
     # )
-    #
-    # # Fit the model
-    # trainer.fit(
-    #     integrator,
-    #     train_dataloaders=data_loader.train_dataloader(),
-    #     val_dataloaders=data_loader.val_dataloader(),
-    # )
-    #
-    # print("Traning complete!")
-    #
-    # # %%
-    # counts, sbox, masks, metadata = next(iter(data_loader.train_dataloader()))
-    # out = integrator.forward(counts, sbox, masks, metadata)
-    # forward_out = out["forward_out"]
-    #
-    # forward_out.keys()
+
+    # load data
+    data_loader = construct_data_loader(cfg)
+    data_loader.setup()
+
+    # load wandb logger
+    logger = WandbLogger(
+        project="local-default",
+        save_dir="/Users/luis/temp/wandb/",
+    )
+
+    # get logging directory
+    logdir = Path(logger.experiment.dir)
+
+    run_dir = Path("/Users/luis/integrator/temp_run_dir/")
+
+    config_copy = logdir / "config_copy.yaml"
+    cfg_json = deepcopy(cfg)
+
+    logger.log_hyperparams(cfg_json)
+
+    with open(config_copy, "w") as f:
+        yaml.safe_dump(cfg_json, f, sort_keys=False)
+
+    metadata = {
+        "config": config_copy.as_posix(),
+        "slurm": {
+            "job_id": os.environ.get("SLURM_JOB_ID"),
+        },
+        "wandb": {
+            "project": "local-default",
+            "run_id": logger.experiment.id,
+            "entity": logger.experiment.entity,
+            "log_dir": logger.experiment.dir,
+        },
+    }
+
+    (run_dir / "run_metadata.yaml").write_text(yaml.safe_dump(metadata))
+
+    # assign validation/train labels to each shoebox
+    assign_labels(dataset=data_loader, save_dir=logdir.as_posix())
+
+    # %%
+    # create integrator
+    integrator = construct_integrator(cfg)
+
+    # create prediction writer
+    pred_writer = PredWriter(
+        output_dir=None,
+        write_interval="epoch",
+    )
+
+    # to generate plots
+    data_dim = cfg["integrator"]["args"]["data_dim"]
+    if data_dim == "3d":
+        plotter = Plotter(n_profiles=10)
+    elif data_dim == "2d":
+        plotter = PlotterLD(
+            n_profiles=10,
+            plot_every_n_epochs=1,
+            d=cfg["logger"]["d"],
+            h=cfg["logger"]["h"],
+            w=cfg["logger"]["w"],
+        )
+    else:
+        raise ValueError(
+            f"Specified shoebox data dimension is incompatible: data_dim={data_dim}"
+        )
+
+    fano_logger = LogFano()
+
+    ckpt_dir = logdir / "checkpoints"
+
+    # to save checkpoints
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=ckpt_dir,
+        filename="{epoch:04d}-{val_loss:.2f}",
+        every_n_epochs=1,
+        save_top_k=-1,
+        save_last="link",
+    )
+
+    # to train integrator
+    trainer = construct_trainer(
+        cfg,
+        callbacks=[
+            fano_logger,
+            pred_writer,
+            checkpoint_callback,
+            plotter,
+        ],
+        logger=logger,
+    )
+
+    # Fit the model
+    trainer.fit(
+        integrator,
+        train_dataloaders=data_loader.train_dataloader(),
+        val_dataloaders=data_loader.val_dataloader(),
+    )
+
+    print("Traning complete!")
+
+    # %%
+    counts, sbox, masks, metadata = next(iter(data_loader.train_dataloader()))
+    out = integrator.forward(counts, sbox, masks, metadata)
+    forward_out = out["forward_out"]
+
+    forward_out.keys()

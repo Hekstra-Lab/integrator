@@ -4,19 +4,18 @@ import re
 from dataclasses import asdict
 from importlib.resources import as_file
 from pathlib import Path
-from typing import Any
 
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import yaml
-from pytorch_lightning import LightningModule
 from pytorch_lightning.callbacks import Callback
 from pytorch_lightning.loggers import Logger
 
 from integrator import configs
 from integrator.callbacks import PredWriter
 from integrator.configs import shallow_dict
+from integrator.model.integrators import BaseIntegrator
 from integrator.registry import REGISTRY
 
 PRIOR_PARAMS = {
@@ -42,7 +41,7 @@ TUPLE_FIELDS = {
 }
 
 
-def _get_integrator_cls(name: str) -> nn.Module:
+def _get_integrator_cls(name: str) -> type[BaseIntegrator]:
     return REGISTRY["integrator"][name]
 
 
@@ -70,7 +69,7 @@ def _normalize_tuples(d: dict) -> dict:
     return out
 
 
-def _construct_loss_args(
+def _get_loss_args(
     cfg: dict,
     prior_configs: dict,
 ) -> configs.LossArgs:
@@ -88,9 +87,9 @@ def _construct_loss_args(
     return args_cls
 
 
-def _construct_surrogate_modules(
+def _get_surrogate_modules(
     cfg: dict,
-) -> dict:
+) -> dict[str, nn.Module]:
     qp_args = configs.DirichletArgs(**cfg["surrogates"]["qp"]["args"])
     qp_cls = REGISTRY["surrogates"][cfg["surrogates"]["qp"]["name"]]
     qp = qp_cls(**asdict(qp_args))
@@ -110,12 +109,12 @@ def _construct_surrogate_modules(
     }
 
 
-def _construct_priors(
+def _get_prior_cfgs(
     cfg: dict,
     pprf_cfg: str = "pprf_cfg",
     pbg_cfg: str = "pbg_cfg",
     pi_cfg: str = "pi_cfg",
-) -> dict[str, Any]:
+) -> dict[str, configs.PriorConfig | None]:
     # Building loss class
     priors = {}
     prior_cfgs = dict(cfg)
@@ -135,24 +134,25 @@ def _construct_priors(
     return priors
 
 
-def _construct_encoder_modules(
+def _get_encoder_modules(
     cfg: dict,
-) -> dict[str, object]:
-    model = cfg["integrator"]["name"]
+) -> dict[str, nn.Module]:
+    cfg_ = dict(cfg)
+    model = cfg_["integrator"]["name"]
     required_encoders = REGISTRY["integrator"][model].REQUIRED_ENCODERS
 
     # Verify config has the correct number of encoders for specified model
-    if len(required_encoders) != len(cfg["encoders"]):
+    if len(required_encoders) != len(cfg_["encoders"]):
         raise ValueError(
             f"""
             Integration model '{model}' requires {len(required_encoders)}
-            encoders, but {len(cfg["encoders"])} were passed
+            encoders, but {len(cfg_["encoders"])} were passed
             """
         )
     # loading encoder arguments in corresponding dataclasses
     encoders = {}
     for items, encoder_cfg in zip(
-        required_encoders.items(), cfg["encoders"], strict=False
+        required_encoders.items(), cfg_["encoders"], strict=False
     ):
         name, args = items
         encoder_args = args(**encoder_cfg["args"])
@@ -162,15 +162,15 @@ def _construct_encoder_modules(
     return encoders
 
 
-def _construct_loss_module(
+def _get_loss_module(
     cfg: dict,
 ) -> nn.Module:
     # get loss cls
     loss_cls = _get_loss_cls(cfg["loss"]["name"])
     # construct priors
-    prior_configs = _construct_priors(cfg)
+    prior_configs = _get_prior_cfgs(cfg)
     # construct loss args
-    loss_args = _construct_loss_args(
+    loss_args = _get_loss_args(
         cfg=cfg,
         prior_configs=prior_configs,
     )
@@ -179,15 +179,15 @@ def _construct_loss_module(
 
 def construct_integrator(
     cfg: dict,
-) -> LightningModule:
+) -> BaseIntegrator:
     # integrator class
     integrator_cls = _get_integrator_cls(cfg["integrator"]["name"])
 
     # get integrator components
-    integrator_args = configs.IntegratorArgs(**cfg["integrator"]["args"])
-    encoders = _construct_encoder_modules(cfg)
-    surrogates = _construct_surrogate_modules(cfg)
-    loss = _construct_loss_module(cfg)
+    integrator_args = configs.IntegratorCfg(**cfg["integrator"]["args"])
+    encoders = _get_encoder_modules(cfg)
+    surrogates = _get_surrogate_modules(cfg)
+    loss = _get_loss_module(cfg)
 
     return integrator_cls(
         cfg=integrator_args,
