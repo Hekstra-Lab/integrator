@@ -3,7 +3,8 @@ from pathlib import Path
 
 import polars as plr
 import torch
-from pytorch_lightning.callbacks import BasePredictionWriter, Callback
+from pytorch_lightning.callbacks import BasePredictionWriter
+from pytorch_lightning.loggers import WandbLogger
 
 
 def assign_labels(
@@ -34,21 +35,6 @@ def assign_labels(
     print(f"val labels saved to {save_dir + '/val_labels.csv'}")
 
 
-class IntensityPlotter(Callback):
-    # def on_validation_epoch_end(self,trainer, pl_module):
-    def __init__(self):
-        super().__init__()
-        self.batch_predictions = []
-        self.val_predictions = []
-
-    def on_train_batch_end(
-        self, trainer, pl_module, outputs, batch, batch_idx
-    ):
-        with torch.no_grad():
-            predictions = pl_module(batch)
-            self.batch_predictions.append(predictions)
-
-
 class PredWriter(BasePredictionWriter):
     def __init__(self, output_dir, write_interval):
         super().__init__(write_interval)
@@ -64,14 +50,13 @@ class PredWriter(BasePredictionWriter):
         batch_idx,
         dataloader_idx,
     ):
-        if self.output_dir is None:
-            # Default to logger directory
-            self.output_dir = os.path.join(
-                # trainer.logger.log_dir, "predictions", "last"
-                trainer.logger.experiment.dir,
-                "predictions",
-                "last",
-            )
+        # Getting log direcotory
+        logger = trainer.logger
+        if isinstance(logger, WandbLogger):
+            self.output_dir = logger.experiment.dir
+            Path(self.output_dir).mkdir(parents=True, exist_ok=True)
+        else:
+            self.output_dir = trainer.default_root_dir
             Path(self.output_dir).mkdir(parents=True, exist_ok=True)
 
         # Move predictions to CPU and save
@@ -87,8 +72,13 @@ class PredWriter(BasePredictionWriter):
     def write_on_epoch_end(
         self, trainer, pl_module, predictions, batch_indices
     ):
-        if self.output_dir is None:
-            self.output_dir = trainer.logger.experiment.dir
+        # Getting log direcotory
+        logger = trainer.logger
+        if isinstance(logger, WandbLogger):
+            self.output_dir = logger.experiment.dir
+            Path(self.output_dir).mkdir(parents=True, exist_ok=True)
+        else:
+            self.output_dir = trainer.default_root_dir
             Path(self.output_dir).mkdir(parents=True, exist_ok=True)
 
         merged_predictions = {}
