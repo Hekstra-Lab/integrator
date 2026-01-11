@@ -70,7 +70,11 @@ class PredWriter(BasePredictionWriter):
         del prediction
 
     def write_on_epoch_end(
-        self, trainer, pl_module, predictions, batch_indices
+        self,
+        trainer,
+        pl_module,
+        predictions,
+        batch_indices,
     ):
         # Getting log direcotory
         logger = trainer.logger
