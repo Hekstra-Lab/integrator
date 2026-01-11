@@ -164,84 +164,87 @@ def main():
 
 if __name__ == "__main__":
     main()
-    #
-    # import argparse
-    # import re
-    # from pathlib import Path
-    #
-    # import torch
-    # import yaml
-    #
-    # from integrator.callbacks import PredWriter
-    # from integrator.utils import (
-    #     construct_data_loader,
-    #     construct_integrator,
-    #     construct_trainer,
-    #     load_config,
-    # )
-    #
-    # # Path to run-dir
-    # run_dir = Path("/Users/luis/integrator/temp_run_dir/")
-    #
-    # # Reading in pred.yaml
-    # meta = yaml.safe_load((run_dir / "run_metadata.yaml").read_text())
-    # config = load_config(meta["config"])
-    # wandb_info = meta["wandb"]
-    # slurm_info = meta["slurm"]
-    #
-    # # writing prediction directories
-    # log_dir = Path(wandb_info["log_dir"])
-    # wandb_dir = log_dir.parent
-    # pred_dir = wandb_dir / "predictions"
-    # pred_dir.mkdir(exist_ok=True)
-    #
-    # # list of .ckpt files
-    # checkpoints = sorted(log_dir.glob("**/epoch*.ckpt"))
-    #
-    # # load data
-    # data_loader = construct_data_loader(config)
-    # data_loader.setup()
-    #
-    # refl_file = config["output"]["refl_file"]
-    #
-    # epoch_re = re.compile(r"epoch=(\d+)")
-    # for ckpt in checkpoints:
-    #     # Finding checkpoint epoch
-    #     m = epoch_re.search(ckpt.name)
-    #     if not m:
-    #         raise ValueError(f"Could not parse epoch from {ckpt.name}")
-    #     epoch = int(m.group(1))
-    #
-    #     # Writing epoch prediction dir
-    #     ckpt_dir = pred_dir / f"epoch_{epoch:04d}"
-    #     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    #
-    #     # Construct callbacks
-    #     callbacks = []
-    #     pred_writer = PredWriter(
-    #         output_dir=ckpt_dir,
-    #         write_interval="epoch",
-    #     )
-    #     callbacks.append(pred_writer)
-    #
-    #     # Construct trainer
-    #     trainer = construct_trainer(
-    #         config,
-    #         callbacks=callbacks,
-    #         logger=None,
-    #     )
-    #
-    #     ckpt_ = torch.load(ckpt.as_posix())
-    #     integrator = construct_integrator(config)
-    #     integrator.load_state_dict(ckpt_["state_dict"])
-    #
-    #     # Use gpu if available
-    #     if torch.cuda.is_available():
-    #         integrator.to(torch.device("cuda"))
-    #
-    #     integrator.eval()
-    #     data = trainer.predict(
-    #         integrator,
-    #         return_predictions=True,
-    #         dataloaders=data_loader.predict_dataloader(),
-    #     )
+
+    import argparse
+    import re
+    from pathlib import Path
+
+    import torch
+    import yaml
+
+    from integrator.callbacks import PredWriter
+    from integrator.utils import (
+        construct_data_loader,
+        construct_integrator,
+        construct_trainer,
+        load_config,
+    )
+
+    # Path to run-dir
+    run_dir = Path("/Users/luis/integrator/temp_run_dir/")
+
+    # Reading in pred.yaml
+    meta = yaml.safe_load((run_dir / "run_metadata.yaml").read_text())
+    config = load_config(meta["config"])
+    wandb_info = meta["wandb"]
+    slurm_info = meta["slurm"]
+
+    # writing prediction directories
+    log_dir = Path(wandb_info["log_dir"])
+    wandb_dir = log_dir.parent
+    pred_dir = wandb_dir / "predictions"
+    pred_dir.mkdir(exist_ok=True)
+
+    # list of .ckpt files
+    checkpoints = sorted(log_dir.glob("**/epoch*.ckpt"))
+
+    # load data
+    data_loader = construct_data_loader(config)
+    data_loader.setup()
+
+    refl_file = config["output"]["refl_file"]
+
+    epoch_re = re.compile(r"epoch=(\d+)")
+    for ckpt in checkpoints:
+        # Finding checkpoint epoch
+        m = epoch_re.search(ckpt.name)
+        if not m:
+            raise ValueError(f"Could not parse epoch from {ckpt.name}")
+        epoch = int(m.group(1))
+
+        # Writing epoch prediction dir
+        ckpt_dir = pred_dir / f"epoch_{epoch:04d}"
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+        # Construct callbacks
+        callbacks = []
+        pred_writer = PredWriter(
+            output_dir=ckpt_dir,
+            write_interval="epoch",
+        )
+        callbacks.append(pred_writer)
+
+        # Construct trainer
+        trainer = construct_trainer(
+            config,
+            callbacks=callbacks,
+            logger=None,
+        )
+
+        ckpt_ = torch.load(ckpt.as_posix())
+        integrator = construct_integrator(config)
+        integrator.load_state_dict(ckpt_["state_dict"])
+
+        # Use gpu if available
+        if torch.cuda.is_available():
+            integrator.to(torch.device("cuda"))
+
+        integrator.eval()
+
+        data = trainer.predict(
+            integrator,
+            return_predictions=True,
+            dataloaders=data_loader.predict_dataloader(),
+        )
+
+        list(ckpt_dir.glob("preds.pt"))

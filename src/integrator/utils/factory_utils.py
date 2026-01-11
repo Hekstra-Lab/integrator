@@ -15,7 +15,7 @@ from pytorch_lightning.loggers import Logger
 from integrator import configs
 from integrator.callbacks import PredWriter
 from integrator.configs import shallow_dict
-from integrator.model.integrators import BaseIntegrator
+from integrator.model.integrators.base_integrator import BaseIntegrator
 from integrator.registry import REGISTRY
 
 PRIOR_PARAMS = {

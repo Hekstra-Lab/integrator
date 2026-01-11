@@ -36,7 +36,11 @@ def assign_labels(
 
 
 class PredWriter(BasePredictionWriter):
-    def __init__(self, output_dir, write_interval):
+    def __init__(
+        self,
+        output_dir: Path,
+        write_interval,
+    ):
         super().__init__(write_interval)
         self.output_dir = output_dir
 
@@ -76,15 +80,6 @@ class PredWriter(BasePredictionWriter):
         predictions,
         batch_indices,
     ):
-        # Getting log direcotory
-        logger = trainer.logger
-        if isinstance(logger, WandbLogger):
-            self.output_dir = logger.experiment.dir
-            Path(self.output_dir).mkdir(parents=True, exist_ok=True)
-        else:
-            self.output_dir = trainer.default_root_dir
-            Path(self.output_dir).mkdir(parents=True, exist_ok=True)
-
         merged_predictions = {}
 
         for batch_prediction in predictions:
@@ -101,6 +96,5 @@ class PredWriter(BasePredictionWriter):
                 merged_predictions[key].append(value)
 
         # Save the merged predictions as a single .pt file
-        torch.save(
-            merged_predictions, os.path.join(self.output_dir, "preds.pt")
-        )
+        preds_fname = self.output_dir / "preds.pt"
+        torch.save(merged_predictions, preds_fname)
