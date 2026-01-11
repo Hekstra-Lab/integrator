@@ -1,5 +1,3 @@
-import torch
-
 from integrator.data_loaders import (
     ShoeboxDataModule,
     ShoeboxDataModule2D,
@@ -47,57 +45,8 @@ REGISTRY = {
         "half_normal": HalfNormalDistribution,
         "dirichlet": DirichletDistribution,
     },
-    "qi": {
-        "gamma": GammaDistribution,
-        "gammaA": GammaDistributionRepamA,
-        "gammaB": GammaDistributionRepamB,
-        "gammaC": GammaDistributionRepamC,
-        "gammaD": GammaDistributionRepamD,
-        "log_normal": LogNormalDistribution,
-        "folded_normal": FoldedNormalDistribution,
-    },
-    "qp": {
-        "dirichlet": DirichletDistribution,
-    },
-    "qbg": {
-        "gamma": GammaDistribution,
-        "gammaA": GammaDistributionRepamA,
-        "gammaB": GammaDistributionRepamB,
-        "gammaC": GammaDistributionRepamC,
-        "gammaD": GammaDistributionRepamD,
-        "half_normal": HalfNormalDistribution,
-        "log_normal": LogNormalDistribution,
-        "folded_normal": FoldedNormalDistribution,
-    },
     "data_loader": {
         "default": ShoeboxDataModule,
         "shoebox_data_module_2d": ShoeboxDataModule2D,
-    },
-}
-
-ARGUMENT_RESOLVER = {
-    "trainer": {
-        "accelerator": {
-            "auto": lambda: "gpu" if torch.cuda.is_available() else "cpu",
-            "gpu": "gpu",
-            "cpu": "cpu",
-        },
-    },
-    "loss": {
-        "p_bg": {
-            "exponential": torch.distributions.Exponential,
-            "gamma": torch.distributions.Gamma,
-            "half_cauchy": torch.distributions.half_cauchy.HalfCauchy,
-            "half_normal": torch.distributions.half_normal.HalfNormal,
-            "log_normal": torch.distributions.LogNormal,
-        },
-        "p_I": {
-            "exponential": torch.distributions.Exponential,
-            "gamma": torch.distributions.Gamma,
-            "half_cauchy": torch.distributions.half_cauchy.HalfCauchy,
-            "half_normal": torch.distributions.half_normal.HalfNormal,
-            "log_normal": torch.distributions.LogNormal,
-        },
-        "p_prf": {"dirichlet": torch.distributions.Dirichlet},
     },
 }

@@ -132,38 +132,8 @@ def calculate_intensities(counts, qbg, qp, mask, cfg):
         return intensities
 
 
-def extract_metadata_fields(
-    ref: Tensor,
-    data_dim: str,
-):
-    if data_dim == "3d":
-        return ref
-    elif data_dim == "2d":
-        return {
-            "dials_I_sum_value": ref[:, 3],
-            "dials_I_sum_var": ref[:, 4],
-            "dials_I_prf_value": ref[:, 3],
-            "dials_I_prf_var": ref[:, 4],
-            "refl_ids": ref[:, -1].tolist(),
-            "x_c": ref[:, 9],
-            "y_c": ref[:, 10],
-            "z_c": ref[:, 11],
-            "dials_bg_mean": ref[:, 0],
-            "dials_bg_sum_value": ref[:, 0],
-            "dials_bg_sum_var": ref[:, 1],
-            "wavelength": ref[:, 8],
-            "batch": ref[:, 2],
-            "h": ref[:, 5],
-            "k": ref[:, 6],
-            "l": ref[:, 7],
-        }
-    else:
-        raise ValueError(f"Unsupported data_dim: {data_dim}")
-
-
 def _assemble_outputs(
     out: IntegratorBaseOutputs,
-    data_dim: Literal["2d", "3d"],
 ) -> dict[str, Any]:
     base = {
         "rates": out.rates,
@@ -182,7 +152,6 @@ def _assemble_outputs(
     if out.metadata is None:
         return base
 
-    ref_fields = extract_metadata_fields(out.metadata, data_dim)
-    base.update(ref_fields)
+    base.update(out.metadata)
 
     return base

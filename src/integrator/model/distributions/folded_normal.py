@@ -24,9 +24,7 @@ from torch.distributions import Distribution
 #     def support(self) -> Constraint:
 #         return constraints.nonnegative
 #
-#     @property
-#     def loc(self) -> Tensor:
-#         return self._normal.loc
+#     @property def loc(self) -> Tensor: return self._normal.loc
 #
 #     @property
 #     def scale(self) -> Tensor:

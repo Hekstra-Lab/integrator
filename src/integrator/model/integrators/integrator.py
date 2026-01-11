@@ -64,7 +64,7 @@ class IntegratorModelA(BaseIntegrator):
             concentration=qp.concentration,  # if using Dirichlet
             metadata=metadata,
         )
-        out = _assemble_outputs(out, self.cfg.data_dim)
+        out = _assemble_outputs(out)
 
         return {
             "forward_out": out,
@@ -126,7 +126,7 @@ class IntegratorModelB(BaseIntegrator):
             metadata=metadata,
             concentration=qp.concentration,
         )
-        out = _assemble_outputs(out, self.cfg.data_dim)
+        out = _assemble_outputs(out)
 
         return {
             "forward_out": out,

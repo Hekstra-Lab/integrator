@@ -71,7 +71,9 @@ class OutWriter:
 
         indices = np.where(sel)
         intensity_dials_sum = np.array(list(tbl["intensity.sum.value"]))
-        intensity_dials_variance = np.array(list(tbl["intensity.sum.variance"]))
+        intensity_dials_variance = np.array(
+            list(tbl["intensity.sum.variance"])
+        )
         intensity_dials_sum[indices] = intensity_preds
         intensity_dials_variance[indices] = intensity_variance
         temp2 = tbl

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Generic, Literal, TypeVar
+from typing import Literal, TypeVar
 
 P = TypeVar("P")
 
@@ -77,7 +77,7 @@ class LogNormalParams:
 
 
 @dataclass
-class PriorConfig(Generic[P]):
+class PriorConfig[P]:
     name: Literal[
         "dirichlet",
         "exponential",
