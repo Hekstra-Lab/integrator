@@ -189,8 +189,7 @@ class Loss(nn.Module):
         kl_i = torch.zeros(batch_size, device=device)
         kl_bg = torch.zeros(batch_size, device=device)
 
-        # calculating per prior KL temrms
-
+        # Calculating per prior KL temrms
         if self.pprf_cfg is not None and self.pprf_params is not None:
             kl_prf = _prior_kl(
                 prior_cfg=self.pprf_cfg,
@@ -231,11 +230,6 @@ class Loss(nn.Module):
 
         # Total loss
         loss = (neg_ll + kl).mean()
-
-        print("Loss module:")
-        print("min nll", neg_ll.min())
-        print("max nll", neg_ll.max())
-        print("max nll", neg_ll.mean())
 
         return {
             "loss": loss,
