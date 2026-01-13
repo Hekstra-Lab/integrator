@@ -48,7 +48,7 @@ def write_refl_from_preds(
 
     pred_file = list(ckpt_dir.glob("preds.pt"))[0]
     data = torch.load(pred_file, weights_only=False)
-    fname = ckpt_dir / f"preds_epoch_{epoch}.refl"
+    fname = ckpt_dir / f"preds_epoch_{epoch:04d}.refl"
 
     ds = rs.io.read_dials_stills(refl_file, extra_cols=DEFAULT_REFL_COLS)
     unstacked_preds = unstack_preds(data)

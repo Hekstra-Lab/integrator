@@ -35,7 +35,6 @@ DTYPE_TO_NUMPY = {
     "cctbx::miller::index<>": np.int32,  # (N,3) int32
 }
 
-
 # Default columns from rs.io.read_dials_stills
 # out will contain the following
 FLOAT_COLS = [
@@ -137,9 +136,12 @@ VECTOR_COLUMNS = {
     "miller_index": ("cctbx::miller::index<>", 3),
 }
 
+DEFAULT_REFL_COLS = list(SCALAR_DTYPES.keys()) + list(VECTOR_COLUMNS.keys())
 
 DEFAULT_EXCLUDED_COLS = ["BATCH", "PARTIAL"]
+
 DEFAULT_REFL_COLS = list(SCALAR_DTYPES.keys()) + list(VECTOR_COLUMNS.keys())
+
 ALL_COLS = FLOAT_COLS + INT_COLS + BOOL_COLS
 
 DEFAULT_DS_COLS = [

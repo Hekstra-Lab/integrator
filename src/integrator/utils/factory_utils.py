@@ -198,23 +198,26 @@ def construct_integrator(
 
 
 def construct_data_loader(cfg):
-    data_loader_cls = _get_dataloader_cls(cfg["data_loader"]["name"])
-    data_loader_args = configs.DataLoaderArgs(**cfg["data_loader"]["args"])
-    return data_loader_cls(
-        data_dir=data_loader_args.data_dir,
-        batch_size=data_loader_args.batch_size,
-        val_split=data_loader_args.val_split,
-        test_split=data_loader_args.test_split,
-        num_workers=data_loader_args.num_workers,
-        include_test=data_loader_args.include_test,
-        subset_size=data_loader_args.subset_size,
-        cutoff=data_loader_args.cutoff,
-        use_metadata=data_loader_args.use_metadata,
-        shoebox_file_names=data_loader_args.shoebox_file_names,
-        D=data_loader_args.D,
-        H=data_loader_args.H,
-        W=data_loader_args.W,
-        anscombe=data_loader_args.anscombe,
+    dl_cls = _get_dataloader_cls(cfg["data_loader"]["name"])
+    dl_args = configs.DataLoaderArgs(**cfg["data_loader"]["args"])
+
+    data_dir = Path(dl_args.data_dir)
+
+    return dl_cls(
+        data_dir=data_dir.as_posix(),
+        batch_size=dl_args.batch_size,
+        val_split=dl_args.val_split,
+        test_split=dl_args.test_split,
+        num_workers=dl_args.num_workers,
+        include_test=dl_args.include_test,
+        subset_size=dl_args.subset_size,
+        cutoff=dl_args.cutoff,
+        use_metadata=dl_args.use_metadata,
+        shoebox_file_names=dl_args.shoebox_file_names,
+        D=dl_args.D,
+        H=dl_args.H,
+        W=dl_args.W,
+        anscombe=dl_args.anscombe,
     )
 
 
@@ -247,9 +250,7 @@ def override_config(args, config):
         config["trainer"]["args"]["max_epochs"] = args.epochs
 
 
-def clean_from_memory(
-    trainer, pred_writer, pred_integrator, checkpoint_callback=None
-):
+def clean_from_memory(trainer, pred_writer, pred_integrator, checkpoint_callback=None):
     del trainer
     del pred_writer
     del pred_integrator
@@ -259,9 +260,7 @@ def clean_from_memory(
     gc.collect()
 
 
-def predict_from_checkpoints(
-    config, trainer, pred_integrator, data, version_dir, path
-):
+def predict_from_checkpoints(config, trainer, pred_integrator, data, version_dir, path):
     for ckpt in glob.glob(path):
         match = re.search(r"epoch=(\d+)", ckpt)
         if match is None:
@@ -274,9 +273,9 @@ def predict_from_checkpoints(
         # prediction writer for current checkpoint
         pred_writer = PredWriter(
             output_dir=ckpt_dir,
-            write_interval=config["trainer"]["args"]["callbacks"][
-                "pred_writer"
-            ]["write_interval"],
+            write_interval=config["trainer"]["args"]["callbacks"]["pred_writer"][
+                "write_interval"
+            ],
         )
 
         trainer.callbacks = [pred_writer]

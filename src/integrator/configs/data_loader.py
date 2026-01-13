@@ -25,9 +25,7 @@ class DataFileNames:
         if self.standardized_counts is not None:
             p = self._resolve(self.standardized_counts)
             if not p.is_file():
-                raise FileNotFoundError(
-                    f"standardized_counts file not found: {p}"
-                )
+                raise FileNotFoundError(f"standardized_counts file not found: {p}")
 
     def _resolve(self, fname: str) -> Path:
         return Path(self.data_dir) / fname
@@ -57,6 +55,10 @@ class DataLoaderArgs:
                     Batch size must be an integer greater than 0, but
                     batch_size={self.batch_size} was passed
                 """
+            )
+        if not Path(self.data_dir).exists():
+            raise ValueError(
+                f"The data directory does not exist: data_dir={self.data_dir}"
             )
 
 
