@@ -151,16 +151,16 @@ def main():
 
     epoch_re = re.compile(r"epoch=(\d+)")
     for ckpt in checkpoints:
-        # logger
-        logger.info("Processing checkpoint: %s", ckpt.name)
-        logger.debug("Checkpoint path: %s", ckpt)
-        logger.info("Epoch: %d", epoch)
-
         # Finding checkpoint epoch
         m = epoch_re.search(ckpt.name)
         if not m:
             raise ValueError(f"Could not parse epoch from {ckpt.name}")
         epoch = int(m.group(1))
+
+        # logger
+        logger.info("Processing checkpoint: %s", ckpt.name)
+        logger.debug("Checkpoint path: %s", ckpt)
+        logger.info("Epoch: %d", epoch)
 
         # Writing epoch prediction dir
         ckpt_dir = pred_dir / f"epoch_{epoch:04d}"
