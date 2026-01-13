@@ -239,6 +239,7 @@ def construct_trainer(
         deterministic=tr_cfg.deterministic,
         enable_checkpointing=tr_cfg.enable_checkpointing,
         callbacks=callbacks,
+        enable_progress_bar=False,
     )
 
 
