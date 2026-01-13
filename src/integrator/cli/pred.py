@@ -2,8 +2,8 @@ import argparse
 import logging
 import re
 
-from .utils.io import write_refl_from_preds
-from .utils.logger import setup_logging
+from integrator.cli.utils.io import write_refl_from_preds
+from integrator.cli.utils.logger import setup_logging
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +67,8 @@ def main():
     # setup logger
     setup_logging(args.verbose)
 
+    logger.info("Run directory: %s", args.run_dir)
+    logger.info("CUDA available: %s", torch.cuda.is_available())
     logger.info("Starting Predictions")
 
     # run dir
@@ -151,13 +153,11 @@ def main():
             )
 
     logger.info("Prediction complete!")
-    logger.info("Run directory: %s", args.run_dir)
-    logger.info("CUDA available: %s", torch.cuda.is_available())
 
 
 if __name__ == "__main__":
     main()
-
+    #
     # import argparse
     # import re
     # from pathlib import Path
@@ -240,4 +240,11 @@ if __name__ == "__main__":
     #         dataloaders=data_loader.predict_dataloader(),
     #     )
     #
-    #     list(ckpt_dir.glob("preds.pt"))
+    #     write_refl_from_preds(
+    #         ckpt_dir=ckpt_dir,
+    #         refl_file=refl_file,
+    #         epoch=epoch,
+    #     )
+    #
+    #     # %%
+    #     list(ckpt_dir.glob("preds*"))

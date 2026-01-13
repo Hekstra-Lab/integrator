@@ -17,9 +17,11 @@ DTYPE_SIZES = {
     "double": 8,
     "std::size_t": 8,
     "int": 4,
+    "int6": 6 * 4,
     "vec3<double>": 24,
     "cctbx::miller::index<>": 12,
     "bool": 1,
+    "id": 4,
 }
 BOOL_COLS = [
     "entering",
@@ -33,6 +35,7 @@ DTYPE_TO_NUMPY = {
     "bool": np.uint8,  # 1 byte each
     "std::size_t": np.uint64,  # 8 bytes each
     "cctbx::miller::index<>": np.int32,  # (N,3) int32
+    "id": np.int32,
 }
 
 # Default columns from rs.io.read_dials_stills
@@ -210,7 +213,6 @@ def unstack_preds(
     # combine epochs into a single array
     for k, v in preds.items():
         out[k] = np.concatenate(v)
-    return out
 
     return out
 
@@ -225,12 +227,23 @@ def _extract_miller_index(
     )
 
 
-def _cast_for_dials(
-    arr: np.ndarray,
-    dtype_name: str,
-) -> np.ndarray:
+def _cast_for_dials(arr: np.ndarray, dtype_name: str) -> np.ndarray:
     np_dtype = DTYPE_TO_NUMPY[dtype_name]
-    return np.ascontiguousarray(arr.astype(np_dtype, copy=False))
+    arr = np.asarray(arr, dtype=np_dtype)
+    return np.ascontiguousarray(arr)
+
+
+def _check_bytes(key: str, dtype_name: str, nrows: int, raw: bytes):
+    if dtype_name not in DTYPE_SIZES:
+        raise KeyError(f"{key}: dtype '{dtype_name}' missing from DTYPE_SIZES")
+
+    expected = nrows * DTYPE_SIZES[dtype_name]
+    actual = len(raw)
+    if expected != actual:
+        raise RuntimeError(
+            f"{key}: expected {expected} bytes, got {actual} "
+            f"(dtype={dtype_name}, nrows={nrows})"
+        )
 
 
 def dict_to_refl_columns(preds):
@@ -294,10 +307,9 @@ def write_refl_from_ds(
     data = {}
     nrows = None
     columns = _dataset_to_refl_columns(ds)
-
     for key, val in columns.items():
         arr, dtype_name = val
-        arr = np.ascontiguousarray(arr)
+        arr = _cast_for_dials(arr, dtype_name)
 
         if nrows is None:
             nrows = arr.shape[0]
@@ -306,10 +318,10 @@ def write_refl_from_ds(
                 f"Column '{key}' has {arr.shape[0]} rows, expected {nrows}"
             )
 
-        data[key] = (
-            dtype_name,
-            (nrows, arr.tobytes(order="C")),
-        )
+        raw = arr.tobytes(order="C")
+        _check_bytes(key, dtype_name, nrows, raw)
+
+        data[key] = (dtype_name, (nrows, raw))
 
     pack = {
         "data": data,
