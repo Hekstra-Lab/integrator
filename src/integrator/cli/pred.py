@@ -1,5 +1,30 @@
 import argparse
+import logging
 import re
+import sys
+
+logger = logging.getLogger(__name__)
+
+
+def setup_logging(verbosity: int = 0):
+    """
+    verbosity = 0 -> WARNING
+    verbosity = 1 -> INFO
+    verbosity >= 2 -> DEBUG
+    """
+    level = logging.WARNING
+    if verbosity == 1:
+        level = logging.INFO
+    elif verbosity >= 2:
+        level = logging.DEBUG
+
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+        datefmt="%H:%M:%S",
+        handlers=[logging.StreamHandler(sys.stdout)],
+        force=True,  # important for CLIs
+    )
 
 
 def parse_args():
@@ -23,11 +48,21 @@ def parse_args():
         action="store_true",
         help="Write predictions as a .refl file",
     )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=0,
+        help="Increase verbosity (-v = INFO, -vv = DEBUG)",
+    )
+
+    # TODO: Add mtz writer
     # parser.add_argument(
     #     "--write-as-mtz",
     #     action="store_true",
     #     help="Write predictions as a .mtz file",
     # )
+
     return parser.parse_args()
 
 
@@ -84,6 +119,9 @@ def main():
 
     # Get args
     args = parse_args()
+    setup_logging(args.verbose)
+
+    logger.info("Starting Predictions")
 
     # run dir
     run_dir = Path(args.run_dir)
@@ -102,6 +140,7 @@ def main():
 
     # list of .ckpt files
     checkpoints = sorted(log_dir.glob("**/epoch*.ckpt"))
+    logger.info("Found %d checkpoints", len(checkpoints))
 
     # load data
     data_loader = construct_data_loader(config)
@@ -112,6 +151,11 @@ def main():
 
     epoch_re = re.compile(r"epoch=(\d+)")
     for ckpt in checkpoints:
+        # logger
+        logger.info("Processing checkpoint: %s", ckpt.name)
+        logger.debug("Checkpoint path: %s", ckpt)
+        logger.info("Epoch: %d", epoch)
+
         # Finding checkpoint epoch
         m = epoch_re.search(ckpt.name)
         if not m:
@@ -153,13 +197,16 @@ def main():
         )
 
         if args.write_refl:
+            logger.info("Writing .refl output for epoch %d", epoch)
             write_refl_from_preds(
                 ckpt_dir=ckpt_dir,
                 refl_file=refl_file,
                 epoch=epoch,
             )
 
-    print("Prediction complete!")
+    logger.info("Prediction complete!")
+    logger.info("Run directory: %s", args.run_dir)
+    logger.info("CUDA available: %s", torch.cuda.is_available())
 
 
 if __name__ == "__main__":
