@@ -116,6 +116,9 @@ def main():
     logdir = Path(wb_logger.experiment.dir)
     run_dir = Path(args.run_dir)
 
+    logger.info(f"Logging directory: {logdir}")
+    logger.info(f"Run directory: {run_dir}")
+
     # Write a copy of the config.yaml file
     config_copy = logdir / "config_copy.yaml"
     cfg_json = deepcopy(cfg)
@@ -140,7 +143,10 @@ def main():
         },
     }
 
-    (run_dir / "run_metadata.yaml").write_text(yaml.safe_dump(metadata))
+    m_fname = run_dir / "run_metadata.yaml"
+    (m_fname).write_text(yaml.safe_dump(metadata))
+
+    logger.info(f"Saved run_metadata: {m_fname}")
 
     # assign validation/train labels to each shoebox
     assign_labels(dataset=data_loader, save_dir=logdir.as_posix())
@@ -176,6 +182,7 @@ def main():
         save_top_k=-1,
         save_last="link",
     )
+    logger.info(f"Checkpoints saved to: {ckpt_dir}")
 
     # PyTorch-Lightning Trainer
     trainer = construct_trainer(
@@ -195,7 +202,7 @@ def main():
         val_dataloaders=data_loader.val_dataloader(),
     )
 
-    print("Traning complete!")
+    logger.info("Traning complete!")
 
     # clean_from_memory(
     #     pred_writer, pred_writer, pred_writer, checkpoint_callback
