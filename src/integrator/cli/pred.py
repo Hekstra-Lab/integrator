@@ -2,6 +2,7 @@ import argparse
 import logging
 import re
 
+from .utils.io import write_refl_from_preds
 from .utils.logger import setup_logging
 
 logger = logging.getLogger(__name__)

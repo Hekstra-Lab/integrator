@@ -1,44 +1,14 @@
 import argparse
+import logging
 import re
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
 
 import yaml
 
+from .utils.logger import setup_logging
 
-def _deep_merge(a: dict, b: dict) -> dict:
-    out = deepcopy(a)
-    for k, v in b.items():
-        if isinstance(v, dict) and isinstance(out.get(k), dict):
-            out[k] = _deep_merge(out[k], v)
-        else:
-            out[k] = v
-    return out
-
-
-def apply_cli_overrides(
-    cfg: dict,
-    *,
-    epochs: int | None = None,
-    batch_size: int | None = None,
-    data_path: Path | None = None,
-) -> dict:
-    base = cfg  # plain dict
-    updates: dict[str, Any] = {}
-    if epochs is not None:
-        updates.setdefault("trainer", {}).setdefault("args", {})["max_epochs"] = epochs
-    if batch_size is not None:
-        updates.setdefault("data_loader", {}).setdefault("args", {})["batch_size"] = (
-            batch_size
-        )
-    if data_path is not None:
-        updates.setdefault("data_loader", {}).setdefault("args", {})["data_dir"] = str(
-            data_path
-        )
-
-    merged = _deep_merge(base, updates)
-    return merged
+logger = logging.getLogger(__name__)
 
 
 def parse_args():
@@ -84,11 +54,17 @@ def parse_args():
         type=str,
         help="Path to run directory; located where integrator.train is called",
     )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=0,
+        help="Increase verbosity (-v = INFO, -vv = DEBUG)",
+    )
     return parser.parse_args()
 
 
 def main():
-    args = parse_args()
     import os
 
     import torch
@@ -108,6 +84,9 @@ def main():
         load_config,
     )
 
+    args = parse_args()
+    setup_logging(args.verbose)
+
     torch.set_float32_matmul_precision("medium")
 
     # load configuration file
@@ -121,17 +100,20 @@ def main():
     # )
 
     # load data
+
+    logger.info("Starting Training")
+
     data_loader = construct_data_loader(cfg)
     data_loader.setup()
 
     # load wandb logger
-    logger = WandbLogger(
+    wb_logger = WandbLogger(
         project=args.wb_project,
         save_dir=args.save_dir,
     )
 
     # Logging directory
-    logdir = Path(logger.experiment.dir)
+    logdir = Path(wb_logger.experiment.dir)
     run_dir = Path(args.run_dir)
 
     # Write a copy of the config.yaml file
@@ -142,7 +124,7 @@ def main():
         yaml.safe_dump(cfg_json, f, sort_keys=False)
 
     # log hyperparameters
-    logger.log_hyperparams(cfg_json)
+    wb_logger.log_hyperparams(cfg_json)
 
     # Run metadata
     metadata = {
@@ -152,9 +134,9 @@ def main():
         },
         "wandb": {
             "project": args.wb_project,
-            "run_id": logger.experiment.id,
-            "entity": logger.experiment.entity,
-            "log_dir": logger.experiment.dir,
+            "run_id": wb_logger.experiment.id,
+            "entity": wb_logger.experiment.entity,
+            "log_dir": wb_logger.experiment.dir,
         },
     }
 
@@ -174,16 +156,16 @@ def main():
         plotter = PlotterLD(
             n_profiles=10,
             plot_every_n_epochs=1,
-            d=cfg["logger"]["d"],
-            h=cfg["logger"]["h"],
-            w=cfg["logger"]["w"],
+            d=cfg["wb_logger"]["d"],
+            h=cfg["wb_logger"]["h"],
+            w=cfg["wb_logger"]["w"],
         )
     else:
         raise ValueError(
             f"Specified shoebox data dimension is incompatible: data_dim={data_dim}"
         )
 
-    fano_logger = LogFano()
+    fano_wb_logger = LogFano()
 
     # to save checkpoints
     ckpt_dir = logdir / "checkpoints"
@@ -199,11 +181,11 @@ def main():
     trainer = construct_trainer(
         cfg,
         callbacks=[
-            fano_logger,
+            fano_wb_logger,
             checkpoint_callback,
             plotter,
         ],
-        logger=logger,
+        logger=wb_logger,
     )
 
     # Fit the model
