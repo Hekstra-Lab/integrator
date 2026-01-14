@@ -283,8 +283,12 @@ def write_mtz_files():
             plus = ds.hkl_to_asu()["M/ISYM"].to_numpy() % 2 == 1
             centrics = ds.label_centrics().CENTRIC.to_numpy()
             plus |= centrics
-            ds[plus].write_mtz(Path(p.as_posix() + "/friedel_plus.mtz").as_posix())
-            ds[~plus].write_mtz(Path(p.as_posix() + "/friedel_minus.mtz").as_posix())
+            ds[plus].write_mtz(
+                Path(p.as_posix() + "/friedel_plus.mtz").as_posix()
+            )
+            ds[~plus].write_mtz(
+                Path(p.as_posix() + "/friedel_minus.mtz").as_posix()
+            )
 
             # report for file
             log_path = p.as_posix() + "/filter_log.txt"
