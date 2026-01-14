@@ -66,8 +66,10 @@ def write_refl_from_preds(
 
     id_filter = ds["refl_ids"].isin(unstacked_preds["refl_ids"])
     ds_filtered = ds[id_filter].sort_values(by="refl_ids")
-
     pred_df = pd.DataFrame(unstacked_preds).sort_values(by="refl_ids")
+
+    ds_filtered = ds_filtered.sort_values("refl_ids").reset_index(drop=True)
+    pred_df = pred_df.sort_values("refl_ids").reset_index(drop=True)
 
     # Overwriting columns
     ds_filtered["intensity.prf.value"] = pred_df["qi_mean"]
