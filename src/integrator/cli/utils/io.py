@@ -77,11 +77,13 @@ def write_refl_from_preds(
     ds_filtered["background.mean"] = pred_df["qbg_mean"]
 
     # Getting identifiers
-    data_dir = Path(config["global_vars"]["data_dir"])
-    identifiers = data_dir / "identifiers.yaml"
-    if identifiers.exists():
-        identifiers = load_config(identifiers)
-    else:
-        identifiers = None
+    identifiers_path = (
+        Path(config["global_vars"]["data_dir"]) / "identifiers.yaml"
+    )
+
+    if not identifiers_path.exists():
+        raise RuntimeError(f"Missing identifiers.yaml at {identifiers_path}")
+
+    identifiers = load_config(identifiers_path)
 
     write_refl_from_ds(ds_filtered, fname, identifiers=identifiers)

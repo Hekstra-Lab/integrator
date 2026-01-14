@@ -176,7 +176,6 @@ class Loss(nn.Module):
     ):
         # batch metadata
         device = rate.device
-        print(device)
         batch_size = rate.shape[0]
 
         # moving data to device

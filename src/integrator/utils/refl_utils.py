@@ -323,12 +323,17 @@ def write_refl_from_ds(
 
         data[key] = (dtype_name, (nrows, raw))
 
+    if identifiers is None:
+        raise ValueError(
+            "Identifiers must be provided when writing a reflection table "
+            "for use with an experiment file"
+        )
+
     pack = {
         "data": data,
         "nrows": nrows,
-        "identifiers": identifiers or {},
+        "identifiers": identifiers,
     }
-
     out = (REFL_TAG, REFL_VERSION, pack)
 
     with open(filename, "wb") as f:
