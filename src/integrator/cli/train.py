@@ -6,6 +6,8 @@ from pathlib import Path
 
 import yaml
 
+from utils.io import _apply_cli_overrides
+
 from .utils.logger import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -54,6 +56,22 @@ def parse_args():
         type=str,
         help="Path to run directory; located where integrator.train is called",
     )
+
+    parser.add_argument(
+        "--integrator-name",
+        type=str,
+        help="Name of the ingrator module to use",
+    )
+    parser.add_argument(
+        "--qbg",
+        type=str,
+        help="String name of the background surrogate module",
+    )
+    parser.add_argument(
+        "--qi",
+        type=str,
+        help="String name of the intensity surrogate module",
+    )
     parser.add_argument(
         "-v",
         "--verbose",
@@ -92,12 +110,7 @@ def main():
     # load configuration file
     cfg = load_config(args.config)
 
-    # cfg = apply_cli_overrides(
-    #     cfg,
-    #     epochs=args.epochs,
-    #     batch_size=args.batch_size,
-    #     data_path=args.data_path,
-    # )
+    cfg = _apply_cli_overrides(cfg, args=args)
 
     # load data
 
@@ -120,7 +133,7 @@ def main():
     logger.info(f"Run directory: {run_dir}")
 
     # Write a copy of the config.yaml file
-    config_copy = logdir / "config_copy.yaml"
+    config_copy = run_dir / "config_copy.yaml"
     cfg_json = deepcopy(cfg)
 
     with open(config_copy, "w") as f:
@@ -271,12 +284,8 @@ def write_mtz_files():
             plus = ds.hkl_to_asu()["M/ISYM"].to_numpy() % 2 == 1
             centrics = ds.label_centrics().CENTRIC.to_numpy()
             plus |= centrics
-            ds[plus].write_mtz(
-                Path(p.as_posix() + "/friedel_plus.mtz").as_posix()
-            )
-            ds[~plus].write_mtz(
-                Path(p.as_posix() + "/friedel_minus.mtz").as_posix()
-            )
+            ds[plus].write_mtz(Path(p.as_posix() + "/friedel_plus.mtz").as_posix())
+            ds[~plus].write_mtz(Path(p.as_posix() + "/friedel_minus.mtz").as_posix())
 
             # report for file
             log_path = p.as_posix() + "/filter_log.txt"

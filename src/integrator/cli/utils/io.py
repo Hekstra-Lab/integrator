@@ -1,6 +1,5 @@
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
 
 from integrator.utils import load_config
 
@@ -18,24 +17,28 @@ def _deep_merge(a: dict, b: dict) -> dict:
 def _apply_cli_overrides(
     cfg: dict,
     *,
-    epochs: int | None = None,
-    batch_size: int | None = None,
-    data_path: Path | None = None,
+    args,
 ) -> dict:
-    base = cfg  # plain dict
-    updates: dict[str, Any] = {}
-    if epochs is not None:
-        updates.setdefault("trainer", {}).setdefault("args", {})[
-            "max_epochs"
-        ] = epochs
-    if batch_size is not None:
-        updates.setdefault("data_loader", {}).setdefault("args", {})[
-            "batch_size"
-        ] = batch_size
-    if data_path is not None:
-        updates.setdefault("data_loader", {}).setdefault("args", {})[
-            "data_dir"
-        ] = str(data_path)
+    base = dict(cfg)
+
+    updates = {}
+
+    if args.epochs is not None:
+        updates.setdefault("trainer", {})["max_epochs"] = args.epochs
+    if args.batch_size is not None:
+        updates.setdefault("data_loader", {}).setdefault("args", {})["batch_size"] = (
+            args.batch_size
+        )
+    if args.data_path is not None:
+        updates.setdefault("data_loader", {}).setdefault("args", {})["data_dir"] = str(
+            args.data_path
+        )
+    if args.qi is not None:
+        updates.setdefault("surrogates", {}).setdefault("qi", {})["name"] = args.qi
+    if args.qbg is not None:
+        updates.setdefault("surrogates", {}).setdefault("qbg", {})["name"] = args.qbg
+    if args.integrator_name is not None:
+        updates.setdefault("integrator", {})["name"] = args.integrator_name
 
     merged = _deep_merge(base, updates)
     return merged
@@ -79,9 +82,7 @@ def write_refl_from_preds(
     ds_filtered["background.mean"] = pred_df["qbg_mean"]
 
     # Getting identifiers
-    identifiers_path = (
-        Path(config["global_vars"]["data_dir"]) / "identifiers.yaml"
-    )
+    identifiers_path = Path(config["global_vars"]["data_dir"]) / "identifiers.yaml"
 
     if not identifiers_path.exists():
         raise RuntimeError(f"Missing identifiers.yaml at {identifiers_path}")

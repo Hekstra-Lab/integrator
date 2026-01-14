@@ -40,30 +40,25 @@ dev = ['pytest','ruff','mypy','wandb>=0.17']
 Homepage = "https://github.com/Hekstra-Lab/integrator/tree/integrator_mvn"
 Repository = "https://github.com/Hekstra-Lab/integrator"
 
-# ----------------------------
 # Hatchling build config
-# ----------------------------
-# Your code uses a "src" layout. Point hatchling at the package folder.
+# Point hatchling at the package folder.
 [tool.hatch.build.targets.wheel]
 packages = ["src/integrator"]
 
 #include = []
 
-# Source distribution: include your source tree and top-level files.
+# Source distribution
 [tool.hatch.build.targets.sdist]
 include = [
   "src/**",
   "docs/**",
-  "tests/**",        # optional—include tests in the sdist if you want
+  "tests/**",        
   "README.md",
   "pyproject.toml",
   "mkdocs.yml"
 ]
 
-# ----------------------------
-# Tool configs (same as before)
-# ----------------------------
-
+# Tool configs
 [tool.hatch.version]
 
 [tool.ruff]
@@ -85,9 +80,9 @@ quote-style = "double"
 indent-style = "space"
 docstring-code-format = true
 
-
 [tool.ruff.lint]
-# Only ignore variables named "_".
+
+# Only ignore variables named "_"
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
 [tool.mypy]
