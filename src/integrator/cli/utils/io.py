@@ -2,6 +2,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from integrator.utils import load_config
+
 
 def _deep_merge(a: dict, b: dict) -> dict:
     out = deepcopy(a)
@@ -42,6 +44,7 @@ def _apply_cli_overrides(
 def write_refl_from_preds(
     ckpt_dir,
     refl_file,
+    config: dict,
     epoch: int,
 ):
     import pandas as pd
@@ -73,4 +76,12 @@ def write_refl_from_preds(
     ds_filtered["intensity.sum.variance"] = pred_df["qi_var"]
     ds_filtered["background.mean"] = pred_df["qbg_mean"]
 
-    write_refl_from_ds(ds_filtered, fname)
+    # Getting identifiers
+    data_dir = Path(config["global_vars"]["data_dir"])
+    identifiers = data_dir / "identifiers.yaml"
+    if identifiers.exists():
+        identifiers = load_config(identifiers)
+    else:
+        identifiers = None
+
+    write_refl_from_ds(ds_filtered, fname, identifiers=identifiers)

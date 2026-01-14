@@ -150,6 +150,7 @@ def main():
                 ckpt_dir=ckpt_dir,
                 refl_file=refl_file,
                 epoch=epoch,
+                config=config,
             )
 
     logger.info("Prediction complete!")
