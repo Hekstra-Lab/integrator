@@ -32,6 +32,8 @@ def _log_forward_out(
     forward_out: dict,
     step: Literal["train", "val"],
 ):
+    if step != "val":
+        return
     self.log(f"{step}: mean(qi.mean)", forward_out["qi_mean"].mean())
     self.log(f"{step}: min(qi.mean)", forward_out["qi_mean"].min())
     self.log(f"{step}: max(qi.mean)", forward_out["qi_mean"].max())
@@ -87,7 +89,9 @@ class BaseIntegrator(pl.LightningModule):
 
         # predict step keys
         self.predict_keys = (
-            DEFAULT_PREDICT_KEYS if cfg.predict_keys == "default" else cfg.predict_keys
+            DEFAULT_PREDICT_KEYS
+            if cfg.predict_keys == "default"
+            else cfg.predict_keys
         )
 
         self.encoders = nn.ModuleDict(encoders)
@@ -131,11 +135,11 @@ class BaseIntegrator(pl.LightningModule):
 
         total_loss = loss_dict["loss"]
 
-        _log_forward_out(
-            self,
-            forward_out=forward_out,
-            step=step,
-        )
+        # _log_forward_out(
+        #     self,
+        #     forward_out=forward_out,
+        #     step=step,
+        # )
         _log_loss(
             self,
             kl=loss_dict["kl_mean"],
@@ -157,7 +161,9 @@ class BaseIntegrator(pl.LightningModule):
         outputs = self(counts, shoebox, mask, metadata)
 
         return {
-            k: v for k, v in outputs["forward_out"].items() if k in self.predict_keys
+            k: v
+            for k, v in outputs["forward_out"].items()
+            if k in self.predict_keys
         }
 
     def configure_optimizers(self):

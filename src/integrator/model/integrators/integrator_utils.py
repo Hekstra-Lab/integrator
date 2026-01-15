@@ -53,18 +53,24 @@ def _log_forward_out(
     forward_out: dict,
     step: Literal["train", "val"],
 ):
-    self.log(f"{step}: mean(qi.mean)", forward_out["qi_mean"].mean())
-    self.log(f"{step}: min(qi.mean)", forward_out["qi_mean"].min())
-    self.log(f"{step}: max(qi.mean)", forward_out["qi_mean"].max())
-    self.log(f"{step}: max(qi.variance)", forward_out["qi_var"].max())
-    self.log(f"{step}: min(qi.variance)", forward_out["qi_var"].min())
-    self.log(f"{step}: mean(qi.variance)", forward_out["qi_var"].mean())
-    self.log(f"{step}: mean(qbg.mean)", forward_out["qbg_mean"].mean())
-    self.log(f"{step}: min(qbg.mean)", forward_out["qbg_mean"].min())
-    self.log(f"{step}: max(qbg.mean)", forward_out["qbg_mean"].max())
-    self.log(f"{step}: mean(qbg.variance)", forward_out["qbg_var"].mean())
-    self.log(f"{step}: max(qbg.variance)", forward_out["qbg_var"].max())
-    self.log(f"{step}: min(qbg.variance)", forward_out["qbg_var"].min())
+    on_ = {
+        "on_epoch": True,
+        "on_step": False,
+    }
+    self.log(f"{step}: mean(qi.mean)", forward_out["qi_mean"].mean(), **on_)
+    self.log(f"{step}: min(qi.mean)", forward_out["qi_mean"].min(), **on_)
+    self.log(f"{step}: max(qi.mean)", forward_out["qi_mean"].max(), **on_)
+    self.log(f"{step}: max(qi.variance)", forward_out["qi_var"].max(), **on_)
+    self.log(f"{step}: min(qi.variance)", forward_out["qi_var"].min(), **on_)
+    self.log(f"{step}: mean(qi.variance)", forward_out["qi_var"].mean(), **on_)
+    self.log(f"{step}: mean(qbg.mean)", forward_out["qbg_mean"].mean(), **on_)
+    self.log(f"{step}: min(qbg.mean)", forward_out["qbg_mean"].min(), **on_)
+    self.log(f"{step}: max(qbg.mean)", forward_out["qbg_mean"].max(), **on_)
+    self.log(
+        f"{step}: mean(qbg.variance)", forward_out["qbg_var"].mean(), **on_
+    )
+    self.log(f"{step}: max(qbg.variance)", forward_out["qbg_var"].max(), **on_)
+    self.log(f"{step}: min(qbg.variance)", forward_out["qbg_var"].min(), **on_)
 
 
 def _log_loss(
@@ -78,7 +84,7 @@ def _log_loss(
         "train/loss",
         total_loss,
         on_step=False,
-        on_epoch=True,
+        on_epoch=False,
         prog_bar=True,
     )
     self.log(f"{step} kl", kl, on_step=False, on_epoch=True)
