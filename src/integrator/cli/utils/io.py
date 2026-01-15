@@ -23,20 +23,24 @@ def _apply_cli_overrides(
 
     updates = {}
 
-    if args.epochs is not None:
+    if args.max_epochs is not None:
         updates.setdefault("trainer", {})["max_epochs"] = args.epochs
     if args.batch_size is not None:
-        updates.setdefault("data_loader", {}).setdefault("args", {})["batch_size"] = (
-            args.batch_size
-        )
+        updates.setdefault("data_loader", {}).setdefault("args", {})[
+            "batch_size"
+        ] = args.batch_size
     if args.data_path is not None:
-        updates.setdefault("data_loader", {}).setdefault("args", {})["data_dir"] = str(
-            args.data_path
-        )
+        updates.setdefault("data_loader", {}).setdefault("args", {})[
+            "data_dir"
+        ] = str(args.data_path)
     if args.qi is not None:
-        updates.setdefault("surrogates", {}).setdefault("qi", {})["name"] = args.qi
+        updates.setdefault("surrogates", {}).setdefault("qi", {})["name"] = (
+            args.qi
+        )
     if args.qbg is not None:
-        updates.setdefault("surrogates", {}).setdefault("qbg", {})["name"] = args.qbg
+        updates.setdefault("surrogates", {}).setdefault("qbg", {})["name"] = (
+            args.qbg
+        )
     if args.integrator_name is not None:
         updates.setdefault("integrator", {})["name"] = args.integrator_name
 
@@ -82,7 +86,9 @@ def write_refl_from_preds(
     ds_filtered["background.mean"] = pred_df["qbg_mean"]
 
     # Getting identifiers
-    identifiers_path = Path(config["global_vars"]["data_dir"]) / "identifiers.yaml"
+    identifiers_path = (
+        Path(config["global_vars"]["data_dir"]) / "identifiers.yaml"
+    )
 
     if not identifiers_path.exists():
         raise RuntimeError(f"Missing identifiers.yaml at {identifiers_path}")

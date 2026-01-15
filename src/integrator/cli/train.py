@@ -21,15 +21,13 @@ def parse_args():
         help="Path to configuration file",
     )
     parser.add_argument(
-        "--epochs",
+        "--max_epochs",
         type=int,
-        default=2,
         help="Number of epochs to train for",
     )
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=64,
         help="The size of a train batch",
     )
     parser.add_argument(
