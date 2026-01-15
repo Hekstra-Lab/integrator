@@ -4,6 +4,7 @@ from integrator.data_loaders import (
 )
 from integrator.model.distributions import (
     DirichletDistribution,
+    FoldedNormalA,
     FoldedNormalDistribution,
     GammaDistribution,
     GammaDistributionRepamA,
