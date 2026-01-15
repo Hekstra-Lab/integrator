@@ -200,7 +200,7 @@ def main():
         callbacks=[
             # fano_wb_logger,
             checkpoint_callback,
-            plotter,
+            # plotter,
         ],
         logger=wb_logger,
     )

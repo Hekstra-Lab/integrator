@@ -10,9 +10,7 @@ import polars as pl
 import torch
 import wandb
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import Callback
-from pytorch_lightning.loggers import WandbLogger
 from torch import Tensor
 
 ## The callbacks assume a W&B logger with logger.experiment.dir
@@ -249,140 +247,233 @@ def _get_agg_df(bin_labels):
     )
 
 
+# class LogFano(Callback):
+#     def __init__(self):
+#         super().__init__()
+#
+#         edges = [0, 10, 25, 50, 100, 300, 600, 1000, 1500, 2500, 5000, 10000]
+#         bin_edges = zip(edges[:-1], edges[1:], strict=False)
+#
+#         bin_labels = []
+#         for a, b in bin_edges:
+#             bin_labels.append(f"{a} - {b}")
+#
+#         # add end conditions
+#         bin_labels.insert(0, f"<{bin_labels[0].split()[0]}")
+#         bin_labels.append(f">{bin_labels[-1].split()[1]}")
+#
+#         self.bin_edges = edges
+#         self.bin_labels = bin_labels
+#
+#         # dataframe to merge and get all intensity bins
+#         self.base_df = pl.DataFrame(
+#             {"intensity_bin": bin_labels},
+#             schema={"intensity_bin": pl.Categorical},
+#         )
+#
+#         # columns to aggregate
+#         self.numeric_cols = ["fano_sum", "n", "isigi_sum", "cv_sum"]
+#
+#         # initialize an empty dataframe to aggregate data across steps
+#         self.agg_df = _get_agg_df(self.bin_labels)
+#
+#     def on_train_batch_end(
+#         self,
+#         trainer: Trainer,
+#         pl_module,
+#         outputs,
+#         batch,
+#         batch_idx,
+#     ):
+#         # do nothing if outputs is None
+#         if outputs is None:
+#             return
+#
+#         if not isinstance(outputs, Mapping):
+#             raise TypeError("Outputs should be a dictionary type")
+#
+#         if "forward_out" not in outputs:
+#             raise KeyError(
+#                 "outputs dictionary should contain a 'forward_out' key"
+#             )
+#
+#         out = outputs["forward_out"]
+#         fano = to_cpu(_fano(out, "qi_mean", "qi_var"))
+#         cv = to_cpu(_cv(out, "qi_mean", "qi_var"))
+#
+#         # aggregate
+#         df = pl.DataFrame(
+#             {
+#                 "refl_ids": to_cpu(out["refl_ids"]),
+#                 "qi_mean": to_cpu(out["qi_mean"]),
+#                 "qi_var": to_cpu(out["qi_var"]),
+#                 "fano": fano,
+#                 "cv": cv,
+#             }
+#         )
+#
+#         # bin by intensity
+#         df = df.with_columns(
+#             pl.col("qi_mean")
+#             .cut(self.bin_edges, labels=self.bin_labels)
+#             .alias("intensity_bin")
+#         )
+#
+#         # signal-to-noise expression
+#         isigi = pl.col("qi_mean") / pl.col("qi_var").sqrt()
+#
+#         # group by intensity bin and get mean
+#         avg_df = df.group_by(pl.col("intensity_bin")).agg(
+#             fano_sum=pl.col("fano").sum(),
+#             cv_sum=pl.col("cv").sum(),
+#             isigi_sum=isigi.sum(),
+#             n=pl.len(),
+#         )
+#
+#         merged_df = self.base_df.join(
+#             avg_df,
+#             how="left",
+#             on="intensity_bin",
+#         ).fill_null(0)
+#
+#         self.agg_df = self.agg_df.with_columns(
+#             [pl.col(c) + merged_df[c] for c in self.numeric_cols]
+#         )
+#
+#     def on_train_epoch_end(
+#         self,
+#         trainer: Trainer,
+#         pl_module,
+#     ):
+#         # get avg variance/mean ratio per intensity bin
+#         epoch_df = self.agg_df.with_columns(
+#             (pl.col("fano_sum") / pl.col("n")).alias("avg_fano"),
+#             (pl.col("isigi_sum") / pl.col("n")).alias("avg_isigi"),
+#             (pl.col("cv_sum") / pl.col("n")).alias("avg_cv"),
+#         )
+#
+#         # plot average Fano factor
+#         fig = _plot_avg_fano(epoch_df)
+#         wandb.log({"train: avg var/mean": wandb.Image(fig)})
+#         plt.close(fig)
+#
+#         # plot average Coefficient of variation
+#         fig = _plot_avg_cv(epoch_df)
+#         wandb.log({"train: avg CV": wandb.Image(fig)})
+#         plt.close(fig)
+#
+#         # plot average signal-to-noise
+#         fig = _plot_avg_isigi(epoch_df)
+#         wandb.log({"train: avg signal-to-noise": wandb.Image(fig)})
+#         plt.close(fig)
+#
+#         # Getting log direcotory
+#         logger = trainer.logger
+#         if isinstance(logger, WandbLogger):
+#             log_dir = logger.experiment.dir
+#         else:
+#             log_dir = trainer.default_root_dir
+#
+#         csv_fname = (
+#             log_dir + f"/log_fano_csv_epoch_{trainer.current_epoch}.csv"
+#         )
+#         epoch_df.write_csv(csv_fname)
+#
+#         # reset agg_df
+#         self.agg_df = _get_agg_df(self.bin_labels)
+#
+#
 class LogFano(Callback):
     def __init__(self):
         super().__init__()
 
         edges = [0, 10, 25, 50, 100, 300, 600, 1000, 1500, 2500, 5000, 10000]
-        bin_edges = zip(edges[:-1], edges[1:], strict=False)
+        self.bin_edges = torch.tensor(edges)
 
-        bin_labels = []
-        for a, b in bin_edges:
-            bin_labels.append(f"{a} - {b}")
-
-        # add end conditions
-        bin_labels.insert(0, f"<{bin_labels[0].split()[0]}")
-        bin_labels.append(f">{bin_labels[-1].split()[1]}")
-
-        self.bin_edges = edges
-        self.bin_labels = bin_labels
-
-        # dataframe to merge and get all intensity bins
-        self.base_df = pl.DataFrame(
-            {"intensity_bin": bin_labels},
-            schema={"intensity_bin": pl.Categorical},
-        )
-
-        # columns to aggregate
-        self.numeric_cols = ["fano_sum", "n", "isigi_sum", "cv_sum"]
-
-        # initialize an empty dataframe to aggregate data across steps
-        self.agg_df = _get_agg_df(self.bin_labels)
+        # buffers (GPU tensors)
+        self.qi_mean = []
+        self.qi_var = []
 
     def on_train_batch_end(
         self,
-        trainer: Trainer,
+        trainer,
         pl_module,
         outputs,
         batch,
         batch_idx,
     ):
-        # do nothing if outputs is None
         if outputs is None:
             return
 
-        if not isinstance(outputs, Mapping):
-            raise TypeError("Outputs should be a dictionary type")
-
-        if "forward_out" not in outputs:
-            raise KeyError(
-                "outputs dictionary should contain a 'forward_out' key"
-            )
-
         out = outputs["forward_out"]
-        fano = to_cpu(_fano(out, "qi_mean", "qi_var"))
-        cv = to_cpu(_cv(out, "qi_mean", "qi_var"))
+
+        self.qi_mean.append(out["qi_mean"].detach())
+        self.qi_var.append(out["qi_var"].detach())
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        if not self.qi_mean:
+            return
+
+        # concatenate once
+        qi = torch.cat(self.qi_mean).cpu()
+        qv = torch.cat(self.qi_var).cpu()
+
+        # clear buffers early
+        self.qi_mean.clear()
+        self.qi_var.clear()
+
+        fano = qv / (qi + 1e-8)
+        isigi = qi / (qv.sqrt() + 1e-8)
+        cv = qv.sqrt() / (qi + 1e-8)
+
+        # bin indices
+        bin_idx = torch.bucketize(qi, self.bin_edges)
+
+        n_bins = len(self.bin_edges) + 1
 
         # aggregate
-        df = pl.DataFrame(
+        fano_sum = torch.zeros(n_bins)
+        cv_sum = torch.zeros(n_bins)
+        isigi_sum = torch.zeros(n_bins)
+        counts = torch.zeros(n_bins)
+
+        for i in range(n_bins):
+            mask = bin_idx == i
+            if mask.any():
+                fano_sum[i] = fano[mask].sum()
+                cv_sum[i] = cv[mask].sum()
+                isigi_sum[i] = isigi[mask].sum()
+                counts[i] = mask.sum()
+
+        # avoid division by zero
+        valid = counts > 0
+        avg_fano = torch.zeros_like(fano_sum)
+        avg_cv = torch.zeros_like(cv_sum)
+        avg_isigi = torch.zeros_like(isigi_sum)
+
+        avg_fano[valid] = fano_sum[valid] / counts[valid]
+        avg_cv[valid] = cv_sum[valid] / counts[valid]
+        avg_isigi[valid] = isigi_sum[valid] / counts[valid]
+
+        wandb.log(
             {
-                "refl_ids": to_cpu(out["refl_ids"]),
-                "qi_mean": to_cpu(out["qi_mean"]),
-                "qi_var": to_cpu(out["qi_var"]),
-                "fano": fano,
-                "cv": cv,
+                "train/avg_fano": avg_fano[valid].mean().item(),
+                "train/avg_cv": avg_cv[valid].mean().item(),
+                "train/avg_isigi": avg_isigi[valid].mean().item(),
             }
         )
 
-        # bin by intensity
-        df = df.with_columns(
-            pl.col("qi_mean")
-            .cut(self.bin_edges, labels=self.bin_labels)
-            .alias("intensity_bin")
+        # optional: plot once per epoch
+        fig = _plot_avg_fano(
+            pl.DataFrame(
+                {
+                    "intensity_bin": list(range(n_bins)),
+                    "avg_fano": avg_fano.numpy(),
+                }
+            )
         )
-
-        # signal-to-noise expression
-        isigi = pl.col("qi_mean") / pl.col("qi_var").sqrt()
-
-        # group by intensity bin and get mean
-        avg_df = df.group_by(pl.col("intensity_bin")).agg(
-            fano_sum=pl.col("fano").sum(),
-            cv_sum=pl.col("cv").sum(),
-            isigi_sum=isigi.sum(),
-            n=pl.len(),
-        )
-
-        merged_df = self.base_df.join(
-            avg_df,
-            how="left",
-            on="intensity_bin",
-        ).fill_null(0)
-
-        self.agg_df = self.agg_df.with_columns(
-            [pl.col(c) + merged_df[c] for c in self.numeric_cols]
-        )
-
-    def on_train_epoch_end(
-        self,
-        trainer: Trainer,
-        pl_module,
-    ):
-        # get avg variance/mean ratio per intensity bin
-        epoch_df = self.agg_df.with_columns(
-            (pl.col("fano_sum") / pl.col("n")).alias("avg_fano"),
-            (pl.col("isigi_sum") / pl.col("n")).alias("avg_isigi"),
-            (pl.col("cv_sum") / pl.col("n")).alias("avg_cv"),
-        )
-
-        # plot average Fano factor
-        fig = _plot_avg_fano(epoch_df)
-        wandb.log({"train: avg var/mean": wandb.Image(fig)})
+        wandb.log({"train/fano_vs_bin": wandb.Image(fig)})
         plt.close(fig)
-
-        # plot average Coefficient of variation
-        fig = _plot_avg_cv(epoch_df)
-        wandb.log({"train: avg CV": wandb.Image(fig)})
-        plt.close(fig)
-
-        # plot average signal-to-noise
-        fig = _plot_avg_isigi(epoch_df)
-        wandb.log({"train: avg signal-to-noise": wandb.Image(fig)})
-        plt.close(fig)
-
-        # Getting log direcotory
-        logger = trainer.logger
-        if isinstance(logger, WandbLogger):
-            log_dir = logger.experiment.dir
-        else:
-            log_dir = trainer.default_root_dir
-
-        csv_fname = (
-            log_dir + f"/log_fano_csv_epoch_{trainer.current_epoch}.csv"
-        )
-        epoch_df.write_csv(csv_fname)
-
-        # reset agg_df
-        self.agg_df = _get_agg_df(self.bin_labels)
 
 
 class PlotterLD(Callback):
