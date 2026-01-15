@@ -239,7 +239,7 @@ def construct_trainer(
         deterministic=tr_cfg.deterministic,
         enable_checkpointing=tr_cfg.enable_checkpointing,
         callbacks=callbacks,
-        enable_progress_bar=False,
+        enable_progress_bar=True,
     )
 
 
@@ -251,7 +251,9 @@ def override_config(args, config):
         config["trainer"]["args"]["max_epochs"] = args.epochs
 
 
-def clean_from_memory(trainer, pred_writer, pred_integrator, checkpoint_callback=None):
+def clean_from_memory(
+    trainer, pred_writer, pred_integrator, checkpoint_callback=None
+):
     del trainer
     del pred_writer
     del pred_integrator
@@ -261,7 +263,9 @@ def clean_from_memory(trainer, pred_writer, pred_integrator, checkpoint_callback
     gc.collect()
 
 
-def predict_from_checkpoints(config, trainer, pred_integrator, data, version_dir, path):
+def predict_from_checkpoints(
+    config, trainer, pred_integrator, data, version_dir, path
+):
     for ckpt in glob.glob(path):
         match = re.search(r"epoch=(\d+)", ckpt)
         if match is None:
@@ -274,9 +278,9 @@ def predict_from_checkpoints(config, trainer, pred_integrator, data, version_dir
         # prediction writer for current checkpoint
         pred_writer = PredWriter(
             output_dir=ckpt_dir,
-            write_interval=config["trainer"]["args"]["callbacks"]["pred_writer"][
-                "write_interval"
-            ],
+            write_interval=config["trainer"]["args"]["callbacks"][
+                "pred_writer"
+            ]["write_interval"],
         )
 
         trainer.callbacks = [pred_writer]
