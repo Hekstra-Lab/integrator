@@ -1,7 +1,7 @@
-import os
 import sys
 import traceback
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
@@ -382,8 +382,8 @@ def _get_agg_df(bin_labels):
 #
 #         # reset agg_df
 #         self.agg_df = _get_agg_df(self.bin_labels)
-#
-#
+
+
 class LogFano(Callback):
     def __init__(self):
         super().__init__()
@@ -919,7 +919,7 @@ class PlotterLD(Callback):
 class EpochMetricRecorder(Callback):
     def __init__(
         self,
-        out_dir: str,
+        out_dir: str | Path,
         keys: list[str],
         split: str = "train",  # "train" or "val"
         every_n_epochs: int = 1,
@@ -935,7 +935,7 @@ class EpochMetricRecorder(Callback):
         self.use_parquet = use_parquet
 
         self.buffers: dict[str, list[torch.Tensor]] = {}
-        os.makedirs(out_dir, exist_ok=True)
+        Path(out_dir).mkdir(parents=True, exist_ok=True)
 
     def _append(self, key, tensor):
         self.buffers.setdefault(key, []).append(tensor.detach())

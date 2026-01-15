@@ -179,8 +179,11 @@ def main():
         "xyzcal.px.2",
         "d",
     ]
+    train_metric_dir = logdir / "train_metrics"
+    val_metric_dir = logdir / "val_metrics"
+
     train_epoch_recorder = EpochMetricRecorder(
-        out_dir="logs/train_metrics",
+        out_dir=train_metric_dir,
         keys=keys,
         split="train",
         every_n_epochs=1,
@@ -188,7 +191,7 @@ def main():
     )
 
     val_epoch_recorder = EpochMetricRecorder(
-        out_dir="logs/val_metrics",
+        out_dir=val_metric_dir,
         keys=keys,
         split="val",
     )
