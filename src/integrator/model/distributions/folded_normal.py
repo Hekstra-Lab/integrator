@@ -6,7 +6,6 @@ import torch.nn.functional as F
 from torch import Tensor
 from torch.distributions import Distribution
 
-
 # class FoldedNormal(TransformedDistribution):
 #     arg_constraints = {"loc": constraints.real, "scale": constraints.positive}
 #
@@ -56,9 +55,8 @@ from torch.distributions import Distribution
 #             self._validate_sample(value)
 #         n = self._normal
 #         return torch.logaddexp(n.log_prob(value), n.log_prob(-value))
-#
-#
-# -
+
+
 class NormalIRSample(torch.autograd.Function):
     @staticmethod
     def forward(ctx, loc, scale, samples, dFdmu, dFdsig, q):
