@@ -288,7 +288,33 @@ class FoldedNormalDistribution(nn.Module):
         return FoldedNormal(loc, scale)
 
 
-#
+class FoldedNormalA(nn.Module):
+    def __init__(
+        self,
+        in_features: int = 64,
+        eps: float = 0.1,
+    ):
+        super().__init__()
+        self.linear_loc = torch.nn.Linear(in_features, 1)
+        self.linear_scale = torch.nn.Linear(in_features, 1)
+        self.eps = eps
+
+    def forward(
+        self,
+        x: Tensor,
+        x_: Tensor,
+    ) -> FoldedNormal:
+        # raw params
+        raw_loc = self.linear_loc(x)
+        raw_scale = self.linear_scale(x_)
+
+        # transform
+        loc = torch.exp(raw_loc)
+        scale = F.softplus(raw_scale) + self.eps
+
+        return FoldedNormal(loc, scale)
+
+
 # class FoldedNormalDistribution(nn.Module):
 #     """
 #     FoldedNormal distribution with parameters predicted by a linear layer.

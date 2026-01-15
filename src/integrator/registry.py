@@ -44,6 +44,7 @@ REGISTRY = {
         "folded_normal": FoldedNormalDistribution,
         "half_normal": HalfNormalDistribution,
         "dirichlet": DirichletDistribution,
+        "folded_normal_A": FoldedNormalA,
     },
     "data_loader": {
         "default": ShoeboxDataModule,
