@@ -87,6 +87,7 @@ def main():
     from pytorch_lightning.loggers import WandbLogger
 
     from integrator.callbacks import (
+        EpochMetricRecorder,
         LogFano,
         Plotter,
         PlotterLD,
@@ -165,6 +166,33 @@ def main():
     integrator = construct_integrator(cfg)
 
     # Callbacks
+    keys = [
+        "refl_ids",
+        "qi_mean",
+        "qi_var",
+        "qbg_mean",
+        "background.mean",
+        "intensity.prf.value",
+        "intensity.prf.variance",
+        "xyzcal.px.0",
+        "xyzcal.px.1",
+        "xyzcal.px.2",
+        "d",
+    ]
+    train_epoch_recorder = EpochMetricRecorder(
+        out_dir="logs/train_metrics",
+        keys=keys,
+        split="train",
+        every_n_epochs=1,
+        max_rows_per_epoch=200_000,  # safety valve
+    )
+
+    val_epoch_recorder = EpochMetricRecorder(
+        out_dir="logs/val_metrics",
+        keys=keys,
+        split="val",
+    )
+
     data_dim = cfg["integrator"]["args"]["data_dim"]
     if data_dim == "3d":
         plotter = Plotter(n_profiles=10)
@@ -199,6 +227,8 @@ def main():
         cfg,
         callbacks=[
             # fano_wb_logger,
+            val_epoch_recorder,
+            train_epoch_recorder,
             checkpoint_callback,
             # plotter,
         ],
@@ -298,7 +328,7 @@ def write_mtz_files():
 
 if __name__ == "__main__":
     main()
-    #
+
     # import os
     # from pathlib import Path
     #
@@ -307,6 +337,7 @@ if __name__ == "__main__":
     # from pytorch_lightning.loggers import WandbLogger
     #
     # from integrator.callbacks import (
+    #     EpochMetricRecorder,
     #     LogFano,
     #     Plotter,
     #     PlotterLD,
@@ -377,7 +408,34 @@ if __name__ == "__main__":
     # # create integrator
     # integrator = construct_integrator(cfg)
     #
-    # # to generate plots
+    # # Callbacks
+    # keys = [
+    #     "refl_ids",
+    #     "qi_mean",
+    #     "qi_var",
+    #     "qbg_mean",
+    #     "background.mean",
+    #     "intensity.prf.value",
+    #     "intensity.prf.variance",
+    #     "xyzcal.px.0",
+    #     "xyzcal.px.1",
+    #     "xyzcal.px.2",
+    #     "d",
+    # ]
+    # train_epoch_recorder = EpochMetricRecorder(
+    #     out_dir="logs/train_metrics",
+    #     keys=keys,
+    #     split="train",
+    #     every_n_epochs=1,
+    #     max_rows_per_epoch=200_000,  # safety valve
+    # )
+    #
+    # val_epoch_recorder = EpochMetricRecorder(
+    #     out_dir="logs/val_metrics",
+    #     keys=keys,
+    #     split="val",
+    # )
+    #
     # data_dim = cfg["integrator"]["args"]["data_dim"]
     # if data_dim == "3d":
     #     plotter = Plotter(n_profiles=10)
@@ -385,35 +443,36 @@ if __name__ == "__main__":
     #     plotter = PlotterLD(
     #         n_profiles=10,
     #         plot_every_n_epochs=1,
-    #         d=cfg["logger"]["d"],
-    #         h=cfg["logger"]["h"],
-    #         w=cfg["logger"]["w"],
+    #         d=cfg["wb_logger"]["d"],
+    #         h=cfg["wb_logger"]["h"],
+    #         w=cfg["wb_logger"]["w"],
     #     )
     # else:
     #     raise ValueError(
     #         f"Specified shoebox data dimension is incompatible: data_dim={data_dim}"
     #     )
     #
-    # fano_logger = LogFano()
-    #
-    # ckpt_dir = logdir / "checkpoints"
+    # fano_wb_logger = LogFano()
     #
     # # to save checkpoints
+    # ckpt_dir = logdir / "checkpoints"
     # checkpoint_callback = ModelCheckpoint(
     #     dirpath=ckpt_dir,
-    #     filename="{epoch:04d}-{val_loss:.2f}",
+    #     filename="{epoch:04d}",
     #     every_n_epochs=1,
     #     save_top_k=-1,
     #     save_last="link",
     # )
     #
-    # # to train integrator
+    # # PyTorch-Lightning Trainer
     # trainer = construct_trainer(
     #     cfg,
     #     callbacks=[
-    #         fano_logger,
+    #         # fano_wb_logger,
+    #         val_epoch_recorder,
+    #         train_epoch_recorder,
     #         checkpoint_callback,
-    #         plotter,
+    #         # plotter,
     #     ],
     #     logger=logger,
     # )

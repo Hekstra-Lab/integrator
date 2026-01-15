@@ -1,3 +1,4 @@
+import os
 import sys
 import traceback
 from collections.abc import Mapping
@@ -915,6 +916,105 @@ class PlotterLD(Callback):
             self.preds_validation = {}
 
 
+class EpochMetricRecorder(Callback):
+    def __init__(
+        self,
+        out_dir: str,
+        keys: list[str],
+        split: str = "train",  # "train" or "val"
+        every_n_epochs: int = 1,
+        max_rows_per_epoch: int | None = None,
+        use_parquet: bool = True,
+    ):
+        super().__init__()
+        self.out_dir = out_dir
+        self.keys = keys
+        self.split = split
+        self.every_n_epochs = every_n_epochs
+        self.max_rows_per_epoch = max_rows_per_epoch
+        self.use_parquet = use_parquet
+
+        self.buffers: dict[str, list[torch.Tensor]] = {}
+        os.makedirs(out_dir, exist_ok=True)
+
+    def _append(self, key, tensor):
+        self.buffers.setdefault(key, []).append(tensor.detach())
+
+    def _collect(self, outputs):
+        out = outputs["forward_out"]
+        for key in self.keys:
+            if key in out:
+                self._append(key, out[key])
+
+    def on_train_batch_end(
+        self,
+        trainer,
+        pl_module,
+        outputs,
+        batch,
+        batch_idx,
+    ):
+        if self.split == "train":
+            self._collect(outputs)
+
+    def on_validation_batch_end(
+        self,
+        trainer,
+        pl_module,
+        outputs,
+        batch,
+        batch_idx,
+    ):
+        if self.split == "val":
+            self._collect(outputs)
+
+    def _flush(self, trainer):
+        epoch = trainer.current_epoch
+
+        if epoch % self.every_n_epochs != 0:
+            self.buffers.clear()
+            return
+
+        if not self.buffers:
+            return
+
+        data = {}
+
+        for key, chunks in self.buffers.items():
+            x = torch.cat(chunks)
+
+            if (
+                self.max_rows_per_epoch
+                and x.shape[0] > self.max_rows_per_epoch
+            ):
+                idx = torch.randperm(x.shape[0])[: self.max_rows_per_epoch]
+                x = x[idx]
+
+            data[key] = x.cpu().numpy()
+
+        df = pd.DataFrame(data)
+
+        suffix = "parquet" if self.use_parquet else "csv"
+        fname = f"{self.out_dir}/{self.split}_epoch_{epoch:04d}.{suffix}"
+
+        if self.use_parquet:
+            df.to_parquet(fname, index=False)
+        else:
+            df.to_csv(fname, index=False)
+
+        print(f"[Recorder] wrote {fname}")
+
+        self.buffers.clear()
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        if self.split == "train":
+            self._flush(trainer)
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        if self.split == "val":
+            self._flush(trainer)
+
+
 class Plotter(Callback):
     def __init__(
         self,
@@ -1207,7 +1307,6 @@ class Plotter(Callback):
 
             self.preds_train = {}
 
-        # Increment epoch counter
         self.current_epoch += 1
 
     def on_validation_batch_end(
