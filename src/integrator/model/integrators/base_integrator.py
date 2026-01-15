@@ -140,6 +140,7 @@ class BaseIntegrator(pl.LightningModule):
         #     forward_out=forward_out,
         #     step=step,
         # )
+
         _log_loss(
             self,
             kl=loss_dict["kl_mean"],

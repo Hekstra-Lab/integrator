@@ -467,7 +467,6 @@ class PlotterLD(Callback):
                     "z_c": preds["z_c"][idx].cpu(),
                 }
 
-        torch.cuda.empty_cache()
         return tracked_ids, tracked_shoeboxes
 
     def on_train_batch_end(
@@ -510,9 +509,6 @@ class PlotterLD(Callback):
                         self.preds_train[key] = to_cpu(forward_out[key].mean)
                     else:
                         self.preds_train[key] = to_cpu(forward_out[key])
-
-            # Clean up
-            torch.cuda.empty_cache()
 
     def on_train_epoch_end(self, trainer, pl_module):
         if self.preds_train:
@@ -648,9 +644,7 @@ class PlotterLD(Callback):
                 print("Exception object:", e)
                 traceback.print_exc(file=sys.stdout)
 
-            # Clear memory
             self.preds_train = {}
-            torch.cuda.empty_cache()
 
         # Increment epoch counter
         self.current_epoch += 1
@@ -694,9 +688,6 @@ class PlotterLD(Callback):
                         self.preds_validation[key] = to_cpu(forward_out[key])
                 elif key in forward_out:
                     self.preds_validation[key] = to_cpu(forward_out[key])
-
-            # Clean up
-            torch.cuda.empty_cache()
 
     def on_validation_epoch_end(self, trainer, pl_module):
         if self.preds_validation:
@@ -830,9 +821,7 @@ class PlotterLD(Callback):
                 print("Exception object:", e)
                 traceback.print_exc(file=sys.stdout)
 
-            # Clear memory
             self.preds_validation = {}
-            torch.cuda.empty_cache()
 
 
 class Plotter(Callback):
@@ -915,7 +904,6 @@ class Plotter(Callback):
                     "d": preds["d"][idx].cpu(),
                 }
 
-        torch.cuda.empty_cache()
         return tracked_ids, tracked_shoeboxes
 
     def on_train_batch_end(
@@ -967,9 +955,6 @@ class Plotter(Callback):
             # ]:
             #     if key in forward_out:
             #         self.preds_train[key] = to_cpu(forward_out[key])
-
-            # Clean up
-            torch.cuda.empty_cache()
 
     def on_train_epoch_end(self, trainer, pl_module):
         if self.preds_train:
@@ -1129,9 +1114,7 @@ class Plotter(Callback):
                 print("Exception object:", e)
                 traceback.print_exc(file=sys.stdout)
 
-            # Clear memory
             self.preds_train = {}
-            torch.cuda.empty_cache()
 
         # Increment epoch counter
         self.current_epoch += 1
@@ -1184,9 +1167,7 @@ class Plotter(Callback):
                 elif key in forward_out:
                     self.preds_validation[key] = to_cpu(forward_out[key])
 
-            # Clean up
             del forward_out
-            torch.cuda.empty_cache()
 
     def on_validation_epoch_end(
         self,
@@ -1353,6 +1334,4 @@ class Plotter(Callback):
                 print("Exception object:", e)
                 traceback.print_exc(file=sys.stdout)
 
-            # Clear memory
             self.preds_validation = {}
-            torch.cuda.empty_cache()

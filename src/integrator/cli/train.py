@@ -198,7 +198,7 @@ def main():
     trainer = construct_trainer(
         cfg,
         callbacks=[
-            fano_wb_logger,
+            # fano_wb_logger,
             checkpoint_callback,
             plotter,
         ],
