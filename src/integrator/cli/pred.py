@@ -137,6 +137,7 @@ def main():
         pred_writer = BatchPredWriter(
             output_dir=ckpt_dir,
             write_interval="batch",
+            epoch=epoch,
         )
         callbacks.append(pred_writer)
 
