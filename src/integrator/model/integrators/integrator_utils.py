@@ -7,12 +7,16 @@ from torch import Tensor, nn
 from integrator.configs.integrator import IntegratorCfg
 
 DEFAULT_PREDICT_KEYS = [
+    # Reflection identifiers
+    "refl_ids",
+    # Model predictions
     "qi_mean",
     "qi_var",
-    "refl_ids",
+    "qi_params",
     "qbg_mean",
     "qbg_var",
-    "qbg_scale",
+    "qbg_params",
+    # From DIALS refl table
     "intensity.prf.value",
     "intensity.prf.variance",
     "intensity.sum.value",
@@ -158,6 +162,18 @@ def _assemble_outputs(
     if out.metadata is None:
         return base
 
+    # Storing the surrogate distribution parameters
+    distribution_params = {
+        "qbg_params": {
+            name: getattr(out.qbg, name) for name in out.qbg.arg_constraints
+        },
+        "qi_params": {
+            name: getattr(out.qi, name) for name in out.qi.arg_constraints
+        },
+    }
+
+    # Update base dictionary
     base.update(out.metadata)
+    base.update(distribution_params)
 
     return base

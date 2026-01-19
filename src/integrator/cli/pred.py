@@ -1,3 +1,10 @@
+"""
+# Example use
+integrator.pred -v \
+        --run-dir \
+        --data-dim \
+"""
+
 import argparse
 import logging
 import re
@@ -118,7 +125,7 @@ def main():
         callbacks = []
         pred_writer = PredWriter(
             output_dir=ckpt_dir,
-            write_interval="epoch",
+            write_interval="batch",
         )
         callbacks.append(pred_writer)
 

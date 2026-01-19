@@ -200,38 +200,26 @@ class ShoeboxDataModule2D(BaseDataModule):
             ans = 2 * torch.sqrt(processed_counts + (3.0 / 8.0))
             standardized_counts = (ans - stats[1]) / stats[1].sqrt()
         else:
-            standardized_counts = ((processed_counts) - stats[0]) / stats[
-                1
-            ].sqrt()
+            standardized_counts = ((processed_counts) - stats[0]) / stats[1].sqrt()
 
         if self.x_coords is not None:
-            x = torch.load(os.path.join(self.data_dir, self.x_coords))[
-                ~all_dead
-            ]
-            y = torch.load(os.path.join(self.data_dir, self.y_coords))[
-                ~all_dead
-            ]
+            x = torch.load(os.path.join(self.data_dir, self.x_coords))[~all_dead]
+            y = torch.load(os.path.join(self.data_dir, self.y_coords))[~all_dead]
 
-            standardized_counts = torch.stack(
-                (standardized_counts, x, y)
-            ).permute(1, 0, 2)
+            standardized_counts = torch.stack((standardized_counts, x, y)).permute(
+                1, 0, 2
+            )
 
         self.full_dataset = TensorDataset(
             processed_counts, standardized_counts, masks, reference
         )
         # If single_sample_index is specified, use only that sample
         if self.single_sample_index is not None:
-            self.full_dataset = Subset(
-                self.full_dataset, [self.single_sample_index]
-            )
+            self.full_dataset = Subset(self.full_dataset, [self.single_sample_index])
 
         # Optionally, create a subset of the dataset
-        if self.subset_size is not None and self.subset_size < len(
-            self.full_dataset
-        ):
-            indices = torch.randperm(len(self.full_dataset))[
-                : self.subset_size
-            ]
+        if self.subset_size is not None and self.subset_size < len(self.full_dataset):
+            indices = torch.randperm(len(self.full_dataset))[: self.subset_size]
             self.full_dataset = Subset(self.full_dataset, indices=indices)
 
         # Calculate lengths for train/val/test splits
@@ -246,10 +234,8 @@ class ShoeboxDataModule2D(BaseDataModule):
 
         # Split the dataset
         if self.include_test:
-            self.train_dataset, self.val_dataset, self.test_dataset = (
-                random_split(
-                    self.full_dataset, [train_size, val_size, test_size]
-                )
+            self.train_dataset, self.val_dataset, self.test_dataset = random_split(
+                self.full_dataset, [train_size, val_size, test_size]
             )
         else:
             self.train_dataset, self.val_dataset = random_split(
@@ -408,9 +394,7 @@ class ShoeboxDataModule(BaseDataModule):
         masks = masks[~all_dead]
         reference = {k: v[~all_dead] for k, v in reference.items()}
 
-        counts, masks, reference = _remove_flagged_variance(
-            counts, masks, reference
-        )
+        counts, masks, reference = _remove_flagged_variance(counts, masks, reference)
 
         # Apply cutoff before standardization to ensure we only process needed data
         if self.cutoff is not None:
@@ -435,27 +419,24 @@ class ShoeboxDataModule(BaseDataModule):
                         (anscombe_transformed - stats[1]) / stats[1].sqrt()
                     ) * masks
                 else:
-                    standardized_counts = (
-                        (counts * masks) - stats[0]
-                    ) / stats[1].sqrt()
+                    standardized_counts = ((counts * masks) - stats[0]) / stats[
+                        1
+                    ].sqrt()
             else:
-                standardized_counts = (counts[..., -1] * masks) - stats[
-                    0
-                ] / stats[1].sqrt()
+                standardized_counts = (counts[..., -1] * masks) - stats[0] / stats[
+                    1
+                ].sqrt()
                 # Normalize first three channels of counts
                 # Only attempt this if counts has enough dimensions
                 if counts.dim() >= 3 and counts.size(-1) >= 3:
                     counts[:, :, 0] = (
-                        2 * (counts[:, :, 0] / (counts[:, :, 0].max() + 1e-8))
-                        - 1
+                        2 * (counts[:, :, 0] / (counts[:, :, 0].max() + 1e-8)) - 1
                     )
                     counts[:, :, 1] = (
-                        2 * (counts[:, :, 1] / (counts[:, :, 1].max() + 1e-8))
-                        - 1
+                        2 * (counts[:, :, 1] / (counts[:, :, 1].max() + 1e-8)) - 1
                     )
                     counts[:, :, 2] = (
-                        2 * (counts[:, :, 2] / (counts[:, :, 2].max() + 1e-8))
-                        - 1
+                        2 * (counts[:, :, 2] / (counts[:, :, 2].max() + 1e-8)) - 1
                     )
 
         self.full_dataset = IntegratorDataset(
@@ -464,17 +445,11 @@ class ShoeboxDataModule(BaseDataModule):
 
         # If single_sample_index is specified, use only that sample
         if self.single_sample_index is not None:
-            self.full_dataset = Subset(
-                self.full_dataset, [self.single_sample_index]
-            )
+            self.full_dataset = Subset(self.full_dataset, [self.single_sample_index])
 
         # Optionally, create a subset of the dataset
-        if self.subset_size is not None and self.subset_size < len(
-            self.full_dataset
-        ):
-            indices = torch.randperm(len(self.full_dataset))[
-                : self.subset_size
-            ]
+        if self.subset_size is not None and self.subset_size < len(self.full_dataset):
+            indices = torch.randperm(len(self.full_dataset))[: self.subset_size]
             self.full_dataset = Subset(self.full_dataset, indices)
 
         # Calculate lengths for train/val/test splits
@@ -489,10 +464,8 @@ class ShoeboxDataModule(BaseDataModule):
 
         # Split the dataset
         if self.include_test:
-            self.train_dataset, self.val_dataset, self.test_dataset = (
-                random_split(
-                    self.full_dataset, [train_size, val_size, test_size]
-                )
+            self.train_dataset, self.val_dataset, self.test_dataset = random_split(
+                self.full_dataset, [train_size, val_size, test_size]
             )
         else:
             self.train_dataset, self.val_dataset = random_split(
