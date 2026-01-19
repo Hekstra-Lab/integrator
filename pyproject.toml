@@ -26,6 +26,7 @@ dependencies = [
   "pyarrow>=22.0.0",
   "pytorch_lightning>=2.2",
   "reciprocalspaceship>=1.0.7",
+  "rich>=14.2.0",
   "rs_distributions>=0.0.3",
   "scipy>=1.11",
 ]
