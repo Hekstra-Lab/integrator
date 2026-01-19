@@ -23,7 +23,9 @@ def assign_labels(
 
         for batch in dataset.val_dataloader():
             _, _, _, reference = batch
-            val_ids = plr.DataFrame({"val_ids": (reference["refl_ids"].int()).tolist()})
+            val_ids = plr.DataFrame(
+                {"val_ids": (reference["refl_ids"].int()).tolist()}
+            )
             val_id_df = plr.concat([val_id_df, val_ids])
 
     train_id_df.write_csv(save_dir + "/train_labels.csv")
@@ -79,7 +81,7 @@ class BatchPredWriter(BasePredictionWriter):
         super().__init__(write_interval)
         self.output_dir = Path(output_dir)
         self.dtype = dtype
-        self.epocoh = epoch
+        self.epoch = epoch
 
     def write_on_batch_end(
         self,
@@ -94,7 +96,9 @@ class BatchPredWriter(BasePredictionWriter):
         batch_cpu = {}
         for k, v in prediction.items():
             if isinstance(v, torch.Tensor):
-                batch_cpu[k] = v.detach().cpu().numpy().astype(self.dtype, copy=False)
+                batch_cpu[k] = (
+                    v.detach().cpu().numpy().astype(self.dtype, copy=False)
+                )
             elif isinstance(v, list):
                 batch_cpu[k] = np.array(v, dtype=object)
 
@@ -102,9 +106,12 @@ class BatchPredWriter(BasePredictionWriter):
                 for k_, v_ in v.items():
                     key = k + k_
                     batch_cpu[key] = (
-                        v_.detach().cpu().numpy().astype(self.dtype, copy=False)
+                        v_.detach()
+                        .cpu()
+                        .numpy()
+                        .astype(self.dtype, copy=False)
                     )
-        if epoch is not None:
+        if self.epoch is not None:
             batch_cpu["epoch"] = self.epoch
 
         np.savez(
