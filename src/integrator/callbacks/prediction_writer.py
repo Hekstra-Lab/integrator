@@ -96,8 +96,8 @@ def assign_labels(
 #         # Save the merged predictions as a single .pt file
 #         preds_fname = self.output_dir / "preds.pt"
 #         torch.save(merged_predictions, preds_fname)
-
-
+#
+#
 class PredWriter(BasePredictionWriter):
     def __init__(
         self,
@@ -131,18 +131,29 @@ class PredWriter(BasePredictionWriter):
     ):
         outdir = self._resolve_output_dir(trainer)
 
+        batch_cpu = {}
         for k, v in prediction.items():
             if isinstance(v, torch.Tensor):
-                arr = v.detach().cpu().numpy().astype(self.dtype, copy=False)
-                np.save(outdir / f"{k}_batch_{batch_idx:06d}.npy", arr)
-            elif isinstance(v, list):
-                # save lists separately if needed
-                np.save(
-                    outdir / f"{k}_batch_{batch_idx:06d}.npy",
-                    np.array(v, dtype=object),
+                batch_cpu[k] = (
+                    v.detach().cpu().numpy().astype(self.dtype, copy=False)
                 )
+            elif isinstance(v, list):
+                batch_cpu[k] = np.array(v, dtype=object)
 
-        # Clean
+            elif isinstance(v, dict):
+                for k, v_ in v.items():
+                    batch_cpu[k] = (
+                        v_.detach()
+                        .cpu()
+                        .numpy()
+                        .astype(self.dtype, copy=False)
+                    )
+
+        np.savez(
+            outdir / f"batch_{batch_idx:06d}.npz",
+            **batch_cpu,
+        )
+
         del prediction
         torch.cuda.empty_cache()
 
