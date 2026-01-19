@@ -4,7 +4,6 @@ import numpy as np
 import polars as plr
 import torch
 from pytorch_lightning.callbacks import BasePredictionWriter
-from pytorch_lightning.loggers import WandbLogger
 
 
 def assign_labels(
@@ -109,16 +108,6 @@ class PredWriter(BasePredictionWriter):
         self.output_dir = Path(output_dir)
         self.dtype = dtype
 
-    def _resolve_output_dir(self, trainer):
-        logger = trainer.logger
-        if isinstance(logger, WandbLogger):
-            out = Path(logger.experiment.dir)
-        else:
-            out = Path(trainer.default_root_dir)
-
-        out.mkdir(parents=True, exist_ok=True)
-        return out
-
     def write_on_batch_end(
         self,
         trainer,
@@ -129,8 +118,6 @@ class PredWriter(BasePredictionWriter):
         batch_idx,
         dataloader_idx,
     ):
-        outdir = self._resolve_output_dir(trainer)
-
         batch_cpu = {}
         for k, v in prediction.items():
             if isinstance(v, torch.Tensor):
@@ -150,7 +137,7 @@ class PredWriter(BasePredictionWriter):
                     )
 
         np.savez(
-            outdir / f"batch_{batch_idx:06d}.npz",
+            self.output_dir / f"batch_{batch_idx:06d}.npz",
             **batch_cpu,
         )
 

@@ -107,7 +107,6 @@ def main():
 
     # load configuration file
     cfg = load_config(args.config)
-
     cfg = _apply_cli_overrides(cfg, args=args)
 
     # load data

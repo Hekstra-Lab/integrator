@@ -37,6 +37,11 @@ def parse_args():
         help="Write predictions as a .refl file",
     )
     parser.add_argument(
+        "--batch-size",
+        type=int,
+        help="Integer value specifying the size of each training batch",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="count",
