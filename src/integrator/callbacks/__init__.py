@@ -1,4 +1,4 @@
-from .prediction_writer import PredWriter, assign_labels
+from .prediction_writer import BatchPredWriter, EpochPredWriter, assign_labels
 from .wandb_logger import (
     EpochMetricRecorder,
     LogFano,
@@ -10,7 +10,8 @@ __all__ = [
     "Plotter",
     "PlotterLD",
     "LogFano",
-    "PredWriter",
+    "EpochPredWriter",
+    "BatchPredWriter",
     "assign_labels",
     "EpochMetricRecorder",
 ]

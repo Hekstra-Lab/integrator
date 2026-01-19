@@ -14,6 +14,12 @@ from integrator.cli.utils.logger import setup_logging
 
 logger = logging.getLogger(__name__)
 
+# def _get_pred_writer(config):
+#     from integrator.callbacks import EpochPredWriter,BatchPredWriter
+#
+#     return
+#
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -65,7 +71,7 @@ def main():
     import torch
     import yaml
 
-    from integrator.callbacks import PredWriter
+    from integrator.callbacks import BatchPredWriter
     from integrator.utils import (
         construct_data_loader,
         construct_integrator,
@@ -128,7 +134,7 @@ def main():
 
         # Construct callbacks
         callbacks = []
-        pred_writer = PredWriter(
+        pred_writer = BatchPredWriter(
             output_dir=ckpt_dir,
             write_interval="batch",
         )
