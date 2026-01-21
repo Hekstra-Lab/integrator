@@ -1,7 +1,17 @@
 from copy import deepcopy
 from pathlib import Path
 
+import h5py
+import pandas as pd
+import reciprocalspaceship as rs
+import torch
+
 from integrator.utils import load_config
+from integrator.utils.refl_utils import (
+    DEFAULT_REFL_COLS,
+    unstack_preds,
+    write_refl_from_ds,
+)
 
 
 def _deep_merge(a: dict, b: dict) -> dict:
@@ -48,32 +58,53 @@ def _apply_cli_overrides(
     return merged
 
 
+# WARNING: Will use an arbitrary file if both .h5 and pt files are in ckpt_dir
+def get_pred_files(
+    ckpt_dir: Path,
+):
+    pred_files = list(ckpt_dir.glob("preds_epoch_*.*"))
+    if not pred_files:
+        raise RuntimeError(f"No prediction files found in {ckpt_dir}")
+    pred_file = pred_files[0]
+    suffix = pred_file.suffix
+
+    data = None
+    if suffix == ".pt":
+        data = torch.load(pred_file, weights_only=False)
+        data = unstack_preds(data)
+    elif suffix == ".h5":
+        with h5py.File(pred_file, "r") as f:
+            data = {
+                "refl_ids": f["refl_ids"][:],
+                "qi_mean": f["qi_mean"][:],
+                "qi_var": f["qi_var"][:],
+                "qbg_mean": f["qbg_mean"][:],
+            }
+
+    if data is None:
+        raise ValueError(f"Unsupported prediction file type: {suffix}")
+
+    return data
+
+
 def write_refl_from_preds(
     ckpt_dir,
     refl_file,
     config: dict,
     epoch: int,
 ):
-    import pandas as pd
-    import reciprocalspaceship as rs
-    import torch
+    # REPLACE WITH FUNCTION
+    data = get_pred_files(ckpt_dir=ckpt_dir)
 
-    from integrator.utils.refl_utils import (
-        DEFAULT_REFL_COLS,
-        unstack_preds,
-        write_refl_from_ds,
-    )
-
-    pred_file = list(ckpt_dir.glob("preds.pt"))[0]
-    data = torch.load(pred_file, weights_only=False)
+    # filename of output .refl file
     fname = ckpt_dir / f"preds_epoch_{epoch:04d}.refl"
 
+    # Read .refl file with rs
     ds = rs.io.read_dials_stills(refl_file, extra_cols=DEFAULT_REFL_COLS)
-    unstacked_preds = unstack_preds(data)
 
-    id_filter = ds["refl_ids"].isin(unstacked_preds["refl_ids"])
+    id_filter = ds["refl_ids"].isin(data["refl_ids"])
     ds_filtered = ds[id_filter].sort_values(by="refl_ids")
-    pred_df = pd.DataFrame(unstacked_preds).sort_values(by="refl_ids")
+    pred_df = pd.DataFrame(data).sort_values(by="refl_ids")
 
     ds_filtered = ds_filtered.sort_values("refl_ids").reset_index(drop=True)
     pred_df = pred_df.sort_values("refl_ids").reset_index(drop=True)

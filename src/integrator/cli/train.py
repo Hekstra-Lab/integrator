@@ -153,6 +153,8 @@ def main():
         },
     }
 
+    wb_logger.log_hyperparams(metadata)
+
     m_fname = run_dir / "run_metadata.yaml"
     (m_fname).write_text(yaml.safe_dump(metadata))
 
@@ -186,7 +188,7 @@ def main():
         keys=keys,
         split="train",
         every_n_epochs=1,
-        max_rows_per_epoch=200_000,  # safety valve
+        max_rows_per_epoch=200_000,
     )
 
     val_epoch_recorder = EpochMetricRecorder(

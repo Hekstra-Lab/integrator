@@ -14,11 +14,9 @@ from integrator.cli.utils.logger import setup_logging
 
 logger = logging.getLogger(__name__)
 
-# def _get_pred_writer(config):
-#     from integrator.callbacks import EpochPredWriter,BatchPredWriter
-#
-#     return
-#
+
+def _concat_npz_file():
+    pass
 
 
 def parse_args():
