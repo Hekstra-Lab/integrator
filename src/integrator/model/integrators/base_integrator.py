@@ -149,7 +149,9 @@ class BaseIntegrator(pl.LightningModule):
 
         # predict step keys
         self.predict_keys = (
-            DEFAULT_PREDICT_KEYS if cfg.predict_keys == "default" else cfg.predict_keys
+            DEFAULT_PREDICT_KEYS
+            if cfg.predict_keys == "default"
+            else cfg.predict_keys
         )
 
         self.encoders = nn.ModuleDict(encoders)
@@ -214,7 +216,9 @@ class BaseIntegrator(pl.LightningModule):
         outputs = self(counts, shoebox, mask, metadata)
 
         return {
-            k: v for k, v in outputs["forward_out"].items() if k in self.predict_keys
+            k: v
+            for k, v in outputs["forward_out"].items()
+            if k in self.predict_keys
         }
 
     def configure_optimizers(self):

@@ -76,6 +76,11 @@ def parse_args():
         default=0,
         help="Increase verbosity (-v = INFO, -vv = DEBUG)",
     )
+    parser.add_argument(
+        "--id",
+        type=str,
+        help="Optional string identifer. Useful when comparing separate models",
+    )
     return parser.parse_args()
 
 
@@ -141,6 +146,7 @@ def main():
 
     # Run metadata
     metadata = {
+        "id": args.id,
         "config": config_copy.as_posix(),
         "slurm": {
             "job_id": os.environ.get("SLURM_JOB_ID"),
