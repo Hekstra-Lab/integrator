@@ -32,20 +32,80 @@ def _log_forward_out(
     forward_out: dict,
     step: Literal["train", "val"],
 ):
-    if step != "val":
-        return
-    self.log(f"{step}: mean(qi.mean)", forward_out["qi_mean"].mean())
-    self.log(f"{step}: min(qi.mean)", forward_out["qi_mean"].min())
-    self.log(f"{step}: max(qi.mean)", forward_out["qi_mean"].max())
-    self.log(f"{step}: max(qi.variance)", forward_out["qi_var"].max())
-    self.log(f"{step}: min(qi.variance)", forward_out["qi_var"].min())
-    self.log(f"{step}: mean(qi.variance)", forward_out["qi_var"].mean())
-    self.log(f"{step}: mean(qbg.mean)", forward_out["qbg_mean"].mean())
-    self.log(f"{step}: min(qbg.mean)", forward_out["qbg_mean"].min())
-    self.log(f"{step}: max(qbg.mean)", forward_out["qbg_mean"].max())
-    self.log(f"{step}: mean(qbg.variance)", forward_out["qbg_var"].mean())
-    self.log(f"{step}: max(qbg.variance)", forward_out["qbg_var"].max())
-    self.log(f"{step}: min(qbg.variance)", forward_out["qbg_var"].min())
+    # if step != "val":
+    #     return
+    self.log(
+        f"{step}: mean(qi.mean)",
+        forward_out["qi_mean"].mean(),
+        on_step=False,
+        on_epoch=True,
+    )
+    self.log(
+        f"{step}: min(qi.mean)",
+        forward_out["qi_mean"].min(),
+        on_step=False,
+        on_epoch=True,
+    )
+    self.log(
+        f"{step}: max(qi.mean)",
+        forward_out["qi_mean"].max(),
+        on_step=False,
+        on_epoch=True,
+    )
+    self.log(
+        f"{step}: max(qi.variance)",
+        forward_out["qi_var"].max(),
+        on_step=False,
+        on_epoch=True,
+    )
+    self.log(
+        f"{step}: min(qi.variance)",
+        forward_out["qi_var"].min(),
+        on_step=False,
+        on_epoch=True,
+    )
+    self.log(
+        f"{step}: mean(qi.variance)",
+        forward_out["qi_var"].mean(),
+        on_step=False,
+        on_epoch=True,
+    )
+    self.log(
+        f"{step}: mean(qbg.mean)",
+        forward_out["qbg_mean"].mean(),
+        on_step=False,
+        on_epoch=True,
+    )
+    self.log(
+        f"{step}: min(qbg.mean)",
+        forward_out["qbg_mean"].min(),
+        on_step=False,
+        on_epoch=True,
+    )
+    self.log(
+        f"{step}: max(qbg.mean)",
+        forward_out["qbg_mean"].max(),
+        on_step=False,
+        on_epoch=True,
+    )
+    self.log(
+        f"{step}: mean(qbg.variance)",
+        forward_out["qbg_var"].mean(),
+        on_step=False,
+        on_epoch=True,
+    )
+    self.log(
+        f"{step}: max(qbg.variance)",
+        forward_out["qbg_var"].max(),
+        on_step=False,
+        on_epoch=True,
+    )
+    self.log(
+        f"{step}: min(qbg.variance)",
+        forward_out["qbg_var"].min(),
+        on_step=False,
+        on_epoch=True,
+    )
 
 
 def _log_loss(
@@ -56,7 +116,7 @@ def _log_loss(
     step: Literal["train", "val"],
 ):
     self.log(
-        "train/loss",
+        f"{step}/loss",
         total_loss,
         on_step=False,
         on_epoch=True,
@@ -89,9 +149,7 @@ class BaseIntegrator(pl.LightningModule):
 
         # predict step keys
         self.predict_keys = (
-            DEFAULT_PREDICT_KEYS
-            if cfg.predict_keys == "default"
-            else cfg.predict_keys
+            DEFAULT_PREDICT_KEYS if cfg.predict_keys == "default" else cfg.predict_keys
         )
 
         self.encoders = nn.ModuleDict(encoders)
@@ -135,12 +193,6 @@ class BaseIntegrator(pl.LightningModule):
 
         total_loss = loss_dict["loss"]
 
-        # _log_forward_out(
-        #     self,
-        #     forward_out=forward_out,
-        #     step=step,
-        # )
-
         _log_loss(
             self,
             kl=loss_dict["kl_mean"],
@@ -162,9 +214,7 @@ class BaseIntegrator(pl.LightningModule):
         outputs = self(counts, shoebox, mask, metadata)
 
         return {
-            k: v
-            for k, v in outputs["forward_out"].items()
-            if k in self.predict_keys
+            k: v for k, v in outputs["forward_out"].items() if k in self.predict_keys
         }
 
     def configure_optimizers(self):
