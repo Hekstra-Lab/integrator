@@ -21,6 +21,7 @@ DEFAULT_PREDICT_KEYS = [
     "xyzcal.px.0",
     "xyzcal.px.1",
     "xyzcal.px.2",
+    "d",
     "H",
     "K",
     "L",
