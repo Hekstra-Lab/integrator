@@ -141,7 +141,6 @@ class EpochPredWriter(BasePredictionWriter):
 #
 #         del prediction
 #         torch.cuda.empty_cache()
-#
 
 
 ## Parquet writer
