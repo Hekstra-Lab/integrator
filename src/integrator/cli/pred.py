@@ -174,7 +174,7 @@ def main():
                 refl_file=refl_file,
                 epoch=epoch,
                 config=config,
-                filetype=args.filetype,
+                filetype=args.save_preds_as,
             )
 
     logger.info("Prediction complete!")
