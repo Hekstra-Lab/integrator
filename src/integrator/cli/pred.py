@@ -46,6 +46,12 @@ def parse_args():
         help="Integer value specifying the size of each training batch",
     )
     parser.add_argument(
+        "--save-preds-as",
+        type=str,
+        default="parquet",
+        help="Filetype to save predictions as. Support for .h5, .pt, and .parquet",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="count",
@@ -168,6 +174,7 @@ def main():
                 refl_file=refl_file,
                 epoch=epoch,
                 config=config,
+                filetype=args.filetype,
             )
 
     logger.info("Prediction complete!")
