@@ -5,7 +5,6 @@ import numpy as np
 import polars as pl
 import polars as plr
 import torch
-from lightning.pytorch.callbacks import BasePredictionWriter
 from pytorch_lightning.callbacks import BasePredictionWriter
 
 
