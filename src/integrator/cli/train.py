@@ -77,9 +77,9 @@ def parse_args():
         help="Increase verbosity (-v = INFO, -vv = DEBUG)",
     )
     parser.add_argument(
-        "--id",
-        type=str,
-        help="Optional string identifer. Useful when comparing separate models",
+        "--tags",
+        nargs="+",
+        help="Optional list of tags. Useful for model identifiation",
     )
     return parser.parse_args()
 
@@ -121,10 +121,18 @@ def main():
     data_loader = construct_data_loader(cfg)
     data_loader.setup()
 
+    # Tags for identification
+    tags = [
+        cfg["integrator"]["name"],
+        cfg["integrator"]["args"]["data_dim"],
+        cfg["surrogates"]["qi"]["name"],
+    ]
+
     # load wandb logger
     wb_logger = WandbLogger(
         project=args.wb_project,
         save_dir=args.save_dir,
+        tags=tags,
     )
 
     # Logging directory
@@ -146,7 +154,6 @@ def main():
 
     # Run metadata
     metadata = {
-        "id": args.id,
         "config": config_copy.as_posix(),
         "slurm": {
             "job_id": os.environ.get("SLURM_JOB_ID"),

@@ -2,8 +2,10 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+import polars as pl
 import polars as plr
 import torch
+from lightning.pytorch.callbacks import BasePredictionWriter
 from pytorch_lightning.callbacks import BasePredictionWriter
 
 
@@ -165,3 +167,166 @@ class BatchPredWriter(BasePredictionWriter):
         if self._h5 is not None:
             self._h5.close()
             self._h5 = None
+
+
+# class BatchPredWriter(BasePredictionWriter):
+#     def __init__(
+#         self,
+#         output_dir: Path,
+#         write_interval="batch",
+#         dtype=np.float32,
+#         epoch: int | None = None,
+#         filename_prefix: str = "preds",
+#     ):
+#         super().__init__(write_interval)
+#         self.output_dir = Path(output_dir)
+#         self.dtype = dtype
+#         self.epoch = epoch
+#         self.filename_prefix = filename_prefix
+#
+#     def write_on_batch_end(
+#         self,
+#         trainer,
+#         pl_module,
+#         prediction,
+#         batch_indices,
+#         batch,
+#         batch_idx,
+#         dataloader_idx,
+#     ):
+#         self.output_dir.mkdir(parents=True, exist_ok=True)
+#
+#         batch_cpu = {}
+#
+#         # ---- flatten prediction dict (unchanged logic) ----
+#         for k, v in prediction.items():
+#             if isinstance(v, torch.Tensor):
+#                 batch_cpu[k] = (
+#                     v.detach().cpu().numpy().astype(self.dtype, copy=False)
+#                 )
+#
+#             elif isinstance(v, dict):
+#                 for k_, v_ in v.items():
+#                     key = f"{k}.{k_}"
+#                     batch_cpu[key] = (
+#                         v_.detach()
+#                         .cpu()
+#                         .numpy()
+#                         .astype(self.dtype, copy=False)
+#                     )
+#
+#             elif isinstance(v, list):
+#                 batch_cpu[k] = np.asarray(v)
+#
+#         n_rows = next(iter(batch_cpu.values())).shape[0]
+#
+#         if self.epoch is not None:
+#             batch_cpu["epoch"] = np.full((n_rows,), self.epoch, dtype=np.int32)
+#
+#         df = pl.DataFrame(batch_cpu)
+#
+#         rank = trainer.global_rank
+#         fname = (
+#             f"{self.filename_prefix}"
+#             f"_epoch={self.epoch:04d}"
+#             f"_rank={rank}"
+#             f"_batch={batch_idx:06d}.parquet"
+#         )
+#
+#         path = self.output_dir / fname
+#         df.write_parquet(path)
+#
+#         del prediction
+#         torch.cuda.empty_cache()
+#
+
+
+class BatchPredWriter(BasePredictionWriter):
+    def __init__(
+        self,
+        output_dir: Path,
+        write_interval="batch",
+        dtype=np.float32,
+        epoch: int | None = None,
+        filename_prefix: str = "preds",
+        flush_every: int = 10,  # K
+    ):
+        super().__init__(write_interval)
+        self.output_dir = Path(output_dir)
+        self.dtype = dtype
+        self.epoch = epoch
+        self.filename_prefix = filename_prefix
+        self.flush_every = flush_every
+
+        self._buffer: list[pl.DataFrame] = []
+        self._flush_idx = 0
+
+    def _flush(self, trainer):
+        if not self._buffer:
+            return
+
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        df = pl.concat(self._buffer, rechunk=True)
+        self._buffer.clear()
+
+        rank = trainer.global_rank
+        fname = (
+            f"{self.filename_prefix}"
+            f"_epoch_{self.epoch:04d}"
+            f"_rank={rank}"
+            f"_flush={self._flush_idx:06d}.parquet"
+        )
+
+        df.write_parquet(self.output_dir / fname)
+        self._flush_idx += 1
+
+    def write_on_batch_end(
+        self,
+        trainer,
+        pl_module,
+        prediction,
+        batch_indices,
+        batch,
+        batch_idx,
+        dataloader_idx,
+    ):
+        batch_cpu = {}
+
+        for k, v in prediction.items():
+            if isinstance(v, torch.Tensor):
+                batch_cpu[k] = (
+                    v.detach().cpu().numpy().astype(self.dtype, copy=False)
+                )
+
+            elif isinstance(v, dict):
+                for k_, v_ in v.items():
+                    key = f"{k}.{k_}"
+                    batch_cpu[key] = (
+                        v_.detach()
+                        .cpu()
+                        .numpy()
+                        .astype(self.dtype, copy=False)
+                    )
+
+            elif isinstance(v, list):
+                batch_cpu[k] = np.asarray(v)
+
+        n_rows = next(iter(batch_cpu.values())).shape[0]
+
+        if self.epoch is not None:
+            batch_cpu["epoch"] = np.full((n_rows,), self.epoch, dtype=np.int32)
+
+        self._buffer.append(pl.DataFrame(batch_cpu))
+
+        if len(self._buffer) >= self.flush_every:
+            self._flush(trainer)
+
+        del prediction
+        torch.cuda.empty_cache()
+
+    # -------------------------
+    # flush at end of prediction loop
+    # -------------------------
+    def on_predict_epoch_end(self, trainer, pl_module):
+        self._flush(trainer)
