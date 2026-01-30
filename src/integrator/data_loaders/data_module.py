@@ -92,6 +92,7 @@ class IntegratorDataset(Dataset):
 
         return counts, standardized_counts, masks, meta
 
+
 # Filter to remove reflections with variance = -1
 def _remove_flagged_variance(
     counts: torch.Tensor,
@@ -106,8 +107,6 @@ def _remove_flagged_variance(
     metadata = {k: v[~filter_] for k, v in metadata.items()}
 
     return counts, masks, metadata
-
-
 
 
 class ShoeboxDataModule2D(BaseDataModule):
@@ -480,7 +479,7 @@ class ShoeboxDataModule(BaseDataModule):
         # indices of non test reflections
         train_val_idx = torch.where(~is_test)[0]
 
-        self.test_dataset = Subset(.full_dataset, test_idx.tolist())
+        self.test_dataset = Subset(self.full_dataset, test_idx.tolist())
 
         perm = torch.randperm(len(train_val_idx))
 
