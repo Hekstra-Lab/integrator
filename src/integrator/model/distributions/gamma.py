@@ -126,12 +126,16 @@ class GammaDistributionRepamB(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        x_: torch.Tensor,
+        x_: torch.Tensor | None = None,
     ):
         raw_mu = self.linear_mu(x)
         mu = F.softplus(raw_mu) + self.eps
 
-        raw_fano = self.linear_fano(x_)
+        if x_ is not None:
+            raw_fano = self.linear_fano(x_)
+        else:
+            raw_fano = self.linear_fano(x)
+
         fano = F.softplus(raw_fano) + self.eps
 
         r = 1 / (fano + self.eps)
