@@ -461,23 +461,24 @@ class ShoeboxDataModule(BaseDataModule):
             counts, standardized_counts, masks, reference
         )
 
+        # indicators for reflections flagged for the test set
+        is_test = reference["is_test"]
+
+        # Determine the pool of indices to use
+        all_indices = torch.arange(len(self.full_dataset))
+
         # Optionally, create a subset of the dataset
         if self.subset_size is not None and self.subset_size < len(
             self.full_dataset
         ):
-            indices = torch.randperm(len(self.full_dataset))[
-                : self.subset_size
+            all_indices = all_indices[
+                torch.randperm(len(all_indices))[: self.subset_size]
             ]
-            self.full_dataset = Subset(self.full_dataset, indices.tolist())
 
-        # indicators for reflections flagged for the test set
-        is_test = reference["is_test"]
-
-        # indices of test reflections
-        test_idx = torch.where(is_test)[0]
-
-        # indices of non test reflections
-        train_val_idx = torch.where(~is_test)[0]
+        # Split the (possibly subsetted) indices using is_test
+        test_mask = is_test[all_indices]
+        test_idx = all_indices[test_mask]
+        train_val_idx = all_indices[~test_mask]
 
         self.test_dataset = Subset(self.full_dataset, test_idx.tolist())
 
@@ -489,8 +490,8 @@ class ShoeboxDataModule(BaseDataModule):
         train_idx = train_val_idx[perm[val_size:]]
 
         # Train and validation test sets
-        self.val_dataset = Subset(self.full_dataset, val_idx)
-        self.train_dataset = Subset(self.full_dataset, train_idx)
+        self.val_dataset = Subset(self.full_dataset, val_idx.tolist())
+        self.train_dataset = Subset(self.full_dataset, train_idx.tolist())
 
     def train_dataloader(self):
         return DataLoader(
