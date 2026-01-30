@@ -85,7 +85,7 @@ def _log_loss(
     step: Literal["train", "val"],
 ):
     self.log(
-        "train/loss",
+        "train elbo",
         total_loss,
         on_step=False,
         on_epoch=False,

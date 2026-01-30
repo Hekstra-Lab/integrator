@@ -143,6 +143,10 @@ class EpochPredWriter(BasePredictionWriter):
 #         torch.cuda.empty_cache()
 
 
+# TODO: Add argument to select writer based of pred.py --save-preds-as argument
+# We should have a writer for .h5, .parquet, and .pt files
+
+
 ## Parquet writer
 class BatchPredWriter(BasePredictionWriter):
     def __init__(

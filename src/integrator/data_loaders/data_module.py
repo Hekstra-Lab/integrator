@@ -92,6 +92,23 @@ class IntegratorDataset(Dataset):
 
         return counts, standardized_counts, masks, meta
 
+# Filter to remove reflections with variance = -1
+def _remove_flagged_variance(
+    counts: torch.Tensor,
+    masks: torch.Tensor,
+    metadata: dict,
+    filter_key: str = "intensity.prf.variance",
+) -> tuple[torch.Tensor, torch.Tensor, dict]:
+    filter_ = metadata[filter_key] == -1
+
+    counts = counts[~filter_]
+    masks = masks[~filter_]
+    metadata = {k: v[~filter_] for k, v in metadata.items()}
+
+    return counts, masks, metadata
+
+
+
 
 class ShoeboxDataModule2D(BaseDataModule):
     """
@@ -200,26 +217,38 @@ class ShoeboxDataModule2D(BaseDataModule):
             ans = 2 * torch.sqrt(processed_counts + (3.0 / 8.0))
             standardized_counts = (ans - stats[1]) / stats[1].sqrt()
         else:
-            standardized_counts = ((processed_counts) - stats[0]) / stats[1].sqrt()
+            standardized_counts = ((processed_counts) - stats[0]) / stats[
+                1
+            ].sqrt()
 
         if self.x_coords is not None:
-            x = torch.load(os.path.join(self.data_dir, self.x_coords))[~all_dead]
-            y = torch.load(os.path.join(self.data_dir, self.y_coords))[~all_dead]
+            x = torch.load(os.path.join(self.data_dir, self.x_coords))[
+                ~all_dead
+            ]
+            y = torch.load(os.path.join(self.data_dir, self.y_coords))[
+                ~all_dead
+            ]
 
-            standardized_counts = torch.stack((standardized_counts, x, y)).permute(
-                1, 0, 2
-            )
+            standardized_counts = torch.stack(
+                (standardized_counts, x, y)
+            ).permute(1, 0, 2)
 
         self.full_dataset = TensorDataset(
             processed_counts, standardized_counts, masks, reference
         )
         # If single_sample_index is specified, use only that sample
         if self.single_sample_index is not None:
-            self.full_dataset = Subset(self.full_dataset, [self.single_sample_index])
+            self.full_dataset = Subset(
+                self.full_dataset, [self.single_sample_index]
+            )
 
         # Optionally, create a subset of the dataset
-        if self.subset_size is not None and self.subset_size < len(self.full_dataset):
-            indices = torch.randperm(len(self.full_dataset))[: self.subset_size]
+        if self.subset_size is not None and self.subset_size < len(
+            self.full_dataset
+        ):
+            indices = torch.randperm(len(self.full_dataset))[
+                : self.subset_size
+            ]
             self.full_dataset = Subset(self.full_dataset, indices=indices)
 
         # Calculate lengths for train/val/test splits
@@ -234,8 +263,10 @@ class ShoeboxDataModule2D(BaseDataModule):
 
         # Split the dataset
         if self.include_test:
-            self.train_dataset, self.val_dataset, self.test_dataset = random_split(
-                self.full_dataset, [train_size, val_size, test_size]
+            self.train_dataset, self.val_dataset, self.test_dataset = (
+                random_split(
+                    self.full_dataset, [train_size, val_size, test_size]
+                )
             )
         else:
             self.train_dataset, self.val_dataset = random_split(
@@ -281,22 +312,6 @@ class ShoeboxDataModule2D(BaseDataModule):
             num_workers=self.num_workers,
             pin_memory=False,
         )
-
-
-# Filter to remove reflections with variance = -1
-def _remove_flagged_variance(
-    counts: torch.Tensor,
-    masks: torch.Tensor,
-    metadata: dict,
-    filter_key: str = "intensity.prf.variance",
-) -> tuple[torch.Tensor, torch.Tensor, dict]:
-    filter_ = metadata[filter_key] == -1
-
-    counts = counts[~filter_]
-    masks = masks[~filter_]
-    metadata = {k: v[~filter_] for k, v in metadata.items()}
-
-    return counts, masks, metadata
 
 
 class ShoeboxDataModule(BaseDataModule):
@@ -385,16 +400,17 @@ class ShoeboxDataModule(BaseDataModule):
             os.path.join(self.data_dir, self.shoebox_file_names["reference"])
         )
 
+        # Filter out all refls with less than 10 valid pixels
         all_dead = masks.sum(-1) < 10
-
-        # print("all_dead", all_dead.sum())
 
         # filter out samples with all dead pixels
         counts = counts[~all_dead]
         masks = masks[~all_dead]
         reference = {k: v[~all_dead] for k, v in reference.items()}
 
-        counts, masks, reference = _remove_flagged_variance(counts, masks, reference)
+        counts, masks, reference = _remove_flagged_variance(
+            counts, masks, reference
+        )
 
         # Apply cutoff before standardization to ensure we only process needed data
         if self.cutoff is not None:
@@ -419,59 +435,63 @@ class ShoeboxDataModule(BaseDataModule):
                         (anscombe_transformed - stats[1]) / stats[1].sqrt()
                     ) * masks
                 else:
-                    standardized_counts = ((counts * masks) - stats[0]) / stats[
-                        1
-                    ].sqrt()
+                    standardized_counts = (
+                        (counts * masks) - stats[0]
+                    ) / stats[1].sqrt()
             else:
-                standardized_counts = (counts[..., -1] * masks) - stats[0] / stats[
-                    1
-                ].sqrt()
+                standardized_counts = (counts[..., -1] * masks) - stats[
+                    0
+                ] / stats[1].sqrt()
                 # Normalize first three channels of counts
                 # Only attempt this if counts has enough dimensions
                 if counts.dim() >= 3 and counts.size(-1) >= 3:
                     counts[:, :, 0] = (
-                        2 * (counts[:, :, 0] / (counts[:, :, 0].max() + 1e-8)) - 1
+                        2 * (counts[:, :, 0] / (counts[:, :, 0].max() + 1e-8))
+                        - 1
                     )
                     counts[:, :, 1] = (
-                        2 * (counts[:, :, 1] / (counts[:, :, 1].max() + 1e-8)) - 1
+                        2 * (counts[:, :, 1] / (counts[:, :, 1].max() + 1e-8))
+                        - 1
                     )
                     counts[:, :, 2] = (
-                        2 * (counts[:, :, 2] / (counts[:, :, 2].max() + 1e-8)) - 1
+                        2 * (counts[:, :, 2] / (counts[:, :, 2].max() + 1e-8))
+                        - 1
                     )
 
         self.full_dataset = IntegratorDataset(
             counts, standardized_counts, masks, reference
         )
 
-        # If single_sample_index is specified, use only that sample
-        if self.single_sample_index is not None:
-            self.full_dataset = Subset(self.full_dataset, [self.single_sample_index])
-
         # Optionally, create a subset of the dataset
-        if self.subset_size is not None and self.subset_size < len(self.full_dataset):
-            indices = torch.randperm(len(self.full_dataset))[: self.subset_size]
-            self.full_dataset = Subset(self.full_dataset, indices)
+        if self.subset_size is not None and self.subset_size < len(
+            self.full_dataset
+        ):
+            indices = torch.randperm(len(self.full_dataset))[
+                : self.subset_size
+            ]
+            self.full_dataset = Subset(self.full_dataset, indices.tolist())
 
-        # Calculate lengths for train/val/test splits
-        total_size = len(self.full_dataset)
-        val_size = int(total_size * self.val_split)
-        if self.include_test:
-            test_size = int(total_size * self.test_split)
-            train_size = total_size - val_size - test_size
-        else:
-            test_size = 0
-            train_size = total_size - val_size
+        # indicators for reflections flagged for the test set
+        is_test = reference["is_test"]
 
-        # Split the dataset
-        if self.include_test:
-            self.train_dataset, self.val_dataset, self.test_dataset = random_split(
-                self.full_dataset, [train_size, val_size, test_size]
-            )
-        else:
-            self.train_dataset, self.val_dataset = random_split(
-                self.full_dataset, [train_size, val_size]
-            )
-            self.test_dataset = None
+        # indices of test reflections
+        test_idx = torch.where(is_test)[0]
+
+        # indices of non test reflections
+        train_val_idx = torch.where(~is_test)[0]
+
+        self.test_dataset = Subset(.full_dataset, test_idx.tolist())
+
+        perm = torch.randperm(len(train_val_idx))
+
+        val_size = int(len(train_val_idx) * self.val_split)
+
+        val_idx = train_val_idx[perm[:val_size]]
+        train_idx = train_val_idx[perm[val_size:]]
+
+        # Train and validation test sets
+        self.val_dataset = Subset(self.full_dataset, val_idx)
+        self.train_dataset = Subset(self.full_dataset, train_idx)
 
     def train_dataloader(self):
         return DataLoader(
