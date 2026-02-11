@@ -13,6 +13,8 @@ class TrainerConfig:
     log_every_n_steps: int
     deterministic: bool
     enable_checkpointing: bool
+    gradient_clip_val: float | None = None
+    gradient_clip_algorithm: Literal["norm", "value"] | None = None
 
     def __post_init__(self):
         if self.max_epochs < 0:

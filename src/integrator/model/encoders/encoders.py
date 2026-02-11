@@ -201,6 +201,4 @@ if __name__ == "__main__":
     B = torch.ones(100, 21)
     C = torch.ones(100, 3)
 
-    concentration = torch.einsum("bi,bj,bl -> blij", A, B, C).reshape(
-        -1, 3 * 21 * 21
-    )
+    concentration = torch.einsum("bi,bj,bl -> blij", A, B, C).reshape(-1, 3 * 21 * 21)

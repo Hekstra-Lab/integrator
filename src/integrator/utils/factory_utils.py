@@ -228,7 +228,7 @@ def construct_trainer(
 ) -> pl.Trainer:
     tr_cfg = configs.TrainerConfig(**cfg["trainer"])
 
-    return pl.Trainer(
+    trainer_kwargs = dict(
         max_epochs=tr_cfg.max_epochs,
         accelerator=tr_cfg.accelerator,
         devices=tr_cfg.devices,
@@ -241,6 +241,13 @@ def construct_trainer(
         callbacks=callbacks,
         enable_progress_bar=True,
     )
+
+    if tr_cfg.gradient_clip_val is not None:
+        trainer_kwargs["gradient_clip_val"] = tr_cfg.gradient_clip_val
+    if tr_cfg.gradient_clip_algorithm is not None:
+        trainer_kwargs["gradient_clip_algorithm"] = tr_cfg.gradient_clip_algorithm
+
+    return pl.Trainer(**trainer_kwargs)
 
 
 def override_config(args, config):

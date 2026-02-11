@@ -18,6 +18,7 @@ def parse_args():
     parser.add_argument(
         "--config",
         type=str,
+        required=True,
         help="Path to configuration file",
     )
     parser.add_argument(
@@ -50,6 +51,7 @@ def parse_args():
     parser.add_argument(
         "--run-dir",
         type=str,
+        required=True,
         help="Path to run directory",
     )
     parser.add_argument(
