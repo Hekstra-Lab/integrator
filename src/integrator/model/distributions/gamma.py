@@ -5,6 +5,9 @@ from torch.distributions import Gamma
 
 from integrator.layers import Linear
 
+# min k value
+_K_MIN = 1e-2
+
 
 class MLP(nn.Module):
     def __init__(
@@ -40,7 +43,7 @@ def _get_gamma_params(
 ):
     if parameterization == "a":
         assert linear_r is not None
-        k = F.softplus(linear_k(x)) + eps
+        k = F.softplus(linear_k(x)).clamp(min=_K_MIN)
         r = F.softplus(linear_r(x)) + eps
         return k, r
 
@@ -53,12 +56,12 @@ def _get_gamma_params(
         mu = F.softplus(linear_k(x)) + eps
         fano = F.softplus(linear_r(x)) + eps
         r = 1 / (fano + eps)
-        k = r * mu
+        k = (r * mu).clamp(min=_K_MIN)
         return k, r
 
     if parameterization == "d":
         assert linear_r is not None
-        k = F.softplus(linear_k(x)) + eps
+        k = F.softplus(linear_k(x)).clamp(min=_K_MIN)
         fano = F.softplus(linear_r(x)) + eps
         r = 1 / (fano + eps)
         return k, r
@@ -97,7 +100,7 @@ class GammaDistributionRepamA(nn.Module):
         x_: torch.Tensor | None = None,
     ):
         raw_k = self.linear_k(x)
-        k = F.softplus(raw_k) + self.eps
+        k = F.softplus(raw_k).clamp(min=_K_MIN)
 
         if x_ is not None:
             raw_r = self.linear_r(x_)
@@ -139,7 +142,7 @@ class GammaDistributionRepamB(nn.Module):
         fano = F.softplus(raw_fano) + self.eps
 
         r = 1 / (fano + self.eps)
-        k = mu * r
+        k = (mu * r).clamp(min=_K_MIN)
 
         return Gamma(concentration=k.flatten(), rate=r.flatten())
 
@@ -168,7 +171,7 @@ class GammaDistributionRepamC(nn.Module):
         raw_phi = self.linear_phi(x_)
         phi = F.softplus(raw_phi) + self.eps
 
-        k = 1 / (phi + self.eps)
+        k = (1 / (phi + self.eps)).clamp(min=_K_MIN)
         r = 1 / (phi * mu + self.eps)
 
         return Gamma(concentration=k.flatten(), rate=r.flatten())
@@ -193,7 +196,7 @@ class GammaDistributionRepamD(nn.Module):
         x_,
     ):
         raw_k = self.linear_k(x)
-        k = F.softplus(raw_k) + self.eps
+        k = F.softplus(raw_k).clamp(min=_K_MIN)
 
         raw_fano = self.linear_fano(x_)
         fano = F.softplus(raw_fano) + self.eps
@@ -294,6 +297,6 @@ class GammaDistribution(nn.Module):
         fano = F.softplus(raw_fano) + self.eps
 
         r = 1 / (fano + self.eps)
-        k = mu * r
+        k = (mu * r).clamp(min=_K_MIN)
 
         return Gamma(concentration=k.flatten(), rate=r.flatten())
