@@ -17,15 +17,17 @@ def assign_labels(
     with torch.no_grad():
         for batch in dataset.train_dataloader():
             _, _, _, reference = batch
+            refl_key = "refl_ids" if "refl_ids" in reference else "refl_id"
             train_ids = plr.DataFrame(
-                {"train_ids": (reference["refl_ids"].int()).tolist()}
+                {"train_ids": (reference[refl_key].int()).tolist()}
             )
             train_id_df = plr.concat([train_id_df, train_ids])
 
         for batch in dataset.val_dataloader():
             _, _, _, reference = batch
+            refl_key = "refl_ids" if "refl_ids" in reference else "refl_id"
             val_ids = plr.DataFrame(
-                {"val_ids": (reference["refl_ids"].int()).tolist()}
+                {"val_ids": (reference[refl_key].int()).tolist()}
             )
             val_id_df = plr.concat([val_id_df, val_ids])
 

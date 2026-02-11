@@ -1,6 +1,7 @@
 from integrator.data_loaders import (
     ShoeboxDataModule,
     ShoeboxDataModule2D,
+    SimulatedShoeboxLoader,
 )
 from integrator.model.distributions import (
     DirichletDistribution,
@@ -50,5 +51,6 @@ REGISTRY = {
     "data_loader": {
         "default": ShoeboxDataModule,
         "shoebox_data_module_2d": ShoeboxDataModule2D,
+        "simulated_data": SimulatedShoeboxLoader,
     },
 }

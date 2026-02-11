@@ -9,6 +9,7 @@ from integrator.configs.integrator import IntegratorCfg
 DEFAULT_PREDICT_KEYS = [
     # Reflection identifiers
     "refl_ids",
+    "is_test",
     # Model predictions
     "qi_mean",
     "qi_var",

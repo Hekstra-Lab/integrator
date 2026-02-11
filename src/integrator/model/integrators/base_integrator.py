@@ -146,13 +146,14 @@ class BaseIntegrator(pl.LightningModule):
         self.weight_decay = cfg.weight_decay
         self.mc_samples = cfg.mc_samples
         self.renyi_scale = cfg.renyi_scale
-        self.shoebox_shape = (cfg.d, cfg.h, cfg.w)
+        if cfg.data_dim == "2d":
+            self.shoebox_shape = (cfg.h, cfg.w)
+        else:
+            self.shoebox_shape = (cfg.d, cfg.h, cfg.w)
 
         # predict step keys
         self.predict_keys = (
-            DEFAULT_PREDICT_KEYS
-            if cfg.predict_keys == "default"
-            else cfg.predict_keys
+            DEFAULT_PREDICT_KEYS if cfg.predict_keys == "default" else cfg.predict_keys
         )
 
         self.encoders = nn.ModuleDict(encoders)
@@ -217,9 +218,7 @@ class BaseIntegrator(pl.LightningModule):
         outputs = self(counts, shoebox, mask, metadata)
 
         return {
-            k: v
-            for k, v in outputs["forward_out"].items()
-            if k in self.predict_keys
+            k: v for k, v in outputs["forward_out"].items() if k in self.predict_keys
         }
 
     def configure_optimizers(self):

@@ -153,7 +153,6 @@ from torch.distributions import Dirichlet
 #             raise RuntimeError("NaNs or nonpositive alpha before Dirichlet")
 #
 #         return Dirichlet(alpha)
-#
 
 
 class DirichletDistribution(torch.nn.Module):

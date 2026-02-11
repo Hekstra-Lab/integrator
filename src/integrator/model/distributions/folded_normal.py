@@ -60,8 +60,8 @@ from torch.distributions import Distribution
 class NormalIRSample(torch.autograd.Function):
     @staticmethod
     def forward(ctx, loc, scale, samples, dFdmu, dFdsig, q):
-        dzdmu = -dFdmu / q
-        dzdsig = -dFdsig / q
+        dzdmu = -dFdmu / (q + 1e-4)
+        dzdsig = -dFdsig / (q + 1e-4)
         ctx.save_for_backward(dzdmu, dzdsig)
         return samples
 
@@ -192,8 +192,6 @@ class FoldedNormal(Distribution):
             var[large] = scale[large] ** 2
 
         if small.any():
-            # stable variant of μ²+σ²−E[X]²
-
             var[small] = loc[small] ** 2 + scale[small] ** 2 - mean[small] ** 2
 
         return var
