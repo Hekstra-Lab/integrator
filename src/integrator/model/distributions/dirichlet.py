@@ -176,5 +176,36 @@ class DirichletDistribution(torch.nn.Module):
         return q
 
 
+class DirichletDistributionB(torch.nn.Module):
+    """Dirichlet with sigmoid log-space parameterization.
+
+    Maps linear outputs through sigmoid into a bounded log-alpha range,
+    providing smooth gradients everywhere (no hard clamp dead zones)
+    while preventing unbounded concentration values.
+    """
+
+    def __init__(
+        self,
+        in_features: int = 64,
+        sbox_shape: tuple[int, ...] = (3, 21, 21),
+        eps: float = 1e-6,
+        alpha_min: float = 1e-3,
+        alpha_max: float = 1e3,
+    ):
+        super().__init__()
+        import math
+
+        self.n_pixels = prod(sbox_shape)
+        self.alpha_layer = nn.Linear(in_features, self.n_pixels)
+        self.log_min = math.log(alpha_min)
+        self.log_max = math.log(alpha_max)
+
+    def forward(self, x):
+        x = self.alpha_layer(x)
+        log_alpha = self.log_min + (self.log_max - self.log_min) * torch.sigmoid(x)
+        alpha = torch.exp(log_alpha)
+        return Dirichlet(alpha)
+
+
 if __name__ == "__main__":
     import torch

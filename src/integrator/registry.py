@@ -5,6 +5,7 @@ from integrator.data_loaders import (
 )
 from integrator.model.distributions import (
     DirichletDistribution,
+    DirichletDistributionB,
     FoldedNormalA,
     FoldedNormalDistribution,
     GammaDistribution,
@@ -46,6 +47,7 @@ REGISTRY = {
         "folded_normal": FoldedNormalDistribution,
         "half_normal": HalfNormalDistribution,
         "dirichlet": DirichletDistribution,
+        "dirichletB": DirichletDistributionB,
         "folded_normal_A": FoldedNormalA,
     },
     "data_loader": {

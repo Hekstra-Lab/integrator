@@ -1,5 +1,6 @@
 import gc
 import glob
+import os
 import re
 from dataclasses import asdict
 from importlib.resources import as_file
@@ -118,11 +119,18 @@ def _get_prior_cfgs(
     # Building loss class
     priors = {}
     prior_cfgs = dict(cfg)
+    data_dir = cfg.get("data_loader", {}).get("args", {}).get("data_dir", "")
     for p in (pprf_cfg, pbg_cfg, pi_cfg):
         if p in prior_cfgs["loss"]["args"]:
             p_dict = prior_cfgs["loss"]["args"][p]
             p_name = p_dict["name"]
-            p_params = PRIOR_PARAMS[p_name](**p_dict["params"])
+            p_params_dict = dict(p_dict["params"])
+            # Resolve relative concentration paths for Dirichlet
+            if p_name == "dirichlet" and "concentration" in p_params_dict:
+                conc = p_params_dict["concentration"]
+                if isinstance(conc, str) and not os.path.isabs(conc) and not conc.startswith("~"):
+                    p_params_dict["concentration"] = os.path.join(data_dir, conc)
+            p_params = PRIOR_PARAMS[p_name](**p_params_dict)
             p_prior_cfgs = configs.PriorConfig(
                 name=p_name,
                 params=p_params,

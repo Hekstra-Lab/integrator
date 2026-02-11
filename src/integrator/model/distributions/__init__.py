@@ -1,4 +1,4 @@
-from .dirichlet import DirichletDistribution
+from .dirichlet import DirichletDistribution, DirichletDistributionB
 from .folded_normal import FoldedNormalA, FoldedNormalDistribution
 from .gamma import (
     GammaDistribution,
@@ -21,4 +21,5 @@ __all__ = [
     "GammaDistributionRepamC",
     "GammaDistributionRepamD",
     "FoldedNormalA",
+    "DirichletDistributionB",
 ]
