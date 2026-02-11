@@ -205,7 +205,18 @@ class BaseIntegrator(pl.LightningModule):
             step=step,
         )
 
-        return {"loss": total_loss, "forward_out": forward_out}
+        return {
+            "loss": total_loss,
+            "forward_out": forward_out,
+            "loss_components": {
+                "loss": total_loss.detach(),
+                "nll": loss_dict["neg_ll_mean"].detach(),
+                "kl": loss_dict["kl_mean"].detach(),
+                "kl_prf": loss_dict["kl_prf_mean"].detach(),
+                "kl_i": loss_dict["kl_i_mean"].detach(),
+                "kl_bg": loss_dict["kl_bg_mean"].detach(),
+            },
+        }
 
     def training_step(self, batch, _batch_idx):
         return self._step(batch, step="train")

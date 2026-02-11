@@ -98,6 +98,7 @@ def main():
 
     from integrator.callbacks import (
         EpochMetricRecorder,
+        LossTraceRecorder,
         assign_labels,
     )
     from integrator.utils import (
@@ -105,6 +106,7 @@ def main():
         construct_integrator,
         construct_trainer,
         load_config,
+        save_run_artifacts,
     )
 
     args = parse_args()
@@ -181,6 +183,9 @@ def main():
     # create integrator
     integrator = construct_integrator(cfg)
 
+    # save prior artifacts (rescaled concentration, param counts, etc.)
+    save_run_artifacts(integrator, cfg, logdir)
+
     # Callbacks — simulated-appropriate keys (no DIALS metadata)
     keys = [
         "refl_ids",
@@ -209,6 +214,10 @@ def main():
         split="val",
     )
 
+    loss_trace_recorder = LossTraceRecorder(
+        out_dir=logdir / "loss_traces",
+    )
+
     # to save checkpoints
     ckpt_dir = logdir / "checkpoints"
     checkpoint_callback = ModelCheckpoint(
@@ -226,6 +235,7 @@ def main():
         callbacks=[
             val_epoch_recorder,
             train_epoch_recorder,
+            loss_trace_recorder,
             checkpoint_callback,
         ],
         logger=wb_logger,

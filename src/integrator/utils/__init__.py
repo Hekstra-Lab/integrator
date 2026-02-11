@@ -7,6 +7,7 @@ from .factory_utils import (
     load_config,
     override_config,
     predict_from_checkpoints,
+    save_run_artifacts,
 )
 from .mtzwriter import mtz_writer
 from .parser import BaseParser
@@ -24,4 +25,5 @@ __all__ = [
     "mtz_writer",
     "BaseParser",
     "dump_yaml_config",
+    "save_run_artifacts",
 ]

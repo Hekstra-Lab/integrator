@@ -94,6 +94,7 @@ def main():
     from integrator.callbacks import (
         EpochMetricRecorder,
         LogFano,
+        LossTraceRecorder,
         Plotter,
         PlotterLD,
         assign_labels,
@@ -103,6 +104,7 @@ def main():
         construct_integrator,
         construct_trainer,
         load_config,
+        save_run_artifacts,
     )
 
     args = parse_args()
@@ -179,6 +181,9 @@ def main():
     # create integrator
     integrator = construct_integrator(cfg)
 
+    # save prior artifacts (rescaled concentration, param counts, etc.)
+    save_run_artifacts(integrator, cfg, logdir)
+
     # Callbacks
     keys = [
         "refl_ids",
@@ -228,6 +233,10 @@ def main():
 
     fano_wb_logger = LogFano()
 
+    loss_trace_recorder = LossTraceRecorder(
+        out_dir=logdir / "loss_traces",
+    )
+
     # to save checkpoints
     ckpt_dir = logdir / "checkpoints"
     checkpoint_callback = ModelCheckpoint(
@@ -246,6 +255,7 @@ def main():
             # fano_wb_logger,
             val_epoch_recorder,
             train_epoch_recorder,
+            loss_trace_recorder,
             checkpoint_callback,
             # plotter,
         ],

@@ -916,6 +916,79 @@ class PlotterLD(Callback):
             self.preds_validation = {}
 
 
+class LossTraceRecorder(Callback):
+    """Record per-step loss components to CSV/parquet without slowing training.
+
+    Accumulates scalar loss values in plain Python lists (no GPU tensors held),
+    then flushes to disk once per epoch.
+
+    Columns: step, loss, nll, kl, kl_prf, kl_i, kl_bg
+    """
+
+    _KEYS = ("loss", "nll", "kl", "kl_prf", "kl_i", "kl_bg")
+
+    def __init__(
+        self,
+        out_dir: str | Path,
+        use_parquet: bool = True,
+    ):
+        super().__init__()
+        self.out_dir = Path(out_dir)
+        self.out_dir.mkdir(parents=True, exist_ok=True)
+        self.use_parquet = use_parquet
+        self._rows: list[dict[str, float]] = []
+
+    # -- batch hooks --------------------------------------------------------
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        lc = outputs.get("loss_components") if isinstance(outputs, dict) else None
+        if lc is None:
+            return
+        row = {"global_step": trainer.global_step}
+        for k in self._KEYS:
+            v = lc.get(k)
+            row[k] = float(v) if v is not None else float("nan")
+        self._rows.append(row)
+
+    def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        lc = outputs.get("loss_components") if isinstance(outputs, dict) else None
+        if lc is None:
+            return
+        row = {"global_step": trainer.global_step}
+        for k in self._KEYS:
+            v = lc.get(k)
+            row[k] = float(v) if v is not None else float("nan")
+        # tag so train/val are distinguishable if someone merges files
+        row["split"] = "val"
+        self._rows.append(row)
+
+    # -- epoch hooks --------------------------------------------------------
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        self._flush(trainer, split="train")
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        self._flush(trainer, split="val")
+
+    # -- internals ----------------------------------------------------------
+
+    def _flush(self, trainer, split: str):
+        if not self._rows:
+            return
+
+        epoch = trainer.current_epoch
+        suffix = "parquet" if self.use_parquet else "csv"
+        fname = self.out_dir / f"loss_trace_{split}_epoch_{epoch:04d}.{suffix}"
+
+        df = pd.DataFrame(self._rows)
+        if self.use_parquet:
+            df.to_parquet(fname, index=False)
+        else:
+            df.to_csv(fname, index=False)
+
+        self._rows.clear()
+
+
 class EpochMetricRecorder(Callback):
     def __init__(
         self,

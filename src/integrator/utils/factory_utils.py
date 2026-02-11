@@ -258,6 +258,84 @@ def construct_trainer(
     return pl.Trainer(**trainer_kwargs)
 
 
+def save_run_artifacts(
+    integrator: BaseIntegrator,
+    cfg: dict,
+    logdir: Path,
+) -> None:
+    """Save model metadata and prior artifacts to the wandb log directory.
+
+    Saves:
+        - prior_concentration.pt: the rescaled Dirichlet concentration vector
+          actually used during training (after load/amplify/normalize)
+        - run_artifacts.yaml: prior configs, model param counts, loss settings
+    """
+    artifacts_dir = Path(logdir) / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    loss_module = integrator.loss
+    artifacts = {}
+
+    # --- Dirichlet prior concentration (rescaled) ---
+    pprf_params = getattr(loss_module, "pprf_params", None)
+    if pprf_params is not None and "concentration" in pprf_params:
+        conc = pprf_params["concentration"]
+        torch.save(conc, artifacts_dir / "prior_concentration.pt")
+        artifacts["prior_concentration"] = {
+            "n_elements": int(conc.numel()),
+            "sum": float(conc.sum()),
+            "min": float(conc.min()),
+            "max": float(conc.max()),
+            "mean": float(conc.mean()),
+        }
+
+    # --- Prior configs ---
+    prior_summary = {}
+    for attr, label in [
+        ("pprf_cfg", "profile"),
+        ("pi_cfg", "intensity"),
+        ("pbg_cfg", "background"),
+    ]:
+        prior_cfg = getattr(loss_module, attr, None)
+        if prior_cfg is not None:
+            entry = {
+                "name": prior_cfg.name,
+                "weight": float(prior_cfg.weight),
+            }
+            params = prior_cfg.params
+            for field in params.__dataclass_fields__:
+                v = getattr(params, field)
+                if isinstance(v, (int, float, str, tuple, list)):
+                    entry[field] = v
+            prior_summary[label] = entry
+    if prior_summary:
+        artifacts["priors"] = prior_summary
+
+    # --- Loss settings ---
+    artifacts["loss"] = {
+        "name": cfg["loss"]["name"],
+        "mc_samples": getattr(loss_module, "mc_samples", None),
+        "eps": getattr(loss_module, "eps", None),
+    }
+
+    # --- Model parameter counts ---
+    param_counts = {}
+    for name, module in integrator.named_children():
+        if isinstance(module, nn.ModuleDict):
+            for sub_name, sub_module in module.items():
+                n = sum(p.numel() for p in sub_module.parameters())
+                param_counts[f"{name}.{sub_name}"] = n
+        else:
+            n = sum(p.numel() for p in module.parameters())
+            param_counts[name] = n
+    param_counts["total"] = sum(p.numel() for p in integrator.parameters())
+    artifacts["param_counts"] = param_counts
+
+    # --- Write summary YAML ---
+    with open(artifacts_dir / "run_artifacts.yaml", "w") as f:
+        yaml.safe_dump(artifacts, f, sort_keys=False, default_flow_style=False)
+
+
 def override_config(args, config):
     # Override config options from command line
     if args.batch_size:
