@@ -61,8 +61,10 @@ class IntegratorModelA(BaseIntegrator):
             qp=qp,
             qi=qi,
             zp=zp,
+            zbg=zbg,
             concentration=qp.concentration,  # if using Dirichlet
             metadata=metadata,
+            compute_pred_var=self.cfg.compute_pred_var,
         )
         out = _assemble_outputs(out)
 
@@ -123,8 +125,10 @@ class IntegratorModelB(BaseIntegrator):
             qp=qp,
             qi=qi,
             zp=zp,
+            zbg=zbg,
             metadata=metadata,
             concentration=qp.concentration,
+            compute_pred_var=self.cfg.compute_pred_var,
         )
         out = _assemble_outputs(out)
 

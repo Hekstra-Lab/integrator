@@ -41,8 +41,10 @@ class IntegratorBaseOutputs:
     qp: Any
     qi: Any
     zp: Tensor
+    zbg: Tensor
     metadata: dict[str, torch.Tensor]
     concentration: Tensor | None = None
+    compute_pred_var: bool = False
 
 
 @dataclass
@@ -143,6 +145,79 @@ def calculate_intensities(counts, qbg, qp, mask, cfg):
         return intensities
 
 
+def predictive_intensity_variance(
+    out: IntegratorBaseOutputs,
+    n_iterations: int = 3,
+    eps: float = 1e-6,
+) -> Tensor:
+    """Posterior predictive variance of the Kabsch profile-fitted intensity.
+
+    For each MC sample *s*, run the iterative Kabsch weighted profile-fitting
+    estimator (matching ``calculate_intensities``):
+
+        vi^s       = I_hat^s * zp^s + zbg^s          (pixel variance estimate)
+        I_hat^s    = sum(w_i * (c_i - zbg^s)) / sum(w_i * zp^s)
+                     where  w_i = zp^s_i / vi^s_i
+
+    The iteration starts with vi = zbg (background-only variance) and refines
+    for *n_iterations* cycles. The variance of I_hat across the S MC samples
+    marginalises over profile and background uncertainty, giving a more
+    complete variance estimate than qi_var alone.
+
+    Parameters
+    ----------
+    out : IntegratorBaseOutputs
+        Forward-pass outputs containing counts, mask, zp, and zbg.
+    n_iterations : int
+        Number of Kabsch refinement iterations (default 3).
+    eps : float
+        Small constant for numerical stability.
+
+    Returns
+    -------
+    Tensor, shape [batch]
+        Per-reflection predictive variance.
+    """
+    # counts: [B, P], mask: [B, P]
+    # zp:  [B, S, P]   (profile samples)
+    # zbg: [B, S, 1]   (background samples, broadcast over pixels)
+    counts = out.counts
+    mask = out.mask
+    zp = out.zp
+    zbg = out.zbg
+
+    with torch.no_grad():
+        m = mask.unsqueeze(1)  # [B, 1, P]
+        c = (counts * mask).unsqueeze(1)  # [B, 1, P]
+        zp_m = zp * m  # [B, S, P]
+
+        # Initialise pixel variance with background-only estimate
+        vi = zbg.clamp(min=eps)  # [B, S, 1] broadcast over pixels
+
+        # Iterative Kabsch refinement
+        I_hat = torch.zeros(
+            counts.shape[0], zp.shape[1], device=counts.device
+        )  # [B, S]
+
+        for _ in range(n_iterations):
+            w = zp_m / vi  # [B, S, P]
+            num = (w * (c - zbg)).sum(dim=-1)  # [B, S]
+            denom = (w * zp_m).sum(dim=-1)  # [B, S]
+
+            I_hat = num / denom.clamp(min=eps)  # [B, S]
+
+            # Update pixel variance: vi = I * p + bg, averaged over pixels
+            vi = I_hat.unsqueeze(-1) * zp_m + zbg  # [B, S, P]
+            vi = vi.mean(dim=-1, keepdim=True).clamp(min=eps)  # [B, S, 1]
+
+        # Guard: if all mask pixels are zero, variance is zero
+        n_valid = mask.sum(dim=-1)  # [B]
+        pred_var = I_hat.var(dim=1)  # [B]
+        pred_var = torch.where(n_valid > 0, pred_var, torch.zeros_like(pred_var))
+
+        return pred_var
+
+
 def _assemble_outputs(
     out: IntegratorBaseOutputs,
 ) -> dict[str, Any]:
@@ -159,6 +234,9 @@ def _assemble_outputs(
         "profile": out.qp.mean,
         "concentration": out.concentration,
     }
+
+    if out.compute_pred_var:
+        base["qi_pred_var"] = predictive_intensity_variance(out)
 
     if out.metadata is None:
         return base

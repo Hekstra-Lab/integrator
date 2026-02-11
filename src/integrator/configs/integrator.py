@@ -14,6 +14,7 @@ class IntegratorCfg:
     mc_samples: int = 4
     renyi_scale: float = 0.0
     predict_keys: Literal["default"] | list[str] = "default"
+    compute_pred_var: bool = False
 
     def __post_init__(self):
         if self.data_dim not in ("2d", "3d"):
