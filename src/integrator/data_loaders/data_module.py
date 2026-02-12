@@ -20,7 +20,6 @@ SIMULATED_COLS = [
     "shoebox_max",
     "intensity",
     "background",
-    "refl_id",
     "refl_ids",
     "is_test",
 ]
