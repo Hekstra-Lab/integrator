@@ -390,7 +390,7 @@ class ShoeboxDataModule(BaseDataModule):
         self.D = D
         self.standardized_counts = shoebox_file_names["standardized_counts"]
         self.get_dxyz = get_dxyz
-        self.anscombe = False
+        self.anscombe = anscombe
 
     def setup(self, stage=None):
         counts = torch.load(
@@ -607,7 +607,7 @@ class SimulatedShoeboxLoader(BaseDataModule):
         self.D = D
         self.standardized_counts = shoebox_file_names["standardized_counts"]
         self.get_dxyz = get_dxyz
-        self.anscombe = False
+        self.anscombe = anscombe
 
     def setup(self, stage=None):
         counts = torch.load(
