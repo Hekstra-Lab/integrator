@@ -5,6 +5,7 @@ from dataclasses import dataclass
 class SurrogateArgs:
     in_features: int
     eps: float
+    k_max: float | None = None
 
 
 @dataclass
