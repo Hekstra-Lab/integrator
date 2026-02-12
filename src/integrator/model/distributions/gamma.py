@@ -100,7 +100,7 @@ class GammaDistributionRepamA(nn.Module):
         x_: torch.Tensor | None = None,
     ):
         raw_k = self.linear_k(x)
-        k = F.softplus(raw_k).clamp(min=_K_MIN)
+        k = F.softplus(raw_k) + self.eps
 
         if x_ is not None:
             raw_r = self.linear_r(x_)
@@ -142,7 +142,7 @@ class GammaDistributionRepamB(nn.Module):
         fano = F.softplus(raw_fano) + self.eps
 
         r = 1 / (fano + self.eps)
-        k = (mu * r).clamp(min=_K_MIN)
+        k = (mu * r) + self.eps
 
         return Gamma(concentration=k.flatten(), rate=r.flatten())
 
