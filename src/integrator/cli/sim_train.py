@@ -97,6 +97,12 @@ def _apply_sim_overrides(cfg: dict, *, args) -> dict:
         updates.setdefault("data_loader", {}).setdefault("args", {})["batch_size"] = (
             args.batch_size
         )
+    if args.integrator_name is not None:
+        updates.setdefault("integrator", {})["name"] = args.integrator_name
+    if args.qi is not None:
+        updates.setdefault("surrogates", {}).setdefault("qi", {})["name"] = args.qi
+    if args.qbg is not None:
+        updates.setdefault("surrogates", {}).setdefault("qbg", {})["name"] = args.qbg
     if args.data_path is not None:
         updates.setdefault("data_loader", {}).setdefault("args", {})["data_dir"] = str(
             args.data_path
