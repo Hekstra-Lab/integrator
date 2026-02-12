@@ -279,7 +279,7 @@ class FoldedNormalDistribution(nn.Module):
         raw_loc, raw_scale = self.fc(x).unbind(-1)
 
         # transform
-        loc = torch.exp(raw_loc)
+        loc = F.softplus(raw_loc) + self.eps
         scale = F.softplus(raw_scale) + self.eps
         return FoldedNormal(loc, scale)
 
@@ -305,7 +305,7 @@ class FoldedNormalA(nn.Module):
         raw_scale = self.linear_scale(x_)
 
         # transform
-        loc = torch.exp(raw_loc).squeeze()
+        loc = (F.softplus(raw_loc) + self.eps).squeeze()
         scale = (F.softplus(raw_scale) + self.eps).squeeze()
 
         return FoldedNormal(loc, scale)

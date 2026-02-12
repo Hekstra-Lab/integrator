@@ -633,7 +633,7 @@ class SimulatedShoeboxLoader(BaseDataModule):
         if self.anscombe:
             anscombe_transformed = 2 * (counts + 0.375).sqrt()
             standardized_counts = (
-                (anscombe_transformed - stats[1]) / stats[1].sqrt()
+                (anscombe_transformed - stats[0]) / stats[1].sqrt()
             ) * masks
         else:
             standardized_counts = ((counts * masks) - stats[0]) / stats[1].sqrt()

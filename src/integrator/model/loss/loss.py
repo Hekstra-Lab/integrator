@@ -82,7 +82,8 @@ def _get_dirichlet_prior(
     if isinstance(conc, str):
         loaded = torch.load(conc)
         loaded[loaded > 2] *= 40
-        loaded /= loaded.sum()
+        n_components = loaded.numel()
+        loaded = loaded / loaded.sum() * n_components  # avg alpha = 1.0
         return {"concentration": loaded.reshape(-1)}
 
     raise TypeError(f"Unsupported concentration type: {type(conc)}")
