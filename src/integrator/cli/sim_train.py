@@ -55,12 +55,28 @@ def parse_args():
         help="Path to run directory",
     )
     parser.add_argument(
+        "--integrator-name",
+        type=str,
+        help="Name of the ingrator module to use",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="count",
         default=0,
         help="Increase verbosity (-v = INFO, -vv = DEBUG)",
     )
+    parser.add_argument(
+        "--qbg",
+        type=str,
+        help="String name of the background surrogate module",
+    )
+    parser.add_argument(
+        "--qi",
+        type=str,
+        help="String name of the intensity surrogate module",
+    )
+
     parser.add_argument(
         "--tags",
         nargs="+",
@@ -78,13 +94,13 @@ def _apply_sim_overrides(cfg: dict, *, args) -> dict:
     if args.max_epochs is not None:
         updates.setdefault("trainer", {})["max_epochs"] = args.max_epochs
     if args.batch_size is not None:
-        updates.setdefault("data_loader", {}).setdefault("args", {})[
-            "batch_size"
-        ] = args.batch_size
+        updates.setdefault("data_loader", {}).setdefault("args", {})["batch_size"] = (
+            args.batch_size
+        )
     if args.data_path is not None:
-        updates.setdefault("data_loader", {}).setdefault("args", {})[
-            "data_dir"
-        ] = str(args.data_path)
+        updates.setdefault("data_loader", {}).setdefault("args", {})["data_dir"] = str(
+            args.data_path
+        )
 
     return _deep_merge(base, updates)
 
