@@ -14,6 +14,7 @@ from integrator.model.distributions import (
     GammaDistributionRepamC,
     GammaDistributionRepamD,
     HalfNormalDistribution,
+    LogNormalA,
     LogNormalDistribution,
 )
 from integrator.model.encoders import (
@@ -49,6 +50,7 @@ REGISTRY = {
         "dirichlet": DirichletDistribution,
         "dirichletB": DirichletDistributionB,
         "folded_normal_A": FoldedNormalA,
+        "log_normal_A": LogNormalA,
     },
     "data_loader": {
         "default": ShoeboxDataModule,

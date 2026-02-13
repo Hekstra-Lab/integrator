@@ -8,7 +8,7 @@ from .gamma import (
     GammaDistributionRepamD,
 )
 from .half_normal import HalfNormalDistribution
-from .log_normal import LogNormalDistribution
+from .log_normal import LogNormalA, LogNormalDistribution
 
 __all__ = [
     "DirichletDistribution",
@@ -22,4 +22,5 @@ __all__ = [
     "GammaDistributionRepamD",
     "FoldedNormalA",
     "DirichletDistributionB",
+    "LogNormalA",
 ]
