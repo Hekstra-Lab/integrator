@@ -5,7 +5,10 @@ from torch import Tensor
 
 from integrator import configs
 from integrator.model.integrators import BaseIntegrator
-from integrator.model.integrators.base_integrator import _log_loss
+from integrator.model.integrators.base_integrator import (
+    DEFAULT_PREDICT_KEYS_MODELC,
+    _log_loss,
+)
 
 from .integrator_utils import (
     IntegratorBaseOutputs,
@@ -96,6 +99,13 @@ class IntegratorModelC(BaseIntegrator):
 
     ARGS = IntegratorModelArgs
 
+    def __init__(self, cfg, loss, encoders, surrogates):
+        super().__init__(cfg=cfg, loss=loss, encoders=encoders, surrogates=surrogates)
+        # Use the extended key list when the user hasn't set a custom predict_keys,
+        # so that q_ib_loc, q_ib_scale_tril, and ib_log_space_correlation are saved.
+        if cfg.predict_keys == "default":
+            self.predict_keys = DEFAULT_PREDICT_KEYS_MODELC
+
     def _forward_impl(
         self,
         counts: Tensor,
@@ -142,6 +152,13 @@ class IntegratorModelC(BaseIntegrator):
             compute_pred_var=self.cfg.compute_pred_var,
         )
         out = _assemble_outputs(out)
+
+        # Store the 5 raw Cholesky parameters so the full BivariateLogNormal
+        # can be reconstructed from the prediction file for calibration analysis.
+        # scale_tril layout: [[L_11, 0], [L_21, L_22]]
+        out["q_ib_loc"] = q_ib.loc                          # [B, 2]
+        out["q_ib_scale_tril"] = q_ib.scale_tril            # [B, 2, 2]
+        out["ib_log_space_correlation"] = q_ib.log_space_correlation  # [B]
 
         return {
             "forward_out": out,

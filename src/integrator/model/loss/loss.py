@@ -142,29 +142,15 @@ def _joint_prior_kl(
     mc_samples: int,
     weight: float = 1.0,
 ) -> torch.Tensor:
-    """MC estimate of KL(q(I,B) || p(I)*p(B)) for an independent prior.
-
-    Draws joint samples from q_ib, evaluates the joint log-prob under q,
-    and compares to the sum of independent prior log-probs:
-
-        KL ≈ E_q[log q(I,B) - log p(I) - log p(B)]
-
-    Args:
-        q_ib:       Joint BivariateLogNormal posterior, batch_shape=[B].
-        pi_cfg:     PriorConfig for the intensity prior p(I).
-        pbg_cfg:    PriorConfig for the background prior p(B).
-        pi_params:  Tensor-valued params for p(I).
-        pbg_params: Tensor-valued params for p(B).
-        device:     Target device.
-        mc_samples: Number of MC samples for the KL estimate.
-        weight:     KL regularization weight (β in β-VAE).
-
-    Returns:
-        Tensor of shape [B] with per-sample KL estimates.
-    """
-    p_i = _build_prior(pi_cfg, pi_params, device) if (pi_cfg and pi_params) else None
+    p_i = (
+        _build_prior(pi_cfg, pi_params, device)
+        if (pi_cfg and pi_params)
+        else None
+    )
     p_bg = (
-        _build_prior(pbg_cfg, pbg_params, device) if (pbg_cfg and pbg_params) else None
+        _build_prior(pbg_cfg, pbg_params, device)
+        if (pbg_cfg and pbg_params)
+        else None
     )
 
     if p_i is None and p_bg is None:
@@ -208,13 +194,19 @@ class Loss(nn.Module):
 
         # Always set attributes so forward() can do unconditional `is not None` checks.
         self.pi_cfg = pi_cfg
-        self.pi_params = _params_as_tensors(pi_cfg) if pi_cfg is not None else None
+        self.pi_params = (
+            _params_as_tensors(pi_cfg) if pi_cfg is not None else None
+        )
 
         self.pbg_cfg = pbg_cfg
-        self.pbg_params = _params_as_tensors(pbg_cfg) if pbg_cfg is not None else None
+        self.pbg_params = (
+            _params_as_tensors(pbg_cfg) if pbg_cfg is not None else None
+        )
 
         self.pprf_cfg = pprf_cfg
-        self.pprf_params = _get_dirichlet_prior(pprf_cfg) if pprf_cfg is not None else None
+        self.pprf_params = (
+            _get_dirichlet_prior(pprf_cfg) if pprf_cfg is not None else None
+        )
 
     def forward(
         self,
@@ -276,7 +268,11 @@ class Loss(nn.Module):
             kl += kl_i
         else:
             # Independent mean-field mode: separate KL for qi and qbg.
-            if self.pi_cfg is not None and self.pi_params is not None and qi is not None:
+            if (
+                self.pi_cfg is not None
+                and self.pi_params is not None
+                and qi is not None
+            ):
                 kl_i = _prior_kl(
                     prior_cfg=self.pi_cfg,
                     q=qi,

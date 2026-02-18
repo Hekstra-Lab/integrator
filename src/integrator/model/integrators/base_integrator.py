@@ -27,6 +27,14 @@ DEFAULT_PREDICT_KEYS = [
     "L",
 ]
 
+# Extended keys for IntegratorModelC: includes the joint (I,B) Cholesky parameters
+# so the full BivariateLogNormal can be reconstructed from prediction files.
+DEFAULT_PREDICT_KEYS_MODELC = DEFAULT_PREDICT_KEYS + [
+    "q_ib_loc",                 # [B, 2]  — (mu_I, mu_B) in log-space
+    "q_ib_scale_tril",          # [B, 2, 2] — Cholesky factor L
+    "ib_log_space_correlation",  # [B]     — Pearson corr of (log I, log B)
+]
+
 
 def _log_forward_out(
     self,

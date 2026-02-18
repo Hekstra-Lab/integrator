@@ -23,7 +23,11 @@ from integrator.model.encoders import (
     MLPMetadataEncoder,
     ShoeboxEncoder,
 )
-from integrator.model.integrators import IntegratorModelA, IntegratorModelB, IntegratorModelC
+from integrator.model.integrators import (
+    IntegratorModelA,
+    IntegratorModelB,
+    IntegratorModelC,
+)
 from integrator.model.loss import Loss
 
 REGISTRY = {
