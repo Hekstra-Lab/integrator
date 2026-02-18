@@ -132,6 +132,56 @@ def _prior_kl(
     return kl_prior * weight
 
 
+def _joint_prior_kl(
+    q_ib: Distribution,
+    pi_cfg: PriorConfig | None,
+    pbg_cfg: PriorConfig | None,
+    pi_params: dict[str, torch.Tensor] | None,
+    pbg_params: dict[str, torch.Tensor] | None,
+    device: torch.device,
+    mc_samples: int,
+    weight: float = 1.0,
+) -> torch.Tensor:
+    """MC estimate of KL(q(I,B) || p(I)*p(B)) for an independent prior.
+
+    Draws joint samples from q_ib, evaluates the joint log-prob under q,
+    and compares to the sum of independent prior log-probs:
+
+        KL ≈ E_q[log q(I,B) - log p(I) - log p(B)]
+
+    Args:
+        q_ib:       Joint BivariateLogNormal posterior, batch_shape=[B].
+        pi_cfg:     PriorConfig for the intensity prior p(I).
+        pbg_cfg:    PriorConfig for the background prior p(B).
+        pi_params:  Tensor-valued params for p(I).
+        pbg_params: Tensor-valued params for p(B).
+        device:     Target device.
+        mc_samples: Number of MC samples for the KL estimate.
+        weight:     KL regularization weight (β in β-VAE).
+
+    Returns:
+        Tensor of shape [B] with per-sample KL estimates.
+    """
+    p_i = _build_prior(pi_cfg, pi_params, device) if (pi_cfg and pi_params) else None
+    p_bg = (
+        _build_prior(pbg_cfg, pbg_params, device) if (pbg_cfg and pbg_params) else None
+    )
+
+    if p_i is None and p_bg is None:
+        return torch.zeros(q_ib.batch_shape, device=device)
+
+    samples_ib = q_ib.rsample([mc_samples])  # [S, B, 2]
+    log_q = q_ib.log_prob(samples_ib)  # [S, B]
+
+    log_p = torch.zeros_like(log_q)
+    if p_i is not None:
+        log_p = log_p + p_i.log_prob(samples_ib[..., 0])  # [S, B]
+    if p_bg is not None:
+        log_p = log_p + p_bg.log_prob(samples_ib[..., 1])  # [S, B]
+
+    return (log_q - log_p).mean(dim=0) * weight
+
+
 def _params_as_tensors(
     prior: PriorConfig | None,
 ) -> dict[str, torch.Tensor] | None:
@@ -156,25 +206,33 @@ class Loss(nn.Module):
         self.eps = eps
         self.mc_samples = mc_samples
 
-        if pi_cfg is not None:
-            self.pi_params = _params_as_tensors(pi_cfg)
-            self.pi_cfg = pi_cfg
-        if pbg_cfg is not None:
-            self.pbg_params = _params_as_tensors(pbg_cfg)
-            self.pbg_cfg = pbg_cfg
-        if pprf_cfg is not None:
-            self.pprf_params = _get_dirichlet_prior(pprf_cfg)
-            self.pprf_cfg = pprf_cfg
+        # Always set attributes so forward() can do unconditional `is not None` checks.
+        self.pi_cfg = pi_cfg
+        self.pi_params = _params_as_tensors(pi_cfg) if pi_cfg is not None else None
+
+        self.pbg_cfg = pbg_cfg
+        self.pbg_params = _params_as_tensors(pbg_cfg) if pbg_cfg is not None else None
+
+        self.pprf_cfg = pprf_cfg
+        self.pprf_params = _get_dirichlet_prior(pprf_cfg) if pprf_cfg is not None else None
 
     def forward(
         self,
         rate: Tensor,
         counts: Tensor,
         qp: Distribution,
-        qi: Distribution,
-        qbg: Distribution,
         mask: Tensor,
+        qi: Distribution | None = None,
+        qbg: Distribution | None = None,
+        q_ib: Distribution | None = None,
     ):
+        """Compute the ELBO loss.
+
+        Supports two modes for the (I, B) posterior:
+          - Independent:  pass ``qi`` and ``qbg`` (original mean-field).
+          - Joint:        pass ``q_ib`` (BivariateLogNormal); ``qi``/``qbg``
+                          are then ignored and the joint KL is computed instead.
+        """
         # batch metadata
         device = rate.device
         batch_size = rate.shape[0]
@@ -189,7 +247,7 @@ class Loss(nn.Module):
         kl_i = torch.zeros(batch_size, device=device)
         kl_bg = torch.zeros(batch_size, device=device)
 
-        # Calculating per prior KL temrms
+        # Profile prior KL (always independent of the I/B mode)
         if self.pprf_cfg is not None and self.pprf_params is not None:
             kl_prf = _prior_kl(
                 prior_cfg=self.pprf_cfg,
@@ -201,27 +259,48 @@ class Loss(nn.Module):
             )
             kl += kl_prf
 
-        if self.pi_cfg is not None and self.pi_params is not None:
-            kl_i = _prior_kl(
-                prior_cfg=self.pi_cfg,
-                q=qi,
-                params=self.pi_params,
-                weight=self.pi_cfg.weight,
+        if q_ib is not None:
+            # Joint (I, B) mode: single KL term for the bivariate posterior.
+            # The joint KL weight is taken from pi_cfg; pbg_cfg.weight is ignored.
+            weight = self.pi_cfg.weight if self.pi_cfg is not None else 1.0
+            kl_i = _joint_prior_kl(
+                q_ib=q_ib,
+                pi_cfg=self.pi_cfg,
+                pbg_cfg=self.pbg_cfg,
+                pi_params=self.pi_params,
+                pbg_params=self.pbg_params,
                 device=device,
                 mc_samples=self.mc_samples,
+                weight=weight,
             )
             kl += kl_i
+        else:
+            # Independent mean-field mode: separate KL for qi and qbg.
+            if self.pi_cfg is not None and self.pi_params is not None and qi is not None:
+                kl_i = _prior_kl(
+                    prior_cfg=self.pi_cfg,
+                    q=qi,
+                    params=self.pi_params,
+                    weight=self.pi_cfg.weight,
+                    device=device,
+                    mc_samples=self.mc_samples,
+                )
+                kl += kl_i
 
-        if self.pbg_cfg is not None and self.pbg_params is not None:
-            kl_bg = _prior_kl(
-                prior_cfg=self.pbg_cfg,
-                q=qbg,
-                params=self.pbg_params,
-                weight=self.pbg_cfg.weight,
-                device=device,
-                mc_samples=self.mc_samples,
-            )
-            kl += kl_bg
+            if (
+                self.pbg_cfg is not None
+                and self.pbg_params is not None
+                and qbg is not None
+            ):
+                kl_bg = _prior_kl(
+                    prior_cfg=self.pbg_cfg,
+                    q=qbg,
+                    params=self.pbg_params,
+                    weight=self.pbg_cfg.weight,
+                    device=device,
+                    mc_samples=self.mc_samples,
+                )
+                kl += kl_bg
 
         # Calculating log likelihood
         ll = Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))

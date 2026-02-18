@@ -4,6 +4,7 @@ from integrator.data_loaders import (
     SimulatedShoeboxLoader,
 )
 from integrator.model.distributions import (
+    BivariateLogNormalSurrogate,
     DirichletDistribution,
     DirichletDistributionB,
     FoldedNormalA,
@@ -22,7 +23,7 @@ from integrator.model.encoders import (
     MLPMetadataEncoder,
     ShoeboxEncoder,
 )
-from integrator.model.integrators import IntegratorModelA, IntegratorModelB
+from integrator.model.integrators import IntegratorModelA, IntegratorModelB, IntegratorModelC
 from integrator.model.loss import Loss
 
 REGISTRY = {
@@ -37,6 +38,7 @@ REGISTRY = {
     "integrator": {
         "modela": IntegratorModelA,
         "modelb": IntegratorModelB,
+        "modelc": IntegratorModelC,
     },
     "surrogates": {
         "gamma": GammaDistribution,
@@ -51,6 +53,7 @@ REGISTRY = {
         "dirichletB": DirichletDistributionB,
         "folded_normal_A": FoldedNormalA,
         "log_normal_A": LogNormalA,
+        "bivariate_log_normal": BivariateLogNormalSurrogate,
     },
     "data_loader": {
         "default": ShoeboxDataModule,

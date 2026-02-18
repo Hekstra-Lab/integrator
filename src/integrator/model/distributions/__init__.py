@@ -1,3 +1,4 @@
+from .bivariate_log_normal import BivariateLogNormal, BivariateLogNormalSurrogate
 from .dirichlet import DirichletDistribution, DirichletDistributionB
 from .folded_normal import FoldedNormalA, FoldedNormalDistribution
 from .gamma import (
@@ -11,6 +12,8 @@ from .half_normal import HalfNormalDistribution
 from .log_normal import LogNormalA, LogNormalDistribution
 
 __all__ = [
+    "BivariateLogNormal",
+    "BivariateLogNormalSurrogate",
     "DirichletDistribution",
     "GammaDistribution",
     "HalfNormalDistribution",

@@ -91,23 +91,19 @@ def _get_loss_args(
 def _get_surrogate_modules(
     cfg: dict,
 ) -> dict[str, nn.Module]:
-    qp_args = configs.DirichletArgs(**cfg["surrogates"]["qp"]["args"])
-    qp_cls = REGISTRY["surrogates"][cfg["surrogates"]["qp"]["name"]]
-    qp = qp_cls(**asdict(qp_args))
+    """Construct all surrogate distribution modules from config.
 
-    qbg_args = configs.SurrogateArgs(**cfg["surrogates"]["qbg"]["args"])
-    qbg_cls = REGISTRY["surrogates"][cfg["surrogates"]["qbg"]["name"]]
-    qbg = qbg_cls(**asdict(qbg_args))
-
-    qi_args = configs.SurrogateArgs(**cfg["surrogates"]["qi"]["args"])
-    qi_cls = REGISTRY["surrogates"][cfg["surrogates"]["qi"]["name"]]
-    qi = qi_cls(**asdict(qi_args))
-
-    return {
-        "qp": qp,
-        "qbg": qbg,
-        "qi": qi,
-    }
+    Iterates over all keys in ``cfg["surrogates"]`` so that any combination
+    of surrogates is supported (e.g., the standard ``qp``/``qi``/``qbg`` trio
+    or the joint ``qp``/``q_ib`` pair used by IntegratorModelC).  The raw
+    args dict from the YAML is passed directly to each class constructor,
+    avoiding the need for a separate ``SurrogateArgs`` dataclass per class.
+    """
+    surrogates = {}
+    for key, surrogate_cfg in cfg["surrogates"].items():
+        surrogate_cls = REGISTRY["surrogates"][surrogate_cfg["name"]]
+        surrogates[key] = surrogate_cls(**surrogate_cfg["args"])
+    return surrogates
 
 
 def _get_prior_cfgs(
