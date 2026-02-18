@@ -153,11 +153,16 @@ class IntegratorModelC(BaseIntegrator):
         )
         out = _assemble_outputs(out)
 
-        # Store the 5 raw Cholesky parameters so the full BivariateLogNormal
-        # can be reconstructed from the prediction file for calibration analysis.
-        # scale_tril layout: [[L_11, 0], [L_21, L_22]]
-        out["q_ib_loc"] = q_ib.loc                          # [B, 2]
-        out["q_ib_scale_tril"] = q_ib.scale_tril            # [B, 2, 2]
+        # Store the 5 Cholesky parameters as flat [B] columns so they survive
+        # the Polars DataFrame serialisation in BatchPredWriter.
+        # Reconstruct with:
+        #   loc = torch.stack([preds["q_ib_mu_I"], preds["q_ib_mu_B"]], dim=-1)
+        #   L   = [[L11, 0], [L21, L22]]
+        out["q_ib_mu_I"] = q_ib.loc[..., 0]             # [B]
+        out["q_ib_mu_B"] = q_ib.loc[..., 1]             # [B]
+        out["q_ib_L11"] = q_ib.scale_tril[..., 0, 0]   # [B]
+        out["q_ib_L21"] = q_ib.scale_tril[..., 1, 0]   # [B]
+        out["q_ib_L22"] = q_ib.scale_tril[..., 1, 1]   # [B]
         out["ib_log_space_correlation"] = q_ib.log_space_correlation  # [B]
 
         return {
