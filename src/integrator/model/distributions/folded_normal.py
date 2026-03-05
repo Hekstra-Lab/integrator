@@ -289,6 +289,7 @@ class FoldedNormalA(nn.Module):
         self,
         in_features: int = 64,
         eps: float = 0.1,
+        **kwargs,
     ):
         super().__init__()
         self.linear_loc = torch.nn.Linear(in_features, 1)
