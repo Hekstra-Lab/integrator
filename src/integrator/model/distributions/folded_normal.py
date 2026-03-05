@@ -1,10 +1,16 @@
-import numpy as np
+from math import pi, sqrt
+
 import torch
-import torch.distributions as dist
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from torch.distributions import Distribution
+from torch.distributions import (
+    Normal,
+    TransformedDistribution,
+    constraints,
+)
+from torch.distributions.transforms import AbsTransform
+
 
 class FoldedNormal(TransformedDistribution):
     arg_constraints = {"loc": constraints.real, "scale": constraints.positive}
@@ -20,10 +26,12 @@ class FoldedNormal(TransformedDistribution):
         return True
 
     @property
-    def support(self) -> Constraint:
+    def support(self) -> constraints.Constraint:
         return constraints.nonnegative
 
-    @property def loc(self) -> Tensor: return self._normal.loc
+    @property
+    def loc(self) -> Tensor:
+        return self._normal.loc
 
     @property
     def scale(self) -> Tensor:
@@ -239,6 +247,7 @@ class FoldedNormal(TransformedDistribution):
 #             self.loc, self.scale, samples, dFdmu, dFdsigma, q
 #         )
 #
+
 
 class FoldedNormalDistribution(nn.Module):
     """
