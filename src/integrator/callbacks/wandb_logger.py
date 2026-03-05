@@ -944,7 +944,7 @@ class LossTraceRecorder(Callback):
         lc = outputs.get("loss_components") if isinstance(outputs, dict) else None
         if lc is None:
             return
-        row = {"global_step": trainer.global_step}
+        row = {"epoch": trainer.current_epoch, "global_step": trainer.global_step}
         for k in self._KEYS:
             v = lc.get(k)
             row[k] = float(v) if v is not None else float("nan")
@@ -954,7 +954,7 @@ class LossTraceRecorder(Callback):
         lc = outputs.get("loss_components") if isinstance(outputs, dict) else None
         if lc is None:
             return
-        row = {"global_step": trainer.global_step}
+        row = {"epoch": trainer.current_epoch, "global_step": trainer.global_step}
         for k in self._KEYS:
             v = lc.get(k)
             row[k] = float(v) if v is not None else float("nan")
@@ -1066,6 +1066,7 @@ class EpochMetricRecorder(Callback):
             data[key] = x.cpu().numpy()
 
         df = pd.DataFrame(data)
+        df.insert(0, "epoch", epoch)
 
         suffix = "parquet" if self.use_parquet else "csv"
         fname = f"{self.out_dir}/{self.split}_epoch_{epoch:04d}.{suffix}"

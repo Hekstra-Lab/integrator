@@ -136,6 +136,7 @@ def _log_loss(
     )
     self.log(f"{step} kl", kl, on_step=False, on_epoch=True)
     self.log(f"{step} nll", nll, on_step=False, on_epoch=True)
+    self.log("epoch", float(self.current_epoch), on_step=False, on_epoch=True)
 
 
 class BaseIntegrator(pl.LightningModule):
