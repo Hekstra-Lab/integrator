@@ -28,7 +28,7 @@ from integrator.model.integrators import (
     IntegratorModelB,
     IntegratorModelC,
 )
-from integrator.model.loss import Loss
+from integrator.model.loss import HierarchicalLoss, Loss
 
 REGISTRY = {
     "encoders": {
@@ -38,6 +38,7 @@ REGISTRY = {
     },
     "loss": {
         "default": Loss,
+        "hierarchical": HierarchicalLoss,
     },
     "integrator": {
         "modela": IntegratorModelA,

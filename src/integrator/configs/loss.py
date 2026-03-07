@@ -22,6 +22,15 @@ class LossArgs:
 
 
 @dataclass
+class HierarchicalLossArgs(LossArgs):
+    """LossArgs extended with empirical-Bayes hyperparameters."""
+
+    hierarchical_intensity: bool = True
+    hierarchical_background: bool = False
+    hyperprior_scale: float = 2.0
+
+
+@dataclass
 class LossConfig:
-    name: Literal["default"]
+    name: Literal["default", "hierarchical"]
     args: LossArgs

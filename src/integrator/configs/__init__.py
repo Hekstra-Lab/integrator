@@ -20,6 +20,7 @@ from .global_config import GlobalConfig
 from .integrator import IntegratorCfg, IntegratorConfig
 from .logger import LoggerConfig
 from .loss import (
+    HierarchicalLossArgs,
     LossArgs,
     LossConfig,
 )
@@ -42,6 +43,7 @@ __all__ = [
     "GammaParams",
     "HalfCauchyParams",
     "LogNormalParams",
+    "HierarchicalLossArgs",
     "LossArgs",
     "DataFileNames",
     "DataLoaderConfig",

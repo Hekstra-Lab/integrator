@@ -75,9 +75,10 @@ def _get_loss_args(
     prior_configs: dict,
 ) -> configs.LossArgs:
     loss_cfg = dict(cfg["loss"])
+    loss_name = loss_cfg["name"]
     loss_args = _normalize_tuples(loss_cfg["args"])
 
-    args_cls = configs.LossArgs(
+    base_kwargs = dict(
         mc_samples=loss_args["mc_samples"],
         eps=loss_args["eps"],
         pbg_cfg=prior_configs["pbg_cfg"],
@@ -85,7 +86,15 @@ def _get_loss_args(
         pprf_cfg=prior_configs["pprf_cfg"],
     )
 
-    return args_cls
+    if loss_name == "hierarchical":
+        return configs.HierarchicalLossArgs(
+            **base_kwargs,
+            hierarchical_intensity=loss_args.get("hierarchical_intensity", True),
+            hierarchical_background=loss_args.get("hierarchical_background", False),
+            hyperprior_scale=loss_args.get("hyperprior_scale", 2.0),
+        )
+
+    return configs.LossArgs(**base_kwargs)
 
 
 def _get_surrogate_modules(
