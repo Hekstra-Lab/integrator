@@ -31,6 +31,16 @@ class HierarchicalLossArgs(LossArgs):
 
 
 @dataclass
+class ConditionalLossArgs(LossArgs):
+    """LossArgs extended with input-dependent (conditional) prior parameters."""
+
+    conditional_intensity: bool = True
+    conditional_background: bool = False
+    hidden_dim: int = 16
+    hyperprior_scale: float = 2.0
+
+
+@dataclass
 class LossConfig:
-    name: Literal["default", "hierarchical"]
+    name: Literal["default", "hierarchical", "conditional"]
     args: LossArgs

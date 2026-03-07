@@ -94,6 +94,15 @@ def _get_loss_args(
             hyperprior_scale=loss_args.get("hyperprior_scale", 2.0),
         )
 
+    if loss_name == "conditional":
+        return configs.ConditionalLossArgs(
+            **base_kwargs,
+            conditional_intensity=loss_args.get("conditional_intensity", True),
+            conditional_background=loss_args.get("conditional_background", False),
+            hidden_dim=loss_args.get("hidden_dim", 16),
+            hyperprior_scale=loss_args.get("hyperprior_scale", 2.0),
+        )
+
     return configs.LossArgs(**base_kwargs)
 
 
