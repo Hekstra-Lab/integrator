@@ -20,6 +20,7 @@ from integrator.model.distributions import (
 )
 from integrator.model.encoders import (
     BorderPixelMLPEncoder,
+    BorderStatsEncoder,
     IntensityEncoder,
     MLPMetadataEncoder,
     ShoeboxEncoder,
@@ -30,6 +31,7 @@ from integrator.model.integrators import (
     IntegratorModelC,
     IntegratorModelD,
     IntegratorModelE,
+    IntegratorModelF,
 )
 from integrator.model.loss import Loss
 
@@ -39,6 +41,7 @@ REGISTRY = {
         "intensity_encoder": IntensityEncoder,
         "mlp_metadata_encoder": MLPMetadataEncoder,
         "border_pixel_mlp": BorderPixelMLPEncoder,
+        "border_stats_encoder": BorderStatsEncoder,
     },
     "loss": {
         "default": Loss,
@@ -49,6 +52,7 @@ REGISTRY = {
         "modelc": IntegratorModelC,
         "modeld": IntegratorModelD,
         "modele": IntegratorModelE,
+        "modelf": IntegratorModelF,
     },
     "surrogates": {
         "gamma": GammaDistribution,
