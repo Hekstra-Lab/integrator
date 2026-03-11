@@ -48,6 +48,18 @@ class IntensityEncoderArgs:
 
 
 @dataclass
+class BorderStatsEncoderArgs:
+    D: int
+    H: int
+    W: int
+    encoder_out: int
+    hidden_dim: int = 32
+
+    def __post_init__(self):
+        pass
+
+
+@dataclass
 class BorderPixelMLPEncoderArgs:
     D: int
     H: int

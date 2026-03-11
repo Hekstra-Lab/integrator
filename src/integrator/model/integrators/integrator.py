@@ -366,6 +366,84 @@ class IntegratorModelE(BaseIntegrator):
         }
 
 
+class IntegratorModelF(BaseIntegrator):
+    """ModelE variant where the bg encoders use summary statistics instead of raw pixels.
+
+    Rather than learning over the full border pixel vector, each bg encoder
+    computes 6 scalar statistics (mean, std, min, max, median, total) over the
+    outer H×W ring, then projects them to encoder_out via a tiny MLP.  This
+    eliminates spatial-pattern overfitting while retaining the signal that
+    background estimation actually needs.
+
+    Encoder keys (must match YAML order):
+        profile  – shoebox encoder   → qp
+        k_i      – intensity encoder → qi shape
+        r_i      – intensity encoder → qi rate
+        k_bg     – border stats MLP  → qbg shape
+        r_bg     – border stats MLP  → qbg rate
+    """
+
+    REQUIRED_ENCODERS = {
+        "profile": configs.ShoeboxEncoderArgs,
+        "k_i":     configs.IntensityEncoderArgs,
+        "r_i":     configs.IntensityEncoderArgs,
+        "k_bg":    configs.BorderStatsEncoderArgs,
+        "r_bg":    configs.BorderStatsEncoderArgs,
+    }
+
+    ARGS = IntegratorModelArgs
+
+    def _forward_impl(
+        self,
+        counts: Tensor,
+        shoebox: Tensor,
+        mask: Tensor,
+        metadata: dict,
+    ) -> dict[str, Any]:
+        counts = torch.clamp(counts, min=0)
+
+        b = shoebox.shape[0]
+        shoebox_reshaped = shoebox.reshape(b, 1, *self.shoebox_shape)
+
+        x_profile = self.encoders["profile"](shoebox_reshaped)
+        x_k_i     = self.encoders["k_i"](shoebox_reshaped)
+        x_r_i     = self.encoders["r_i"](shoebox_reshaped)
+        x_k_bg    = self.encoders["k_bg"](shoebox_reshaped)
+        x_r_bg    = self.encoders["r_bg"](shoebox_reshaped)
+
+        qp  = self.surrogates["qp"](x_profile)
+        qi  = self.surrogates["qi"](x_k_i, x_r_i)
+        qbg = self.surrogates["qbg"](x_k_bg, x_r_bg)
+
+        zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        zp  = qp.rsample([self.mc_samples]).permute(1, 0, 2)
+        zI  = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+
+        rate = zI * zp + zbg
+
+        out = IntegratorBaseOutputs(
+            rates=rate,
+            counts=counts,
+            mask=mask,
+            qbg=qbg,
+            qp=qp,
+            qi=qi,
+            zp=zp,
+            zbg=zbg,
+            concentration=qp.concentration,
+            metadata=metadata,
+            compute_pred_var=self.cfg.compute_pred_var,
+        )
+        out = _assemble_outputs(out)
+
+        return {
+            "forward_out": out,
+            "qp": qp,
+            "qi": qi,
+            "qbg": qbg,
+        }
+
+
 class IntegratorModelB(BaseIntegrator):
     REQUIRED_ENCODERS = {
         "profile": configs.ShoeboxEncoderArgs,

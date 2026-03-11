@@ -1,5 +1,5 @@
 from .base_integrator import BaseIntegrator
-from .integrator import IntegratorModelA, IntegratorModelB, IntegratorModelC, IntegratorModelD, IntegratorModelE
+from .integrator import IntegratorModelA, IntegratorModelB, IntegratorModelC, IntegratorModelD, IntegratorModelE, IntegratorModelF
 
 __all__ = [
     "BaseIntegrator",
@@ -8,4 +8,5 @@ __all__ = [
     "IntegratorModelC",
     "IntegratorModelD",
     "IntegratorModelE",
+    "IntegratorModelF",
 ]

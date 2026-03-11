@@ -12,6 +12,7 @@ from .distributions import (
 )
 from .encoder import (
     BorderPixelMLPEncoderArgs,
+    BorderStatsEncoderArgs,
     EncoderConfig,
     Encoders,
     IntensityEncoderArgs,
@@ -48,6 +49,7 @@ __all__ = [
     "DataLoaderConfig",
     "DataLoaderArgs",
     "BorderPixelMLPEncoderArgs",
+    "BorderStatsEncoderArgs",
     "IntegratorCfg",
     "Encoders",
     "EncoderConfig",
