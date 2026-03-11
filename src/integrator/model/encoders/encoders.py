@@ -231,13 +231,13 @@ class BorderPixelMLPEncoder(nn.Module):
         self.mlp = nn.Sequential(*layers)
 
     def _extract_border(self, x: Tensor) -> Tensor:
-        # x: (B, 1, D, H, W) → (B, n_border)
-        x = x.squeeze(1)                    # (B, D, H, W)
-        top    = x[:, :, 0, :]              # (B, D, W)
-        bottom = x[:, :, -1, :]             # (B, D, W)
-        left   = x[:, :, 1:-1, 0]           # (B, D, H-2)
-        right  = x[:, :, 1:-1, -1]          # (B, D, H-2)
+        # x: (B, 1, D, H, W) or (B, 1, H, W) → (B, n_border)
         b = x.shape[0]
+        x = x.reshape(b, self.D, self.H, self.W)   # (B, D, H, W)
+        top    = x[:, :, 0, :]                      # (B, D, W)
+        bottom = x[:, :, -1, :]                     # (B, D, W)
+        left   = x[:, :, 1:-1, 0]                   # (B, D, H-2)
+        right  = x[:, :, 1:-1, -1]                  # (B, D, H-2)
         return torch.cat([
             top.reshape(b, -1),
             bottom.reshape(b, -1),
