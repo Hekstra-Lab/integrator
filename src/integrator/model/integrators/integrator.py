@@ -100,7 +100,9 @@ class IntegratorModelC(BaseIntegrator):
     ARGS = IntegratorModelArgs
 
     def __init__(self, cfg, loss, encoders, surrogates):
-        super().__init__(cfg=cfg, loss=loss, encoders=encoders, surrogates=surrogates)
+        super().__init__(
+            cfg=cfg, loss=loss, encoders=encoders, surrogates=surrogates
+        )
         # Use the extended key list when the user hasn't set a custom predict_keys,
         # so that q_ib_loc, q_ib_scale_tril, and ib_log_space_correlation are saved.
         if cfg.predict_keys == "default":
@@ -158,11 +160,11 @@ class IntegratorModelC(BaseIntegrator):
         # Reconstruct with:
         #   loc = torch.stack([preds["q_ib_mu_I"], preds["q_ib_mu_B"]], dim=-1)
         #   L   = [[L11, 0], [L21, L22]]
-        out["q_ib_mu_I"] = q_ib.loc[..., 0]             # [B]
-        out["q_ib_mu_B"] = q_ib.loc[..., 1]             # [B]
-        out["q_ib_L11"] = q_ib.scale_tril[..., 0, 0]   # [B]
-        out["q_ib_L21"] = q_ib.scale_tril[..., 1, 0]   # [B]
-        out["q_ib_L22"] = q_ib.scale_tril[..., 1, 1]   # [B]
+        out["q_ib_mu_I"] = q_ib.loc[..., 0]  # [B]
+        out["q_ib_mu_B"] = q_ib.loc[..., 1]  # [B]
+        out["q_ib_L11"] = q_ib.scale_tril[..., 0, 0]  # [B]
+        out["q_ib_L21"] = q_ib.scale_tril[..., 1, 0]  # [B]
+        out["q_ib_L22"] = q_ib.scale_tril[..., 1, 1]  # [B]
         out["ib_log_space_correlation"] = q_ib.log_space_correlation  # [B]
 
         return {
@@ -207,6 +209,82 @@ class IntegratorModelC(BaseIntegrator):
                 "kl_i": loss_dict["kl_i_mean"].detach(),
                 "kl_bg": loss_dict["kl_bg_mean"].detach(),
             },
+        }
+
+
+class IntegratorModelD(BaseIntegrator):
+    """IntegratorModelB variant with fully decoupled encoders for qi and qbg.
+
+    Uses five encoders instead of three so that the intensity and background
+    surrogates receive independent latent representations, eliminating the
+    gradient entanglement that biases qbg when qi and qbg share (x_k, x_r).
+
+    Encoder keys (must match YAML order):
+        profile  – shoebox encoder  → qp
+        k_i      – intensity encoder → qi mean
+        r_i      – intensity encoder → qi fano
+        k_bg     – intensity encoder → qbg mean
+        r_bg     – intensity encoder → qbg fano
+    """
+
+    REQUIRED_ENCODERS = {
+        "profile": configs.ShoeboxEncoderArgs,
+        "k_i": configs.IntensityEncoderArgs,
+        "r_i": configs.IntensityEncoderArgs,
+        "k_bg": configs.IntensityEncoderArgs,
+        "r_bg": configs.IntensityEncoderArgs,
+    }
+
+    ARGS = IntegratorModelArgs
+
+    def _forward_impl(
+        self,
+        counts: torch.Tensor,
+        shoebox: torch.Tensor,
+        mask: torch.Tensor,
+        metadata: dict,
+    ) -> dict[str, Any]:
+        counts = torch.clamp(counts, min=0)
+
+        b = shoebox.shape[0]
+        shoebox_reshaped = shoebox.reshape(b, 1, *self.shoebox_shape)
+
+        x_profile = self.encoders["profile"](shoebox_reshaped)
+        x_k_i = self.encoders["k_i"](shoebox_reshaped)
+        x_r_i = self.encoders["r_i"](shoebox_reshaped)
+        x_k_bg = self.encoders["k_bg"](shoebox_reshaped)
+        x_r_bg = self.encoders["r_bg"](shoebox_reshaped)
+
+        qbg = self.surrogates["qbg"](x_k_bg, x_r_bg)
+        qi = self.surrogates["qi"](x_k_i, x_r_i)
+        qp = self.surrogates["qp"](x_profile)
+
+        zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
+        zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+
+        rate = zI * zp + zbg
+
+        out = IntegratorBaseOutputs(
+            rates=rate,
+            counts=counts,
+            mask=mask,
+            qbg=qbg,
+            qp=qp,
+            qi=qi,
+            zp=zp,
+            zbg=zbg,
+            concentration=qp.concentration,
+            metadata=metadata,
+            compute_pred_var=self.cfg.compute_pred_var,
+        )
+        out = _assemble_outputs(out)
+
+        return {
+            "forward_out": out,
+            "qp": qp,
+            "qi": qi,
+            "qbg": qbg,
         }
 
 

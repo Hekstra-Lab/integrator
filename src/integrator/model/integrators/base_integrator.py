@@ -174,6 +174,12 @@ class BaseIntegrator(pl.LightningModule):
 
         self.automatic_optimization = True
 
+    def setup(self, stage: str) -> None:
+        """Infer dataset_size for losses that need it (e.g. HierarchicalLoss)."""
+        if stage == "fit" and hasattr(self.loss, "dataset_size"):
+            dm = self.trainer.datamodule
+            self.loss.dataset_size = len(dm.train_dataset)
+
     def forward(
         self,
         counts: Tensor,
@@ -216,6 +222,13 @@ class BaseIntegrator(pl.LightningModule):
             total_loss=total_loss,
             step=step,
         )
+
+        # Log hyperprior diagnostics if present (HierarchicalLoss)
+        for key in ("kl_global", "hp_alpha_mean", "hp_beta_mean",
+                    "hp_alpha_std", "hp_beta_std", "hp_prior_mean"):
+            if key in loss_dict:
+                self.log(f"{step} {key}", loss_dict[key],
+                         on_step=False, on_epoch=True)
 
         return {
             "loss": total_loss,

@@ -27,6 +27,7 @@ from integrator.model.integrators import (
     IntegratorModelA,
     IntegratorModelB,
     IntegratorModelC,
+    IntegratorModelD,
 )
 from integrator.model.loss import Loss
 
@@ -43,6 +44,7 @@ REGISTRY = {
         "modela": IntegratorModelA,
         "modelb": IntegratorModelB,
         "modelc": IntegratorModelC,
+        "modeld": IntegratorModelD,
     },
     "surrogates": {
         "gamma": GammaDistribution,
