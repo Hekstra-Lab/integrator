@@ -194,6 +194,62 @@ class IntensityEncoder(nn.Module):
         return x
 
 
+class BorderPixelMLPEncoder(nn.Module):
+    """MLP encoder that operates only on the border pixels of a shoebox.
+
+    Extracts the outer H×W ring across all D slices (pixels where h=0,
+    h=H-1, w=0, or w=W-1), flattening them to a 1-D vector of length
+    n_border = D * (2H + 2W - 4), and passes that through a small MLP.
+
+    Args:
+        D, H, W: shoebox spatial dimensions
+        encoder_out: output embedding size
+        hidden_dim: width of hidden layers
+        depth: number of hidden residual-style blocks (Linear + LayerNorm + GELU)
+    """
+
+    def __init__(
+        self,
+        D: int,
+        H: int,
+        W: int,
+        encoder_out: int = 64,
+        hidden_dim: int = 128,
+        depth: int = 2,
+    ):
+        super().__init__()
+        self.D, self.H, self.W = D, H, W
+        n_border = D * (2 * H + 2 * W - 4)
+        layers = [
+            nn.LayerNorm(n_border),
+            nn.Linear(n_border, hidden_dim),
+            nn.GELU(),
+        ]
+        for _ in range(depth):
+            layers += [nn.Linear(hidden_dim, hidden_dim), nn.LayerNorm(hidden_dim), nn.GELU()]
+        layers += [nn.Linear(hidden_dim, encoder_out), nn.ReLU()]
+        self.mlp = nn.Sequential(*layers)
+
+    def _extract_border(self, x: Tensor) -> Tensor:
+        # x: (B, 1, D, H, W) → (B, n_border)
+        x = x.squeeze(1)                    # (B, D, H, W)
+        top    = x[:, :, 0, :]              # (B, D, W)
+        bottom = x[:, :, -1, :]             # (B, D, W)
+        left   = x[:, :, 1:-1, 0]           # (B, D, H-2)
+        right  = x[:, :, 1:-1, -1]          # (B, D, H-2)
+        b = x.shape[0]
+        return torch.cat([
+            top.reshape(b, -1),
+            bottom.reshape(b, -1),
+            left.reshape(b, -1),
+            right.reshape(b, -1),
+        ], dim=-1)
+
+    def forward(self, x: Tensor) -> Tensor:
+        border = self._extract_border(x)    # (B, n_border)
+        return self.mlp(border)             # (B, encoder_out)
+
+
 if __name__ == "__main__":
     import torch
 

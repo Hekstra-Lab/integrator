@@ -48,6 +48,19 @@ class IntensityEncoderArgs:
 
 
 @dataclass
+class BorderPixelMLPEncoderArgs:
+    D: int
+    H: int
+    W: int
+    encoder_out: int
+    hidden_dim: int = 128
+    depth: int = 2
+
+    def __post_init__(self):
+        pass
+
+
+@dataclass
 class EncoderConfig:
     name: str
     args: ShoeboxEncoderArgs | IntensityEncoderArgs
