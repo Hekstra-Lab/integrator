@@ -206,7 +206,9 @@ class Loss(nn.Module):
 
         self.pprf_cfg = pprf_cfg
         self.pprf_params = (
-            _get_dirichlet_prior(pprf_cfg) if pprf_cfg is not None else None
+            _get_dirichlet_prior(pprf_cfg)
+            if pprf_cfg is not None and pprf_cfg.name == "dirichlet"
+            else None
         )
 
     def forward(
