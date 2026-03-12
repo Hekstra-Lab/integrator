@@ -18,6 +18,7 @@ from integrator.model.distributions import (
     LogNormalA,
     LogNormalDistribution,
     LogisticNormalSurrogate,
+    TotalFractionSurrogate,
 )
 from integrator.model.encoders import (
     BorderPixelMLPEncoder,
@@ -70,6 +71,7 @@ REGISTRY = {
         "log_normal_A": LogNormalA,
         "bivariate_log_normal": BivariateLogNormalSurrogate,
         "logistic_normal_surrogate": LogisticNormalSurrogate,
+        "total_fraction_surrogate": TotalFractionSurrogate,
     },
     "data_loader": {
         "default": ShoeboxDataModule,

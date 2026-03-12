@@ -18,6 +18,7 @@ from torch.distributions import (
 from integrator.configs.config_utils import shallow_dict
 from integrator.configs.priors import DirichletParams, PriorConfig
 from integrator.model.distributions.logistic_normal import ProfilePosterior
+from integrator.model.distributions.total_fraction import TotalFractionPosterior
 
 PRIOR_MAP = {
     "gamma": Gamma,
@@ -220,6 +221,47 @@ def _joint_prior_kl(
     return (log_q - log_p).mean(dim=0) * weight
 
 
+def _joint_prior_kl_tf(
+    q_ib: "TotalFractionPosterior",
+    pi_cfg: "PriorConfig | None",
+    pbg_cfg: "PriorConfig | None",
+    pi_params: "dict[str, torch.Tensor] | None",
+    pbg_params: "dict[str, torch.Tensor] | None",
+    device: torch.device,
+    mc_samples: int,
+    weight: float = 1.0,
+) -> torch.Tensor:
+    """MC KL for TotalFractionPosterior against any independent I/bg priors.
+
+    The induced prior on (T, f) is:
+        log p(T, f) = log p_I(f*T) + log p_bg((1-f)*T/n) + log T - log n
+    which is not a standard family, so we estimate the KL via MC.
+    Works with any prior supported by PRIOR_MAP (Gamma, LogNormal, etc.).
+    """
+    p_i  = _build_prior(pi_cfg,  pi_params,  device) if (pi_cfg  and pi_params)  else None
+    p_bg = _build_prior(pbg_cfg, pbg_params, device) if (pbg_cfg and pbg_params) else None
+
+    if p_i is None and p_bg is None:
+        return torch.zeros(q_ib.batch_shape, device=device)
+
+    samples_Tf = q_ib.rsample([mc_samples])          # [S, B, 2]
+    T_s = samples_Tf[..., 0]                          # [S, B]
+    f_s = samples_Tf[..., 1]                          # [S, B]
+    I_s  = f_s * T_s                                  # [S, B]
+    bg_s = (1.0 - f_s) * T_s / q_ib.n_pixels         # [S, B]
+
+    log_q = q_ib.log_prob(samples_Tf)                 # [S, B]
+
+    # log p_induced(T, f) = log p_I(fT) + log p_bg((1-f)T/n) + log T - log n
+    log_p = T_s.log() - log(q_ib.n_pixels)
+    if p_i  is not None:
+        log_p = log_p + p_i.log_prob(I_s)
+    if p_bg is not None:
+        log_p = log_p + p_bg.log_prob(bg_s)
+
+    return (log_q - log_p).mean(dim=0) * weight
+
+
 def _params_as_tensors(
     prior: PriorConfig | None,
 ) -> dict[str, torch.Tensor] | None:
@@ -338,7 +380,20 @@ class Loss(nn.Module):
             # Joint (I, B) mode: single KL term for the bivariate posterior.
             # The joint KL weight is taken from pi_cfg; pbg_cfg.weight is ignored.
             weight = self.pi_cfg.weight if self.pi_cfg is not None else 1.0
-            if self._use_analytic_kl:
+            if isinstance(q_ib, TotalFractionPosterior):
+                # (T, f) reparameterization — MC KL with Jacobian-corrected log_p.
+                kl_i = _joint_prior_kl_tf(
+                    q_ib=q_ib,
+                    pi_cfg=self.pi_cfg,
+                    pbg_cfg=self.pbg_cfg,
+                    pi_params=self.pi_params,
+                    pbg_params=self.pbg_params,
+                    device=device,
+                    mc_samples=self.mc_samples,
+                    weight=weight,
+                )
+            elif self._use_analytic_kl:
+                # BivariateLogNormal with Gamma priors — exact analytic KL.
                 kl_i = _joint_prior_kl_analytic(
                     q_ib,
                     self._alpha_I, self._beta_I,
@@ -347,6 +402,7 @@ class Loss(nn.Module):
                     weight=weight,
                 )
             else:
+                # BivariateLogNormal with non-Gamma priors — MC fallback.
                 kl_i = _joint_prior_kl(
                     q_ib=q_ib,
                     pi_cfg=self.pi_cfg,
