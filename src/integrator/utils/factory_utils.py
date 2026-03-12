@@ -99,11 +99,20 @@ def _get_surrogate_modules(
     or the joint ``qp``/``q_ib`` pair used by IntegratorModelC).  The raw
     args dict from the YAML is passed directly to each class constructor,
     avoiding the need for a separate ``SurrogateArgs`` dataclass per class.
+
+    For ``logistic_normal_surrogate``, a relative ``basis_path`` is resolved
+    against ``data_loader.args.data_dir`` so the YAML only needs the filename.
     """
     surrogates = {}
+    data_dir = cfg.get("data_loader", {}).get("args", {}).get("data_dir", "")
     for key, surrogate_cfg in cfg["surrogates"].items():
         surrogate_cls = REGISTRY["surrogates"][surrogate_cfg["name"]]
-        surrogates[key] = surrogate_cls(**surrogate_cfg["args"])
+        args = dict(surrogate_cfg["args"])
+        if surrogate_cfg["name"] == "logistic_normal_surrogate" and "basis_path" in args:
+            bp = args["basis_path"]
+            if isinstance(bp, str) and not os.path.isabs(bp) and not bp.startswith("~"):
+                args["basis_path"] = os.path.join(data_dir, bp)
+        surrogates[key] = surrogate_cls(**args)
     return surrogates
 
 

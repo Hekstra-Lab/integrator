@@ -1,4 +1,4 @@
-from math import prod
+from math import lgamma, log, pi, prod
 
 import numpy as np
 import torch
@@ -133,6 +133,57 @@ def _prior_kl(
     return kl_prior * weight
 
 
+def _joint_prior_kl_analytic(
+    q_ib: Distribution,
+    alpha_I: float,
+    beta_I: float,
+    alpha_bg: float,
+    beta_bg: float,
+    kl_const_I: float,
+    kl_const_bg: float,
+    weight: float = 1.0,
+) -> torch.Tensor:
+    """Exact KL(BivariateLogNormal || Gamma(alpha_I, beta_I) x Gamma(alpha_bg, beta_bg)).
+
+    Exploits the log-normal identities:
+        E_q[log I] = mu1,   E_q[I] = exp(mu1 + s11/2)
+        E_q[log B] = mu2,   E_q[B] = exp(mu2 + s22/2)
+
+    The entropy of BivariateLogNormal is:
+        H = (1 + log 2π) + 0.5 log|Σ| + mu1 + mu2
+    where 0.5 log|Σ| = log L11 + log L22 for lower-triangular Cholesky L.
+
+    kl_const_I  = lgamma(alpha_I)  - alpha_I  * log(beta_I)   (precomputed scalar)
+    kl_const_bg = lgamma(alpha_bg) - alpha_bg * log(beta_bg)  (precomputed scalar)
+    """
+    mu = q_ib.loc         # (B, 2)
+    L  = q_ib.scale_tril  # (B, 2, 2)
+    mu1, mu2 = mu[:, 0], mu[:, 1]
+
+    # Marginal log-space variances
+    s11 = L[:, 0, 0] ** 2                     # Var[log I] = L11²
+    s22 = L[:, 1, 0] ** 2 + L[:, 1, 1] ** 2  # Var[log B] = L21² + L22²
+
+    # Differential entropy of BivariateLogNormal
+    log_det_half = L[:, 0, 0].log() + L[:, 1, 1].log()  # 0.5 log|Σ|
+    entropy = 1.0 + log(2.0 * pi) + log_det_half + mu1 + mu2
+
+    # -E[log p_I(I)] = -(α-1) E[log I]  + β E[I]  + (lgamma(α) - α log β)
+    neg_cross_I = (
+        -(alpha_I - 1.0) * mu1
+        + beta_I * (mu1 + 0.5 * s11).exp()
+        + kl_const_I
+    )
+
+    neg_cross_bg = (
+        -(alpha_bg - 1.0) * mu2
+        + beta_bg * (mu2 + 0.5 * s22).exp()
+        + kl_const_bg
+    )
+
+    return (-entropy + neg_cross_I + neg_cross_bg) * weight
+
+
 def _joint_prior_kl(
     q_ib: Distribution,
     pi_cfg: PriorConfig | None,
@@ -211,6 +262,29 @@ class Loss(nn.Module):
             else None
         )
 
+        # Precompute scalar constants for the analytic joint KL.
+        # Only valid when both I and bg priors are Gamma (rate parameterization).
+        self._use_analytic_kl = (
+            pi_cfg is not None
+            and pi_cfg.name == "gamma"
+            and self.pi_params is not None
+            and pbg_cfg is not None
+            and pbg_cfg.name == "gamma"
+            and self.pbg_params is not None
+        )
+        if self._use_analytic_kl:
+            a_I  = float(self.pi_params["concentration"])   # type: ignore[index]
+            b_I  = float(self.pi_params["rate"])            # type: ignore[index]
+            a_bg = float(self.pbg_params["concentration"])  # type: ignore[index]
+            b_bg = float(self.pbg_params["rate"])           # type: ignore[index]
+            self._alpha_I  = a_I
+            self._beta_I   = b_I
+            self._alpha_bg = a_bg
+            self._beta_bg  = b_bg
+            # lgamma(α) - α·log(β):  constant w.r.t. model params
+            self._kl_const_I  = lgamma(a_I)  - a_I  * log(b_I)
+            self._kl_const_bg = lgamma(a_bg) - a_bg * log(b_bg)
+
     def forward(
         self,
         rate: Tensor,
@@ -264,16 +338,25 @@ class Loss(nn.Module):
             # Joint (I, B) mode: single KL term for the bivariate posterior.
             # The joint KL weight is taken from pi_cfg; pbg_cfg.weight is ignored.
             weight = self.pi_cfg.weight if self.pi_cfg is not None else 1.0
-            kl_i = _joint_prior_kl(
-                q_ib=q_ib,
-                pi_cfg=self.pi_cfg,
-                pbg_cfg=self.pbg_cfg,
-                pi_params=self.pi_params,
-                pbg_params=self.pbg_params,
-                device=device,
-                mc_samples=self.mc_samples,
-                weight=weight,
-            )
+            if self._use_analytic_kl:
+                kl_i = _joint_prior_kl_analytic(
+                    q_ib,
+                    self._alpha_I, self._beta_I,
+                    self._alpha_bg, self._beta_bg,
+                    self._kl_const_I, self._kl_const_bg,
+                    weight=weight,
+                )
+            else:
+                kl_i = _joint_prior_kl(
+                    q_ib=q_ib,
+                    pi_cfg=self.pi_cfg,
+                    pbg_cfg=self.pbg_cfg,
+                    pi_params=self.pi_params,
+                    pbg_params=self.pbg_params,
+                    device=device,
+                    mc_samples=self.mc_samples,
+                    weight=weight,
+                )
             kl += kl_i
         else:
             # Independent mean-field mode: separate KL for qi and qbg.
