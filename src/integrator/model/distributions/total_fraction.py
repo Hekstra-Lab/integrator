@@ -138,25 +138,40 @@ class TotalFractionPosterior(Distribution):
 class TotalFractionSurrogate(nn.Module):
     """Inference network outputting a TotalFractionPosterior over (T, f).
 
-    Same 5-parameter lower-triangular Cholesky architecture as
-    BivariateLogNormalSurrogate, but maps encoder features to
-    (mu_logT, mu_logitf, raw_L11, L_21, raw_L22).
+    Maps encoder features to (mu_logT, mu_logitf) and a lower-triangular
+    Cholesky factor for the covariance of (log T, logit f).
 
     Args:
         in_features: Encoder output dimension.
         n_pixels:    Shoebox pixel count (H*W or D*H*W). Default 441 = 21×21.
         eps:         Stability constant added to Cholesky diagonal.
+        diagonal:    If True, L_21 is fixed to zero (independent log T, logit f).
+                     Uses 4 output params instead of 5.  Equivalent to independent
+                     LogNormal(T) × LogisticNormal(f) with no cross-correlation.
     """
 
-    def __init__(self, in_features: int, n_pixels: int = 441, eps: float = 1e-3, **kwargs):
+    def __init__(
+        self,
+        in_features: int,
+        n_pixels: int = 441,
+        eps: float = 1e-3,
+        diagonal: bool = False,
+        **kwargs,
+    ):
         super().__init__()
-        self.fc       = nn.Linear(in_features, 5)
+        self.n_params = 4 if diagonal else 5
+        self.fc       = nn.Linear(in_features, self.n_params)
         self.n_pixels = n_pixels
         self.eps      = eps
+        self.diagonal = diagonal
 
     def forward(self, x, x_=None):
-        params                              = self.fc(x)  # (B, 5)
-        mu_T, mu_f, raw_L11, L_21, raw_L22 = params.unbind(dim=-1)
+        params = self.fc(x)  # (B, 4) or (B, 5)
+        if self.diagonal:
+            mu_T, mu_f, raw_L11, raw_L22 = params.unbind(dim=-1)
+            L_21 = torch.zeros_like(mu_T)
+        else:
+            mu_T, mu_f, raw_L11, L_21, raw_L22 = params.unbind(dim=-1)
         L_11 = F.softplus(raw_L11) + self.eps
         L_22 = F.softplus(raw_L22) + self.eps
         loc  = torch.stack([mu_T, mu_f], dim=-1)  # (B, 2)
