@@ -5,6 +5,7 @@ import torch
 from torch import Tensor, nn
 
 from integrator.configs.integrator import IntegratorCfg
+from integrator.model.distributions.logistic_normal import ProfilePosterior
 
 DEFAULT_PREDICT_KEYS = [
     # Reflection identifiers
@@ -237,6 +238,10 @@ def _assemble_outputs(
 
     if out.compute_pred_var:
         base["qi_pred_var"] = predictive_intensity_variance(out)
+
+    if isinstance(out.qp, ProfilePosterior):
+        base["qp_mu_h"] = out.qp.mu_h        # (B, d) posterior mean of h
+        base["qp_logvar_h"] = out.qp.logvar_h  # (B, d) posterior log-variance of h
 
     if out.metadata is None:
         return base

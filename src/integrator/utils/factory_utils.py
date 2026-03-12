@@ -121,7 +121,7 @@ def _get_prior_cfgs(
         if p in prior_cfgs["loss"]["args"]:
             p_dict = prior_cfgs["loss"]["args"][p]
             p_name = p_dict["name"]
-            p_params_dict = dict(p_dict["params"])
+            p_params_dict = dict(p_dict.get("params") or {})
             # Resolve relative concentration paths for Dirichlet
             if p_name == "dirichlet" and "concentration" in p_params_dict:
                 conc = p_params_dict["concentration"]
