@@ -107,11 +107,20 @@ def _kl(
     q: Distribution,
     p: Distribution,
     mc_samples: int,
+    eps: float = 0.0,
 ):
     try:
         return torch.distributions.kl.kl_divergence(q, p)
     except NotImplementedError:
         samples = q.rsample(torch.Size([mc_samples]))
+        if eps > 0:
+            # FoldedNormal (and similar distributions with nonnegative support) can
+            # produce samples at exactly 0 via AbsTransform.  Gamma.log_prob(0) is
+            # ±inf when alpha ≠ 1, giving NaN gradients.  Clamping to eps prevents
+            # this: the probability mass at x=0 is zero in continuous distributions,
+            # so the bias is negligible.  Gradient through the clamp is zero at the
+            # clamped values, which correctly suppresses the ill-conditioned updates.
+            samples = samples.clamp(min=eps)
         log_q = q.log_prob(samples)
         log_p = p.log_prob(samples)
         return (log_q - log_p).mean(dim=0)
@@ -124,13 +133,10 @@ def _prior_kl(
     weight: float,
     device: torch.device,
     mc_samples: int,
+    eps: float = 0.0,
 ) -> torch.Tensor:
-    p = _build_prior(
-        prior_cfg,
-        params,
-        device,
-    )
-    kl_prior = _kl(q, p, mc_samples)
+    p = _build_prior(prior_cfg, params, device)
+    kl_prior = _kl(q, p, mc_samples, eps=eps)
     return kl_prior * weight
 
 
@@ -373,6 +379,7 @@ class Loss(nn.Module):
                 weight=self.pprf_cfg.weight,
                 device=device,
                 mc_samples=self.mc_samples,
+                eps=self.eps,
             )
             kl += kl_prf
 
@@ -428,6 +435,7 @@ class Loss(nn.Module):
                     weight=self.pi_cfg.weight,
                     device=device,
                     mc_samples=self.mc_samples,
+                    eps=self.eps,
                 )
                 kl += kl_i
 
@@ -443,6 +451,7 @@ class Loss(nn.Module):
                     weight=self.pbg_cfg.weight,
                     device=device,
                     mc_samples=self.mc_samples,
+                    eps=self.eps,
                 )
                 kl += kl_bg
 
