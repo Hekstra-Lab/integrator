@@ -32,6 +32,7 @@ from .priors import (
     GammaParams,
     HalfCauchyParams,
     LogNormalParams,
+    GaussianProfilePriorParams,
     PriorConfig,
 )
 from .trainer import TrainerConfig
@@ -44,6 +45,7 @@ __all__ = [
     "GammaParams",
     "HalfCauchyParams",
     "LogNormalParams",
+    "GaussianProfilePriorParams",
     "LossArgs",
     "DataFileNames",
     "DataLoaderConfig",

@@ -25,6 +25,7 @@ PRIOR_PARAMS = {
     "exponential": configs.ExponentialParams,
     "half_cauchy": configs.HalfCauchyParams,
     "log_normal": configs.LogNormalParams,
+    "gaussian_profile": configs.GaussianProfilePriorParams,
 }
 
 TUPLE_FIELDS = {

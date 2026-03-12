@@ -77,6 +77,17 @@ class LogNormalParams:
 
 
 @dataclass
+class GaussianProfilePriorParams:
+    """Prior params for the low-rank logistic-normal profile surrogate.
+
+    The prior on h is N(0, sigma_prior² I).  sigma_prior is stored in
+    ``profile_basis.pt`` — no params need to be configured here.
+    This dataclass exists only so that ``pprf_cfg`` can carry a ``weight``.
+    Leave ``params: {}`` in the YAML.
+    """
+
+
+@dataclass
 class PriorConfig[P]:
     name: Literal[
         "dirichlet",
@@ -84,6 +95,7 @@ class PriorConfig[P]:
         "gamma",
         "half_cauchy",
         "log_normal",
+        "gaussian_profile",
     ]
     params: P
     weight: float

@@ -307,10 +307,10 @@ class IntegratorModelE(BaseIntegrator):
 
     REQUIRED_ENCODERS = {
         "profile": configs.ShoeboxEncoderArgs,
-        "k_i":     configs.IntensityEncoderArgs,
-        "r_i":     configs.IntensityEncoderArgs,
-        "k_bg":    configs.BorderPixelMLPEncoderArgs,
-        "r_bg":    configs.BorderPixelMLPEncoderArgs,
+        "k_i": configs.IntensityEncoderArgs,
+        "r_i": configs.IntensityEncoderArgs,
+        "k_bg": configs.BorderPixelMLPEncoderArgs,
+        "r_bg": configs.BorderPixelMLPEncoderArgs,
     }
 
     ARGS = IntegratorModelArgs
@@ -325,21 +325,23 @@ class IntegratorModelE(BaseIntegrator):
         counts = torch.clamp(counts, min=0)
 
         b = shoebox.shape[0]
-        shoebox_reshaped = shoebox.reshape(b, 1, *self.shoebox_shape)  # (B, 1, D, H, W)
+        shoebox_reshaped = shoebox.reshape(
+            b, 1, *self.shoebox_shape
+        )  # (B, 1, D, H, W)
 
         x_profile = self.encoders["profile"](shoebox_reshaped)
-        x_k_i     = self.encoders["k_i"](shoebox_reshaped)
-        x_r_i     = self.encoders["r_i"](shoebox_reshaped)
-        x_k_bg    = self.encoders["k_bg"](shoebox_reshaped)
-        x_r_bg    = self.encoders["r_bg"](shoebox_reshaped)
+        x_k_i = self.encoders["k_i"](shoebox_reshaped)
+        x_r_i = self.encoders["r_i"](shoebox_reshaped)
+        x_k_bg = self.encoders["k_bg"](shoebox_reshaped)
+        x_r_bg = self.encoders["r_bg"](shoebox_reshaped)
 
-        qp  = self.surrogates["qp"](x_profile)
-        qi  = self.surrogates["qi"](x_k_i, x_r_i)
+        qp = self.surrogates["qp"](x_profile)
+        qi = self.surrogates["qi"](x_k_i, x_r_i)
         qbg = self.surrogates["qbg"](x_k_bg, x_r_bg)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
-        zp  = qp.rsample([self.mc_samples]).permute(1, 0, 2)
-        zI  = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
+        zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
         rate = zI * zp + zbg
 
@@ -385,10 +387,10 @@ class IntegratorModelF(BaseIntegrator):
 
     REQUIRED_ENCODERS = {
         "profile": configs.ShoeboxEncoderArgs,
-        "k_i":     configs.IntensityEncoderArgs,
-        "r_i":     configs.IntensityEncoderArgs,
-        "k_bg":    configs.BorderStatsEncoderArgs,
-        "r_bg":    configs.BorderStatsEncoderArgs,
+        "k_i": configs.IntensityEncoderArgs,
+        "r_i": configs.IntensityEncoderArgs,
+        "k_bg": configs.BorderStatsEncoderArgs,
+        "r_bg": configs.BorderStatsEncoderArgs,
     }
 
     ARGS = IntegratorModelArgs
@@ -406,18 +408,18 @@ class IntegratorModelF(BaseIntegrator):
         shoebox_reshaped = shoebox.reshape(b, 1, *self.shoebox_shape)
 
         x_profile = self.encoders["profile"](shoebox_reshaped)
-        x_k_i     = self.encoders["k_i"](shoebox_reshaped)
-        x_r_i     = self.encoders["r_i"](shoebox_reshaped)
-        x_k_bg    = self.encoders["k_bg"](shoebox_reshaped)
-        x_r_bg    = self.encoders["r_bg"](shoebox_reshaped)
+        x_k_i = self.encoders["k_i"](shoebox_reshaped)
+        x_r_i = self.encoders["r_i"](shoebox_reshaped)
+        x_k_bg = self.encoders["k_bg"](shoebox_reshaped)
+        x_r_bg = self.encoders["r_bg"](shoebox_reshaped)
 
-        qp  = self.surrogates["qp"](x_profile)
-        qi  = self.surrogates["qi"](x_k_i, x_r_i)
+        qp = self.surrogates["qp"](x_profile)
+        qi = self.surrogates["qi"](x_k_i, x_r_i)
         qbg = self.surrogates["qbg"](x_k_bg, x_r_bg)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
-        zp  = qp.rsample([self.mc_samples]).permute(1, 0, 2)
-        zI  = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
+        zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
         rate = zI * zp + zbg
 
