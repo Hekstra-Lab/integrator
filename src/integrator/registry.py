@@ -18,6 +18,7 @@ from integrator.model.distributions import (
     LogNormalA,
     LogNormalDistribution,
     LogisticNormalSurrogate,
+    PhysicalGaussianProfileSurrogate,
     TotalFractionSurrogate,
 )
 from integrator.model.encoders import (
@@ -71,6 +72,7 @@ REGISTRY = {
         "log_normal_A": LogNormalA,
         "bivariate_log_normal": BivariateLogNormalSurrogate,
         "logistic_normal_surrogate": LogisticNormalSurrogate,
+        "physical_gaussian_surrogate": PhysicalGaussianProfileSurrogate,
         "total_fraction_surrogate": TotalFractionSurrogate,
     },
     "data_loader": {

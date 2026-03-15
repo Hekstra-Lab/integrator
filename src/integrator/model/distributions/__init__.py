@@ -10,7 +10,12 @@ from .gamma import (
 )
 from .half_normal import HalfNormalDistribution
 from .log_normal import LogNormalA, LogNormalDistribution
-from .logistic_normal import LogisticNormalSurrogate, ProfilePosterior
+from .logistic_normal import (
+    LogisticNormalSurrogate,
+    PhysicalGaussianProfilePosterior,
+    PhysicalGaussianProfileSurrogate,
+    ProfilePosterior,
+)
 from .total_fraction import TotalFractionPosterior, TotalFractionSurrogate
 
 __all__ = [
@@ -29,6 +34,8 @@ __all__ = [
     "DirichletDistributionB",
     "LogNormalA",
     "LogisticNormalSurrogate",
+    "PhysicalGaussianProfilePosterior",
+    "PhysicalGaussianProfileSurrogate",
     "ProfilePosterior",
     "TotalFractionPosterior",
     "TotalFractionSurrogate",

@@ -1,14 +1,22 @@
-"""Low-rank logistic-normal profile surrogate.
+"""Profile surrogates with a Gaussian latent h.
 
-Profile surrogate:
-    q(h|x) = N(mu_h, diag(sigma_h^2))
+Two h→profile mappings are supported:
+
+  Hermite (LogisticNormalSurrogate):
     prf = softmax(W @ h + b)
+    W (K, d), b (K,) are a fixed Hermite-Gaussian basis from profile_basis.pt.
 
-W (K, d) and b (K,) are fixed Hermite-Gaussian basis loaded from
-profile_basis.pt.  Only mu_head and logvar_head are trainable.
+  Physical Gaussian (PhysicalGaussianProfileSurrogate):
+    h = (cx, cy, log σ₁, log σ₂, θ_raw), d=5
+    prf = normalized 2-D rotated Gaussian on the 21×21 grid.
 
-Prior: h ~ N(0, sigma_p^2 * I_d)
-KL:   closed-form diagonal Gaussian KL (~7 nats vs ~250 nats for Dirichlet)
+Both use the same posterior:
+    q(h|x) = N(mu_h, diag(sigma_h^2))
+and the same closed-form KL:
+    KL(q||p)  where  p(h) = N(0, sigma_p^2 * I_d)
+
+PhysicalGaussianProfilePosterior is a subclass of ProfilePosterior so the
+isinstance(qp, ProfilePosterior) check in loss.py works without changes.
 """
 
 import torch
@@ -202,5 +210,181 @@ class LogisticNormalSurrogate(nn.Module):
             logvar_h=logvar_h,
             W=self.W,
             b=self.b,
+            sigma_prior=self.sigma_prior,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Physical Gaussian profile — h→profile via rotated 2-D Gaussian
+# ---------------------------------------------------------------------------
+
+
+def _h_to_physical_params(
+    h: Tensor,
+    center_base: float = 10.0,
+    center_scale: float = 1.5,
+    log_sigma_base: float = 0.7,
+    width_scale: float = 0.4,
+) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
+    """Map latent h (..., 5) → physical Gaussian parameters.
+
+    Returns (cx, cy, sigma1, sigma2, theta), all shape (...,).
+    """
+    cx     = center_base + h[..., 0] * center_scale
+    cy     = center_base + h[..., 1] * center_scale
+    sigma1 = (log_sigma_base + h[..., 2] * width_scale).exp()
+    sigma2 = (log_sigma_base + h[..., 3] * width_scale).exp()
+    theta  = torch.pi * torch.sigmoid(h[..., 4])
+    return cx, cy, sigma1, sigma2, theta
+
+
+def _physical_params_to_profile(
+    cx: Tensor,
+    cy: Tensor,
+    sigma1: Tensor,
+    sigma2: Tensor,
+    theta: Tensor,
+    H: int = 21,
+    W: int = 21,
+) -> Tensor:
+    """Normalized 2-D rotated Gaussian profile.
+
+    Parameters are (...,) shaped; returns (..., H*W).
+    """
+    yy, xx = torch.meshgrid(
+        torch.arange(H, dtype=torch.float32, device=cx.device),
+        torch.arange(W, dtype=torch.float32, device=cx.device),
+        indexing="ij",
+    )
+    # expand grid for broadcasting
+    for _ in range(cx.dim()):
+        xx = xx.unsqueeze(0)
+        yy = yy.unsqueeze(0)
+
+    cx    = cx[..., None, None]
+    cy    = cy[..., None, None]
+    s1    = sigma1[..., None, None]
+    s2    = sigma2[..., None, None]
+    th    = theta[..., None, None]
+
+    cos_t, sin_t = th.cos(), th.sin()
+    dx = xx - cx
+    dy = yy - cy
+    x_rot =  dx * cos_t + dy * sin_t
+    y_rot = -dx * sin_t + dy * cos_t
+
+    profile = torch.exp(-0.5 * (x_rot**2 / s1**2 + y_rot**2 / s2**2))
+    profile = profile / profile.sum(dim=(-2, -1), keepdim=True).clamp(min=1e-10)
+    return profile.reshape(*cx.shape[:-2], H * W)
+
+
+def _h_to_profile_physical(
+    h: Tensor,
+    center_base: float = 10.0,
+    center_scale: float = 1.5,
+    log_sigma_base: float = 0.7,
+    width_scale: float = 0.4,
+    H: int = 21,
+    W: int = 21,
+) -> Tensor:
+    """Full pipeline: h (..., 5) → normalized profile (..., H*W)."""
+    cx, cy, s1, s2, th = _h_to_physical_params(
+        h, center_base, center_scale, log_sigma_base, width_scale
+    )
+    return _physical_params_to_profile(cx, cy, s1, s2, th, H, W)
+
+
+class PhysicalGaussianProfilePosterior(ProfilePosterior):
+    """Profile posterior using a physical 2-D Gaussian parameterization.
+
+    h ∈ R^5 encodes (cx, cy, log σ₁, log σ₂, θ_raw).
+    The profile is a normalized rotated Gaussian on the H×W grid.
+
+    Inherits from ProfilePosterior so loss.py's isinstance check works.
+    kl_divergence() and rsample_h() are unchanged (pure h-space ops).
+    rsample() and mean are overridden to use the physical mapping.
+    """
+
+    def __init__(
+        self,
+        mu_h: Tensor,
+        logvar_h: Tensor,
+        transform_config: dict,
+        sigma_prior: float = 1.0,
+    ) -> None:
+        # Bypass ProfilePosterior.__init__ (which requires W, b).
+        self.mu_h = mu_h
+        self.logvar_h = logvar_h
+        self.sigma_prior = sigma_prior
+        self._transform_config = transform_config
+        self.concentration: Tensor | None = None  # Dirichlet compat shim
+
+    def rsample(self, sample_shape: torch.Size = torch.Size([])) -> Tensor:
+        """Reparameterized profile samples. Returns (*sample_shape, B, H*W)."""
+        h = self.rsample_h(sample_shape)          # (*sample_shape, B, 5)
+        return _h_to_profile_physical(h, **self._transform_config)
+
+    def h_to_profile(self, h: Tensor) -> Tensor:
+        """Deterministic map h → profile."""
+        return _h_to_profile_physical(h, **self._transform_config)
+
+    @property
+    def mean(self) -> Tensor:
+        """Profile at the posterior mean h. Returns (B, H*W)."""
+        return _h_to_profile_physical(self.mu_h, **self._transform_config)
+
+    @property
+    def mean_profile(self) -> Tensor:
+        return self.mean
+
+
+class PhysicalGaussianProfileSurrogate(nn.Module):
+    """Profile surrogate using a physical 2-D Gaussian parameterization.
+
+    Reads scalar hyper-parameters from ``profile_basis.pt`` saved by
+    simulate_shoeboxes_mvn.py (basis_type='physical_gaussian').  Unlike the
+    Hermite surrogate there is no W/b matrix — the file just holds d,
+    sigma_prior, and the transform scalars.
+
+    Parameters
+    ----------
+    input_dim : int
+        Dimension of the encoder output.
+    basis_path : str
+        Path to profile_basis.pt with basis_type == 'physical_gaussian'.
+    """
+
+    def __init__(self, input_dim: int, basis_path: str) -> None:
+        super().__init__()
+
+        config = torch.load(basis_path, weights_only=False)
+        if config.get("basis_type") != "physical_gaussian":
+            raise ValueError(
+                f"Expected basis_type='physical_gaussian', got '{config.get('basis_type')}'. "
+                "Use LogisticNormalSurrogate for Hermite bases."
+            )
+
+        self.d: int = int(config["d"])  # 5
+        self.sigma_prior: float = float(config.get("sigma_prior", 1.0))
+        self._transform_config: dict = {
+            "center_base":    float(config.get("center_base",    10.0)),
+            "center_scale":   float(config.get("center_scale",    1.5)),
+            "log_sigma_base": float(config.get("log_sigma_base",  0.7)),
+            "width_scale":    float(config.get("width_scale",     0.4)),
+        }
+
+        self.mu_head     = nn.Linear(input_dim, self.d)
+        self.logvar_head = nn.Linear(input_dim, self.d)
+
+        nn.init.zeros_(self.logvar_head.weight)
+        nn.init.constant_(self.logvar_head.bias, -2.0)
+
+    def forward(self, x: Tensor) -> PhysicalGaussianProfilePosterior:
+        mu_h     = self.mu_head(x)                              # (B, 5)
+        logvar_h = self.logvar_head(x).clamp(-10.0, 10.0)      # (B, 5)
+        return PhysicalGaussianProfilePosterior(
+            mu_h=mu_h,
+            logvar_h=logvar_h,
+            transform_config=self._transform_config,
             sigma_prior=self.sigma_prior,
         )
