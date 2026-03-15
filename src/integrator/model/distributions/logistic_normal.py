@@ -215,6 +215,65 @@ class LogisticNormalSurrogate(nn.Module):
 
 
 # ---------------------------------------------------------------------------
+# Learned linear decoder surrogate
+# ---------------------------------------------------------------------------
+
+
+class LinearProfileSurrogate(nn.Module):
+    """Profile surrogate with a learned linear decoder.
+
+    Generalises LogisticNormalSurrogate: instead of a fixed Hermite basis the
+    decoder W (K, d) and b (K,) are trained jointly with the encoder heads.
+
+        prf = softmax(W @ h + b)
+        q(h | x) = N(mu_h(x), diag(sigma_h(x)²))
+
+    No basis file is needed.
+
+    Parameters
+    ----------
+    input_dim : int
+        Dimension of the encoder output.
+    latent_dim : int
+        Dimension of the latent h. Default 8.
+    output_dim : int
+        Number of profile pixels (H * W). Default 441.
+    sigma_prior : float
+        Prior std for h ~ N(0, sigma_prior² I). Default 3.0.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        latent_dim: int = 8,
+        output_dim: int = 441,
+        sigma_prior: float = 3.0,
+    ) -> None:
+        super().__init__()
+
+        self.d: int = latent_dim
+        self.sigma_prior: float = float(sigma_prior)
+
+        self.mu_head = nn.Linear(input_dim, self.d)
+        self.logvar_head = nn.Linear(input_dim, self.d)
+        self.decoder = nn.Linear(self.d, output_dim)
+
+        nn.init.zeros_(self.logvar_head.weight)
+        nn.init.constant_(self.logvar_head.bias, -2.0)
+
+    def forward(self, x: Tensor) -> ProfilePosterior:
+        mu_h = self.mu_head(x)                              # (B, d)
+        logvar_h = self.logvar_head(x).clamp(-10.0, 10.0)  # (B, d)
+        return ProfilePosterior(
+            mu_h=mu_h,
+            logvar_h=logvar_h,
+            W=self.decoder.weight,  # (output_dim, d) — trainable
+            b=self.decoder.bias,    # (output_dim,)   — trainable
+            sigma_prior=self.sigma_prior,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Physical Gaussian profile — h→profile via rotated 2-D Gaussian
 # ---------------------------------------------------------------------------
 

@@ -11,6 +11,7 @@ from .gamma import (
 from .half_normal import HalfNormalDistribution
 from .log_normal import LogNormalA, LogNormalDistribution
 from .logistic_normal import (
+    LinearProfileSurrogate,
     LogisticNormalSurrogate,
     PhysicalGaussianProfilePosterior,
     PhysicalGaussianProfileSurrogate,
@@ -33,6 +34,7 @@ __all__ = [
     "FoldedNormalA",
     "DirichletDistributionB",
     "LogNormalA",
+    "LinearProfileSurrogate",
     "LogisticNormalSurrogate",
     "PhysicalGaussianProfilePosterior",
     "PhysicalGaussianProfileSurrogate",
