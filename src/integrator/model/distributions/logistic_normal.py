@@ -1,24 +1,3 @@
-"""Profile surrogates with a Gaussian latent h.
-
-Two h→profile mappings are supported:
-
-  Hermite (LogisticNormalSurrogate):
-    prf = softmax(W @ h + b)
-    W (K, d), b (K,) are a fixed Hermite-Gaussian basis from profile_basis.pt.
-
-  Physical Gaussian (PhysicalGaussianProfileSurrogate):
-    h = (cx, cy, log σ₁, log σ₂, θ_raw), d=5
-    prf = normalized 2-D rotated Gaussian on the 21×21 grid.
-
-Both use the same posterior:
-    q(h|x) = N(mu_h, diag(sigma_h^2))
-and the same closed-form KL:
-    KL(q||p)  where  p(h) = N(0, sigma_p^2 * I_d)
-
-PhysicalGaussianProfilePosterior is a subclass of ProfilePosterior so the
-isinstance(qp, ProfilePosterior) check in loss.py works without changes.
-"""
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -45,10 +24,10 @@ class ProfilePosterior:
         b: Tensor,
         sigma_prior: float,
     ) -> None:
-        self.mu_h = mu_h          # (B, d)
+        self.mu_h = mu_h  # (B, d)
         self.logvar_h = logvar_h  # (B, d)
-        self.W = W                # (K, d)  fixed
-        self.b = b                # (K,)    fixed
+        self.W = W  # (K, d)  fixed
+        self.b = b  # (K,)    fixed
         self.sigma_prior = sigma_prior  # scalar
 
         # Dirichlet compatibility: integrators store qp.concentration
@@ -75,8 +54,8 @@ class ProfilePosterior:
         eps = torch.randn(
             *sample_shape, *self.mu_h.shape, device=self.mu_h.device
         )  # (*sample_shape, B, d)
-        h = self.mu_h + std_h * eps          # (*sample_shape, B, d)
-        logits = h @ self.W.T + self.b       # (*sample_shape, B, K)
+        h = self.mu_h + std_h * eps  # (*sample_shape, B, d)
+        logits = h @ self.W.T + self.b  # (*sample_shape, B, K)
         return F.softmax(logits, dim=-1)
 
     def rsample_h(self, sample_shape: torch.Size = torch.Size([])) -> Tensor:
@@ -130,12 +109,12 @@ class ProfilePosterior:
 
         Returns: (B,) — KL per batch element.
         """
-        sigma_p_sq = self.sigma_prior ** 2
+        sigma_p_sq = self.sigma_prior**2
         sigma_q_sq = self.logvar_h.exp()
 
         kl = 0.5 * (
             sigma_q_sq / sigma_p_sq
-            + self.mu_h ** 2 / sigma_p_sq
+            + self.mu_h**2 / sigma_p_sq
             - 1.0
             - torch.log(sigma_q_sq / sigma_p_sq)
         ).sum(dim=-1)
@@ -202,7 +181,7 @@ class LogisticNormalSurrogate(nn.Module):
         -------
         ProfilePosterior
         """
-        mu_h = self.mu_head(x)                              # (B, d)
+        mu_h = self.mu_head(x)  # (B, d)
         logvar_h = self.logvar_head(x).clamp(-10.0, 10.0)  # (B, d)
 
         return ProfilePosterior(
@@ -262,13 +241,13 @@ class LinearProfileSurrogate(nn.Module):
         nn.init.constant_(self.logvar_head.bias, -2.0)
 
     def forward(self, x: Tensor) -> ProfilePosterior:
-        mu_h = self.mu_head(x)                              # (B, d)
+        mu_h = self.mu_head(x)  # (B, d)
         logvar_h = self.logvar_head(x).clamp(-10.0, 10.0)  # (B, d)
         return ProfilePosterior(
             mu_h=mu_h,
             logvar_h=logvar_h,
             W=self.decoder.weight,  # (output_dim, d) — trainable
-            b=self.decoder.bias,    # (output_dim,)   — trainable
+            b=self.decoder.bias,  # (output_dim,)   — trainable
             sigma_prior=self.sigma_prior,
         )
 
@@ -289,11 +268,11 @@ def _h_to_physical_params(
 
     Returns (cx, cy, sigma1, sigma2, theta), all shape (...,).
     """
-    cx     = center_base + h[..., 0] * center_scale
-    cy     = center_base + h[..., 1] * center_scale
+    cx = center_base + h[..., 0] * center_scale
+    cy = center_base + h[..., 1] * center_scale
     sigma1 = (log_sigma_base + h[..., 2] * width_scale).exp()
     sigma2 = (log_sigma_base + h[..., 3] * width_scale).exp()
-    theta  = torch.pi * torch.sigmoid(h[..., 4])
+    theta = torch.pi * torch.sigmoid(h[..., 4])
     return cx, cy, sigma1, sigma2, theta
 
 
@@ -320,20 +299,22 @@ def _physical_params_to_profile(
         xx = xx.unsqueeze(0)
         yy = yy.unsqueeze(0)
 
-    cx    = cx[..., None, None]
-    cy    = cy[..., None, None]
-    s1    = sigma1[..., None, None]
-    s2    = sigma2[..., None, None]
-    th    = theta[..., None, None]
+    cx = cx[..., None, None]
+    cy = cy[..., None, None]
+    s1 = sigma1[..., None, None]
+    s2 = sigma2[..., None, None]
+    th = theta[..., None, None]
 
     cos_t, sin_t = th.cos(), th.sin()
     dx = xx - cx
     dy = yy - cy
-    x_rot =  dx * cos_t + dy * sin_t
+    x_rot = dx * cos_t + dy * sin_t
     y_rot = -dx * sin_t + dy * cos_t
 
     profile = torch.exp(-0.5 * (x_rot**2 / s1**2 + y_rot**2 / s2**2))
-    profile = profile / profile.sum(dim=(-2, -1), keepdim=True).clamp(min=1e-10)
+    profile = profile / profile.sum(dim=(-2, -1), keepdim=True).clamp(
+        min=1e-10
+    )
     return profile.reshape(*cx.shape[:-2], H * W)
 
 
@@ -380,7 +361,7 @@ class PhysicalGaussianProfilePosterior(ProfilePosterior):
 
     def rsample(self, sample_shape: torch.Size = torch.Size([])) -> Tensor:
         """Reparameterized profile samples. Returns (*sample_shape, B, H*W)."""
-        h = self.rsample_h(sample_shape)          # (*sample_shape, B, 5)
+        h = self.rsample_h(sample_shape)  # (*sample_shape, B, 5)
         return _h_to_profile_physical(h, **self._transform_config)
 
     def h_to_profile(self, h: Tensor) -> Tensor:
@@ -426,21 +407,21 @@ class PhysicalGaussianProfileSurrogate(nn.Module):
         self.d: int = int(config["d"])  # 5
         self.sigma_prior: float = float(config.get("sigma_prior", 1.0))
         self._transform_config: dict = {
-            "center_base":    float(config.get("center_base",    10.0)),
-            "center_scale":   float(config.get("center_scale",    1.5)),
-            "log_sigma_base": float(config.get("log_sigma_base",  0.7)),
-            "width_scale":    float(config.get("width_scale",     0.4)),
+            "center_base": float(config.get("center_base", 10.0)),
+            "center_scale": float(config.get("center_scale", 1.5)),
+            "log_sigma_base": float(config.get("log_sigma_base", 0.7)),
+            "width_scale": float(config.get("width_scale", 0.4)),
         }
 
-        self.mu_head     = nn.Linear(input_dim, self.d)
+        self.mu_head = nn.Linear(input_dim, self.d)
         self.logvar_head = nn.Linear(input_dim, self.d)
 
         nn.init.zeros_(self.logvar_head.weight)
         nn.init.constant_(self.logvar_head.bias, -2.0)
 
     def forward(self, x: Tensor) -> PhysicalGaussianProfilePosterior:
-        mu_h     = self.mu_head(x)                              # (B, 5)
-        logvar_h = self.logvar_head(x).clamp(-10.0, 10.0)      # (B, 5)
+        mu_h = self.mu_head(x)  # (B, 5)
+        logvar_h = self.logvar_head(x).clamp(-10.0, 10.0)  # (B, 5)
         return PhysicalGaussianProfilePosterior(
             mu_h=mu_h,
             logvar_h=logvar_h,

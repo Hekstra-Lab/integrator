@@ -108,7 +108,7 @@ def _get_surrogate_modules(
     for key, surrogate_cfg in cfg["surrogates"].items():
         surrogate_cls = REGISTRY["surrogates"][surrogate_cfg["name"]]
         args = dict(surrogate_cfg["args"])
-        if surrogate_cfg["name"] == "logistic_normal_surrogate" and "basis_path" in args:
+        if surrogate_cfg["name"] in ("logistic_normal_surrogate", "physical_gaussian_surrogate") and "basis_path" in args:
             bp = args["basis_path"]
             if isinstance(bp, str) and not os.path.isabs(bp) and not bp.startswith("~"):
                 args["basis_path"] = os.path.join(data_dir, bp)
