@@ -22,6 +22,7 @@ SIMULATED_COLS = [
     "background",
     "refl_ids",
     "is_test",
+    "group_label",
 ]
 
 # Default columns from rs.io.read_dials_stills
@@ -108,7 +109,11 @@ class IntegratorDataset(Dataset):
         standardized_counts = self.standardized_counts[idx]
         masks = self.masks[idx]
 
-        meta = {k: self.reference[k][idx] for k in self.column_names}
+        meta = {
+            k: self.reference[k][idx]
+            for k in self.column_names
+            if k in self.reference
+        }
 
         return counts, standardized_counts, masks, meta
 
@@ -650,6 +655,10 @@ class SimulatedShoeboxLoader(BaseDataModule):
         # Alias refl_id -> refl_ids for compatibility with callbacks
         if "refl_id" in reference and "refl_ids" not in reference:
             reference["refl_ids"] = reference["refl_id"]
+
+        # Alias radial_bin -> group_label for hierarchical model
+        if "radial_bin" in reference and "group_label" not in reference:
+            reference["group_label"] = reference["radial_bin"]
 
         if self.anscombe:
             anscombe_transformed = 2 * (counts + 0.375).sqrt()

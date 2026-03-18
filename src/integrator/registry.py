@@ -30,6 +30,7 @@ from integrator.model.encoders import (
     ShoeboxEncoder,
 )
 from integrator.model.integrators import (
+    HierarchicalIntegrator,
     IntegratorModelA,
     IntegratorModelB,
     IntegratorModelC,
@@ -37,7 +38,7 @@ from integrator.model.integrators import (
     IntegratorModelE,
     IntegratorModelF,
 )
-from integrator.model.loss import Loss
+from integrator.model.loss import HierarchicalShoeboxLoss, Loss
 
 REGISTRY = {
     "encoders": {
@@ -49,6 +50,7 @@ REGISTRY = {
     },
     "loss": {
         "default": Loss,
+        "hierarchical_shoebox": HierarchicalShoeboxLoss,
     },
     "integrator": {
         "modela": IntegratorModelA,
@@ -57,6 +59,7 @@ REGISTRY = {
         "modeld": IntegratorModelD,
         "modele": IntegratorModelE,
         "modelf": IntegratorModelF,
+        "hierarchical": HierarchicalIntegrator,
     },
     "surrogates": {
         "gamma": GammaDistribution,

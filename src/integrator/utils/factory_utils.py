@@ -188,7 +188,16 @@ def _get_loss_module(
         cfg=cfg,
         prior_configs=prior_configs,
     )
-    return loss_cls(**shallow_dict(loss_args))
+    kwargs = shallow_dict(loss_args)
+
+    # Forward extra keys from loss.args for custom loss classes
+    # (e.g. hp_alpha, hp_beta for HierarchicalShoeboxLoss)
+    standard_keys = {"mc_samples", "eps", "pprf_cfg", "pbg_cfg", "pi_cfg"}
+    for k, v in cfg["loss"]["args"].items():
+        if k not in standard_keys:
+            kwargs[k] = v
+
+    return loss_cls(**kwargs)
 
 
 def construct_integrator(
