@@ -19,8 +19,9 @@ class GroupEncoder(nn.Module):
         Width of φ and ρ hidden layers.
     """
 
-    def __init__(self, encoder_out: int, hidden_dim: int = 64):
+    def __init__(self, encoder_out: int, hidden_dim: int = 64, alpha_min: float = 0.1):
         super().__init__()
+        self.alpha_min = alpha_min
 
         # φ: per-element transform (before pooling)
         self.phi = nn.Sequential(
@@ -80,9 +81,9 @@ class GroupEncoder(nn.Module):
         h = self.rho(group_features)  # (n_groups, hidden_dim)
 
         alpha = (
-            F.softplus(self.head_alpha(h)).squeeze(-1) + 1e-4
+            F.softplus(self.head_alpha(h)).squeeze(-1) + self.alpha_min
         )  # (n_groups,)
-        beta = F.softplus(self.head_beta(h)).squeeze(-1) + 1e-4  # (n_groups,)
+        beta = F.softplus(self.head_beta(h)).squeeze(-1) + self.alpha_min  # (n_groups,)
 
         q_tau = Gamma(concentration=alpha, rate=beta)
 
