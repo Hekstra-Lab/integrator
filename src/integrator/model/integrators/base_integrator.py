@@ -178,7 +178,8 @@ class BaseIntegrator(pl.LightningModule):
         """Infer dataset_size for losses that need it (e.g. HierarchicalLoss)."""
         if stage == "fit" and hasattr(self.loss, "dataset_size"):
             dm = self.trainer.datamodule
-            self.loss.dataset_size = len(dm.train_dataset)
+            if dm is not None and hasattr(dm, "train_dataset"):
+                self.loss.dataset_size = len(dm.train_dataset)
 
     def forward(
         self,

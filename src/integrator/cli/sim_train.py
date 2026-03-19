@@ -205,6 +205,12 @@ def main():
     # create integrator
     integrator = construct_integrator(cfg)
 
+    # Set dataset_size for losses that need it (e.g. HierarchicalShoeboxLoss)
+    # Must be done here because sim_train passes raw dataloaders, not the
+    # data module, so trainer.datamodule is None during model.setup().
+    if hasattr(integrator.loss, "dataset_size"):
+        integrator.loss.dataset_size = len(data_loader.train_dataset)
+
     # save prior artifacts (rescaled concentration, param counts, etc.)
     save_run_artifacts(integrator, cfg, logdir)
 
