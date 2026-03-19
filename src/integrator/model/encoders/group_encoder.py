@@ -1,15 +1,16 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch import Tensor
-from torch.distributions import Gamma
 
 
 class GroupEncoder(nn.Module):
-    """Infer per-group rate posteriors q(τ_k) from local encoder features.
+    """Infer per-group rate posteriors q(log τ_k) from local encoder features.
+
+    Works in log-space: q(log τ_k) = Normal(μ_k, σ_k²), then τ_k = exp(log τ_k).
+    This avoids Gamma rsample instabilities when τ → 0.
 
     Architecture (DeepSets):
-        x_i → φ(x_i) → mean-pool by group → ρ(·) → (α_k, β_k)
+        x_i → φ(x_i) → mean-pool by group → ρ(·) → (μ_k, logvar_k)
 
     Parameters
     ----------
@@ -17,11 +18,17 @@ class GroupEncoder(nn.Module):
         Dimension of per-reflection encoder features.
     hidden_dim : int
         Width of φ and ρ hidden layers.
+    log_tau_init : float
+        Initial bias for head_mu (should match prior mean, e.g. -6.9).
     """
 
-    def __init__(self, encoder_out: int, hidden_dim: int = 64, alpha_min: float = 0.1):
+    def __init__(
+        self,
+        encoder_out: int,
+        hidden_dim: int = 64,
+        log_tau_init: float = -6.9,
+    ):
         super().__init__()
-        self.alpha_min = alpha_min
 
         # φ: per-element transform (before pooling)
         self.phi = nn.Sequential(
@@ -37,19 +44,19 @@ class GroupEncoder(nn.Module):
             nn.SiLU(),
         )
 
-        self.head_alpha = nn.Linear(hidden_dim, 1)
-        self.head_beta = nn.Linear(hidden_dim, 1)
+        self.head_mu = nn.Linear(hidden_dim, 1)
+        self.head_logvar = nn.Linear(hidden_dim, 1)
 
-        nn.init.zeros_(self.head_alpha.weight)
-        nn.init.zeros_(self.head_alpha.bias)
-        nn.init.zeros_(self.head_beta.weight)
-        nn.init.zeros_(self.head_beta.bias)
+        nn.init.zeros_(self.head_mu.weight)
+        nn.init.constant_(self.head_mu.bias, log_tau_init)
+        nn.init.zeros_(self.head_logvar.weight)
+        nn.init.constant_(self.head_logvar.bias, -2.0)
 
     def forward(
         self,
         x: Tensor,
         group_labels: Tensor,
-    ) -> tuple[Gamma, Tensor]:
+    ) -> tuple[Tensor, Tensor, Tensor]:
         """
         Parameters
         ----------
@@ -60,15 +67,18 @@ class GroupEncoder(nn.Module):
 
         Returns
         -------
-        q_tau : Gamma with batch shape (n_groups_in_batch,)
-        tau_per_refl : (B, 1) sampled τ_k broadcast to each reflection.
+        mu : (n_groups,)
+            Posterior mean of log τ_k.
+        logvar : (n_groups,)
+            Posterior log-variance of log τ_k.
+        tau_per_refl : (B, 1)
+            Sampled τ_k = exp(log τ_k) broadcast to each reflection.
         """
         # φ: transform each reflection
         z = self.phi(x)  # (B, hidden_dim)
 
         # Mean-pool by group (simple loop — K is small)
         unique_groups = torch.unique(group_labels)
-        n_groups = unique_groups.shape[0]
 
         group_means = []
         for k in unique_groups:
@@ -77,21 +87,20 @@ class GroupEncoder(nn.Module):
 
         group_features = torch.stack(group_means)  # (n_groups, hidden_dim)
 
-        # ρ: per-group transform → Gamma params
+        # ρ: per-group transform → Normal params in log-space
         h = self.rho(group_features)  # (n_groups, hidden_dim)
 
-        alpha = (
-            F.softplus(self.head_alpha(h)).squeeze(-1) + self.alpha_min
-        )  # (n_groups,)
-        beta = F.softplus(self.head_beta(h)).squeeze(-1) + self.alpha_min  # (n_groups,)
+        mu = self.head_mu(h).squeeze(-1)  # (n_groups,)
+        logvar = self.head_logvar(h).squeeze(-1).clamp(-10.0, 4.0)  # (n_groups,)
 
-        q_tau = Gamma(concentration=alpha, rate=beta)
-
-        # Sample one τ per group, broadcast to reflections
-        tau_group = q_tau.rsample()  # (n_groups,)
+        # Reparameterized sample: log τ_k = μ_k + σ_k * ε, ε ~ N(0,1)
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        log_tau = mu + std * eps  # (n_groups,)
+        tau_group = torch.exp(log_tau)  # (n_groups,), always positive
 
         # Map back: unique_groups is sorted (from torch.unique), so use searchsorted
         indices = torch.searchsorted(unique_groups, group_labels)
         tau_per_refl = tau_group[indices].unsqueeze(1)  # (B, 1)
 
-        return q_tau, tau_per_refl
+        return mu, logvar, tau_per_refl

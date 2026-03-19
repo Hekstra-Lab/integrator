@@ -5,13 +5,13 @@ ELBO decomposition:
       - KL( q(prf) || p(prf) )                  — profile prior
       - KL( q(I_i) || Exp(τ_{k(i)}) )           — adaptive intensity prior
       - KL( q(bg_i) || Exp(λ_bg) )              — background prior
-      - (1/N) Σ_k KL( q(τ_k) || Gamma(α, β) )  — global hyperprior
+      - (1/N) Σ_k KL( q(log τ_k) || N(μ_0, σ_0²) )  — global hyperprior
 """
 
 import torch
 import torch.nn as nn
 from torch import Tensor
-from torch.distributions import Distribution, Exponential, Gamma, Poisson
+from torch.distributions import Distribution, Gamma, Poisson
 
 from integrator.configs.priors import PriorConfig
 from integrator.model.distributions.logistic_normal import ProfilePosterior
@@ -27,8 +27,8 @@ class HierarchicalShoeboxLoss(nn.Module):
     """ELBO loss with per-group learned Exponential intensity priors.
 
     The intensity prior for reflection i in group k is Exp(τ_k), where
-    q(τ_k) = Gamma(α_q, β_q) is learned by the GroupEncoder.  The global
-    hyperprior is p(τ_k) = Gamma(hp_alpha, hp_beta).
+    q(log τ_k) = Normal(μ_k, σ_k²) is learned by the GroupEncoder.
+    The global hyperprior is p(log τ_k) = Normal(log_tau_mu, log_tau_sigma²).
 
     Parameters
     ----------
@@ -42,10 +42,10 @@ class HierarchicalShoeboxLoss(nn.Module):
         Monte Carlo samples for KL estimation.
     eps : float
         Numerical stability constant.
-    hp_alpha : float
-        Hyperprior Gamma concentration for τ_k.
-    hp_beta : float
-        Hyperprior Gamma rate for τ_k.
+    log_tau_mu : float
+        Prior mean for log τ_k (Normal hyperprior).
+    log_tau_sigma : float
+        Prior std for log τ_k (Normal hyperprior).
     dataset_size : int
         Total training set size N for global KL scaling.
     """
@@ -58,15 +58,15 @@ class HierarchicalShoeboxLoss(nn.Module):
         pi_cfg: PriorConfig | None = None,
         mc_samples: int = 4,
         eps: float = 1e-6,
-        hp_alpha: float = 2.0,
-        hp_beta: float = 1.0,
+        log_tau_mu: float = -6.9,
+        log_tau_sigma: float = 1.0,
         dataset_size: int = 1,
     ):
         super().__init__()
         self.mc_samples = mc_samples
         self.eps = eps
-        self.hp_alpha = hp_alpha
-        self.hp_beta = hp_beta
+        self.log_tau_mu = log_tau_mu
+        self.log_tau_sigma = log_tau_sigma
         self.dataset_size = dataset_size
 
         # Profile prior (Dirichlet path — ignored when qp is ProfilePosterior)
@@ -94,7 +94,8 @@ class HierarchicalShoeboxLoss(nn.Module):
         qi: Distribution,
         qbg: Distribution,
         mask: Tensor,
-        q_tau: Gamma,
+        mu: Tensor,
+        logvar: Tensor,
         tau_per_refl: Tensor,
         group_labels: Tensor,
     ) -> dict[str, Tensor]:
@@ -126,11 +127,6 @@ class HierarchicalShoeboxLoss(nn.Module):
             kl = kl + kl_prf
 
         # ── Intensity KL: KL(q(I_i) || Exp(τ_{k(i)})) ──────────────
-        # tau_per_refl is [B, 1]; flatten to [B] for the Exponential rate
-        tau_flat = tau_per_refl.squeeze(-1).detach()  # stop gradient to τ for this KL
-        # Actually we want gradients through τ for the global KL, but the
-        # per-reflection intensity KL should use the same τ sample.
-        # Re-enable gradient: use tau_per_refl directly (no detach).
         tau_flat = tau_per_refl.squeeze(-1)
         p_i = Gamma(
             concentration=torch.ones_like(tau_flat),
@@ -152,13 +148,18 @@ class HierarchicalShoeboxLoss(nn.Module):
             )
             kl = kl + kl_bg
 
-        # ── Global KL: KL(q(τ_k) || Gamma(α, β)) / N ───────────────
-        p_tau = Gamma(
-            concentration=torch.tensor(self.hp_alpha, device=device),
-            rate=torch.tensor(self.hp_beta, device=device),
-        )
+        # ── Global KL: KL(N(μ_k, σ_k²) || N(μ_0, σ_0²)) / N ─────
+        sigma_q_sq = logvar.exp()  # (n_groups,)
+        sigma_p_sq = self.log_tau_sigma**2
+
         kl_global = (
-            torch.distributions.kl.kl_divergence(q_tau, p_tau).sum()
+            0.5
+            * (
+                sigma_q_sq / sigma_p_sq
+                + (mu - self.log_tau_mu) ** 2 / sigma_p_sq
+                - 1.0
+                - torch.log(sigma_q_sq / sigma_p_sq)
+            ).sum()
             / self.dataset_size
         )
 

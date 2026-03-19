@@ -191,7 +191,7 @@ def _get_loss_module(
     kwargs = shallow_dict(loss_args)
 
     # Forward extra keys from loss.args for custom loss classes
-    # (e.g. hp_alpha, hp_beta for HierarchicalShoeboxLoss)
+    # (e.g. log_tau_mu, log_tau_sigma for HierarchicalShoeboxLoss)
     standard_keys = {"mc_samples", "eps", "pprf_cfg", "pbg_cfg", "pi_cfg"}
     for k, v in cfg["loss"]["args"].items():
         if k not in standard_keys:

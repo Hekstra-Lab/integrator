@@ -1,8 +1,8 @@
 """Hierarchical Integrator: groups reflections and learns per-group intensity priors.
 
 Uses the standard encoder architecture but adds:
-  1. A GroupEncoder that pools local features by radial bin → q(τ_k)
-  2. Conditioning of the qi surrogate on the sampled τ_k
+  1. A GroupEncoder that pools local features by radial bin → q(log τ_k)
+  2. Conditioning of the qi surrogate on the sampled log τ_k
 """
 
 from typing import Any, Literal
@@ -67,11 +67,12 @@ class HierarchicalIntegrator(BaseIntegrator):
         x_profile = self.encoders["profile"](shoebox_reshaped)
         x_intensity = self.encoders["intensity"](shoebox_reshaped)
 
-        # Group encoder: pool by radial bin -> sample τ_k per reflection
+        # Group encoder: pool by radial bin → sample τ_k in log-space
         group_labels = metadata["group_label"].long()
-        q_tau, tau_per_refl = self.group_encoder(x_intensity, group_labels)
+        mu, logvar, tau_per_refl = self.group_encoder(x_intensity, group_labels)
 
         # Condition qi on τ_k: concatenate log(τ) to intensity features
+        # tau_per_refl = exp(log_tau), so log(tau_per_refl) recovers log_tau
         log_tau = torch.log(tau_per_refl + 1e-6)
         x_intensity_cond = torch.cat([x_intensity, log_tau], dim=-1)
 
@@ -103,20 +104,20 @@ class HierarchicalIntegrator(BaseIntegrator):
         )
         out = _assemble_outputs(out)
 
-        # Store q(τ_k) parameters and per-reflection τ for SBC / prediction
-        # q_tau has batch shape [n_groups_in_batch]; scatter back to [B]
+        # Store q(log τ_k) parameters and per-reflection τ for SBC / prediction
         _, inv = torch.unique(group_labels, return_inverse=True)
-        out["tau_per_refl"] = tau_per_refl.squeeze(-1)          # [B]
-        out["q_tau_concentration"] = q_tau.concentration[inv]   # [B]
-        out["q_tau_rate"] = q_tau.rate[inv]                     # [B]
-        out["group_label"] = group_labels                       # [B]
+        out["tau_per_refl"] = tau_per_refl.squeeze(-1)  # [B]
+        out["q_log_tau_mu"] = mu[inv]                    # [B]
+        out["q_log_tau_logvar"] = logvar[inv]             # [B]
+        out["group_label"] = group_labels                 # [B]
 
         return {
             "forward_out": out,
             "qp": qp,
             "qi": qi,
             "qbg": qbg,
-            "q_tau": q_tau,
+            "mu": mu,
+            "logvar": logvar,
             "tau_per_refl": tau_per_refl,
             "group_labels": group_labels,
         }
@@ -133,7 +134,8 @@ class HierarchicalIntegrator(BaseIntegrator):
             qi=outputs["qi"],
             qbg=outputs["qbg"],
             mask=forward_out["mask"],
-            q_tau=outputs["q_tau"],
+            mu=outputs["mu"],
+            logvar=outputs["logvar"],
             tau_per_refl=outputs["tau_per_refl"],
             group_labels=outputs["group_labels"],
         )
