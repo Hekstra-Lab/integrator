@@ -61,6 +61,7 @@ class HierarchicalShoeboxLoss(nn.Module):
         log_tau_mu: float = -6.9,
         log_tau_sigma: float = 1.0,
         dataset_size: int = 1,
+        kl_warmup_epochs: int = 0,
     ):
         super().__init__()
         self.mc_samples = mc_samples
@@ -68,6 +69,8 @@ class HierarchicalShoeboxLoss(nn.Module):
         self.log_tau_mu = log_tau_mu
         self.log_tau_sigma = log_tau_sigma
         self.dataset_size = dataset_size
+        self.kl_warmup_epochs = kl_warmup_epochs
+        self.current_epoch = 0
 
         # Profile prior (Dirichlet path — ignored when qp is ProfilePosterior)
         self.pprf_cfg = pprf_cfg
@@ -127,13 +130,22 @@ class HierarchicalShoeboxLoss(nn.Module):
             kl = kl + kl_prf
 
         # ── Intensity KL: KL(q(I_i) || Exp(τ_{k(i)})) ──────────────
+        # Warmup: ramp intensity KL weight from 0 → 1 over kl_warmup_epochs.
+        # During warmup the local encoder learns from NLL and the group
+        # encoder learns τ via the tau_embed conditioning path, preventing
+        # the feedback loop that drives τ → 0.
+        beta = (
+            min(1.0, self.current_epoch / self.kl_warmup_epochs)
+            if self.kl_warmup_epochs > 0
+            else 1.0
+        )
         tau_flat = tau_per_refl.squeeze(-1)
         p_i = Gamma(
             concentration=torch.ones_like(tau_flat),
             rate=tau_flat,
         )  # Exp(τ) = Gamma(1, τ)
         kl_i = _kl(qi, p_i, self.mc_samples, eps=self.eps)
-        kl = kl + kl_i
+        kl = kl + beta * kl_i
 
         # ── Background KL ───────────────────────────────────────────
         if self.pbg_cfg is not None and self.pbg_params is not None:
@@ -184,4 +196,5 @@ class HierarchicalShoeboxLoss(nn.Module):
             "kl_global": kl_global,
             "tau_mean": tau_samples.mean().detach(),
             "tau_std": tau_samples.std().detach(),
+            "beta_kl_warmup": beta,
         }

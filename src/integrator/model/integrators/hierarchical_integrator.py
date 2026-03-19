@@ -144,6 +144,9 @@ class HierarchicalIntegrator(BaseIntegrator):
         outputs = self(counts, shoebox, mask, metadata)
         forward_out = outputs["forward_out"]
 
+        # Pass current epoch so the loss can compute KL warmup beta
+        self.loss.current_epoch = self.current_epoch
+
         loss_dict = self.loss(
             rate=forward_out["rates"],
             counts=forward_out["counts"],
@@ -168,7 +171,7 @@ class HierarchicalIntegrator(BaseIntegrator):
         )
 
         # Log hierarchical diagnostics
-        for key in ("kl_global", "tau_mean", "tau_std"):
+        for key in ("kl_global", "tau_mean", "tau_std", "beta_kl_warmup"):
             if key in loss_dict:
                 self.log(
                     f"{step} {key}",
