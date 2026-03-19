@@ -56,7 +56,7 @@ class GroupEncoder(nn.Module):
         self,
         x: Tensor,
         group_labels: Tensor,
-    ) -> tuple[Tensor, Tensor, Tensor]:
+    ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
         """
         Parameters
         ----------
@@ -73,19 +73,19 @@ class GroupEncoder(nn.Module):
             Posterior log-variance of log τ_k.
         tau_per_refl : (B, 1)
             Sampled τ_k = exp(log τ_k) broadcast to each reflection.
+        log_tau_per_refl : (B, 1)
+            log τ_k broadcast to each reflection (avoids exp→log round trip).
         """
         # φ: transform each reflection
         z = self.phi(x)  # (B, hidden_dim)
 
-        # Mean-pool by group (simple loop — K is small)
+        # Vectorized mean-pool by group via one-hot matmul
         unique_groups = torch.unique(group_labels)
-
-        group_means = []
-        for k in unique_groups:
-            mask = group_labels == k
-            group_means.append(z[mask].mean(dim=0))
-
-        group_features = torch.stack(group_means)  # (n_groups, hidden_dim)
+        # (B, K) one-hot assignment
+        one_hot = (group_labels.unsqueeze(1) == unique_groups.unsqueeze(0)).float()
+        counts = one_hot.sum(0)  # (K,)
+        # (K, D) = (K, B) @ (B, D), normalized
+        group_features = (one_hot.T @ z) / counts.unsqueeze(1)
 
         # ρ: per-group transform → Normal params in log-space
         h = self.rho(group_features)  # (n_groups, hidden_dim)
@@ -99,8 +99,9 @@ class GroupEncoder(nn.Module):
         log_tau = mu + std * eps  # (n_groups,)
         tau_group = torch.exp(log_tau)  # (n_groups,), always positive
 
-        # Map back: unique_groups is sorted (from torch.unique), so use searchsorted
+        # Map back to per-reflection
         indices = torch.searchsorted(unique_groups, group_labels)
         tau_per_refl = tau_group[indices].unsqueeze(1)  # (B, 1)
+        log_tau_per_refl = log_tau[indices].unsqueeze(1)  # (B, 1)
 
-        return mu, logvar, tau_per_refl
+        return mu, logvar, tau_per_refl, log_tau_per_refl

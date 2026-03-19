@@ -8,6 +8,7 @@ Uses the standard encoder architecture but adds:
 from typing import Any, Literal
 
 import torch
+import torch.nn as nn
 from torch import Tensor
 
 from integrator import configs
@@ -55,6 +56,16 @@ class HierarchicalIntegrator(BaseIntegrator):
             log_tau_init=log_tau_init,
         )
 
+        # Embed log(τ) through a small MLP before conditioning qi,
+        # so the surrogate head sees a learned, bounded representation
+        # instead of a raw scalar that can be extreme.
+        self.tau_embed_dim = 16
+        self.tau_embed = nn.Sequential(
+            nn.Linear(1, self.tau_embed_dim),
+            nn.SiLU(),
+            nn.Linear(self.tau_embed_dim, self.tau_embed_dim),
+        )
+
     def _forward_impl(
         self,
         counts: Tensor,
@@ -73,12 +84,14 @@ class HierarchicalIntegrator(BaseIntegrator):
 
         # Group encoder: pool by radial bin → sample τ_k in log-space
         group_labels = metadata["group_label"].long()
-        mu, logvar, tau_per_refl = self.group_encoder(x_intensity, group_labels)
+        mu, logvar, tau_per_refl, log_tau_per_refl = self.group_encoder(
+            x_intensity, group_labels
+        )
 
-        # Condition qi on τ_k: concatenate log(τ) to intensity features
-        # tau_per_refl = exp(log_tau), so log(tau_per_refl) recovers log_tau
-        log_tau = torch.log(tau_per_refl + 1e-6)
-        x_intensity_cond = torch.cat([x_intensity, log_tau], dim=-1)
+        # Condition qi on τ_k: embed log(τ) through learned MLP so the
+        # surrogate sees a bounded representation, not a raw extreme scalar.
+        tau_features = self.tau_embed(log_tau_per_refl)  # (B, tau_embed_dim)
+        x_intensity_cond = torch.cat([x_intensity, tau_features], dim=-1)
 
         # Surrogate modules
         qbg = self.surrogates["qbg"](x_intensity)
@@ -163,6 +176,16 @@ class HierarchicalIntegrator(BaseIntegrator):
                     on_step=False,
                     on_epoch=True,
                 )
+
+        # Log surrogate concentration ranges to diagnose NaN
+        qi = outputs["qi"]
+        qbg = outputs["qbg"]
+        if hasattr(qi, "concentration"):
+            self.log(f"{step} qi_k_max", qi.concentration.max().detach(),
+                     on_step=False, on_epoch=True, reduce_fx="max")
+        if hasattr(qbg, "concentration"):
+            self.log(f"{step} qbg_k_max", qbg.concentration.max().detach(),
+                     on_step=False, on_epoch=True, reduce_fx="max")
 
         return {
             "loss": total_loss,
