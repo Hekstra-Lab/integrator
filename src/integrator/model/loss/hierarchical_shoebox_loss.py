@@ -1,49 +1,53 @@
-"""Hierarchical Shoebox Loss: ELBO with adaptive per-group intensity prior.
+"""Hierarchical shoebox loss with per-group adaptive intensity priors.
 
-ELBO = -E[log p(x|I,B,prf)]
-     + KL(q(I) || Exp(τ_k))           per-reflection, adaptive
-     + KL(q(B) || Exp(λ_bg))          per-reflection, fixed
-     + KL(q(prf) || p(prf))           per-reflection, fixed
-     + Σ_k KL(q(τ_k) || Gamma(α,β)) / N   global, scaled by 1/dataset_size
+ELBO decomposition:
+    L = E_q[ log p(x | I, prf, bg) ]           — Poisson NLL
+      - KL( q(prf) || p(prf) )                  — profile prior
+      - KL( q(I_i) || Exp(τ_{k(i)}) )           — adaptive intensity prior
+      - KL( q(bg_i) || Exp(λ_bg) )              — background prior
+      - (1/N) Σ_k KL( q(τ_k) || Gamma(α, β) )  — global hyperprior
 """
 
 import torch
 import torch.nn as nn
 from torch import Tensor
-from torch.distributions import (
-    Distribution,
-    Exponential,
-    Gamma,
-    Poisson,
-    kl_divergence,
-)
+from torch.distributions import Distribution, Exponential, Gamma, Poisson
 
 from integrator.configs.priors import PriorConfig
 from integrator.model.distributions.logistic_normal import ProfilePosterior
-from integrator.model.loss.loss import _get_dirichlet_prior, _kl, _params_as_tensors, _prior_kl
+from integrator.model.loss.loss import (
+    _get_dirichlet_prior,
+    _kl,
+    _params_as_tensors,
+    _prior_kl,
+)
 
 
 class HierarchicalShoeboxLoss(nn.Module):
     """ELBO loss with per-group learned Exponential intensity priors.
 
+    The intensity prior for reflection i in group k is Exp(τ_k), where
+    q(τ_k) = Gamma(α_q, β_q) is learned by the GroupEncoder.  The global
+    hyperprior is p(τ_k) = Gamma(hp_alpha, hp_beta).
+
     Parameters
     ----------
-    pprf_cfg : PriorConfig | None
-        Profile prior config.
-    pbg_cfg : PriorConfig | None
+    pprf_cfg : PriorConfig or None
+        Profile prior config (Dirichlet). None when using LogisticNormal.
+    pbg_cfg : PriorConfig or None
         Background prior config (typically Exponential).
-    pi_cfg : PriorConfig | None
-        Accepted for factory compatibility but unused.
+    pi_cfg : PriorConfig or None
+        Not used (intensity prior is adaptive), kept for factory compat.
     mc_samples : int
-        MC samples for KL estimation.
+        Monte Carlo samples for KL estimation.
     eps : float
         Numerical stability constant.
     hp_alpha : float
-        Hyperprior concentration for Gamma prior on τ_k.
+        Hyperprior Gamma concentration for τ_k.
     hp_beta : float
-        Hyperprior rate for Gamma prior on τ_k.
+        Hyperprior Gamma rate for τ_k.
     dataset_size : int
-        Total training observations N. Auto-set by BaseIntegrator.setup().
+        Total training set size N for global KL scaling.
     """
 
     def __init__(
@@ -52,18 +56,20 @@ class HierarchicalShoeboxLoss(nn.Module):
         pprf_cfg: PriorConfig | None = None,
         pbg_cfg: PriorConfig | None = None,
         pi_cfg: PriorConfig | None = None,
-        mc_samples: int = 100,
+        mc_samples: int = 4,
         eps: float = 1e-6,
         hp_alpha: float = 2.0,
         hp_beta: float = 1.0,
         dataset_size: int = 1,
     ):
         super().__init__()
-        self.eps = eps
         self.mc_samples = mc_samples
+        self.eps = eps
+        self.hp_alpha = hp_alpha
+        self.hp_beta = hp_beta
         self.dataset_size = dataset_size
 
-        # Profile prior
+        # Profile prior (Dirichlet path — ignored when qp is ProfilePosterior)
         self.pprf_cfg = pprf_cfg
         self.pprf_params = (
             _get_dirichlet_prior(pprf_cfg)
@@ -77,9 +83,8 @@ class HierarchicalShoeboxLoss(nn.Module):
             _params_as_tensors(pbg_cfg) if pbg_cfg is not None else None
         )
 
-        # Hyperprior on τ: Gamma(hp_alpha, hp_beta)
-        self.register_buffer("hp_alpha", torch.tensor(float(hp_alpha)))
-        self.register_buffer("hp_beta", torch.tensor(float(hp_beta)))
+        # pi_cfg unused — intensity prior comes from q(τ_k)
+        self.pi_cfg = pi_cfg
 
     def forward(
         self,
@@ -92,11 +97,9 @@ class HierarchicalShoeboxLoss(nn.Module):
         q_tau: Gamma,
         tau_per_refl: Tensor,
         group_labels: Tensor,
-        q_ib: Distribution | None = None,
-    ) -> dict:
+    ) -> dict[str, Tensor]:
         device = rate.device
         batch_size = rate.shape[0]
-
         counts = counts.to(device)
         mask = mask.to(device)
 
@@ -105,11 +108,11 @@ class HierarchicalShoeboxLoss(nn.Module):
         kl_i = torch.zeros(batch_size, device=device)
         kl_bg = torch.zeros(batch_size, device=device)
 
-        # ── Profile KL ──
+        # ── Profile KL ──────────────────────────────────────────────
         if isinstance(qp, ProfilePosterior):
             weight = self.pprf_cfg.weight if self.pprf_cfg is not None else 1.0
             kl_prf = qp.kl_divergence() * weight
-            kl += kl_prf
+            kl = kl + kl_prf
         elif self.pprf_cfg is not None and self.pprf_params is not None:
             kl_prf = _prior_kl(
                 prior_cfg=self.pprf_cfg,
@@ -120,19 +123,23 @@ class HierarchicalShoeboxLoss(nn.Module):
                 mc_samples=self.mc_samples,
                 eps=self.eps,
             )
-            kl += kl_prf
+            kl = kl + kl_prf
 
-        # ── Intensity KL: KL(q(I_i) || Exp(τ_k_i)) ──
-        tau_flat = tau_per_refl.squeeze(-1)  # [B]
-        # Exp(τ) = Gamma(1, τ)
+        # ── Intensity KL: KL(q(I_i) || Exp(τ_{k(i)})) ──────────────
+        # tau_per_refl is [B, 1]; flatten to [B] for the Exponential rate
+        tau_flat = tau_per_refl.squeeze(-1).detach()  # stop gradient to τ for this KL
+        # Actually we want gradients through τ for the global KL, but the
+        # per-reflection intensity KL should use the same τ sample.
+        # Re-enable gradient: use tau_per_refl directly (no detach).
+        tau_flat = tau_per_refl.squeeze(-1)
         p_i = Gamma(
-            torch.ones_like(tau_flat),
-            tau_flat,
-        )
+            concentration=torch.ones_like(tau_flat),
+            rate=tau_flat,
+        )  # Exp(τ) = Gamma(1, τ)
         kl_i = _kl(qi, p_i, self.mc_samples, eps=self.eps)
-        kl += kl_i
+        kl = kl + kl_i
 
-        # ── Background KL ──
+        # ── Background KL ───────────────────────────────────────────
         if self.pbg_cfg is not None and self.pbg_params is not None:
             kl_bg = _prior_kl(
                 prior_cfg=self.pbg_cfg,
@@ -143,23 +150,28 @@ class HierarchicalShoeboxLoss(nn.Module):
                 mc_samples=self.mc_samples,
                 eps=self.eps,
             )
-            kl += kl_bg
+            kl = kl + kl_bg
 
-        # ── Global KL: Σ_k KL(q(τ_k) || Gamma(α_hp, β_hp)) / N ──
+        # ── Global KL: KL(q(τ_k) || Gamma(α, β)) / N ───────────────
         p_tau = Gamma(
-            self.hp_alpha.expand_as(q_tau.concentration),
-            self.hp_beta.expand_as(q_tau.rate),
+            concentration=torch.tensor(self.hp_alpha, device=device),
+            rate=torch.tensor(self.hp_beta, device=device),
         )
-        kl_global_per_group = kl_divergence(q_tau, p_tau)
-        kl_global = kl_global_per_group.sum() / max(self.dataset_size, 1)
+        kl_global = (
+            torch.distributions.kl.kl_divergence(q_tau, p_tau).sum()
+            / self.dataset_size
+        )
 
-        # ── Negative log-likelihood ──
+        # ── Poisson NLL ──────────────────────────────────────────────
         ll = Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
         ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
         neg_ll = (-ll_mean).sum(1)
 
-        # ── Total loss ──
+        # ── Total loss ───────────────────────────────────────────────
         loss = (neg_ll + kl).mean() + kl_global
+
+        # ── Diagnostics ─────────────────────────────────────────────
+        tau_samples = tau_per_refl.squeeze(-1)
 
         return {
             "loss": loss,
@@ -169,6 +181,6 @@ class HierarchicalShoeboxLoss(nn.Module):
             "kl_i_mean": kl_i.mean(),
             "kl_bg_mean": kl_bg.mean(),
             "kl_global": kl_global,
-            "tau_mean": q_tau.mean.mean().detach(),
-            "tau_std": q_tau.mean.std().detach(),
+            "tau_mean": tau_samples.mean().detach(),
+            "tau_std": tau_samples.std().detach(),
         }
