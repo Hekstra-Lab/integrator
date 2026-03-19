@@ -1,11 +1,12 @@
-"""Hierarchical shoebox loss with per-group adaptive intensity priors.
+"""Hierarchical shoebox loss with fixed per-group intensity priors.
 
 ELBO decomposition:
     L = E_q[ log p(x | I, prf, bg) ]           — Poisson NLL
       - KL( q(prf) || p(prf) )                  — profile prior
-      - KL( q(I_i) || Exp(τ_{k(i)}) )           — adaptive intensity prior
-      - KL( q(bg_i) || Exp(λ_bg) )              — background prior
-      - (1/N) Σ_k KL( q(log τ_k) || N(μ_0, σ_0²) )  — global hyperprior
+      - KL( q(I_i) || Exp(tau_{k(i)}) )         — per-group intensity prior
+      - KL( q(bg_i) || Exp(lambda_bg) )          — background prior
+
+tau_k are fixed (not learned) — loaded from reference data or YAML config.
 """
 
 import torch
@@ -24,30 +25,28 @@ from integrator.model.loss.loss import (
 
 
 class HierarchicalShoeboxLoss(nn.Module):
-    """ELBO loss with per-group learned Exponential intensity priors.
+    """ELBO loss with fixed per-group Exponential intensity priors.
 
-    The intensity prior for reflection i in group k is Exp(τ_k), where
-    q(log τ_k) = Normal(μ_k, σ_k²) is learned by the GroupEncoder.
-    The global hyperprior is p(log τ_k) = Normal(log_tau_mu, log_tau_sigma²).
+    The intensity prior for reflection i in group k is Exp(tau_k), where
+    tau_k values are fixed constants loaded from reference data.
 
     Parameters
     ----------
     pprf_cfg : PriorConfig or None
-        Profile prior config (Dirichlet). None when using LogisticNormal.
+        Profile prior config (Dirichlet or LogisticNormal path).
     pbg_cfg : PriorConfig or None
         Background prior config (typically Exponential).
     pi_cfg : PriorConfig or None
-        Not used (intensity prior is adaptive), kept for factory compat.
+        Not used — intensity prior comes from tau_per_group.
     mc_samples : int
         Monte Carlo samples for KL estimation.
     eps : float
         Numerical stability constant.
-    log_tau_mu : float
-        Prior mean for log τ_k (Normal hyperprior).
-    log_tau_sigma : float
-        Prior std for log τ_k (Normal hyperprior).
+    tau_per_group : list[float] or str
+        Fixed tau_k values per group. Either a list of floats or a path
+        to a .pt file containing either a tensor or a dict with key 'tau_I'.
     dataset_size : int
-        Total training set size N for global KL scaling.
+        Kept for factory/setup compatibility.
     """
 
     def __init__(
@@ -58,19 +57,13 @@ class HierarchicalShoeboxLoss(nn.Module):
         pi_cfg: PriorConfig | None = None,
         mc_samples: int = 4,
         eps: float = 1e-6,
-        log_tau_mu: float = -6.9,
-        log_tau_sigma: float = 1.0,
+        tau_per_group: list[float] | str | None = None,
         dataset_size: int = 1,
-        kl_warmup_epochs: int = 0,
     ):
         super().__init__()
         self.mc_samples = mc_samples
         self.eps = eps
-        self.log_tau_mu = log_tau_mu
-        self.log_tau_sigma = log_tau_sigma
         self.dataset_size = dataset_size
-        self.kl_warmup_epochs = kl_warmup_epochs
-        self.current_epoch = 0
 
         # Profile prior (Dirichlet path — ignored when qp is ProfilePosterior)
         self.pprf_cfg = pprf_cfg
@@ -86,8 +79,23 @@ class HierarchicalShoeboxLoss(nn.Module):
             _params_as_tensors(pbg_cfg) if pbg_cfg is not None else None
         )
 
-        # pi_cfg unused — intensity prior comes from q(τ_k)
+        # pi_cfg unused — intensity prior comes from tau_per_group
         self.pi_cfg = pi_cfg
+
+        # Fixed per-group tau values
+        if tau_per_group is None:
+            raise ValueError("tau_per_group is required for HierarchicalShoeboxLoss")
+
+        if isinstance(tau_per_group, str):
+            loaded = torch.load(tau_per_group, weights_only=True)
+            if isinstance(loaded, dict):
+                tau_tensor = loaded["tau_I"].float()
+            else:
+                tau_tensor = loaded.float()
+        else:
+            tau_tensor = torch.tensor(tau_per_group, dtype=torch.float32)
+
+        self.register_buffer("tau_per_group", tau_tensor)
 
     def forward(
         self,
@@ -97,9 +105,6 @@ class HierarchicalShoeboxLoss(nn.Module):
         qi: Distribution,
         qbg: Distribution,
         mask: Tensor,
-        mu: Tensor,
-        logvar: Tensor,
-        tau_per_refl: Tensor,
         group_labels: Tensor,
     ) -> dict[str, Tensor]:
         device = rate.device
@@ -129,23 +134,14 @@ class HierarchicalShoeboxLoss(nn.Module):
             )
             kl = kl + kl_prf
 
-        # ── Intensity KL: KL(q(I_i) || Exp(τ_{k(i)})) ──────────────
-        # Warmup: ramp intensity KL weight from 0 → 1 over kl_warmup_epochs.
-        # During warmup the local encoder learns from NLL and the group
-        # encoder learns τ via the tau_embed conditioning path, preventing
-        # the feedback loop that drives τ → 0.
-        beta = (
-            min(1.0, self.current_epoch / self.kl_warmup_epochs)
-            if self.kl_warmup_epochs > 0
-            else 1.0
-        )
-        tau_flat = tau_per_refl.squeeze(-1)
+        # ── Intensity KL: KL(q(I_i) || Exp(tau_{k(i)})) ──────────
+        tau_per_refl = self.tau_per_group[group_labels.long()]  # [B]
         p_i = Gamma(
-            concentration=torch.ones_like(tau_flat),
-            rate=tau_flat,
-        )  # Exp(τ) = Gamma(1, τ)
+            concentration=torch.ones_like(tau_per_refl),
+            rate=tau_per_refl,
+        )  # Exp(tau) = Gamma(1, tau)
         kl_i = _kl(qi, p_i, self.mc_samples, eps=self.eps)
-        kl = kl + beta * kl_i
+        kl = kl + kl_i
 
         # ── Background KL ───────────────────────────────────────────
         if self.pbg_cfg is not None and self.pbg_params is not None:
@@ -160,31 +156,13 @@ class HierarchicalShoeboxLoss(nn.Module):
             )
             kl = kl + kl_bg
 
-        # ── Global KL: KL(N(μ_k, σ_k²) || N(μ_0, σ_0²)) / N ─────
-        sigma_q_sq = logvar.exp()  # (n_groups,)
-        sigma_p_sq = self.log_tau_sigma**2
-
-        kl_global = (
-            0.5
-            * (
-                sigma_q_sq / sigma_p_sq
-                + (mu - self.log_tau_mu) ** 2 / sigma_p_sq
-                - 1.0
-                - torch.log(sigma_q_sq / sigma_p_sq)
-            ).sum()
-            / self.dataset_size
-        )
-
         # ── Poisson NLL ──────────────────────────────────────────────
         ll = Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
         ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
         neg_ll = (-ll_mean).sum(1)
 
         # ── Total loss ───────────────────────────────────────────────
-        loss = (neg_ll + kl).mean() + kl_global
-
-        # ── Diagnostics ─────────────────────────────────────────────
-        tau_samples = tau_per_refl.squeeze(-1)
+        loss = (neg_ll + kl).mean()
 
         return {
             "loss": loss,
@@ -193,8 +171,4 @@ class HierarchicalShoeboxLoss(nn.Module):
             "kl_prf_mean": kl_prf.mean(),
             "kl_i_mean": kl_i.mean(),
             "kl_bg_mean": kl_bg.mean(),
-            "kl_global": kl_global,
-            "tau_mean": tau_samples.mean().detach(),
-            "tau_std": tau_samples.std().detach(),
-            "beta_kl_warmup": beta,
         }

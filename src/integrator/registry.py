@@ -31,6 +31,7 @@ from integrator.model.encoders import (
 )
 from integrator.model.integrators import (
     HierarchicalIntegrator,
+    HierarchicalIntegratorB,
     IntegratorModelA,
     IntegratorModelB,
     IntegratorModelC,
@@ -60,6 +61,7 @@ REGISTRY = {
         "modele": IntegratorModelE,
         "modelf": IntegratorModelF,
         "hierarchical": HierarchicalIntegrator,
+        "hierarchicalB": HierarchicalIntegratorB,
     },
     "surrogates": {
         "gamma": GammaDistribution,
