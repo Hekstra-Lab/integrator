@@ -46,9 +46,13 @@ class HierarchicalIntegrator(BaseIntegrator):
     def __init__(self, cfg, loss, encoders, surrogates):
         super().__init__(cfg=cfg, loss=loss, encoders=encoders, surrogates=surrogates)
 
+        # Initialize head_mu bias to the prior mean so training starts near prior
+        log_tau_init = getattr(loss, "log_tau_mu", -6.9)
+
         self.group_encoder = GroupEncoder(
             encoder_out=cfg.encoder_out,
             hidden_dim=cfg.group_hidden_dim,
+            log_tau_init=log_tau_init,
         )
 
     def _forward_impl(
