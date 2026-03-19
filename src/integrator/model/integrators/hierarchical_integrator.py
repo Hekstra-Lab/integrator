@@ -56,14 +56,13 @@ class HierarchicalIntegrator(BaseIntegrator):
             log_tau_init=log_tau_init,
         )
 
-        # Embed log(τ) through a small MLP before conditioning qi,
-        # so the surrogate head sees a learned, bounded representation
-        # instead of a raw scalar that can be extreme.
-        self.tau_embed_dim = 16
+        # Small embedding to normalize log(τ) to the same scale as
+        # encoder features before concatenation.  Kept tiny (1 output)
+        # so τ doesn't dominate qi's input.
+        self.tau_embed_dim = 1
         self.tau_embed = nn.Sequential(
             nn.Linear(1, self.tau_embed_dim),
-            nn.SiLU(),
-            nn.Linear(self.tau_embed_dim, self.tau_embed_dim),
+            nn.Tanh(),
         )
 
     def _forward_impl(
@@ -88,9 +87,9 @@ class HierarchicalIntegrator(BaseIntegrator):
             x_intensity, group_labels
         )
 
-        # Condition qi on τ_k: embed log(τ) through learned MLP so the
-        # surrogate sees a bounded representation, not a raw extreme scalar.
-        tau_features = self.tau_embed(log_tau_per_refl)  # (B, tau_embed_dim)
+        # Condition qi on τ_k: small learned embedding normalizes log(τ)
+        # to the same scale as encoder features before concatenation.
+        tau_features = self.tau_embed(log_tau_per_refl)  # (B, 1)
         x_intensity_cond = torch.cat([x_intensity, tau_features], dim=-1)
 
         # Surrogate modules
