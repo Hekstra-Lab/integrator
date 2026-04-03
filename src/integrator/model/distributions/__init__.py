@@ -2,6 +2,9 @@ from .bivariate_log_normal import BivariateLogNormal, BivariateLogNormalSurrogat
 from .dirichlet import DirichletDistribution, DirichletDistributionB
 from .folded_normal import FoldedNormalA, FoldedNormalDistribution
 from .gamma import (
+    FanoGamma,
+    FanoGammaRepamB,
+    FanoGammaRepamD,
     GammaDistribution,
     GammaDistributionRepamA,
     GammaDistributionRepamB,
@@ -31,6 +34,9 @@ __all__ = [
     "GammaDistributionRepamB",
     "GammaDistributionRepamC",
     "GammaDistributionRepamD",
+    "FanoGamma",
+    "FanoGammaRepamB",
+    "FanoGammaRepamD",
     "FoldedNormalA",
     "DirichletDistributionB",
     "LogNormalA",

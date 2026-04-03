@@ -196,12 +196,13 @@ def _get_loss_module(
         if k not in standard_keys:
             kwargs[k] = v
 
-    # Resolve relative path for tau_per_group
-    if "tau_per_group" in kwargs and isinstance(kwargs["tau_per_group"], str):
-        data_dir = cfg.get("data_loader", {}).get("args", {}).get("data_dir", "")
-        path = kwargs["tau_per_group"]
-        if not os.path.isabs(path) and not path.startswith("~"):
-            kwargs["tau_per_group"] = os.path.join(data_dir, path)
+    # Resolve relative .pt paths for custom loss buffers
+    data_dir = cfg.get("data_loader", {}).get("args", {}).get("data_dir", "")
+    for pt_key in ("tau_per_group", "bg_rate_per_group", "concentration_per_group"):
+        if pt_key in kwargs and isinstance(kwargs[pt_key], str):
+            path = kwargs[pt_key]
+            if not os.path.isabs(path) and not path.startswith("~"):
+                kwargs[pt_key] = os.path.join(data_dir, path)
 
     return loss_cls(**kwargs)
 

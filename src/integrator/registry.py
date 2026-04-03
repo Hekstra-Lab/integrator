@@ -7,6 +7,8 @@ from integrator.model.distributions import (
     BivariateLogNormalSurrogate,
     DirichletDistribution,
     DirichletDistributionB,
+    FanoGammaRepamB,
+    FanoGammaRepamD,
     FoldedNormalA,
     FoldedNormalDistribution,
     GammaDistribution,
@@ -39,7 +41,7 @@ from integrator.model.integrators import (
     IntegratorModelE,
     IntegratorModelF,
 )
-from integrator.model.loss import HierarchicalShoeboxLoss, Loss
+from integrator.model.loss import HierarchicalShoeboxLoss, Loss, PerBinLoss
 
 REGISTRY = {
     "encoders": {
@@ -52,6 +54,7 @@ REGISTRY = {
     "loss": {
         "default": Loss,
         "hierarchical_shoebox": HierarchicalShoeboxLoss,
+        "per_bin": PerBinLoss,
     },
     "integrator": {
         "modela": IntegratorModelA,
@@ -69,6 +72,8 @@ REGISTRY = {
         "gammaB": GammaDistributionRepamB,
         "gammaC": GammaDistributionRepamC,
         "gammaD": GammaDistributionRepamD,
+        "fano_gammaB": FanoGammaRepamB,
+        "fano_gammaD": FanoGammaRepamD,
         "log_normal": LogNormalDistribution,
         "folded_normal": FoldedNormalDistribution,
         "half_normal": HalfNormalDistribution,
