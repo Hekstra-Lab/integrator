@@ -153,7 +153,7 @@ def save_for_integrator(
 
     tau_per_group = 1.0 / mean_intensities
     bg_rate_per_group = 1.0 / bg_per_bin
-    concentration_per_group = dir_kappa[:, None] * dir_mean_profile
+    concentration_per_group = (dir_kappa[:, None] * dir_mean_profile).clamp(min=1e-6)
 
     torch.save(counts_flat, save_dir / "counts.pt")
     torch.save(masks, save_dir / "masks.pt")
