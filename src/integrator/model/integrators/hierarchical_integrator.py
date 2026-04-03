@@ -44,6 +44,7 @@ def _hierarchical_step(self, batch, step: Literal["train", "val"]):
         qbg=outputs["qbg"],
         mask=forward_out["mask"],
         group_labels=group_labels,
+        metadata=metadata,
     )
 
     total_loss = loss_dict["loss"]
@@ -56,17 +57,21 @@ def _hierarchical_step(self, batch, step: Literal["train", "val"]):
         step=step,
     )
 
+    loss_components = {
+        "loss": total_loss.detach(),
+        "nll": loss_dict["neg_ll_mean"].detach(),
+        "kl": loss_dict["kl_mean"].detach(),
+        "kl_prf": loss_dict["kl_prf_mean"].detach(),
+        "kl_i": loss_dict["kl_i_mean"].detach(),
+        "kl_bg": loss_dict["kl_bg_mean"].detach(),
+    }
+    if "kl_hyper" in loss_dict:
+        loss_components["kl_hyper"] = loss_dict["kl_hyper"].detach()
+
     return {
         "loss": total_loss,
         "forward_out": forward_out,
-        "loss_components": {
-            "loss": total_loss.detach(),
-            "nll": loss_dict["neg_ll_mean"].detach(),
-            "kl": loss_dict["kl_mean"].detach(),
-            "kl_prf": loss_dict["kl_prf_mean"].detach(),
-            "kl_i": loss_dict["kl_i_mean"].detach(),
-            "kl_bg": loss_dict["kl_bg_mean"].detach(),
-        },
+        "loss_components": loss_components,
     }
 
 

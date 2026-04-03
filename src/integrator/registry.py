@@ -42,7 +42,7 @@ from integrator.model.integrators import (
     IntegratorModelE,
     IntegratorModelF,
 )
-from integrator.model.loss import HierarchicalShoeboxLoss, Loss, PerBinLoss
+from integrator.model.loss import HierarchicalShoeboxLoss, Loss, PerBinLoss, WilsonPerBinLoss
 
 REGISTRY = {
     "encoders": {
@@ -56,6 +56,7 @@ REGISTRY = {
         "default": Loss,
         "hierarchical_shoebox": HierarchicalShoeboxLoss,
         "per_bin": PerBinLoss,
+        "wilson_per_bin": WilsonPerBinLoss,
     },
     "integrator": {
         "modela": IntegratorModelA,

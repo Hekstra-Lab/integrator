@@ -93,6 +93,7 @@ class PerBinLoss(nn.Module):
         qbg: Distribution,
         mask: Tensor,
         group_labels: Tensor,
+        **kwargs,
     ) -> dict[str, Tensor]:
         device = rate.device
         batch_size = rate.shape[0]

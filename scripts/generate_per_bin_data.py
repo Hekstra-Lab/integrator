@@ -116,6 +116,7 @@ def save_for_integrator(
     dir_kappa: torch.Tensor,
     save_dir: Path,
     test_frac: float = 0.05,
+    mean_d: torch.Tensor | None = None,
 ) -> None:
     """Reshape and save simulation output as .pt files."""
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -162,6 +163,11 @@ def save_for_integrator(
     torch.save(tau_per_group, save_dir / "tau_per_group.pt")
     torch.save(bg_rate_per_group, save_dir / "bg_rate_per_group.pt")
     torch.save(concentration_per_group, save_dir / "concentration_per_group.pt")
+
+    # Wilson prior: s² = 1/(4d²) per bin
+    if mean_d is not None:
+        s_squared_per_group = 1.0 / (4.0 * mean_d ** 2)
+        torch.save(s_squared_per_group, save_dir / "s_squared_per_group.pt")
 
     print(f"Saved {n_total} reflections ({N_per_bin} x {n_bins} bins) to {save_dir}")
 
@@ -230,6 +236,7 @@ def main():
         dir_kappa=params["dir_kappa"],
         save_dir=save_dir,
         test_frac=args.test_frac,
+        mean_d=params.get("mean_d"),
     )
 
     print("Done!")

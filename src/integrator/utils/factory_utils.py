@@ -198,7 +198,7 @@ def _get_loss_module(
 
     # Resolve relative .pt paths for custom loss buffers
     data_dir = cfg.get("data_loader", {}).get("args", {}).get("data_dir", "")
-    for pt_key in ("tau_per_group", "bg_rate_per_group", "concentration_per_group"):
+    for pt_key in ("tau_per_group", "bg_rate_per_group", "concentration_per_group", "s_squared_per_group"):
         if pt_key in kwargs and isinstance(kwargs[pt_key], str):
             path = kwargs[pt_key]
             if not os.path.isabs(path) and not path.startswith("~"):
