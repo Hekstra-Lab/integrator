@@ -1,6 +1,6 @@
 """Hierarchical Integrators with fixed per-group intensity priors.
 
-Identical to IntegratorModelA / IntegratorModelB except:
+Identical to IntegratorModelA / IntegratorModelB / IntegratorModelD except:
   1. _step passes group_labels from metadata to the loss
   2. forward_out includes group_label and tau_per_refl for SBC/prediction
 """
@@ -17,6 +17,7 @@ from integrator.model.integrators.integrator_utils import (
     IntegratorModelArgs,
     _assemble_outputs,
 )
+from integrator.model.integrators.integrator import IntegratorModelD
 
 
 def _add_group_outputs(out: dict, metadata: dict, loss) -> None:
@@ -129,6 +130,27 @@ class HierarchicalIntegrator(BaseIntegrator):
             "qi": qi,
             "qbg": qbg,
         }
+
+    _step = _hierarchical_step
+
+
+class HierarchicalIntegratorD(IntegratorModelD):
+    """ModelD variant with fixed per-group priors.
+
+    Like ModelD, uses five fully decoupled encoders (profile, k_i, r_i, k_bg, r_bg).
+    Metadata must contain ``group_label`` (integer tensor [B]).
+    """
+
+    def _forward_impl(
+        self,
+        counts: Tensor,
+        shoebox: Tensor,
+        mask: Tensor,
+        metadata: dict,
+    ) -> dict[str, Any]:
+        result = super()._forward_impl(counts, shoebox, mask, metadata)
+        _add_group_outputs(result["forward_out"], metadata, self.loss)
+        return result
 
     _step = _hierarchical_step
 

@@ -4,12 +4,14 @@ import torch
 from torch import Tensor
 
 from integrator import configs
+from integrator.model.distributions.total_fraction import (
+    TotalFractionPosterior,
+)
 from integrator.model.integrators import BaseIntegrator
 from integrator.model.integrators.base_integrator import (
     DEFAULT_PREDICT_KEYS_MODELC,
     _log_loss,
 )
-from integrator.model.distributions.total_fraction import TotalFractionPosterior
 
 from .integrator_utils import (
     IntegratorBaseOutputs,
@@ -132,12 +134,12 @@ class IntegratorModelC(BaseIntegrator):
         z_ib = q_ib.rsample([self.mc_samples])
         if isinstance(q_ib, TotalFractionPosterior):
             # (T, f) parameterization — convert to (I, bg)
-            I_s, bg_s = q_ib.to_intensity_bg(z_ib)          # each [S, B]
-            zI  = I_s.unsqueeze(-1).permute(1, 0, 2)         # [B, S, 1]
-            zbg = bg_s.unsqueeze(-1).permute(1, 0, 2)        # [B, S, 1]
+            I_s, bg_s = q_ib.to_intensity_bg(z_ib)  # each [S, B]
+            zI = I_s.unsqueeze(-1).permute(1, 0, 2)  # [B, S, 1]
+            zbg = bg_s.unsqueeze(-1).permute(1, 0, 2)  # [B, S, 1]
         else:
             # (I, bg) parameterization — direct
-            zI  = z_ib[..., 0].unsqueeze(-1).permute(1, 0, 2)  # [B, S, 1]
+            zI = z_ib[..., 0].unsqueeze(-1).permute(1, 0, 2)  # [B, S, 1]
             zbg = z_ib[..., 1].unsqueeze(-1).permute(1, 0, 2)  # [B, S, 1]
         zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)  # [B, S, P]
 
