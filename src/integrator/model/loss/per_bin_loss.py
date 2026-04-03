@@ -80,7 +80,8 @@ class PerBinLoss(nn.Module):
         self.register_buffer("tau_per_group", _load_buffer(tau_per_group))
         self.register_buffer("bg_rate_per_group", _load_buffer(bg_rate_per_group))
         self.register_buffer(
-            "concentration_per_group", _load_buffer(concentration_per_group)
+            "concentration_per_group",
+            _load_buffer(concentration_per_group).clamp(min=1e-6),
         )
 
     def forward(
