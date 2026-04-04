@@ -51,7 +51,7 @@ def parse_args():
         "--sbc-nsamples",
         type=int,
         default=5000,
-        help="Number of SBC simulations",
+        help="Number of SBC simulations per resolution bin",
     )
     parser.add_argument(
         "--sbc-K",
@@ -296,6 +296,14 @@ def compute_profile_metrics(
         return None
 
     prof_agg = pl.concat(all_aggs)
+
+    # Multiple flush files per epoch → aggregate to one row per (bin, epoch)
+    prof_agg = prof_agg.group_by(["bin_labels", "epoch"]).agg(
+        mean_cos_sim=pl.col("mean_cos_sim").mean(),
+        mean_tv=pl.col("mean_tv").mean(),
+        mean_l2_error=pl.col("mean_l2_error").mean(),
+    )
+
     return (
         base_df.lazy()
         .join(prof_agg.lazy(), on="bin_labels", how="left")
@@ -549,26 +557,24 @@ def plot_noise_to_signal(
 def plot_sbc_ranks(
     df_sbc: "pl.DataFrame",
     K: int = 99,
-    min_count: int = 50,
 ) -> "plt.Figure":
-    """SBC rank histogram faceted by intensity bin."""
+    """SBC rank histogram faceted by resolution bin."""
     import matplotlib.pyplot as plt
     import polars as pl
 
-    counts = df_sbc["bin_labels"].value_counts()
-    valid_bins = (
-        counts.filter(pl.col("count") >= min_count)
-        .sort("bin_labels")["bin_labels"]
-        .to_list()
+    bin_ids = sorted(df_sbc["bin_id"].unique().to_list())
+    n_bins = max(1, len(bin_ids))
+
+    ncols = min(n_bins, 5)
+    nrows = (n_bins + ncols - 1) // ncols
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(3 * ncols, 3 * nrows), sharey=True, squeeze=False,
     )
 
-    n_bins = max(1, len(valid_bins))
-    fig, axes = plt.subplots(1, n_bins, figsize=(3 * n_bins, 3), sharey=True)
-    if n_bins == 1:
-        axes = [axes]
-
-    for ax, bin_label in zip(axes, valid_bins):
-        r = df_sbc.filter(pl.col("bin_labels") == bin_label)["rank"].to_numpy()
+    for idx, b in enumerate(bin_ids):
+        row, col = divmod(idx, ncols)
+        ax = axes[row][col]
+        r = df_sbc.filter(pl.col("bin_id") == b)["rank"].to_numpy()
         ax.hist(
             r,
             bins=20,
@@ -580,13 +586,18 @@ def plot_sbc_ranks(
             linewidth=0.3,
         )
         ax.axhline(1 / (K + 1), color="red", linestyle="--", linewidth=1.0)
-        ax.set_title(bin_label, fontsize=8)
+        ax.set_title(f"res bin {b}", fontsize=8)
         ax.set_xlabel("rank", fontsize=7)
         ax.text(0.05, 0.92, f"n={len(r)}", transform=ax.transAxes, fontsize=6)
-        if ax is axes[0]:
+        if col == 0:
             ax.set_ylabel("density", fontsize=7)
 
-    fig.suptitle("SBC rank histograms", fontsize=9)
+    # Hide unused subplots
+    for idx in range(n_bins, nrows * ncols):
+        row, col = divmod(idx, ncols)
+        axes[row][col].set_visible(False)
+
+    fig.suptitle("SBC rank histograms (per resolution bin)", fontsize=9)
     fig.tight_layout()
     return fig
 
@@ -600,91 +611,57 @@ def run_sbc(
     wandb_dir: "Path",
     data_dir: "Path",
     *,
-    nsamples: int = 5000,
+    nsamples_per_bin: int = 500,
     K: int = 99,
-    intensity_edges: list,
-    bin_labels: list[str],
     checkpoint_epoch: int | None = None,
 ) -> "pl.DataFrame":
-    """Run simulation-based calibration and return rank DataFrame."""
+    """Run simulation-based calibration per resolution bin.
+
+    For each resolution bin, samples intensities, backgrounds, and profiles
+    from that bin's prior, generates synthetic shoeboxes, runs inference,
+    and computes SBC ranks.  Returns a DataFrame with one row per simulated
+    reflection, labelled by resolution ``bin_id``.
+    """
     import polars as pl
     import torch
+    from pathlib import Path
 
     from integrator.utils import construct_integrator
 
-    # Load standardization stats
     stats_train = torch.load(data_dir / "stats_anscombe.pt", weights_only=False)
 
-    # Use prior parameters from the config
     loss_args = config.get("loss", {}).get("args", {})
 
-    # Intensity prior: Gamma(1, tau) where tau is per-group
-    tau_path = loss_args.get("tau_per_group")
-    if tau_path is not None:
-        from pathlib import Path
-        tau_p = Path(tau_path) if Path(tau_path).is_absolute() else data_dir / tau_path
-        tau = torch.load(tau_p, weights_only=True)
-    else:
-        tau = torch.tensor([0.001])
+    # --- Load per-bin priors ---
+    def _load_pt(key: str, default: "torch.Tensor") -> "torch.Tensor":
+        p = loss_args.get(key)
+        if p is None:
+            return default
+        fp = Path(p) if Path(p).is_absolute() else data_dir / p
+        return torch.load(fp, weights_only=True)
 
-    # Background prior: Gamma(1, bg_rate) per group
-    bg_rate_path = loss_args.get("bg_rate_per_group")
-    if bg_rate_path is not None:
-        from pathlib import Path
-        bg_p = Path(bg_rate_path) if Path(bg_rate_path).is_absolute() else data_dir / bg_rate_path
-        bg_rate = torch.load(bg_p, weights_only=True)
-    else:
-        bg_rate = torch.tensor([1.0])
+    tau = _load_pt("tau_per_group", torch.tensor([0.001]))            # (n_bins,)
+    bg_rate = _load_pt("bg_rate_per_group", torch.tensor([1.0]))      # (n_bins,)
+    concentration = _load_pt(                                          # (n_bins, 441)
+        "concentration_per_group", torch.ones(1, 441) * 1e-3
+    )
 
-    # Concentration for profile prior
-    conc_path = loss_args.get("concentration_per_group")
-    if conc_path is not None:
-        from pathlib import Path
-        conc_p = Path(conc_path) if Path(conc_path).is_absolute() else data_dir / conc_path
-        concentration = torch.load(conc_p, weights_only=True)
-    else:
-        concentration = torch.ones(441) * 1e-3
+    # Ensure 2-D concentration
+    if concentration.dim() == 1:
+        concentration = concentration.unsqueeze(0)
 
-    # Use bin 0 priors for SBC (simplification: single-bin SBC)
-    # If concentration is 2D (n_bins, 441), use first bin
-    if concentration.dim() == 2:
-        concentration = concentration[0]
-    if tau.dim() >= 1:
-        tau_val = tau[0]
-    else:
-        tau_val = tau
-
-    if bg_rate.dim() >= 1:
-        bg_rate_val = bg_rate[0]
-    else:
-        bg_rate_val = bg_rate
+    n_bins = concentration.shape[0]
+    # Broadcast scalar priors to n_bins if needed
+    if tau.numel() == 1:
+        tau = tau.expand(n_bins)
+    if bg_rate.numel() == 1:
+        bg_rate = bg_rate.expand(n_bins)
 
     H, W = 21, 21
 
-    # Sample from priors
-    pi = torch.distributions.Gamma(torch.ones(1), tau_val)
-    pbg = torch.distributions.Gamma(torch.ones(1), bg_rate_val)
-    pprf = torch.distributions.Dirichlet(concentration.clamp(min=1e-6))
-
-    i_s = pi.sample([nsamples]).squeeze()
-    bg_s = pbg.sample([nsamples]).squeeze()
-    prf_s = pprf.sample([nsamples])
-
-    # Generate shoeboxes
-    rates = (
-        i_s.view(nsamples, 1, 1) * prf_s.view(nsamples, H, W)
-        + bg_s.view(nsamples, 1, 1)
-    )
-    shoeboxes = torch.poisson(rates).unsqueeze(1)  # (N, 1, H, W)
-
-    # Standardize
-    anscombe = 2 * (shoeboxes.float() + 0.375).sqrt()
-    shoeboxes_std = (anscombe - stats_train[0]) / stats_train[1].sqrt()
-
-    # Load model
+    # --- Load model ---
     integrator = construct_integrator(config)
 
-    # Find checkpoint
     ckpts = sorted(wandb_dir.glob("**/epoch*.ckpt"))
     if not ckpts:
         logger.warning("No checkpoints found for SBC")
@@ -700,7 +677,9 @@ def run_sbc(
                 target = c
                 break
         if target is None:
-            logger.warning("Checkpoint epoch %d not found, using last", checkpoint_epoch)
+            logger.warning(
+                "Checkpoint epoch %d not found, using last", checkpoint_epoch
+            )
             target = ckpts[-1]
     else:
         target = ckpts[-1]
@@ -710,58 +689,90 @@ def run_sbc(
     integrator.load_state_dict(ckpt_data["state_dict"])
     integrator.eval()
 
-    # Build dummy inputs for the model's forward pass
-    # counts = raw shoeboxes (flat), masks = all ones, metadata = minimal dict
-    counts_flat = shoeboxes.squeeze(1).reshape(nsamples, -1)  # (N, H*W)
-    masks_flat = torch.ones_like(counts_flat)
-    dummy_meta = {
-        "refl_ids": torch.arange(nsamples),
-        "is_test": torch.ones(nsamples, dtype=torch.bool),
-        "group_label": torch.zeros(nsamples, dtype=torch.long),
-        "intensity": i_s,
-        "background": bg_s,
-    }
+    # --- Run SBC per resolution bin ---
+    all_rows: list[dict] = []
 
-    # Run inference in batches using the model's forward pass
-    batch_size = 512
-    all_qi_mean = []
-    all_qi_var = []
+    for b in range(n_bins):
+        logger.info("SBC bin %d/%d  (N=%d)", b + 1, n_bins, nsamples_per_bin)
 
-    with torch.no_grad():
-        for start in range(0, nsamples, batch_size):
-            end = min(start + batch_size, nsamples)
-            batch_counts = counts_flat[start:end]
-            batch_sbox = shoeboxes_std[start:end].squeeze(1).reshape(end - start, -1)
-            batch_masks = masks_flat[start:end]
-            batch_meta = {k: v[start:end] for k, v in dummy_meta.items()}
+        # Sample from bin-specific priors
+        pi = torch.distributions.Gamma(torch.ones(1), tau[b])
+        pbg = torch.distributions.Gamma(torch.ones(1), bg_rate[b])
+        pprf = torch.distributions.Dirichlet(concentration[b].clamp(min=1e-6))
 
-            outputs = integrator(batch_counts, batch_sbox, batch_masks, batch_meta)
-            fwd = outputs["forward_out"]
-            all_qi_mean.append(fwd["qi_mean"].cpu())
-            all_qi_var.append(fwd["qi_var"].cpu())
+        i_s = pi.sample([nsamples_per_bin]).squeeze()
+        bg_s = pbg.sample([nsamples_per_bin]).squeeze()
+        prf_s = pprf.sample([nsamples_per_bin])  # (N, 441)
 
-    qi_mean = torch.cat(all_qi_mean)
-    qi_var = torch.cat(all_qi_var)
+        # Generate shoeboxes
+        rates = (
+            i_s.view(nsamples_per_bin, 1, 1)
+            * prf_s.view(nsamples_per_bin, H, W)
+            + bg_s.view(nsamples_per_bin, 1, 1)
+        )
+        shoeboxes = torch.poisson(rates).unsqueeze(1)  # (N, 1, H, W)
 
-    # Recover Gamma parameters: mean = conc/rate, var = conc/rate^2
-    # => rate = mean/var, conc = mean^2/var
-    qi_rate = qi_mean / qi_var.clamp(min=1e-12)
-    qi_conc = qi_mean.pow(2) / qi_var.clamp(min=1e-12)
+        # Standardise (Anscombe)
+        anscombe = 2 * (shoeboxes.float() + 0.375).sqrt()
+        shoeboxes_std = (anscombe - stats_train[0]) / stats_train[1].sqrt()
 
-    # Compute SBC ranks
-    post_samples = torch.distributions.Gamma(qi_conc, qi_rate).sample([K])
-    ranks = (post_samples < i_s.unsqueeze(0)).sum(dim=0)
+        # Build model inputs — group_label = b for every sample
+        counts_flat = shoeboxes.squeeze(1).reshape(nsamples_per_bin, -1)
+        masks_flat = torch.ones_like(counts_flat)
+        meta = {
+            "refl_ids": torch.arange(nsamples_per_bin),
+            "is_test": torch.ones(nsamples_per_bin, dtype=torch.bool),
+            "group_label": torch.full(
+                (nsamples_per_bin,), b, dtype=torch.long
+            ),
+            "intensity": i_s,
+            "background": bg_s,
+        }
 
-    # Build DataFrame
+        # Inference in batches
+        batch_size = 512
+        qi_mean_parts, qi_var_parts = [], []
+
+        with torch.no_grad():
+            for start in range(0, nsamples_per_bin, batch_size):
+                end = min(start + batch_size, nsamples_per_bin)
+                bc = counts_flat[start:end]
+                bs = shoeboxes_std[start:end].squeeze(1).reshape(
+                    end - start, -1
+                )
+                bm = masks_flat[start:end]
+                bmet = {k: v[start:end] for k, v in meta.items()}
+
+                out = integrator(bc, bs, bm, bmet)
+                fwd = out["forward_out"]
+                qi_mean_parts.append(fwd["qi_mean"].cpu())
+                qi_var_parts.append(fwd["qi_var"].cpu())
+
+        qi_mean = torch.cat(qi_mean_parts)
+        qi_var = torch.cat(qi_var_parts)
+
+        # Recover Gamma params: mean=c/r, var=c/r² → r=mean/var, c=mean²/var
+        qi_rate = qi_mean / qi_var.clamp(min=1e-12)
+        qi_conc = qi_mean.pow(2) / qi_var.clamp(min=1e-12)
+
+        # SBC ranks
+        post_samples = torch.distributions.Gamma(qi_conc, qi_rate).sample([K])
+        ranks = (post_samples < i_s.unsqueeze(0)).sum(dim=0)
+
+        all_rows.append({
+            "rank": ranks.numpy().astype("int32"),
+            "I_true": i_s.numpy().astype("float32"),
+            "bin_id": [b] * nsamples_per_bin,
+        })
+
+    # Assemble DataFrame
+    import numpy as np
+
     df_sbc = pl.DataFrame({
-        "rank": ranks.numpy().astype("int32"),
-        "I_true": i_s.numpy().astype("float32"),
+        "rank": np.concatenate([r["rank"] for r in all_rows]),
+        "I_true": np.concatenate([r["I_true"] for r in all_rows]),
+        "bin_id": np.concatenate([r["bin_id"] for r in all_rows]).astype("int32"),
     })
-    df_sbc = df_sbc.with_columns(
-        pl.col("I_true")
-        .cut(breaks=intensity_edges, labels=bin_labels)
-        .alias("bin_labels")
-    )
     return df_sbc
 
 
@@ -1071,18 +1082,19 @@ def main():
         for k, v in summary_dict.items():
             _log(f"  {k}: {v:.6f}" if isinstance(v, float) else f"  {k}: {v}")
 
-    # 6. SBC (optional)
+    # 6. SBC (optional) — one check per resolution bin
     if args.sbc:
-        _log(f"Running SBC with {args.sbc_nsamples} samples, K={args.sbc_K}...")
+        _log(
+            f"Running SBC: {args.sbc_nsamples} samples/bin, "
+            f"K={args.sbc_K}..."
+        )
         try:
             df_sbc = run_sbc(
                 config=config,
                 wandb_dir=wandb_dir,
                 data_dir=data_dir,
-                nsamples=args.sbc_nsamples,
+                nsamples_per_bin=args.sbc_nsamples,
                 K=args.sbc_K,
-                intensity_edges=intensity_edges,
-                bin_labels=bin_labels,
                 checkpoint_epoch=last_epoch,
             )
             if len(df_sbc) > 0:
@@ -1091,14 +1103,17 @@ def main():
                 plt.close(fig)
                 n_plots_ok += 1
 
-                # Log rank uniformity p-value
+                # Per-bin KS p-values
                 from scipy import stats as sp_stats
-                ranks_np = df_sbc["rank"].to_numpy()
-                _, p_value = sp_stats.kstest(
-                    ranks_np, "uniform", args=(0, args.sbc_K + 1)
-                )
-                wandb.log({"sbc/ks_pvalue": p_value})
-                _log(f"SBC KS p-value: {p_value:.4f}")
+                for b in sorted(df_sbc["bin_id"].unique().to_list()):
+                    ranks_b = df_sbc.filter(
+                        pl.col("bin_id") == b
+                    )["rank"].to_numpy()
+                    _, pv = sp_stats.kstest(
+                        ranks_b, "uniform", args=(0, args.sbc_K + 1)
+                    )
+                    wandb.log({f"sbc/ks_pvalue_bin{b}": pv})
+                    _log(f"  SBC bin {b}: KS p-value = {pv:.4f}")
             else:
                 _log("SBC returned empty DataFrame")
         except Exception as e:
