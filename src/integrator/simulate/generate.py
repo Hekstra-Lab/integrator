@@ -18,6 +18,41 @@ from .profiles import sample_profiles
 logger = logging.getLogger(__name__)
 
 
+def _fit_concentration_from_profiles(
+    profiles: Tensor,
+    group_label: Tensor,
+) -> Tensor:
+    """Fit Dirichlet concentration per bin from simulated profiles.
+
+    Uses method-of-moments: kappa = median((p(1-p)/var(p)) - 1),
+    then alpha_k = kappa * p_bar.
+
+    Returns: (n_bins, n_pixels)
+    """
+    n_bins = int(group_label.max().item()) + 1
+    n_pixels = profiles.shape[1]
+    concentration = torch.zeros(n_bins, n_pixels)
+
+    for b in range(n_bins):
+        sel = profiles[group_label == b]
+        if len(sel) < 2:
+            concentration[b] = 1e-6
+            continue
+        p_bar = sel.mean(dim=0)
+        var_p = sel.var(dim=0)
+        valid = p_bar > 1e-6
+        if valid.sum() > 0:
+            ratio = (
+                p_bar[valid] * (1 - p_bar[valid])
+            ) / var_p[valid].clamp(min=1e-12) - 1
+            kappa = ratio.median().clamp(min=1.0)
+        else:
+            kappa = torch.tensor(1.0)
+        concentration[b] = (kappa * p_bar).clamp(min=1e-6)
+
+    return concentration
+
+
 def simulate(
     n_per_bin: int,
     n_bins: int,
@@ -193,6 +228,13 @@ def save_dataset(
 
     if concentration is not None:
         torch.save(concentration, save_dir / "concentration_per_group.pt")
+    else:
+        # Fit Dirichlet concentration from simulated profiles (method of moments)
+        concentration = _fit_concentration_from_profiles(
+            sim["profiles"], sim["group_label"]
+        )
+        torch.save(concentration, save_dir / "concentration_per_group.pt")
+        logger.info("Auto-generated concentration_per_group.pt from profiles")
 
     # Ground truth Wilson parameters (for hyperparameter recovery checks)
     if K_true is not None or B_true is not None:
