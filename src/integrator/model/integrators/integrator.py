@@ -226,8 +226,7 @@ class IntegratorModelD(BaseIntegrator):
     """IntegratorModelB variant with fully decoupled encoders for qi and qbg.
 
     Uses five encoders instead of three so that the intensity and background
-    surrogates receive independent latent representations, eliminating the
-    gradient entanglement that biases qbg when qi and qbg share (x_k, x_r).
+    surrogates receive independent latent representations.
 
     Encoder keys (must match YAML order):
         profile  – shoebox encoder  → qp

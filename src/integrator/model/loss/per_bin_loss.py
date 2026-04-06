@@ -1,12 +1,16 @@
-"""Per-bin resolution loss with group-dependent priors for all components.
+"""Per-bin resolution loss with group-dependent priors.
 
 ELBO decomposition:
     L = E_q[ log p(x | I, prf, bg) ]             — Poisson NLL
-      - KL( q(prf_i) || Dir(alpha_{k(i)}) )       — per-group profile prior
+      - KL( q(prf) || p(prf) )                    — profile prior
       - KL( q(I_i)   || Exp(tau_{k(i)}) )         — per-group intensity prior
       - KL( q(bg_i)  || Exp(lambda_{k(i)}) )      — per-group background prior
 
-All prior parameters are fixed (not learned) — loaded from simulation output.
+Profile prior depends on the surrogate type:
+  - Dirichlet surrogate:  KL( q(prf_i) || Dir(alpha_{k(i)}) )  per-bin
+  - Latent decoder (ProfilePosterior):  KL( q(h) || N(0, sigma²I) )  global
+
+All prior parameters are fixed (not learned), loaded from simulation output.
 """
 
 import torch
@@ -44,6 +48,9 @@ class PerBinLoss(nn.Module):
         Exponential rates for background prior, one per group.
     concentration_per_group : str
         Path to .pt file with Dirichlet concentrations (n_groups, n_pixels).
+        Only used when the profile surrogate returns a Distribution (Dirichlet).
+        Ignored when the surrogate returns a ProfilePosterior (latent decoder),
+        which uses a global N(0, sigma_prior²I) prior instead.
     pprf_weight : float
         Scaling factor for profile KL term.
     pbg_weight : float
@@ -78,7 +85,9 @@ class PerBinLoss(nn.Module):
         self.pi_weight = pi_weight
 
         self.register_buffer("tau_per_group", _load_buffer(tau_per_group))
-        self.register_buffer("bg_rate_per_group", _load_buffer(bg_rate_per_group))
+        self.register_buffer(
+            "bg_rate_per_group", _load_buffer(bg_rate_per_group)
+        )
         self.register_buffer(
             "concentration_per_group",
             _load_buffer(concentration_per_group).clamp(min=1e-6),
@@ -106,16 +115,19 @@ class PerBinLoss(nn.Module):
         kl_i = torch.zeros(batch_size, device=device)
         kl_bg = torch.zeros(batch_size, device=device)
 
-        # ── Profile KL: KL(q(prf_i) || Dir(alpha_{k(i)})) ────────
+        # Profile KL: per-bin Dirichlet or global Normal (latent decoder)
         if isinstance(qp, ProfilePosterior):
             kl_prf = qp.kl_divergence() * self.pprf_weight
         else:
             alpha = self.concentration_per_group[groups]  # (B, n_pixels)
             p_prf = Dirichlet(alpha)
-            kl_prf = _kl(qp, p_prf, self.mc_samples, eps=self.eps) * self.pprf_weight
+            kl_prf = (
+                _kl(qp, p_prf, self.mc_samples, eps=self.eps)
+                * self.pprf_weight
+            )
         kl = kl + kl_prf
 
-        # ── Intensity KL: KL(q(I_i) || Exp(tau_{k(i)})) ──────────
+        # Intensity KL: KL(q(I_i) || Exp(tau_{k(i)}))
         tau_per_refl = self.tau_per_group[groups]  # (B,)
         p_i = Gamma(
             concentration=torch.ones_like(tau_per_refl),
@@ -124,7 +136,7 @@ class PerBinLoss(nn.Module):
         kl_i = _kl(qi, p_i, self.mc_samples, eps=self.eps) * self.pi_weight
         kl = kl + kl_i
 
-        # ── Background KL: KL(q(bg_i) || Exp(lambda_{k(i)})) ─────
+        # Background KL: KL(q(bg_i) || Exp(lambda_{k(i)}))
         bg_rate_per_refl = self.bg_rate_per_group[groups]  # (B,)
         p_bg = Gamma(
             concentration=torch.ones_like(bg_rate_per_refl),
@@ -133,12 +145,12 @@ class PerBinLoss(nn.Module):
         kl_bg = _kl(qbg, p_bg, self.mc_samples, eps=self.eps) * self.pbg_weight
         kl = kl + kl_bg
 
-        # ── Poisson NLL ───────────────────────────────────────────
+        # Poisson NLL
         ll = Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
         ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
         neg_ll = (-ll_mean).sum(1)
 
-        # ── Total loss ────────────────────────────────────────────
+        # Total loss
         loss = (neg_ll + kl).mean()
 
         return {

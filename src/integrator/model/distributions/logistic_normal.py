@@ -6,14 +6,7 @@ from torch import Tensor
 
 class ProfilePosterior:
     """Variational posterior q(h|x) = N(mu_h, diag(sigma_h^2)).
-
     Profiles are recovered as prf = softmax(W @ h + b) where W and b are fixed.
-
-    This is NOT a torch.distributions.Distribution.  It exposes:
-      - .rsample(sample_shape)  — reparameterized profile samples
-      - .kl_divergence()        — closed-form KL(q||p) per batch element
-      - .mean                   — profile at the posterior mean h  (B, K)
-      - .concentration          — None (Dirichlet compatibility shim)
     """
 
     def __init__(
@@ -122,34 +115,8 @@ class ProfilePosterior:
         return kl  # (B,)
 
 
-# ---------------------------------------------------------------------------
-# Surrogate module
-# ---------------------------------------------------------------------------
-
-
+# %%
 class LogisticNormalSurrogate(nn.Module):
-    """Profile surrogate using a low-rank logistic-normal parameterization.
-
-    The profile is:
-        prf = softmax(W @ h + b)
-
-    where W (K, d) and b (K,) are a fixed Hermite-Gaussian basis loaded from
-    ``basis_path``, and h is a d-dimensional latent vector.
-
-    The variational posterior is:
-        q(h | x) = N(mu_h(x), diag(sigma_h(x)^2))
-
-    Only the two linear heads (mu_head, logvar_head) are trainable.
-
-    Parameters
-    ----------
-    input_dim : int
-        Dimension of the encoder output fed to this surrogate.
-    basis_path : str
-        Path to ``profile_basis.pt`` containing keys:
-        ``W`` (K, d), ``b`` (K,), ``d`` (int), ``sigma_prior`` (float).
-    """
-
     def __init__(self, input_dim: int, basis_path: str) -> None:
         super().__init__()
 

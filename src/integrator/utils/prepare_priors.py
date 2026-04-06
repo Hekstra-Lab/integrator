@@ -63,7 +63,11 @@ def prepare_per_bin_priors(
             continue
         filename = loss_args[key]
         if isinstance(filename, str):
-            path = Path(filename) if Path(filename).is_absolute() else data_dir / filename
+            path = (
+                Path(filename)
+                if Path(filename).is_absolute()
+                else data_dir / filename
+            )
             if force or not path.exists():
                 needed[key] = path
 
@@ -100,7 +104,9 @@ def prepare_per_bin_priors(
         logger.info("Saved bg_rate_per_group.pt")
 
     if "concentration_per_group" in needed:
-        concentration = _fit_dirichlet_per_group(counts, masks, group_labels, n_bins)
+        concentration = _fit_dirichlet_per_group(
+            counts, masks, group_labels, n_bins
+        )
         torch.save(concentration, needed["concentration_per_group"])
         logger.info("Saved concentration_per_group.pt")
 
@@ -115,16 +121,13 @@ def prepare_per_bin_priors(
             metadata.get("intensity.sum.value"),
         )
         if intensity is not None:
-            tau = _compute_tau_per_group(intensity, group_labels, n_bins, min_intensity)
+            tau = _compute_tau_per_group(
+                intensity, group_labels, n_bins, min_intensity
+            )
             torch.save(tau, needed["tau_per_group"])
             logger.info("Saved tau_per_group.pt")
         else:
             logger.warning("No intensity column found; skipping tau_per_group")
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
 
 
 def _resolve_reference_path(data_dir: Path, cfg: dict) -> Path:
@@ -164,7 +167,7 @@ def _bin_by_resolution(
 ) -> tuple[Tensor, Tensor, int]:
     """Assign reflections to resolution bins via quantiles.
 
-    If any bin has fewer than ``min_per_bin`` reflections, ``n_bins`` is
+    If any bin has fewer than `min_per_bin` reflections, `n_bins` is
     reduced and the binning is retried until all bins are large enough
     (or n_bins reaches 1).
 
@@ -187,7 +190,9 @@ def _bin_by_resolution(
         n_bins = max(1, n_bins - 1)
         logger.warning(
             "Bin with <%d reflections detected; reducing n_bins %d -> %d",
-            min_per_bin, old_n, n_bins,
+            min_per_bin,
+            old_n,
+            n_bins,
         )
 
     # n_bins == 1: single bin fallback
@@ -274,7 +279,9 @@ def _fit_dirichlet_per_group(
 
         valid = p_bar > 1e-6
         if valid.sum() > 0:
-            ratio = (p_bar[valid] * (1 - p_bar[valid])) / var_p[valid].clamp(min=1e-12) - 1
+            ratio = (p_bar[valid] * (1 - p_bar[valid])) / var_p[valid].clamp(
+                min=1e-12
+            ) - 1
             kappa = ratio.median().clamp(min=1.0)
         else:
             kappa = torch.tensor(1.0)

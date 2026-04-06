@@ -11,13 +11,16 @@ import torch
 from torch import Tensor
 
 from integrator import configs
-from integrator.model.integrators.base_integrator import BaseIntegrator, _log_loss
+from integrator.model.integrators.base_integrator import (
+    BaseIntegrator,
+    _log_loss,
+)
+from integrator.model.integrators.integrator import IntegratorModelD
 from integrator.model.integrators.integrator_utils import (
     IntegratorBaseOutputs,
     IntegratorModelArgs,
     _assemble_outputs,
 )
-from integrator.model.integrators.integrator import IntegratorModelD
 
 
 def _add_group_outputs(out: dict, metadata: dict, loss) -> None:
@@ -77,7 +80,6 @@ def _hierarchical_step(self, batch, step: Literal["train", "val"]):
 
 class HierarchicalIntegrator(BaseIntegrator):
     """ModelA variant with fixed per-group intensity priors.
-
     Metadata must contain ``group_label`` (integer tensor [B]).
     """
 
@@ -143,7 +145,7 @@ class HierarchicalIntegratorD(IntegratorModelD):
     """ModelD variant with fixed per-group priors.
 
     Like ModelD, uses five fully decoupled encoders (profile, k_i, r_i, k_bg, r_bg).
-    Metadata must contain ``group_label`` (integer tensor [B]).
+    Metadata must contain `group_labe`` (integer tensor [B]).
     """
 
     def _forward_impl(

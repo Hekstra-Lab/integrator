@@ -6,24 +6,34 @@ Intensity prior — Wilson model (learned, per-bin):
     τ_k   = (1/K) · exp(2B · s_k²)  per-bin rate from Wilson formula
     I_k   ~ Gamma(1, τ_k)           (= Exponential(τ_k))
 
-Background and profile priors — empirical Bayes (fixed, per-bin):
+Background prior — empirical Bayes (fixed, per-bin):
     bg_k  ~ Exp(λ_k)               fixed per-group rate
-    prf_k ~ Dir(α_k)               fixed per-group concentration
+
+Profile prior — depends on surrogate type:
+    Dirichlet surrogate:  prf_k ~ Dir(α_k)          fixed per-group concentration
+    Latent decoder (ProfilePosterior):  h ~ N(0, σ²I)  global prior
 
 ELBO:
     L = E_q[ log p(x | I, prf, bg) ]
-      - KL(q(prf) || Dir(α_k))
-      - E_{q(K,B)}[ KL(q(I) || Gamma(1, τ_k(K,B))) ]
-      - KL(q(bg)  || Exp(λ_k))
-      - KL(q(log K) || p(log K)) / N
-      - KL(q(log B) || p(log B)) / N
+      - KL(q(prf) || p(prf))                          — profile (see above)
+      - E_{q(K,B)}[ KL(q(I) || Gamma(1, τ_k(K,B))) ] — intensity (Wilson)
+      - KL(q(bg)  || Exp(λ_k))                        — background
+      - KL(q(log K) || p(log K)) / N                  — hyperprior
+      - KL(q(log B) || p(log B)) / N                  — hyperprior
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from torch.distributions import Dirichlet, Distribution, Gamma, Normal, Poisson, kl_divergence
+from torch.distributions import (
+    Dirichlet,
+    Distribution,
+    Gamma,
+    Normal,
+    Poisson,
+    kl_divergence,
+)
 
 from integrator.model.distributions.logistic_normal import ProfilePosterior
 from integrator.model.loss.loss import _kl
@@ -53,6 +63,9 @@ class WilsonPerBinLoss(nn.Module):
         Exponential rates for background prior, one per group.
     concentration_per_group : str
         Path to .pt file with Dirichlet concentrations (n_groups, n_pixels).
+        Only used when the profile surrogate returns a Distribution (Dirichlet).
+        Ignored when the surrogate returns a ProfilePosterior (latent decoder),
+        which uses a global N(0, sigma_prior²I) prior instead.
     tau_per_group : list[float] or str or None
         If provided, auto-initializes q(log K) and q(log B) via linear
         regression of log(τ) on s².
@@ -145,9 +158,7 @@ class WilsonPerBinLoss(nn.Module):
     # -- Initialization helper ------------------------------------------------
 
     @staticmethod
-    def _fit_wilson_init(
-        tau: Tensor, s_sq: Tensor
-    ) -> tuple[float, float]:
+    def _fit_wilson_init(tau: Tensor, s_sq: Tensor) -> tuple[float, float]:
         """Fit Wilson model to empirical tau via linear regression.
 
         log(tau_k) = -log(K) + 2B*s_k^2  ->  y = a + b*x
@@ -159,7 +170,9 @@ class WilsonPerBinLoss(nn.Module):
         x = s_sq
         x_mean = x.mean()
         y_mean = y.mean()
-        b = ((x - x_mean) * (y - y_mean)).sum() / (x - x_mean).pow(2).sum().clamp(min=1e-12)
+        b = ((x - x_mean) * (y - y_mean)).sum() / (x - x_mean).pow(
+            2
+        ).sum().clamp(min=1e-12)
         a = y_mean - b * x_mean
         init_log_K = float(-a)
         B_val = float(b / 2.0)
@@ -256,16 +269,19 @@ class WilsonPerBinLoss(nn.Module):
         kl_i = torch.zeros(batch_size, device=device)
         kl_bg = torch.zeros(batch_size, device=device)
 
-        # -- Profile KL: KL(q(prf) || Dir(alpha_k)) -- (per-bin empirical Bayes)
+        # Profile KL: per-bin Dirichlet or global Normal (latent decoder)
         if isinstance(qp, ProfilePosterior):
             kl_prf = qp.kl_divergence() * self.pprf_weight
         else:
             alpha = self.concentration_per_group[groups]  # (B, n_pixels)
             p_prf = Dirichlet(alpha)
-            kl_prf = _kl(qp, p_prf, self.mc_samples, eps=self.eps) * self.pprf_weight
+            kl_prf = (
+                _kl(qp, p_prf, self.mc_samples, eps=self.eps)
+                * self.pprf_weight
+            )
         kl = kl + kl_prf
 
-        # -- Intensity KL: E_{q(K,B)}[ KL(q(I) || Gamma(1, tau_k(K,B))) ] --
+        # Intensity KL: E_{q(K,B)}[ KL(q(I) || Gamma(1, tau_k(K,B))) ]
         # (per-bin Wilson prior)
         s_sq = self.s_squared_per_group[groups]  # (B,)
         for _ in range(self.n_wilson_samples):
@@ -283,7 +299,7 @@ class WilsonPerBinLoss(nn.Module):
         kl_i = kl_i * self.pi_weight
         kl = kl + kl_i
 
-        # -- Background KL: KL(q(bg) || Exp(lambda_k)) -- (per-bin empirical Bayes)
+        # Background KL: KL(q(bg) || Exp(lambda_k))
         bg_rate_per_refl = self.bg_rate_per_group[groups]  # (B,)
         p_bg = Gamma(
             concentration=torch.ones_like(bg_rate_per_refl),
@@ -292,15 +308,15 @@ class WilsonPerBinLoss(nn.Module):
         kl_bg = _kl(qbg, p_bg, self.mc_samples, eps=self.eps) * self.pbg_weight
         kl = kl + kl_bg
 
-        # -- Hyperprior KL (amortized over dataset) --
+        # Hyperprior KL (amortized over dataset)
         kl_hyper = self.kl_hyperparams() / self.dataset_size
 
-        # -- Poisson NLL --
+        # Poisson NLL
         ll = Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
         ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
         neg_ll = (-ll_mean).sum(1)
 
-        # -- Total loss --
+        # Total loss
         loss = (neg_ll + kl).mean() + kl_hyper
 
         return {

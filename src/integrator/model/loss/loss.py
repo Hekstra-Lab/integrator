@@ -18,7 +18,9 @@ from torch.distributions import (
 from integrator.configs.config_utils import shallow_dict
 from integrator.configs.priors import DirichletParams, PriorConfig
 from integrator.model.distributions.logistic_normal import ProfilePosterior
-from integrator.model.distributions.total_fraction import TotalFractionPosterior
+from integrator.model.distributions.total_fraction import (
+    TotalFractionPosterior,
+)
 
 PRIOR_MAP = {
     "gamma": Gamma,
@@ -163,12 +165,12 @@ def _joint_prior_kl_analytic(
     kl_const_I  = lgamma(alpha_I)  - alpha_I  * log(beta_I)   (precomputed scalar)
     kl_const_bg = lgamma(alpha_bg) - alpha_bg * log(beta_bg)  (precomputed scalar)
     """
-    mu = q_ib.loc         # (B, 2)
-    L  = q_ib.scale_tril  # (B, 2, 2)
+    mu = q_ib.loc  # (B, 2)
+    L = q_ib.scale_tril  # (B, 2, 2)
     mu1, mu2 = mu[:, 0], mu[:, 1]
 
     # Marginal log-space variances
-    s11 = L[:, 0, 0] ** 2                     # Var[log I] = L11²
+    s11 = L[:, 0, 0] ** 2  # Var[log I] = L11²
     s22 = L[:, 1, 0] ** 2 + L[:, 1, 1] ** 2  # Var[log B] = L21² + L22²
 
     # Differential entropy of BivariateLogNormal
@@ -177,9 +179,7 @@ def _joint_prior_kl_analytic(
 
     # -E[log p_I(I)] = -(α-1) E[log I]  + β E[I]  + (lgamma(α) - α log β)
     neg_cross_I = (
-        -(alpha_I - 1.0) * mu1
-        + beta_I * (mu1 + 0.5 * s11).exp()
-        + kl_const_I
+        -(alpha_I - 1.0) * mu1 + beta_I * (mu1 + 0.5 * s11).exp() + kl_const_I
     )
 
     neg_cross_bg = (
@@ -244,23 +244,31 @@ def _joint_prior_kl_tf(
     which is not a standard family, so we estimate the KL via MC.
     Works with any prior supported by PRIOR_MAP (Gamma, LogNormal, etc.).
     """
-    p_i  = _build_prior(pi_cfg,  pi_params,  device) if (pi_cfg  and pi_params)  else None
-    p_bg = _build_prior(pbg_cfg, pbg_params, device) if (pbg_cfg and pbg_params) else None
+    p_i = (
+        _build_prior(pi_cfg, pi_params, device)
+        if (pi_cfg and pi_params)
+        else None
+    )
+    p_bg = (
+        _build_prior(pbg_cfg, pbg_params, device)
+        if (pbg_cfg and pbg_params)
+        else None
+    )
 
     if p_i is None and p_bg is None:
         return torch.zeros(q_ib.batch_shape, device=device)
 
-    samples_Tf = q_ib.rsample([mc_samples])          # [S, B, 2]
-    T_s = samples_Tf[..., 0]                          # [S, B]
-    f_s = samples_Tf[..., 1]                          # [S, B]
-    I_s  = f_s * T_s                                  # [S, B]
-    bg_s = (1.0 - f_s) * T_s / q_ib.n_pixels         # [S, B]
+    samples_Tf = q_ib.rsample([mc_samples])  # [S, B, 2]
+    T_s = samples_Tf[..., 0]  # [S, B]
+    f_s = samples_Tf[..., 1]  # [S, B]
+    I_s = f_s * T_s  # [S, B]
+    bg_s = (1.0 - f_s) * T_s / q_ib.n_pixels  # [S, B]
 
-    log_q = q_ib.log_prob(samples_Tf)                 # [S, B]
+    log_q = q_ib.log_prob(samples_Tf)  # [S, B]
 
     # log p_induced(T, f) = log p_I(fT) + log p_bg((1-f)T/n) + log T - log n
     log_p = T_s.log() - log(q_ib.n_pixels)
-    if p_i  is not None:
+    if p_i is not None:
         log_p = log_p + p_i.log_prob(I_s)
     if p_bg is not None:
         log_p = log_p + p_bg.log_prob(bg_s)
@@ -321,16 +329,16 @@ class Loss(nn.Module):
             and self.pbg_params is not None
         )
         if self._use_analytic_kl:
-            a_I  = float(self.pi_params["concentration"])   # type: ignore[index]
-            b_I  = float(self.pi_params["rate"])            # type: ignore[index]
+            a_I = float(self.pi_params["concentration"])  # type: ignore[index]
+            b_I = float(self.pi_params["rate"])  # type: ignore[index]
             a_bg = float(self.pbg_params["concentration"])  # type: ignore[index]
-            b_bg = float(self.pbg_params["rate"])           # type: ignore[index]
-            self._alpha_I  = a_I
-            self._beta_I   = b_I
+            b_bg = float(self.pbg_params["rate"])  # type: ignore[index]
+            self._alpha_I = a_I
+            self._beta_I = b_I
             self._alpha_bg = a_bg
-            self._beta_bg  = b_bg
+            self._beta_bg = b_bg
             # lgamma(α) - α·log(β):  constant w.r.t. model params
-            self._kl_const_I  = lgamma(a_I)  - a_I  * log(b_I)
+            self._kl_const_I = lgamma(a_I) - a_I * log(b_I)
             self._kl_const_bg = lgamma(a_bg) - a_bg * log(b_bg)
 
     def forward(
@@ -403,9 +411,12 @@ class Loss(nn.Module):
                 # BivariateLogNormal with Gamma priors — exact analytic KL.
                 kl_i = _joint_prior_kl_analytic(
                     q_ib,
-                    self._alpha_I, self._beta_I,
-                    self._alpha_bg, self._beta_bg,
-                    self._kl_const_I, self._kl_const_bg,
+                    self._alpha_I,
+                    self._beta_I,
+                    self._alpha_bg,
+                    self._beta_bg,
+                    self._kl_const_I,
+                    self._kl_const_bg,
                     weight=weight,
                 )
             else:

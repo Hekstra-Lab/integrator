@@ -18,9 +18,9 @@ from integrator.model.distributions import (
     GammaDistributionRepamD,
     HalfNormalDistribution,
     LinearProfileSurrogate,
+    LogisticNormalSurrogate,
     LogNormalA,
     LogNormalDistribution,
-    LogisticNormalSurrogate,
     PhysicalGaussianProfileSurrogate,
     TotalFractionSurrogate,
 )
@@ -42,7 +42,12 @@ from integrator.model.integrators import (
     IntegratorModelE,
     IntegratorModelF,
 )
-from integrator.model.loss import HierarchicalShoeboxLoss, Loss, PerBinLoss, WilsonPerBinLoss
+from integrator.model.loss import (
+    HierarchicalShoeboxLoss,
+    Loss,
+    PerBinLoss,
+    WilsonPerBinLoss,
+)
 
 REGISTRY = {
     "encoders": {
