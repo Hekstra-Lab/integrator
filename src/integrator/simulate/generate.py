@@ -236,6 +236,18 @@ def save_dataset(
         torch.save(concentration, save_dir / "concentration_per_group.pt")
         logger.info("Auto-generated concentration_per_group.pt from profiles")
 
+    # Physical Gaussian profile basis (for physical_gaussian_surrogate)
+    profile_basis = {
+        "basis_type": "physical_gaussian",
+        "d": 5,
+        "sigma_prior": 1.0,
+        "center_base": (sim["profiles"].shape[1] ** 0.5 - 1) / 2.0,
+        "center_scale": 1.5,
+        "log_sigma_base": 0.7,
+        "width_scale": 0.4,
+    }
+    torch.save(profile_basis, save_dir / "profile_basis.pt")
+
     # Ground truth Wilson parameters (for hyperparameter recovery checks)
     if K_true is not None or B_true is not None:
         ground_truth = {
