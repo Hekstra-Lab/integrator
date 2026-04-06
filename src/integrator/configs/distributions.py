@@ -6,6 +6,7 @@ class SurrogateArgs:
     in_features: int
     eps: float
     k_max: float | None = None
+    k_min: float = 0.1
 
 
 @dataclass
