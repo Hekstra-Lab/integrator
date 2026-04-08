@@ -64,7 +64,7 @@ def simulate(
     n_frames: int = 3,
     profile_kwargs: dict | None = None,
     seed: int | None = None,
-) -> dict[str, Tensor]:
+) -> dict:
     """Simulate shoeboxes with 2D Gaussian profiles.
 
     Parameters
@@ -145,11 +145,12 @@ def simulate(
         "intensity": intensity,
         "background": background,
         "group_label": group_label,
+        "profile_kwargs": pkw,
     }
 
 
 def save_dataset(
-    sim: dict[str, Tensor],
+    sim: dict,
     tau: Tensor,
     bg_rate: Tensor,
     save_dir: Path,
@@ -237,14 +238,17 @@ def save_dataset(
         logger.info("Auto-generated concentration_per_group.pt from profiles")
 
     # Physical Gaussian profile basis (for physical_gaussian_surrogate)
+    # Use profile_kwargs from simulation if available, otherwise defaults
+    pkw = sim.get("profile_kwargs", {})
+    center_base = pkw.get("center_base", (sim["profiles"].shape[1] ** 0.5 - 1) / 2.0)
     profile_basis = {
         "basis_type": "physical_gaussian",
         "d": 5,
         "sigma_prior": 1.0,
-        "center_base": (sim["profiles"].shape[1] ** 0.5 - 1) / 2.0,
-        "center_scale": 1.5,
-        "log_sigma_base": 0.7,
-        "width_scale": 0.4,
+        "center_base": float(center_base),
+        "center_scale": float(pkw.get("center_scale", 1.5)),
+        "log_sigma_base": float(pkw.get("log_sigma_base", 0.7)),
+        "width_scale": float(pkw.get("width_scale", 0.4)),
     }
     torch.save(profile_basis, save_dir / "profile_basis.pt")
 

@@ -1,11 +1,18 @@
 """Sample 2D Gaussian profiles on a pixel grid.
 
-Each profile is a normalized probability map on an H x W grid, generated
-by rendering a 2D Gaussian with random center, width, rotation, and
-optional streak (elongation) and skew (asymmetry).
-"""
+Each profile is generated from a 5D latent h ~ N(0, I_5) mapped to
+physical parameters (cx, cy, sigma1, sigma2, theta) via the same
+transform used by PhysicalGaussianProfileSurrogate:
 
-import math
+    cx     = center_base + h[0] * center_scale
+    cy     = center_base + h[1] * center_scale
+    sigma1 = exp(log_sigma_base + h[2] * width_scale)
+    sigma2 = exp(log_sigma_base + h[3] * width_scale)
+    theta  = pi * sigmoid(h[4])
+
+This ensures the simulated profiles live in exactly the same family
+as the surrogate posterior, which is required for valid SBC.
+"""
 
 import torch
 from torch import Tensor
@@ -16,18 +23,12 @@ def sample_profiles(
     H: int = 21,
     W: int = 21,
     *,
-    center_std: float = 1.5,
-    log_sigma_mean: float = 0.9,
-    log_sigma_std: float = 0.3,
-    skew_prob: float = 0.3,
-    max_skew: float = 1.5,
-    streak_prob: float = 0.2,
-    max_elongation: float = 5.0,
+    center_base: float | None = None,
+    center_scale: float = 1.5,
+    log_sigma_base: float = 0.7,
+    width_scale: float = 0.4,
 ) -> Tensor:
-    """Sample diverse 2D Gaussian profiles on an H x W pixel grid.
-
-    Each profile is rendered as a (possibly elongated / skewed) 2D
-    Gaussian and normalized to sum to 1.
+    """Sample 2D Gaussian profiles from h ~ N(0, I_5).
 
     Parameters
     ----------
@@ -35,86 +36,130 @@ def sample_profiles(
         Number of profiles to generate.
     H, W : int
         Grid dimensions (default 21 x 21).
-    center_std : float
-        Std of the center jitter around the grid midpoint.
-    log_sigma_mean, log_sigma_std : float
-        Mean and std of the log-normal width distribution.
-        exp(0.9) ≈ 2.5 pixels.
-    skew_prob : float
-        Probability of adding asymmetric sigmoid skew.
-    max_skew : float
-        Maximum skew strength.
-    streak_prob : float
-        Probability of elongating one axis (streak / Laue-like).
-    max_elongation : float
-        Maximum sigma ratio for streaks.
+    center_base : float, optional
+        Center of the grid in pixels. Defaults to (H-1)/2.
+    center_scale : float
+        Std of center jitter in pixels.
+    log_sigma_base : float
+        Base log-width. exp(0.7) ~ 2.0 pixels.
+    width_scale : float
+        Std of log-width variation.
 
     Returns
     -------
     profiles : Tensor, shape (N, H*W)
         Each row sums to 1.
     """
-    cy_base = (H - 1) / 2.0
-    cx_base = (W - 1) / 2.0
+    if center_base is None:
+        center_base = (H - 1) / 2.0
 
+    h = torch.randn(N, 5)
+    profiles = h_to_profile(
+        h,
+        H=H,
+        W=W,
+        center_base=center_base,
+        center_scale=center_scale,
+        log_sigma_base=log_sigma_base,
+        width_scale=width_scale,
+    )
+    return profiles
+
+
+def h_to_physical_params(
+    h: Tensor,
+    center_base: float = 10.0,
+    center_scale: float = 1.5,
+    log_sigma_base: float = 0.7,
+    width_scale: float = 0.4,
+) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
+    """Map latent h to physical profile parameters.
+
+    Returns
+    -------
+    cx, cy : (...,) center coordinates in pixel space
+    sigma1, sigma2 : (...,) widths in pixel space (positive)
+    theta : (...,) rotation angle in (0, pi)
+    """
+    cx = center_base + h[..., 0] * center_scale
+    cy = center_base + h[..., 1] * center_scale
+    sigma1 = (log_sigma_base + h[..., 2] * width_scale).exp()
+    sigma2 = (log_sigma_base + h[..., 3] * width_scale).exp()
+    theta = torch.pi * torch.sigmoid(h[..., 4])
+    return cx, cy, sigma1, sigma2, theta
+
+
+def physical_params_to_profile(
+    cx: Tensor,
+    cy: Tensor,
+    sigma1: Tensor,
+    sigma2: Tensor,
+    theta: Tensor,
+    H: int = 21,
+    W: int = 21,
+) -> Tensor:
+    """Render normalized 2D Gaussian profiles from physical parameters.
+
+    Parameters
+    ----------
+    cx, cy, sigma1, sigma2, theta : (...,) batch of parameters
+
+    Returns
+    -------
+    profiles : (..., H*W) normalized profiles
+    """
     yy, xx = torch.meshgrid(
         torch.arange(H, dtype=torch.float32),
         torch.arange(W, dtype=torch.float32),
         indexing="ij",
     )
 
-    profiles = torch.zeros(N, H * W)
+    # Expand grid for broadcasting: (H, W) -> (1..., H, W)
+    batch_dims = cx.shape
+    for _ in range(len(batch_dims)):
+        xx = xx.unsqueeze(0)
+        yy = yy.unsqueeze(0)
 
-    for i in range(N):
-        # Random center
-        cx = cx_base + torch.randn(1).item() * center_std
-        cy = cy_base + torch.randn(1).item() * center_std
+    # Expand params: (...,) -> (..., 1, 1)
+    cx = cx[..., None, None]
+    cy = cy[..., None, None]
+    sigma1 = sigma1[..., None, None]
+    sigma2 = sigma2[..., None, None]
+    theta = theta[..., None, None]
 
-        # Random widths (log-normal)
-        sigma_x = math.exp(
-            torch.distributions.Normal(log_sigma_mean, log_sigma_std)
-            .sample()
-            .item()
-        )
-        sigma_y = math.exp(
-            torch.distributions.Normal(log_sigma_mean, log_sigma_std)
-            .sample()
-            .item()
-        )
+    # Rotated coordinates
+    dx = xx - cx
+    dy = yy - cy
+    cos_t = torch.cos(theta)
+    sin_t = torch.sin(theta)
+    x_rot = dx * cos_t + dy * sin_t
+    y_rot = -dx * sin_t + dy * cos_t
 
-        # Streak: occasionally elongate one axis
-        if torch.rand(1).item() < streak_prob:
-            elongation = 1.0 + torch.rand(1).item() * (max_elongation - 1.0)
-            if torch.rand(1).item() < 0.5:
-                sigma_x *= elongation
-            else:
-                sigma_y *= elongation
+    # Gaussian
+    profile = torch.exp(-0.5 * (x_rot**2 / sigma1**2 + y_rot**2 / sigma2**2))
 
-        # Random rotation
-        theta = torch.rand(1).item() * math.pi
-        cos_t, sin_t = math.cos(theta), math.sin(theta)
+    # Normalize to sum to 1
+    profile = profile / profile.sum(dim=(-2, -1), keepdim=True).clamp(min=1e-10)
 
-        dx = xx - cx
-        dy = yy - cy
-        x_rot = dx * cos_t + dy * sin_t
-        y_rot = -dx * sin_t + dy * cos_t
+    # Flatten spatial dims
+    return profile.reshape(*batch_dims, H * W)
 
-        # Base Gaussian
-        profile = torch.exp(
-            -0.5 * (x_rot**2 / sigma_x**2 + y_rot**2 / sigma_y**2)
-        )
 
-        # Asymmetric skew
-        if torch.rand(1).item() < skew_prob:
-            skew_strength = torch.rand(1).item() * max_skew
-            skew_angle = torch.rand(1).item() * 2 * math.pi
-            skew_coord = (
-                dx * math.cos(skew_angle) + dy * math.sin(skew_angle)
-            )
-            profile = profile * torch.sigmoid(skew_strength * skew_coord)
+def h_to_profile(
+    h: Tensor,
+    H: int = 21,
+    W: int = 21,
+    **param_kwargs,
+) -> Tensor:
+    """Full pipeline: h -> physical params -> normalized profile.
 
-        # Normalize
-        profile = profile / profile.sum().clamp(min=1e-10)
-        profiles[i] = profile.reshape(-1)
+    Parameters
+    ----------
+    h : (..., 5) latent vector
 
-    return profiles
+    Returns
+    -------
+    profiles : (..., H*W) normalized profiles
+    """
+    cx, cy, sigma1, sigma2, theta = h_to_physical_params(h, **param_kwargs)
+    return physical_params_to_profile(cx, cy, sigma1, sigma2, theta, H, W)
