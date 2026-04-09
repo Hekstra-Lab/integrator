@@ -198,7 +198,7 @@ class GammaDistributionRepamA(nn.Module):
 
         r = F.softplus(raw_r) + self.eps
 
-        return Gamma(concentration=k.flatten(), rate=r.flatten(), validate_args=False)
+        return Gamma(concentration=k.flatten(), rate=r.flatten())
 
 
 # %%
@@ -241,7 +241,7 @@ class GammaDistributionRepamB(nn.Module):
         if self.k_max is not None:
             k = k.clamp(max=self.k_max)
 
-        return Gamma(concentration=k.flatten(), rate=r.flatten(), validate_args=False)
+        return Gamma(concentration=k.flatten(), rate=r.flatten())
 
 
 # %%
@@ -278,7 +278,7 @@ class GammaDistributionRepamC(nn.Module):
             k = k.clamp(max=self.k_max)
         r = 1.0 / (phi * mu)
 
-        return Gamma(concentration=k.flatten(), rate=r.flatten(), validate_args=False)
+        return Gamma(concentration=k.flatten(), rate=r.flatten())
 
 
 # %%
@@ -314,7 +314,7 @@ class GammaDistributionRepamD(nn.Module):
 
         r = 1.0 / fano
 
-        return Gamma(concentration=k.flatten(), rate=r.flatten(), validate_args=False)
+        return Gamma(concentration=k.flatten(), rate=r.flatten())
 
 
 # %%
@@ -353,7 +353,7 @@ class GammaDistribution(nn.Module):
         if self.k_max is not None:
             k = k.clamp(max=self.k_max)
 
-        return Gamma(concentration=k.flatten(), rate=r.flatten(), validate_args=False)
+        return Gamma(concentration=k.flatten(), rate=r.flatten())
 
 
 # %%
@@ -399,7 +399,7 @@ class FanoGammaRepamB(nn.Module):
             k = k.clamp(max=self.k_max)
 
         r = 1.0 / fano
-        return Gamma(concentration=k.flatten(), rate=r.flatten(), validate_args=False)
+        return Gamma(concentration=k.flatten(), rate=r.flatten())
 
 
 class FanoGammaRepamD(nn.Module):
@@ -432,4 +432,4 @@ class FanoGammaRepamD(nn.Module):
         fano = F.softplus(raw_fano) + self.eps
 
         r = 1.0 / fano
-        return Gamma(concentration=k.flatten(), rate=r.flatten(), validate_args=False)
+        return Gamma(concentration=k.flatten(), rate=r.flatten())

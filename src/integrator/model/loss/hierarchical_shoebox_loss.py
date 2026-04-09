@@ -143,7 +143,6 @@ class HierarchicalShoeboxLoss(nn.Module):
         p_i = Gamma(
             concentration=torch.ones_like(tau_per_refl),
             rate=tau_per_refl,
-            validate_args=False,
         )  # Exp(tau) = Gamma(1, tau)
         kl_i = _kl(qi, p_i, self.mc_samples, eps=self.eps)
         kl = kl + kl_i
@@ -162,7 +161,7 @@ class HierarchicalShoeboxLoss(nn.Module):
             kl = kl + kl_bg
 
         # Poisson NLL
-        ll = Poisson(rate + self.eps, validate_args=False).log_prob(counts.unsqueeze(1))
+        ll = Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
         ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
         neg_ll = (-ll_mean).sum(1)
 

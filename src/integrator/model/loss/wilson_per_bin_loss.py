@@ -22,8 +22,6 @@ ELBO:
       - KL(q(log B) || p(log B)) / N                  — hyperprior
 """
 
-import logging
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -40,8 +38,6 @@ from torch.distributions import (
 from integrator.model.distributions.logistic_normal import ProfilePosterior
 from integrator.model.loss.loss import _kl
 from integrator.model.loss.per_bin_loss import _load_buffer
-
-logger = logging.getLogger(__name__)
 
 
 class WilsonPerBinLoss(nn.Module):
@@ -219,16 +215,9 @@ class WilsonPerBinLoss(nn.Module):
         return kl_K + kl_B
 
     @staticmethod
-    def compute_tau(
-        K: Tensor, B: Tensor, s_sq: Tensor, max_log_tau: float = 18.0
-    ) -> Tensor:
-        """Wilson prior rate: tau = (1/K) * exp(2B*s^2).
-
-        Computed in log-space and clamped to exp(max_log_tau) ≈ 6.6e7 to
-        prevent overflow in the Gamma KL gradient.
-        """
-        log_tau = -torch.log(K.clamp(min=1e-12)) + 2.0 * B * s_sq
-        return torch.exp(log_tau.clamp(max=max_log_tau))
+    def compute_tau(K: Tensor, B: Tensor, s_sq: Tensor) -> Tensor:
+        """Wilson prior rate: tau = (1/K) * exp(2B*s^2)."""
+        return (1.0 / K) * torch.exp(2.0 * B * s_sq)
 
     #  Diagnostics
 
@@ -262,27 +251,6 @@ class WilsonPerBinLoss(nn.Module):
 
     #  Forward
 
-    def _nan_check(self, name: str, t: Tensor) -> None:
-        """Log NaN/Inf diagnostics on first occurrence, then disable."""
-        if not getattr(self, "_nan_debug", True):
-            return
-        has_nan = torch.isnan(t).any()
-        has_inf = torch.isinf(t).any()
-        if has_nan or has_inf:
-            logger.error(
-                "NaN/Inf detected in %s: nan=%d inf=%d "
-                "min=%.4g max=%.4g mean=%.4g | "
-                "q_log_K_loc=%.4g q_log_B_loc=%.4g",
-                name,
-                torch.isnan(t).sum().item(),
-                torch.isinf(t).sum().item(),
-                t[t.isfinite()].min().item() if t.isfinite().any() else float("nan"),
-                t[t.isfinite()].max().item() if t.isfinite().any() else float("nan"),
-                t[t.isfinite()].mean().item() if t.isfinite().any() else float("nan"),
-                self.q_log_K_loc.item(),
-                self.q_log_B_loc.item(),
-            )
-
     def forward(
         self,
         rate: Tensor,
@@ -300,12 +268,6 @@ class WilsonPerBinLoss(nn.Module):
         mask = mask.to(device)
         groups = group_labels.long()
 
-        self._nan_check("rate", rate)
-        self._nan_check("qi.concentration", qi.concentration)
-        self._nan_check("qi.rate", qi.rate)
-        self._nan_check("qbg.concentration", qbg.concentration)
-        self._nan_check("qbg.rate", qbg.rate)
-
         kl = torch.zeros(batch_size, device=device)
         kl_prf = torch.zeros(batch_size, device=device)
         kl_i = torch.zeros(batch_size, device=device)
@@ -322,7 +284,6 @@ class WilsonPerBinLoss(nn.Module):
                 * self.pprf_weight
             )
         kl = kl + kl_prf
-        self._nan_check("kl_prf", kl_prf)
 
         # Intensity KL: E_{q(K,B)}[ KL(q(I) || Gamma(1, tau_k(K,B))) ]
         # (per-bin Wilson prior)
@@ -333,19 +294,14 @@ class WilsonPerBinLoss(nn.Module):
             K = torch.exp(log_K)
             B = torch.exp(log_B)
             tau = self.compute_tau(K, B, s_sq)  # (B,)
-            self._nan_check("tau", tau)
             p_i = Gamma(
                 concentration=torch.ones_like(tau),
                 rate=tau,
-                validate_args=False,
             )
-            kl_i_sample = _kl(qi, p_i, self.mc_samples, eps=self.eps)
-            self._nan_check("kl_i_sample", kl_i_sample)
-            kl_i = kl_i + kl_i_sample.clamp(max=1e6)
+            kl_i = kl_i + _kl(qi, p_i, self.mc_samples, eps=self.eps)
         kl_i = kl_i / self.n_wilson_samples
         kl_i = kl_i * self.pi_weight
         kl = kl + kl_i
-        self._nan_check("kl_i", kl_i)
 
         # Background KL: KL(q(bg) || Gamma(α, α·λ_k))
         # α = bg_concentration (default 1.0 = Exponential)
@@ -355,26 +311,20 @@ class WilsonPerBinLoss(nn.Module):
         p_bg = Gamma(
             concentration=torch.full_like(bg_rate_per_refl, alpha_bg),
             rate=alpha_bg * bg_rate_per_refl,
-            validate_args=False,
         )
         kl_bg = _kl(qbg, p_bg, self.mc_samples, eps=self.eps) * self.pbg_weight
         kl = kl + kl_bg
-        self._nan_check("kl_bg", kl_bg)
 
         # Hyperprior KL (amortized over dataset)
         kl_hyper = self.kl_hyperparams() / self.dataset_size
-        self._nan_check("kl_hyper", kl_hyper)
 
         # Poisson NLL
-        ll = Poisson(rate + self.eps, validate_args=False).log_prob(counts.unsqueeze(1))
-        self._nan_check("ll", ll)
+        ll = Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
         ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
-        self._nan_check("ll_mean", ll_mean)
         neg_ll = (-ll_mean).sum(1)
 
         # Total loss
         loss = (neg_ll + kl).mean() + kl_hyper
-        self._nan_check("loss", loss)
 
         return {
             "loss": loss,
