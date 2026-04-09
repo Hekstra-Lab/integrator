@@ -143,6 +143,7 @@ class HierarchicalShoeboxLoss(nn.Module):
         p_i = Gamma(
             concentration=torch.ones_like(tau_per_refl),
             rate=tau_per_refl,
+            validate_args=False,
         )  # Exp(tau) = Gamma(1, tau)
         kl_i = _kl(qi, p_i, self.mc_samples, eps=self.eps)
         kl = kl + kl_i

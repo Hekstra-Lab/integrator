@@ -215,9 +215,16 @@ class WilsonPerBinLoss(nn.Module):
         return kl_K + kl_B
 
     @staticmethod
-    def compute_tau(K: Tensor, B: Tensor, s_sq: Tensor) -> Tensor:
-        """Wilson prior rate: tau = (1/K) * exp(2B*s^2)."""
-        return (1.0 / K) * torch.exp(2.0 * B * s_sq)
+    def compute_tau(
+        K: Tensor, B: Tensor, s_sq: Tensor, max_log_tau: float = 18.0
+    ) -> Tensor:
+        """Wilson prior rate: tau = (1/K) * exp(2B*s^2).
+
+        Computed in log-space and clamped to exp(max_log_tau) ≈ 6.6e7 to
+        prevent overflow in the Gamma KL gradient.
+        """
+        log_tau = -torch.log(K.clamp(min=1e-12)) + 2.0 * B * s_sq
+        return torch.exp(log_tau.clamp(max=max_log_tau))
 
     #  Diagnostics
 
@@ -297,8 +304,11 @@ class WilsonPerBinLoss(nn.Module):
             p_i = Gamma(
                 concentration=torch.ones_like(tau),
                 rate=tau,
+                validate_args=False,
             )
-            kl_i = kl_i + _kl(qi, p_i, self.mc_samples, eps=self.eps)
+            kl_i = kl_i + _kl(qi, p_i, self.mc_samples, eps=self.eps).clamp(
+                max=1e6
+            )
         kl_i = kl_i / self.n_wilson_samples
         kl_i = kl_i * self.pi_weight
         kl = kl + kl_i
@@ -311,6 +321,7 @@ class WilsonPerBinLoss(nn.Module):
         p_bg = Gamma(
             concentration=torch.full_like(bg_rate_per_refl, alpha_bg),
             rate=alpha_bg * bg_rate_per_refl,
+            validate_args=False,
         )
         kl_bg = _kl(qbg, p_bg, self.mc_samples, eps=self.eps) * self.pbg_weight
         kl = kl + kl_bg

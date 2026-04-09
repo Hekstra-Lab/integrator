@@ -138,6 +138,7 @@ class PerBinLoss(nn.Module):
         p_i = Gamma(
             concentration=torch.ones_like(tau_per_refl),
             rate=tau_per_refl,
+            validate_args=False,
         )
         kl_i = _kl(qi, p_i, self.mc_samples, eps=self.eps) * self.pi_weight
         kl = kl + kl_i
@@ -150,6 +151,7 @@ class PerBinLoss(nn.Module):
         p_bg = Gamma(
             concentration=torch.full_like(bg_rate_per_refl, alpha_bg),
             rate=alpha_bg * bg_rate_per_refl,
+            validate_args=False,
         )
         kl_bg = _kl(qbg, p_bg, self.mc_samples, eps=self.eps) * self.pbg_weight
         kl = kl + kl_bg
