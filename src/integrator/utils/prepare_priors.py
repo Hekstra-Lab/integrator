@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 def prepare_per_bin_priors(
     cfg: dict,
     *,
-    n_bins: int = 20,
+    n_bins: int = 0,
     min_intensity: float = 0.01,
     force: bool = False,
 ) -> None:
@@ -34,9 +34,12 @@ def prepare_per_bin_priors(
     Parameters
     ----------
     cfg : dict
-        Full YAML config dict.
+        Full YAML config dict.  If ``loss.args.n_bins`` is set in the
+        config, it is used as the number of resolution bins (unless
+        overridden by the *n_bins* argument).
     n_bins : int
-        Number of resolution bins.
+        Number of resolution bins.  When <= 0 (default), reads from
+        ``cfg["loss"]["args"]["n_bins"]``, falling back to 20.
     min_intensity : float
         Minimum intensity for tau estimation.
     force : bool
@@ -48,6 +51,10 @@ def prepare_per_bin_priors(
 
     data_dir = Path(cfg["data_loader"]["args"]["data_dir"])
     loss_args = cfg["loss"].get("args", {})
+
+    # Read n_bins from config, fall back to 20
+    if n_bins <= 0:
+        n_bins = int(loss_args.get("n_bins", 20))
 
     # Determine which files are referenced and which are missing
     per_bin_keys = [

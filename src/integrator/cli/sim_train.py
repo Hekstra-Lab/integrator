@@ -5,6 +5,7 @@ from pathlib import Path
 
 import yaml
 
+from .utils.io import _apply_cli_overrides
 from .utils.logger import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -15,32 +16,32 @@ def parse_args():
         description="Train model on simulated shoebox data"
     )
 
+    # --- Required ---
     parser.add_argument(
         "--config",
         type=str,
         required=True,
-        help="Path to configuration file",
-    )
-    parser.add_argument(
-        "--max_epochs",
-        type=int,
-        help="Number of epochs to train for",
-    )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        help="The size of a train batch",
-    )
-    parser.add_argument(
-        "--data-path",
-        type=str,
-        default=None,
-        help="Path to directory containing TensorDatasets",
+        help="Path to configuration YAML file",
     )
     parser.add_argument(
         "--wb-project",
         type=str,
+        required=True,
         help="Name of the W&B project to save to",
+    )
+    parser.add_argument(
+        "--run-dir",
+        type=str,
+        required=True,
+        help="Path to run directory (saves config copy and run metadata)",
+    )
+
+    # --- Paths ---
+    parser.add_argument(
+        "--data-path",
+        type=str,
+        default=None,
+        help="Override data_dir in the YAML config",
     )
     parser.add_argument(
         "--save-dir",
@@ -48,17 +49,118 @@ def parse_args():
         default="/n/netscratch/hekstra_lab/Lab/laldama/lightning_logs/",
         help="Path to store local W&B logs",
     )
+
+    # --- Training ---
     parser.add_argument(
-        "--run-dir",
-        type=str,
-        required=True,
-        help="Path to run directory",
+        "--max-epochs",
+        type=int,
+        help="Number of epochs to train for",
     )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        help="Training batch size",
+    )
+    parser.add_argument(
+        "--lr",
+        type=float,
+        help="Learning rate",
+    )
+    parser.add_argument(
+        "--weight-decay",
+        type=float,
+        help="Weight decay for optimizer",
+    )
+    parser.add_argument(
+        "--gradient-clip-val",
+        type=float,
+        help="Gradient clipping value",
+    )
+    parser.add_argument(
+        "--precision",
+        type=str,
+        choices=["16", "32"],
+        help="Training precision",
+    )
+    parser.add_argument(
+        "--accelerator",
+        type=str,
+        choices=["cpu", "gpu", "auto"],
+        help="Accelerator type",
+    )
+    parser.add_argument(
+        "--devices",
+        type=int,
+        help="Number of devices",
+    )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        help="Number of data loader workers",
+    )
+    parser.add_argument(
+        "--check-val-every-n-epoch",
+        type=int,
+        help="Run validation every N epochs",
+    )
+
+    # --- Model ---
     parser.add_argument(
         "--integrator-name",
         type=str,
-        help="Name of the ingrator module to use",
+        help="Name of the integrator module to use",
     )
+    parser.add_argument(
+        "--qbg",
+        type=str,
+        help="Name of the background surrogate module",
+    )
+    parser.add_argument(
+        "--qi",
+        type=str,
+        help="Name of the intensity surrogate module",
+    )
+    parser.add_argument(
+        "--mc-samples",
+        type=int,
+        help="Number of Monte Carlo samples for KL estimation",
+    )
+
+    # --- Loss weights ---
+    parser.add_argument(
+        "--pprf-weight",
+        type=float,
+        help="Profile KL weight",
+    )
+    parser.add_argument(
+        "--pbg-weight",
+        type=float,
+        help="Background KL weight",
+    )
+    parser.add_argument(
+        "--pi-weight",
+        type=float,
+        help="Intensity KL weight",
+    )
+    parser.add_argument(
+        "--n-bins",
+        type=int,
+        help="Number of resolution bins for per-bin priors",
+    )
+
+    # --- Data ---
+    parser.add_argument(
+        "--val-split",
+        type=float,
+        help="Fraction of data for validation",
+    )
+    parser.add_argument(
+        "--subset-size",
+        type=int,
+        help="Use a subset of the data (for debugging)",
+    )
+
+    # --- Misc ---
     parser.add_argument(
         "-v",
         "--verbose",
@@ -67,48 +169,11 @@ def parse_args():
         help="Increase verbosity (-v = INFO, -vv = DEBUG)",
     )
     parser.add_argument(
-        "--qbg",
-        type=str,
-        help="String name of the background surrogate module",
-    )
-    parser.add_argument(
-        "--qi",
-        type=str,
-        help="String name of the intensity surrogate module",
-    )
-
-    parser.add_argument(
         "--tags",
         nargs="+",
-        help="Optional list of tags. Useful for model identification",
+        help="Optional W&B tags for run identification",
     )
     return parser.parse_args()
-
-
-def _apply_sim_overrides(cfg: dict, *, args) -> dict:
-    from .utils.io import _deep_merge
-
-    base = dict(cfg)
-    updates = {}
-
-    if args.max_epochs is not None:
-        updates.setdefault("trainer", {})["max_epochs"] = args.max_epochs
-    if args.batch_size is not None:
-        updates.setdefault("data_loader", {}).setdefault("args", {})["batch_size"] = (
-            args.batch_size
-        )
-    if args.integrator_name is not None:
-        updates.setdefault("integrator", {})["name"] = args.integrator_name
-    if args.qi is not None:
-        updates.setdefault("surrogates", {}).setdefault("qi", {})["name"] = args.qi
-    if args.qbg is not None:
-        updates.setdefault("surrogates", {}).setdefault("qbg", {})["name"] = args.qbg
-    if args.data_path is not None:
-        updates.setdefault("data_loader", {}).setdefault("args", {})["data_dir"] = str(
-            args.data_path
-        )
-
-    return _deep_merge(base, updates)
 
 
 def main():
@@ -139,7 +204,7 @@ def main():
 
     # load configuration file
     cfg = load_config(args.config)
-    cfg = _apply_sim_overrides(cfg, args=args)
+    cfg = _apply_cli_overrides(cfg, args=args)
 
     # load data
     logger.info("Starting Training (simulated data)")

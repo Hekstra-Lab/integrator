@@ -13,33 +13,34 @@ logger = logging.getLogger(__name__)
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Train W&B model")
+    parser = argparse.ArgumentParser(description="Train integrator model")
 
+    # --- Required ---
     parser.add_argument(
         "--config",
         type=str,
-        help="Path to configuration file",
-    )
-    parser.add_argument(
-        "--max_epochs",
-        type=int,
-        help="Number of epochs to train for",
-    )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        help="The size of a train batch",
-    )
-    parser.add_argument(
-        "--data-path",
-        type=str,
-        default=None,
-        help="Path to directory cotaining TensorDatasets",
+        required=True,
+        help="Path to configuration YAML file",
     )
     parser.add_argument(
         "--wb-project",
         type=str,
+        required=True,
         help="Name of the W&B project to save to",
+    )
+    parser.add_argument(
+        "--run-dir",
+        type=str,
+        required=True,
+        help="Path to run directory (saves config copy and run metadata)",
+    )
+
+    # --- Paths ---
+    parser.add_argument(
+        "--data-path",
+        type=str,
+        default=None,
+        help="Override data_dir in the YAML config",
     )
     parser.add_argument(
         "--save-dir",
@@ -48,27 +49,117 @@ def parse_args():
         help="Path to store local W&B logs",
     )
 
+    # --- Training ---
     parser.add_argument(
-        "--run-dir",
+        "--max-epochs",
+        type=int,
+        help="Number of epochs to train for",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        help="Training batch size",
+    )
+    parser.add_argument(
+        "--lr",
+        type=float,
+        help="Learning rate",
+    )
+    parser.add_argument(
+        "--weight-decay",
+        type=float,
+        help="Weight decay for optimizer",
+    )
+    parser.add_argument(
+        "--gradient-clip-val",
+        type=float,
+        help="Gradient clipping value",
+    )
+    parser.add_argument(
+        "--precision",
         type=str,
-        help="Path to run directory; located where integrator.train is called",
+        choices=["16", "32"],
+        help="Training precision",
+    )
+    parser.add_argument(
+        "--accelerator",
+        type=str,
+        choices=["cpu", "gpu", "auto"],
+        help="Accelerator type",
+    )
+    parser.add_argument(
+        "--devices",
+        type=int,
+        help="Number of devices",
+    )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        help="Number of data loader workers",
+    )
+    parser.add_argument(
+        "--check-val-every-n-epoch",
+        type=int,
+        help="Run validation every N epochs",
     )
 
+    # --- Model ---
     parser.add_argument(
         "--integrator-name",
         type=str,
-        help="Name of the ingrator module to use",
+        help="Name of the integrator module to use",
     )
     parser.add_argument(
         "--qbg",
         type=str,
-        help="String name of the background surrogate module",
+        help="Name of the background surrogate module",
     )
     parser.add_argument(
         "--qi",
         type=str,
-        help="String name of the intensity surrogate module",
+        help="Name of the intensity surrogate module",
     )
+    parser.add_argument(
+        "--mc-samples",
+        type=int,
+        help="Number of Monte Carlo samples for KL estimation",
+    )
+
+    # --- Loss weights ---
+    parser.add_argument(
+        "--pprf-weight",
+        type=float,
+        help="Profile KL weight",
+    )
+    parser.add_argument(
+        "--pbg-weight",
+        type=float,
+        help="Background KL weight",
+    )
+    parser.add_argument(
+        "--pi-weight",
+        type=float,
+        help="Intensity KL weight",
+    )
+    parser.add_argument(
+        "--n-bins",
+        type=int,
+        help="Number of resolution bins for per-bin priors",
+    )
+
+    # --- Data ---
+    parser.add_argument(
+        "--val-split",
+        type=float,
+        help="Fraction of data for validation",
+    )
+    parser.add_argument(
+        "--subset-size",
+        type=int,
+        help="Use a subset of the data (for debugging)",
+    )
+
+    # --- Misc ---
     parser.add_argument(
         "-v",
         "--verbose",
@@ -79,7 +170,7 @@ def parse_args():
     parser.add_argument(
         "--tags",
         nargs="+",
-        help="Optional list of tags. Useful for model identifiation",
+        help="Optional W&B tags for run identification",
     )
     return parser.parse_args()
 

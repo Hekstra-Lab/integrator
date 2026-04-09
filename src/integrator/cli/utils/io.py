@@ -32,29 +32,71 @@ def _apply_cli_overrides(
     args,
 ) -> dict:
     base = dict(cfg)
-
     updates = {}
 
-    if args.max_epochs is not None:
-        updates.setdefault("trainer", {})["max_epochs"] = args.epochs
-    if args.batch_size is not None:
-        updates.setdefault("data_loader", {}).setdefault("args", {})[
-            "batch_size"
-        ] = args.batch_size
-    if args.data_path is not None:
-        updates.setdefault("data_loader", {}).setdefault("args", {})[
-            "data_dir"
-        ] = str(args.data_path)
-    if args.qi is not None:
-        updates.setdefault("surrogates", {}).setdefault("qi", {})["name"] = (
-            args.qi
-        )
-    if args.qbg is not None:
-        updates.setdefault("surrogates", {}).setdefault("qbg", {})["name"] = (
-            args.qbg
-        )
-    if args.integrator_name is not None:
+    def _trainer(k, v):
+        updates.setdefault("trainer", {})[k] = v
+
+    def _dl_args(k, v):
+        updates.setdefault("data_loader", {}).setdefault("args", {})[k] = v
+
+    def _integrator_args(k, v):
+        updates.setdefault("integrator", {}).setdefault("args", {})[k] = v
+
+    def _loss_args(k, v):
+        updates.setdefault("loss", {}).setdefault("args", {})[k] = v
+
+    # --- Training ---
+    if getattr(args, "max_epochs", None) is not None:
+        _trainer("max_epochs", args.max_epochs)
+    if getattr(args, "gradient_clip_val", None) is not None:
+        _trainer("gradient_clip_val", args.gradient_clip_val)
+    if getattr(args, "precision", None) is not None:
+        _trainer("precision", args.precision)
+    if getattr(args, "accelerator", None) is not None:
+        _trainer("accelerator", args.accelerator)
+    if getattr(args, "devices", None) is not None:
+        _trainer("devices", args.devices)
+    if getattr(args, "check_val_every_n_epoch", None) is not None:
+        _trainer("check_val_every_n_epoch", args.check_val_every_n_epoch)
+
+    # --- Data loader ---
+    if getattr(args, "batch_size", None) is not None:
+        _dl_args("batch_size", args.batch_size)
+    if getattr(args, "data_path", None) is not None:
+        _dl_args("data_dir", str(args.data_path))
+    if getattr(args, "num_workers", None) is not None:
+        _dl_args("num_workers", args.num_workers)
+    if getattr(args, "val_split", None) is not None:
+        _dl_args("val_split", args.val_split)
+    if getattr(args, "subset_size", None) is not None:
+        _dl_args("subset_size", args.subset_size)
+
+    # --- Integrator ---
+    if getattr(args, "integrator_name", None) is not None:
         updates.setdefault("integrator", {})["name"] = args.integrator_name
+    if getattr(args, "lr", None) is not None:
+        _integrator_args("lr", args.lr)
+    if getattr(args, "weight_decay", None) is not None:
+        _integrator_args("weight_decay", args.weight_decay)
+    if getattr(args, "mc_samples", None) is not None:
+        _integrator_args("mc_samples", args.mc_samples)
+
+    # --- Surrogates ---
+    if getattr(args, "qi", None) is not None:
+        updates.setdefault("surrogates", {}).setdefault("qi", {})["name"] = args.qi
+    if getattr(args, "qbg", None) is not None:
+        updates.setdefault("surrogates", {}).setdefault("qbg", {})["name"] = args.qbg
+
+    # --- Loss weights ---
+    if getattr(args, "pprf_weight", None) is not None:
+        _loss_args("pprf_weight", args.pprf_weight)
+    if getattr(args, "pbg_weight", None) is not None:
+        _loss_args("pbg_weight", args.pbg_weight)
+    if getattr(args, "pi_weight", None) is not None:
+        _loss_args("pi_weight", args.pi_weight)
+    if getattr(args, "n_bins", None) is not None:
+        _loss_args("n_bins", args.n_bins)
 
     merged = _deep_merge(base, updates)
     return merged

@@ -51,6 +51,10 @@ class PerBinLoss(nn.Module):
         Only used when the profile surrogate returns a Distribution (Dirichlet).
         Ignored when the surrogate returns a ProfilePosterior (latent decoder),
         which uses a global N(0, sigma_prior²I) prior instead.
+    bg_concentration : float
+        Shape parameter for the background Gamma prior. Default 1.0
+        gives Exp(lambda_k). Higher values give a tighter prior around
+        mean = 1/lambda_k, with CV = 1/sqrt(bg_concentration).
     pprf_weight : float
         Scaling factor for profile KL term.
     pbg_weight : float
@@ -67,6 +71,7 @@ class PerBinLoss(nn.Module):
         tau_per_group: list[float] | str,
         bg_rate_per_group: list[float] | str,
         concentration_per_group: str,
+        bg_concentration: float = 1.0,
         pprf_weight: float = 1.0,
         pbg_weight: float = 1.0,
         pi_weight: float = 1.0,
@@ -80,6 +85,7 @@ class PerBinLoss(nn.Module):
         self.mc_samples = mc_samples
         self.eps = eps
         self.dataset_size = dataset_size
+        self.bg_concentration = bg_concentration
         self.pprf_weight = pprf_weight
         self.pbg_weight = pbg_weight
         self.pi_weight = pi_weight
@@ -136,11 +142,14 @@ class PerBinLoss(nn.Module):
         kl_i = _kl(qi, p_i, self.mc_samples, eps=self.eps) * self.pi_weight
         kl = kl + kl_i
 
-        # Background KL: KL(q(bg_i) || Exp(lambda_{k(i)}))
+        # Background KL: KL(q(bg_i) || Gamma(α, α·λ_k))
+        # α = bg_concentration (default 1.0 = Exponential)
+        # rate scaled by α to keep mean = 1/λ_k unchanged
         bg_rate_per_refl = self.bg_rate_per_group[groups]  # (B,)
+        alpha_bg = self.bg_concentration
         p_bg = Gamma(
-            concentration=torch.ones_like(bg_rate_per_refl),
-            rate=bg_rate_per_refl,
+            concentration=torch.full_like(bg_rate_per_refl, alpha_bg),
+            rate=alpha_bg * bg_rate_per_refl,
         )
         kl_bg = _kl(qbg, p_bg, self.mc_samples, eps=self.eps) * self.pbg_weight
         kl = kl + kl_bg

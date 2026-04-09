@@ -80,6 +80,8 @@ DEFAULT_DS_COLS = [
     "H",
     "K",
     "L",
+    "is_test",
+    "group_label",
 ]
 
 

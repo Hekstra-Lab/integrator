@@ -168,6 +168,7 @@ class GammaDistributionRepamA(nn.Module):
         in_features: int = 64,
         k_max: float | None = None,
         k_min: float = 0.1,
+        **kwargs,
     ):
         super().__init__()
 
@@ -208,6 +209,7 @@ class GammaDistributionRepamB(nn.Module):
         eps: float = 1e-6,
         k_max: float | None = None,
         k_min: float = 0.1,
+        **kwargs,
     ):
         super().__init__()
         self.eps = eps
@@ -250,6 +252,7 @@ class GammaDistributionRepamC(nn.Module):
         eps: float = 1e-6,
         k_max: float | None = None,
         k_min: float = 0.1,
+        **kwargs,
     ):
         super().__init__()
         self.eps = eps
@@ -286,6 +289,7 @@ class GammaDistributionRepamD(nn.Module):
         eps: float = 1e-6,
         k_max: float | None = None,
         k_min: float = 0.1,
+        **kwargs,
     ):
         super().__init__()
         self.eps = eps
@@ -321,6 +325,7 @@ class GammaDistribution(nn.Module):
         eps: float = 1e-6,
         k_max: float | None = None,
         k_min: float = 0.1,
+        **kwargs,
     ):
         super().__init__()
         self.eps = eps
@@ -365,6 +370,7 @@ class FanoGammaRepamB(nn.Module):
         eps: float = 1e-6,
         k_max: float | None = None,
         k_min: float = 0.1,
+        **kwargs,
     ):
         super().__init__()
         self.eps = eps
@@ -403,6 +409,7 @@ class FanoGammaRepamD(nn.Module):
         eps: float = 1e-6,
         k_max: float | None = None,
         k_min: float = 0.1,
+        **kwargs,
     ):
         super().__init__()
         self.eps = eps

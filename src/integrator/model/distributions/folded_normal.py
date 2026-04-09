@@ -258,6 +258,7 @@ class FoldedNormalDistribution(nn.Module):
         self,
         in_features: int = 64,
         eps: float = 0.1,
+        **kwargs,
     ):
         super().__init__()
         self.fc = torch.nn.Linear(

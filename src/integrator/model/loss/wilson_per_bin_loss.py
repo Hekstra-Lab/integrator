@@ -79,6 +79,10 @@ class WilsonPerBinLoss(nn.Module):
         Hyperprior p(log B) ~ Normal(loc, scale).
     n_wilson_samples : int
         MC samples over (K, B) for the intensity KL outer expectation.
+    bg_concentration : float
+        Shape parameter for the background Gamma prior. Default 1.0
+        gives Exp(lambda_k). Higher values give a tighter prior around
+        mean = 1/lambda_k, with CV = 1/sqrt(bg_concentration).
     pprf_weight, pbg_weight, pi_weight : float
         Scaling factors for each KL term (set all to 1.0 for a proper ELBO).
     dataset_size : int
@@ -95,6 +99,7 @@ class WilsonPerBinLoss(nn.Module):
         # Empirical Bayes priors (per-bin)
         bg_rate_per_group: list[float] | str,
         concentration_per_group: str,
+        bg_concentration: float = 1.0,
         # Optional auto-init from empirical tau
         tau_per_group: list[float] | str | None = None,
         # Wilson hyperprior config
@@ -119,6 +124,7 @@ class WilsonPerBinLoss(nn.Module):
         self.mc_samples = mc_samples
         self.eps = eps
         self.dataset_size = dataset_size
+        self.bg_concentration = bg_concentration
         self.pprf_weight = pprf_weight
         self.pbg_weight = pbg_weight
         self.pi_weight = pi_weight
@@ -149,13 +155,11 @@ class WilsonPerBinLoss(nn.Module):
         self.q_log_B_loc = nn.Parameter(torch.tensor(float(init_log_B)))
         self.q_log_B_log_scale = nn.Parameter(torch.tensor(-2.0))
 
-        # -- Fixed hyperprior parameters --------------------------------------
+        # -- Fixed hyperprior parameters
         self.register_buffer("hp_log_K_loc", torch.tensor(hp_log_K_loc))
         self.register_buffer("hp_log_K_scale", torch.tensor(hp_log_K_scale))
         self.register_buffer("hp_log_B_loc", torch.tensor(hp_log_B_loc))
         self.register_buffer("hp_log_B_scale", torch.tensor(hp_log_B_scale))
-
-    # -- Initialization helper ------------------------------------------------
 
     @staticmethod
     def _fit_wilson_init(tau: Tensor, s_sq: Tensor) -> tuple[float, float]:
@@ -179,7 +183,7 @@ class WilsonPerBinLoss(nn.Module):
         init_log_B = float(torch.log(torch.tensor(max(B_val, 1e-6))))
         return init_log_K, init_log_B
 
-    # -- Variational distributions -------------------------------------------
+    #  Variational distributions
 
     def q_log_K(self) -> Normal:
         """Variational posterior q(log K)."""
@@ -189,7 +193,7 @@ class WilsonPerBinLoss(nn.Module):
         """Variational posterior q(log B)."""
         return Normal(self.q_log_B_loc, F.softplus(self.q_log_B_log_scale))
 
-    # -- Hyperprior distributions --------------------------------------------
+    # Hyperprior distributions
 
     def p_log_K(self) -> Normal:
         """Hyperprior p(log K)."""
@@ -199,7 +203,7 @@ class WilsonPerBinLoss(nn.Module):
         """Hyperprior p(log B)."""
         return Normal(self.hp_log_B_loc, self.hp_log_B_scale)
 
-    # -- KL terms ------------------------------------------------------------
+    #  KL terms
 
     def kl_hyperparams(self) -> Tensor:
         """KL(q(log K) || p(log K)) + KL(q(log B) || p(log B)).
@@ -215,7 +219,7 @@ class WilsonPerBinLoss(nn.Module):
         """Wilson prior rate: tau = (1/K) * exp(2B*s^2)."""
         return (1.0 / K) * torch.exp(2.0 * B * s_sq)
 
-    # -- Diagnostics ---------------------------------------------------------
+    #  Diagnostics
 
     def posterior_means(self) -> dict[str, float]:
         """Approximate posterior means of K and B for logging.
@@ -245,7 +249,7 @@ class WilsonPerBinLoss(nn.Module):
             f"E[B]={means['B_mean']:.4f} +/- {means['B_std']:.4f}"
         )
 
-    # -- Forward --------------------------------------------------------------
+    #  Forward
 
     def forward(
         self,
@@ -299,11 +303,14 @@ class WilsonPerBinLoss(nn.Module):
         kl_i = kl_i * self.pi_weight
         kl = kl + kl_i
 
-        # Background KL: KL(q(bg) || Exp(lambda_k))
+        # Background KL: KL(q(bg) || Gamma(α, α·λ_k))
+        # α = bg_concentration (default 1.0 = Exponential)
+        # rate scaled by α to keep mean = 1/λ_k unchanged
         bg_rate_per_refl = self.bg_rate_per_group[groups]  # (B,)
+        alpha_bg = self.bg_concentration
         p_bg = Gamma(
-            concentration=torch.ones_like(bg_rate_per_refl),
-            rate=bg_rate_per_refl,
+            concentration=torch.full_like(bg_rate_per_refl, alpha_bg),
+            rate=alpha_bg * bg_rate_per_refl,
         )
         kl_bg = _kl(qbg, p_bg, self.mc_samples, eps=self.eps) * self.pbg_weight
         kl = kl + kl_bg
