@@ -155,7 +155,7 @@ class PerBinLoss(nn.Module):
         kl = kl + kl_bg
 
         # Poisson NLL
-        ll = Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
+        ll = Poisson(rate + self.eps, validate_args=False).log_prob(counts.unsqueeze(1))
         ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
         neg_ll = (-ll_mean).sum(1)
 
