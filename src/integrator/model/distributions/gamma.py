@@ -198,7 +198,7 @@ class GammaDistributionRepamA(nn.Module):
 
         r = F.softplus(raw_r) + self.eps
 
-        return Gamma(concentration=k.flatten(), rate=r.flatten())
+        return Gamma(concentration=k.flatten(), rate=r.flatten(), validate_args=False)
 
 
 # %%
@@ -241,7 +241,7 @@ class GammaDistributionRepamB(nn.Module):
         if self.k_max is not None:
             k = k.clamp(max=self.k_max)
 
-        return Gamma(concentration=k.flatten(), rate=r.flatten())
+        return Gamma(concentration=k.flatten(), rate=r.flatten(), validate_args=False)
 
 
 # %%
@@ -278,7 +278,7 @@ class GammaDistributionRepamC(nn.Module):
             k = k.clamp(max=self.k_max)
         r = 1.0 / (phi * mu)
 
-        return Gamma(concentration=k.flatten(), rate=r.flatten())
+        return Gamma(concentration=k.flatten(), rate=r.flatten(), validate_args=False)
 
 
 # %%
@@ -314,7 +314,7 @@ class GammaDistributionRepamD(nn.Module):
 
         r = 1.0 / fano
 
-        return Gamma(concentration=k.flatten(), rate=r.flatten())
+        return Gamma(concentration=k.flatten(), rate=r.flatten(), validate_args=False)
 
 
 # %%
@@ -353,14 +353,13 @@ class GammaDistribution(nn.Module):
         if self.k_max is not None:
             k = k.clamp(max=self.k_max)
 
-        return Gamma(concentration=k.flatten(), rate=r.flatten())
+        return Gamma(concentration=k.flatten(), rate=r.flatten(), validate_args=False)
 
 
 # %%
-# ─── FanoGamma variants ──────────────────────────────────────────────────────
-# These use FanoGamma (multiply by fano in rsample) instead of
-# Gamma (divide by rate=1/fano), giving a shorter autograd chain.
-# Functionally identical to the originals — same samples, same gradients.
+# ─── Fano-parameterized variants ─────────────────────────────────────────────
+# These predict fano factor (variance/mean) instead of rate directly,
+# then convert: rate = 1/fano.  Same Gamma distribution output.
 
 
 class FanoGammaRepamB(nn.Module):
@@ -399,7 +398,8 @@ class FanoGammaRepamB(nn.Module):
         if self.k_max is not None:
             k = k.clamp(max=self.k_max)
 
-        return FanoGamma(concentration=k.flatten(), fano=fano.flatten())
+        r = 1.0 / fano
+        return Gamma(concentration=k.flatten(), rate=r.flatten(), validate_args=False)
 
 
 class FanoGammaRepamD(nn.Module):
@@ -431,4 +431,5 @@ class FanoGammaRepamD(nn.Module):
         raw_fano = self.linear_fano(x_)
         fano = F.softplus(raw_fano) + self.eps
 
-        return FanoGamma(concentration=k.flatten(), fano=fano.flatten())
+        r = 1.0 / fano
+        return Gamma(concentration=k.flatten(), rate=r.flatten(), validate_args=False)
