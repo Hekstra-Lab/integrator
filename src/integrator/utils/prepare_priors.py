@@ -78,6 +78,33 @@ def prepare_per_bin_priors(
             if force or not path.exists():
                 needed[key] = path
 
+    # Check group_label consistency with n_bins even if all files exist
+    rebinned = False
+    ref_path = _resolve_reference_path(data_dir, cfg)
+    metadata_on_disk = torch.load(ref_path, weights_only=False)
+    if "group_label" in metadata_on_disk:
+        existing_n_bins = int(metadata_on_disk["group_label"].max().item()) + 1
+        if existing_n_bins != n_bins:
+            logger.warning(
+                "group_label has %d bins but config specifies n_bins=%d; "
+                "re-binning and regenerating all per-bin files",
+                existing_n_bins,
+                n_bins,
+            )
+            # Force regeneration of ALL referenced per-bin files
+            for key in per_bin_keys:
+                if key not in loss_args:
+                    continue
+                filename = loss_args[key]
+                if isinstance(filename, str):
+                    path = (
+                        Path(filename)
+                        if Path(filename).is_absolute()
+                        else data_dir / filename
+                    )
+                    needed[key] = path
+            rebinned = True
+
     if not needed:
         return
 
@@ -86,7 +113,7 @@ def prepare_per_bin_priors(
         ", ".join(needed.keys()),
     )
 
-    # Load raw data
+    # Load raw data (reuse metadata if already loaded for consistency check)
     counts, masks, metadata = _load_raw_data(data_dir, cfg)
 
     d = metadata["d"]
@@ -96,12 +123,15 @@ def prepare_per_bin_priors(
     group_labels, bin_edges, n_bins = _bin_by_resolution(d, n_bins)
     logger.info("Binned %d reflections into %d resolution shells", N, n_bins)
 
-    # Add group_label to metadata if missing
-    if "group_label" not in metadata:
+    # Add or update group_label in metadata
+    if "group_label" not in metadata or rebinned:
         metadata["group_label"] = group_labels
         meta_path = _resolve_reference_path(data_dir, cfg)
         torch.save(metadata, meta_path)
-        logger.info("Added 'group_label' to %s", meta_path.name)
+        if rebinned:
+            logger.info("Updated 'group_label' in %s to %d bins", meta_path.name, n_bins)
+        else:
+            logger.info("Added 'group_label' to %s", meta_path.name)
 
     # Generate each missing file
     if "bg_rate_per_group" in needed:
