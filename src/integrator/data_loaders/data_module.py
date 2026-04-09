@@ -456,7 +456,7 @@ class ShoeboxDataModule(BaseDataModule):
         else:
             if counts.dim() == 2:
                 if self.anscombe:
-                    anscombe_transformed = 2 * (counts + 0.375).sqrt()
+                    anscombe_transformed = 2 * (counts.clamp(min=0) + 0.375).sqrt()
                     standardized_counts = (
                         (anscombe_transformed - stats[1]) / stats[1].sqrt()
                     ) * masks
@@ -663,7 +663,7 @@ class SimulatedShoeboxLoader(BaseDataModule):
             reference["group_label"] = reference["radial_bin"]
 
         if self.anscombe:
-            anscombe_transformed = 2 * (counts + 0.375).sqrt()
+            anscombe_transformed = 2 * (counts.clamp(min=0) + 0.375).sqrt()
             standardized_counts = (
                 (anscombe_transformed - stats[0]) / stats[1].sqrt()
             ) * masks
