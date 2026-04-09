@@ -116,8 +116,8 @@ def main():
     data_loader = construct_data_loader(config)
     data_loader.setup()
 
-    # path to input refl file
-    refl_file = config["output"]["refl_file"]
+    # path to input refl file (only needed for --write-refl)
+    refl_file = config.get("output", {}).get("refl_file") if args.write_refl else None
 
     epoch_re = re.compile(r"epoch=(\d+)")
     for ckpt in checkpoints:

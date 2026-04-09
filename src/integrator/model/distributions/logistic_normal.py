@@ -6,7 +6,7 @@ from torch import Tensor
 
 class ProfilePosterior:
     """Variational posterior q(h|x) = N(mu_h, diag(sigma_h^2)).
-    Profiles are recovered as prf = softmax(W @ h + b) where W and b are fixed.
+    Profiles are recovered as prf = softmax(W @ h + b)
     """
 
     def __init__(
@@ -19,8 +19,8 @@ class ProfilePosterior:
     ) -> None:
         self.mu_h = mu_h  # (B, d)
         self.logvar_h = logvar_h  # (B, d)
-        self.W = W  # (K, d)  fixed
-        self.b = b  # (K,)    fixed
+        self.W = W  # (K, d)
+        self.b = b  # (K,)
         self.sigma_prior = sigma_prior  # scalar
 
         # Dirichlet compatibility: integrators store qp.concentration
@@ -160,21 +160,14 @@ class LogisticNormalSurrogate(nn.Module):
         )
 
 
-# ---------------------------------------------------------------------------
 # Learned linear decoder surrogate
-# ---------------------------------------------------------------------------
 
 
 class LinearProfileSurrogate(nn.Module):
     """Profile surrogate with a learned linear decoder.
 
-    Generalises LogisticNormalSurrogate: instead of a fixed Hermite basis the
-    decoder W (K, d) and b (K,) are trained jointly with the encoder heads.
-
         prf = softmax(W @ h + b)
         q(h | x) = N(mu_h(x), diag(sigma_h(x)²))
-
-    No basis file is needed.
 
     Parameters
     ----------
@@ -219,11 +212,7 @@ class LinearProfileSurrogate(nn.Module):
         )
 
 
-# ---------------------------------------------------------------------------
-# Physical Gaussian profile — h→profile via rotated 2-D Gaussian
-# ---------------------------------------------------------------------------
-
-
+# Gaussian profile
 def _h_to_physical_params(
     h: Tensor,
     center_base: float = 10.0,
