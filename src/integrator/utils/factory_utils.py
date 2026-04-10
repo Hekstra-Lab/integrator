@@ -191,7 +191,7 @@ def _get_loss_module(
     kwargs = shallow_dict(loss_args)
 
     # Forward extra keys from loss.args for custom loss classes
-    standard_keys = {"mc_samples", "eps", "pprf_cfg", "pbg_cfg", "pi_cfg", "n_bins"}
+    standard_keys = {"mc_samples", "eps", "pprf_cfg", "pbg_cfg", "pi_cfg", "n_bins", "profile_binning"}
     for k, v in cfg["loss"]["args"].items():
         if k not in standard_keys:
             kwargs[k] = v
