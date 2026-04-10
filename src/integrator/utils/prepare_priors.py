@@ -579,6 +579,8 @@ def _plot_profile_binning(
     Right: azi bins per resolution shell (bar chart).
     """
     try:
+        import matplotlib
+        matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         import numpy as np
     except ImportError:
