@@ -3,8 +3,13 @@
 ELBO decomposition:
     L = E_q[ log p(x | I, prf, bg) ]             — Poisson NLL
       - KL( q(prf) || p(prf) )                    — profile prior
-      - KL( q(I_i)   || Exp(tau_{k(i)}) )         — per-group intensity prior
-      - KL( q(bg_i)  || Exp(lambda_{k(i)}) )      — per-group background prior
+      - KL( q(I_i)   || p_I(tau_{k(i)}) )         — per-group intensity prior
+      - KL( q(bg_i)  || p_bg(lambda_{k(i)}) )     — per-group background prior
+
+Intensity and background priors are controlled by ``pi_cfg`` and ``pbg_cfg``:
+  - ``pi_cfg.name = "exponential"``:  I_k ~ Exp(tau_k)
+  - ``pi_cfg.name = "gamma"``:       I_k ~ Gamma(alpha_k, alpha_k * tau_k)
+    where alpha_k is fitted via Gamma MLE per bin.
 
 Profile prior depends on the surrogate type:
   - Dirichlet surrogate:  KL( q(prf_i) || Dir(alpha_{k(i)}) )  per-bin
@@ -48,19 +53,27 @@ class PerBinLoss(nn.Module):
         Exponential rates for background prior, one per group.
     concentration_per_group : str
         Path to .pt file with Dirichlet concentrations (n_groups, n_pixels).
-        Only used when the profile surrogate returns a Distribution (Dirichlet).
-        Ignored when the surrogate returns a ProfilePosterior (latent decoder),
-        which uses a global N(0, sigma_prior²I) prior instead.
+    pi_cfg : PriorConfig or None
+        Intensity prior config.  ``pi_cfg.name`` selects the distribution:
+        ``"exponential"`` (default) or ``"gamma"`` (per-bin MLE alpha).
+        ``pi_cfg.weight`` scales the intensity KL term.
+    pbg_cfg : PriorConfig or None
+        Background prior config.  ``pbg_cfg.name`` selects the distribution:
+        ``"exponential"`` (default) or ``"gamma"`` (per-bin MLE alpha).
+        ``pbg_cfg.weight`` scales the background KL term.
+    pprf_cfg : PriorConfig or None
+        Profile prior config.  ``pprf_cfg.weight`` scales the profile KL term.
+    i_concentration_per_group : list[float] or str or None
+        Per-bin Gamma shape (alpha) for intensity.  Auto-loaded when
+        ``pi_cfg.name = "gamma"``.
+    bg_concentration_per_group : list[float] or str or None
+        Per-bin Gamma shape (alpha) for background.  Auto-loaded when
+        ``pbg_cfg.name = "gamma"``.
     bg_concentration : float
-        Shape parameter for the background Gamma prior. Default 1.0
-        gives Exp(lambda_k). Higher values give a tighter prior around
-        mean = 1/lambda_k, with CV = 1/sqrt(bg_concentration).
-    pprf_weight : float
-        Scaling factor for profile KL term.
-    pbg_weight : float
-        Scaling factor for background KL term.
-    pi_weight : float
-        Scaling factor for intensity KL term.
+        Scalar fallback shape for background Gamma prior.  Only used when
+        ``bg_concentration_per_group`` is not provided.  Default 1.0 = Exp.
+    pprf_weight, pbg_weight, pi_weight : float
+        Scalar fallback weights when *_cfg is not provided.
     """
 
     def __init__(
@@ -71,14 +84,17 @@ class PerBinLoss(nn.Module):
         tau_per_group: list[float] | str,
         bg_rate_per_group: list[float] | str,
         concentration_per_group: str,
+        i_concentration_per_group: list[float] | str | None = None,
+        bg_concentration_per_group: list[float] | str | None = None,
         bg_concentration: float = 1.0,
+        # Prior configs (from YAML pi_cfg / pbg_cfg / pprf_cfg)
+        pi_cfg=None,
+        pbg_cfg=None,
+        pprf_cfg=None,
+        # Scalar fallback weights
         pprf_weight: float = 1.0,
         pbg_weight: float = 1.0,
         pi_weight: float = 1.0,
-        # accepted for factory compatibility but unused
-        pprf_cfg=None,
-        pbg_cfg=None,
-        pi_cfg=None,
         dataset_size: int = 1,
     ):
         super().__init__()
@@ -86,10 +102,13 @@ class PerBinLoss(nn.Module):
         self.eps = eps
         self.dataset_size = dataset_size
         self.bg_concentration = bg_concentration
-        self.pprf_weight = pprf_weight
-        self.pbg_weight = pbg_weight
-        self.pi_weight = pi_weight
 
+        # Resolve weights: prefer *_cfg.weight, fall back to scalar
+        self.pprf_weight = pprf_cfg.weight if pprf_cfg is not None else pprf_weight
+        self.pbg_weight = pbg_cfg.weight if pbg_cfg is not None else pbg_weight
+        self.pi_weight = pi_cfg.weight if pi_cfg is not None else pi_weight
+
+        # -- Fixed buffers (per-bin) ------------------------------------------
         self.register_buffer("tau_per_group", _load_buffer(tau_per_group))
         self.register_buffer(
             "bg_rate_per_group", _load_buffer(bg_rate_per_group)
@@ -98,6 +117,24 @@ class PerBinLoss(nn.Module):
             "concentration_per_group",
             _load_buffer(concentration_per_group).clamp(min=1e-6),
         )
+
+        # -- Intensity concentration (Gamma MLE alpha per bin) ----------------
+        if i_concentration_per_group is not None:
+            self.register_buffer(
+                "i_concentration_per_group",
+                _load_buffer(i_concentration_per_group).clamp(min=0.1),
+            )
+        else:
+            self.i_concentration_per_group = None
+
+        # -- Background concentration (Gamma MLE alpha per bin) ---------------
+        if bg_concentration_per_group is not None:
+            self.register_buffer(
+                "bg_concentration_per_group",
+                _load_buffer(bg_concentration_per_group).clamp(min=0.1),
+            )
+        else:
+            self.bg_concentration_per_group = None
 
     def forward(
         self,
@@ -133,22 +170,28 @@ class PerBinLoss(nn.Module):
             )
         kl = kl + kl_prf
 
-        # Intensity KL: KL(q(I_i) || Exp(tau_{k(i)}))
+        # Intensity KL: KL(q(I_i) || Gamma(alpha_k, alpha_k * tau_k))
+        # When i_concentration_per_group is None, alpha_k = 1 (Exponential)
         tau_per_refl = self.tau_per_group[groups]  # (B,)
+        if self.i_concentration_per_group is not None:
+            alpha_i = self.i_concentration_per_group[groups]  # (B,)
+        else:
+            alpha_i = torch.ones_like(tau_per_refl)
         p_i = Gamma(
-            concentration=torch.ones_like(tau_per_refl),
-            rate=tau_per_refl,
+            concentration=alpha_i,
+            rate=alpha_i * tau_per_refl,
         )
         kl_i = _kl(qi, p_i, self.mc_samples, eps=self.eps) * self.pi_weight
         kl = kl + kl_i
 
-        # Background KL: KL(q(bg_i) || Gamma(α, α·λ_k))
-        # α = bg_concentration (default 1.0 = Exponential)
-        # rate scaled by α to keep mean = 1/λ_k unchanged
+        # Background KL: KL(q(bg_i) || Gamma(alpha_bg, alpha_bg * lambda_k))
         bg_rate_per_refl = self.bg_rate_per_group[groups]  # (B,)
-        alpha_bg = self.bg_concentration
+        if self.bg_concentration_per_group is not None:
+            alpha_bg = self.bg_concentration_per_group[groups]  # (B,)
+        else:
+            alpha_bg = torch.full_like(bg_rate_per_refl, self.bg_concentration)
         p_bg = Gamma(
-            concentration=torch.full_like(bg_rate_per_refl, alpha_bg),
+            concentration=alpha_bg,
             rate=alpha_bg * bg_rate_per_refl,
         )
         kl_bg = _kl(qbg, p_bg, self.mc_samples, eps=self.eps) * self.pbg_weight

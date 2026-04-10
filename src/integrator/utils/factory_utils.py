@@ -127,8 +127,8 @@ def _get_prior_cfgs(
     prior_cfgs = dict(cfg)
     data_dir = cfg.get("data_loader", {}).get("args", {}).get("data_dir", "")
     for p in (pprf_cfg, pbg_cfg, pi_cfg):
-        if p in prior_cfgs["loss"]["args"]:
-            p_dict = prior_cfgs["loss"]["args"][p]
+        p_dict = prior_cfgs["loss"]["args"].get(p)
+        if p_dict is not None:
             p_name = p_dict["name"]
             p_params_dict = dict(p_dict.get("params") or {})
             # Resolve relative concentration paths for Dirichlet
@@ -198,7 +198,7 @@ def _get_loss_module(
 
     # Resolve relative .pt paths for custom loss buffers
     data_dir = cfg.get("data_loader", {}).get("args", {}).get("data_dir", "")
-    for pt_key in ("tau_per_group", "bg_rate_per_group", "concentration_per_group", "s_squared_per_group"):
+    for pt_key in ("tau_per_group", "bg_rate_per_group", "concentration_per_group", "s_squared_per_group", "i_concentration_per_group", "bg_concentration_per_group"):
         if pt_key in kwargs and isinstance(kwargs[pt_key], str):
             path = kwargs[pt_key]
             if not os.path.isabs(path) and not path.startswith("~"):

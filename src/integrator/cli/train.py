@@ -179,6 +179,9 @@ def main():
     import os
 
     import torch
+
+    torch.set_float32_matmul_precision("high")
+
     from pytorch_lightning.callbacks import ModelCheckpoint
     from pytorch_lightning.loggers import WandbLogger
 

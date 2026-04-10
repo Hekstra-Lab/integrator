@@ -8,6 +8,7 @@ Identical to IntegratorModelA / IntegratorModelB / IntegratorModelD except:
 from typing import Any, Literal
 
 import torch
+import torch.nn.functional as F
 from torch import Tensor
 
 from integrator import configs
@@ -24,11 +25,15 @@ from integrator.model.integrators.integrator_utils import (
 
 
 def _add_group_outputs(out: dict, metadata: dict, loss) -> None:
-    """Add group_label and tau_per_refl to forward outputs."""
+    """Add group_label, tau_per_refl, and alpha_per_refl to forward outputs."""
     group_labels = metadata["group_label"].long()
     out["group_label"] = group_labels
     if hasattr(loss, "tau_per_group"):
         out["tau_per_refl"] = loss.tau_per_group[group_labels]
+    if hasattr(loss, "log_alpha_per_group"):
+        out["alpha_per_refl"] = F.softplus(loss.log_alpha_per_group[group_labels])
+    elif getattr(loss, "i_concentration_per_group", None) is not None:
+        out["alpha_per_refl"] = loss.i_concentration_per_group[group_labels]
 
 
 def _hierarchical_step(self, batch, step: Literal["train", "val"]):

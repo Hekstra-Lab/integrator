@@ -56,10 +56,28 @@ def prepare_per_bin_priors(
     if n_bins <= 0:
         n_bins = int(loss_args.get("n_bins", 20))
 
+    # Auto-inject concentration file paths when pi_cfg/pbg_cfg request gamma
+    pi_cfg = loss_args.get("pi_cfg")
+    pbg_cfg = loss_args.get("pbg_cfg")
+    if (
+        isinstance(pi_cfg, dict)
+        and pi_cfg.get("name") == "gamma"
+        and "i_concentration_per_group" not in loss_args
+    ):
+        loss_args["i_concentration_per_group"] = "i_concentration_per_group.pt"
+    if (
+        isinstance(pbg_cfg, dict)
+        and pbg_cfg.get("name") == "gamma"
+        and "bg_concentration_per_group" not in loss_args
+    ):
+        loss_args["bg_concentration_per_group"] = "bg_concentration_per_group.pt"
+
     # Determine which files are referenced and which are missing
     per_bin_keys = [
+        "bg_concentration_per_group",
         "bg_rate_per_group",
         "concentration_per_group",
+        "i_concentration_per_group",
         "s_squared_per_group",
         "tau_per_group",
     ]
@@ -135,10 +153,25 @@ def prepare_per_bin_priors(
 
     # Generate each missing file
     if "bg_rate_per_group" in needed:
-        bg_mean = metadata["background.mean"]
-        bg_rate = _compute_bg_rate_per_group(bg_mean, group_labels, n_bins)
+        bg_per_refl = _get_background_for_prior(
+            loss_args.get("tau_source", "dials"), counts, masks, metadata, cfg
+        )
+        bg_rate = _compute_bg_rate_per_group(bg_per_refl, group_labels, n_bins)
         torch.save(bg_rate, needed["bg_rate_per_group"])
         logger.info("Saved bg_rate_per_group.pt")
+
+    if "bg_concentration_per_group" in needed:
+        bg_per_refl = _get_background_for_prior(
+            loss_args.get("tau_source", "dials"), counts, masks, metadata, cfg
+        )
+        bg_alpha = _fit_gamma_prior_per_group(
+            bg_per_refl, group_labels, n_bins, min_intensity=1e-6
+        )
+        torch.save(bg_alpha, needed["bg_concentration_per_group"])
+        logger.info(
+            "Saved bg_concentration_per_group.pt (Gamma MLE alpha, source=%s)",
+            loss_args.get("tau_source", "dials"),
+        )
 
     if "concentration_per_group" in needed:
         concentration = _fit_dirichlet_per_group(
@@ -153,18 +186,56 @@ def prepare_per_bin_priors(
         logger.info("Saved s_squared_per_group.pt")
 
     if "tau_per_group" in needed:
-        intensity = metadata.get(
-            "intensity.prf.value",
-            metadata.get("intensity.sum.value"),
-        )
-        if intensity is not None:
+        tau_source = loss_args.get("tau_source", "dials")
+
+        if tau_source == "crude":
+            crude_I = _crude_intensity_from_cfg(counts, masks, cfg)
             tau = _compute_tau_per_group(
-                intensity, group_labels, n_bins, min_intensity
+                crude_I, group_labels, n_bins, min_intensity
             )
             torch.save(tau, needed["tau_per_group"])
-            logger.info("Saved tau_per_group.pt")
+            logger.info(
+                "Saved tau_per_group.pt (from crude bg-subtraction, "
+                "%d/%d reflections with I>0)",
+                (crude_I > min_intensity).sum().item(),
+                len(crude_I),
+            )
         else:
-            logger.warning("No intensity column found; skipping tau_per_group")
+            intensity = metadata.get(
+                "intensity.prf.value",
+                metadata.get("intensity.sum.value"),
+            )
+            if intensity is not None:
+                tau = _compute_tau_per_group(
+                    intensity, group_labels, n_bins, min_intensity
+                )
+                torch.save(tau, needed["tau_per_group"])
+                logger.info("Saved tau_per_group.pt (from DIALS intensities)")
+            else:
+                logger.warning(
+                    "No intensity column found and tau_source='dials'; "
+                    "falling back to crude bg-subtraction"
+                )
+                crude_I = _crude_intensity_from_cfg(counts, masks, cfg)
+                tau = _compute_tau_per_group(
+                    crude_I, group_labels, n_bins, min_intensity
+                )
+                torch.save(tau, needed["tau_per_group"])
+                logger.info("Saved tau_per_group.pt (crude fallback)")
+
+    if "i_concentration_per_group" in needed:
+        tau_source = loss_args.get("tau_source", "dials")
+        intensity = _get_intensity_for_prior(
+            tau_source, counts, masks, metadata, cfg
+        )
+        alpha = _fit_gamma_prior_per_group(
+            intensity, group_labels, n_bins, min_intensity
+        )
+        torch.save(alpha, needed["i_concentration_per_group"])
+        logger.info(
+            "Saved i_concentration_per_group.pt (Gamma MLE alpha, source=%s)",
+            tau_source,
+        )
 
 
 def _resolve_reference_path(data_dir: Path, cfg: dict) -> Path:
@@ -239,17 +310,104 @@ def _bin_by_resolution(
 
 
 def _compute_bg_rate_per_group(
-    bg_mean: Tensor,
+    bg_per_refl: Tensor,
     group_labels: Tensor,
     n_bins: int,
 ) -> Tensor:
-    """Exponential rate for background: lambda_k = 1 / mean(bg_k)."""
+    """Exponential rate for background: lambda_k = 1 / mean(bg_k).
+
+    Works with any per-reflection background estimate (DIALS
+    ``background.mean`` or crude quietest-frame estimate).
+    """
     bg_rate = torch.zeros(n_bins)
     for b in range(n_bins):
-        sel = bg_mean[group_labels == b]
+        sel = bg_per_refl[group_labels == b]
         if len(sel) > 0:
             bg_rate[b] = 1.0 / sel.mean().clamp(min=1e-6)
     return bg_rate
+
+
+def _crude_intensity_from_cfg(
+    counts: Tensor, masks: Tensor, cfg: dict
+) -> Tensor:
+    """Read shoebox dimensions from config and compute crude intensity."""
+    dl_args = cfg.get("data_loader", {}).get("args", {})
+    n_frames = int(dl_args.get("d", 3))
+    n_pixels = int(dl_args.get("h", 21)) * int(dl_args.get("w", 21))
+    return _compute_crude_intensity(counts, masks, n_frames, n_pixels)
+
+
+def _compute_crude_intensity(
+    counts: Tensor,
+    masks: Tensor,
+    n_frames: int,
+    n_pixels_per_frame: int,
+) -> Tensor:
+    """Estimate intensity from raw shoeboxes via quietest-frame bg subtraction.
+
+    For each shoebox, the frame with the lowest total (masked) counts is
+    treated as pure background.  The per-pixel background rate from that
+    frame is subtracted from the total shoebox counts to give a crude
+    intensity estimate.
+
+    Parameters
+    ----------
+    counts : Tensor
+        Raw shoebox counts, shape ``(N, n_frames * n_pixels_per_frame)``.
+    masks : Tensor
+        Valid-pixel masks, same shape as *counts*.
+    n_frames : int
+        Number of frames per shoebox (typically 3).
+    n_pixels_per_frame : int
+        Pixels per frame (e.g. 21*21 = 441).
+
+    Returns
+    -------
+    Tensor
+        Crude intensity estimate per reflection, shape ``(N,)``.
+        Can be negative for weak / noise-dominated reflections.
+    """
+    N = counts.shape[0]
+
+    # Clamp dead pixels (count == -1) to 0
+    counts_clean = counts.float().clamp(min=0)
+    masks_f = masks.float()
+
+    # Reshape to (N, n_frames, n_pixels_per_frame)
+    counts_3d = (counts_clean * masks_f).reshape(N, n_frames, n_pixels_per_frame)
+    masks_3d = masks_f.reshape(N, n_frames, n_pixels_per_frame)
+
+    # Total masked counts per frame: (N, n_frames)
+    frame_counts = counts_3d.sum(dim=-1)
+
+    # Number of valid pixels per frame: (N, n_frames)
+    frame_n_pixels = masks_3d.sum(dim=-1)
+
+    # Quietest frame = frame with minimum total counts
+    min_frame_idx = frame_counts.argmin(dim=-1)  # (N,)
+    bg_frame_counts = frame_counts.gather(1, min_frame_idx.unsqueeze(-1)).squeeze(-1)
+    bg_frame_n_pixels = frame_n_pixels.gather(1, min_frame_idx.unsqueeze(-1)).squeeze(-1)
+
+    # Background rate per pixel from quietest frame
+    bg_per_pixel = bg_frame_counts / bg_frame_n_pixels.clamp(min=1)
+
+    # Total counts and total valid pixels across all frames
+    total_counts = counts_3d.sum(dim=(1, 2))
+    total_n_pixels = masks_3d.sum(dim=(1, 2))
+
+    # Crude I = total_counts - n_valid_pixels * bg_per_pixel
+    crude_I = total_counts - total_n_pixels * bg_per_pixel
+
+    logger.info(
+        "Crude intensity: min=%.1f, median=%.1f, max=%.1f, "
+        "fraction negative=%.3f",
+        crude_I.min().item(),
+        crude_I.median().item(),
+        crude_I.max().item(),
+        (crude_I < 0).float().mean().item(),
+    )
+
+    return crude_I
 
 
 def _compute_tau_per_group(
@@ -326,3 +484,192 @@ def _fit_dirichlet_per_group(
         concentration[b] = (kappa * p_bar).clamp(min=1e-6)
 
     return concentration
+
+
+def _get_intensity_for_prior(
+    tau_source: str,
+    counts: Tensor,
+    masks: Tensor,
+    metadata: dict,
+    cfg: dict,
+) -> Tensor:
+    """Return intensity tensor for prior fitting, respecting tau_source config."""
+    if tau_source == "crude":
+        return _crude_intensity_from_cfg(counts, masks, cfg)
+
+    intensity = metadata.get(
+        "intensity.prf.value",
+        metadata.get("intensity.sum.value"),
+    )
+    if intensity is not None:
+        return intensity
+
+    logger.warning(
+        "No intensity column found and tau_source='dials'; "
+        "falling back to crude bg-subtraction"
+    )
+    return _crude_intensity_from_cfg(counts, masks, cfg)
+
+
+def _get_background_for_prior(
+    tau_source: str,
+    counts: Tensor,
+    masks: Tensor,
+    metadata: dict,
+    cfg: dict,
+) -> Tensor:
+    """Return per-reflection background estimate, respecting tau_source config."""
+    if tau_source == "crude":
+        return _crude_background_from_cfg(counts, masks, cfg)
+
+    bg_mean = metadata.get("background.mean")
+    if bg_mean is not None:
+        return bg_mean
+
+    logger.warning(
+        "No background.mean column found and tau_source='dials'; "
+        "falling back to crude bg estimation"
+    )
+    return _crude_background_from_cfg(counts, masks, cfg)
+
+
+def _crude_background_from_cfg(
+    counts: Tensor, masks: Tensor, cfg: dict
+) -> Tensor:
+    """Read shoebox dimensions from config and compute crude background."""
+    dl_args = cfg.get("data_loader", {}).get("args", {})
+    n_frames = int(dl_args.get("d", 3))
+    n_pixels = int(dl_args.get("h", 21)) * int(dl_args.get("w", 21))
+    return _compute_crude_background(counts, masks, n_frames, n_pixels)
+
+
+def _compute_crude_background(
+    counts: Tensor,
+    masks: Tensor,
+    n_frames: int,
+    n_pixels_per_frame: int,
+) -> Tensor:
+    """Estimate per-pixel background rate from the quietest frame.
+
+    For each shoebox, the frame with the lowest total (masked) counts is
+    treated as pure background.  Returns the mean counts per pixel in that
+    frame — analogous to DIALS ``background.mean``.
+
+    Parameters
+    ----------
+    counts : Tensor
+        Raw shoebox counts, shape ``(N, n_frames * n_pixels_per_frame)``.
+    masks : Tensor
+        Valid-pixel masks, same shape as *counts*.
+    n_frames : int
+        Number of frames per shoebox (typically 3).
+    n_pixels_per_frame : int
+        Pixels per frame (e.g. 21*21 = 441).
+
+    Returns
+    -------
+    Tensor
+        Per-pixel background rate per reflection, shape ``(N,)``.
+    """
+    N = counts.shape[0]
+
+    counts_clean = counts.float().clamp(min=0)
+    masks_f = masks.float()
+
+    counts_3d = (counts_clean * masks_f).reshape(N, n_frames, n_pixels_per_frame)
+    masks_3d = masks_f.reshape(N, n_frames, n_pixels_per_frame)
+
+    frame_counts = counts_3d.sum(dim=-1)  # (N, n_frames)
+    frame_n_pixels = masks_3d.sum(dim=-1)  # (N, n_frames)
+
+    min_frame_idx = frame_counts.argmin(dim=-1)  # (N,)
+    bg_frame_counts = frame_counts.gather(1, min_frame_idx.unsqueeze(-1)).squeeze(-1)
+    bg_frame_n_pixels = frame_n_pixels.gather(1, min_frame_idx.unsqueeze(-1)).squeeze(-1)
+
+    bg_per_pixel = bg_frame_counts / bg_frame_n_pixels.clamp(min=1)
+
+    logger.info(
+        "Crude background: min=%.2f, median=%.2f, max=%.2f",
+        bg_per_pixel.min().item(),
+        bg_per_pixel.median().item(),
+        bg_per_pixel.max().item(),
+    )
+
+    return bg_per_pixel
+
+
+def _fit_gamma_mle(
+    x: Tensor,
+    n_iter: int = 100,
+) -> tuple[Tensor, Tensor]:
+    """Fit Gamma distribution via Newton MLE on the profile log-likelihood.
+
+    Parameters
+    ----------
+    x : Tensor
+        Positive-valued samples (1-D).
+    n_iter : int
+        Newton iterations.
+
+    Returns
+    -------
+    alpha, beta : Tensor, Tensor
+        MLE shape (concentration) and rate parameters.
+    """
+    xbar = x.mean()
+    s = xbar.log() - x.log().mean()  # >= 0 by Jensen
+
+    # Init from method of moments
+    alpha = xbar**2 / x.var()
+
+    for _ in range(n_iter):
+        grad = alpha.log() - torch.digamma(alpha) - s
+        hess = 1.0 / alpha - torch.polygamma(1, alpha)
+        alpha = alpha - grad / hess
+        alpha = alpha.clamp(min=1e-6)
+
+    beta = alpha / xbar
+    return alpha, beta
+
+
+def _fit_gamma_prior_per_group(
+    intensity: Tensor,
+    group_labels: Tensor,
+    n_bins: int,
+    min_intensity: float = 0.01,
+) -> Tensor:
+    """Fit Gamma MLE per resolution bin and return alpha (shape) per group.
+
+    Parameters
+    ----------
+    intensity : Tensor
+        Per-reflection intensity estimates, shape ``(N,)``.
+    group_labels : Tensor
+        Bin assignment per reflection, shape ``(N,)``.
+    n_bins : int
+        Number of resolution bins.
+    min_intensity : float
+        Minimum intensity threshold (exclude weak/negative reflections).
+
+    Returns
+    -------
+    Tensor
+        Alpha (concentration) per bin, shape ``(n_bins,)``.
+    """
+    alpha_per_group = torch.ones(n_bins)
+    for b in range(n_bins):
+        sel = intensity[group_labels == b]
+        sel = sel[sel > min_intensity]
+        if len(sel) < 10:
+            # Too few reflections for reliable MLE; default to exponential
+            alpha_per_group[b] = 1.0
+            logger.warning(
+                "Bin %d has only %d reflections with I > %.2f; "
+                "defaulting alpha=1 (exponential)",
+                b, len(sel), min_intensity,
+            )
+            continue
+        alpha, _beta = _fit_gamma_mle(sel)
+        alpha_per_group[b] = alpha.clamp(min=0.1)
+        logger.debug("Bin %d: Gamma MLE alpha=%.3f (n=%d)", b, alpha.item(), len(sel))
+    return alpha_per_group

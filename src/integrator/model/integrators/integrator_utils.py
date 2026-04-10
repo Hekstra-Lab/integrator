@@ -241,7 +241,7 @@ def _assemble_outputs(
 
     if isinstance(out.qp, ProfilePosterior):
         base["qp_mu_h"] = out.qp.mu_h        # (B, d) posterior mean of h
-        base["qp_logvar_h"] = out.qp.logvar_h  # (B, d) posterior log-variance of h
+        base["qp_std_h"] = out.qp.std_h  # (B, d) posterior std of h
 
     if out.metadata is None:
         return base

@@ -6,19 +6,19 @@ from torch import Tensor
 
 class ProfilePosterior:
     """Variational posterior q(h|x) = N(mu_h, diag(sigma_h^2)).
-    Profiles are recovered as prf = softmax(W @ h + b)
+    Profiles are recovered as prf = softmax(W @ h + b).
     """
 
     def __init__(
         self,
         mu_h: Tensor,
-        logvar_h: Tensor,
+        std_h: Tensor,
         W: Tensor,
         b: Tensor,
         sigma_prior: float,
     ) -> None:
         self.mu_h = mu_h  # (B, d)
-        self.logvar_h = logvar_h  # (B, d)
+        self.std_h = std_h  # (B, d)
         self.W = W  # (K, d)
         self.b = b  # (K,)
         self.sigma_prior = sigma_prior  # scalar
@@ -43,21 +43,19 @@ class ProfilePosterior:
         Tensor, shape (*sample_shape, B, K)
             Probability vectors on the simplex.
         """
-        std_h = torch.exp(0.5 * self.logvar_h)  # (B, d)
         eps = torch.randn(
             *sample_shape, *self.mu_h.shape, device=self.mu_h.device
         )  # (*sample_shape, B, d)
-        h = self.mu_h + std_h * eps  # (*sample_shape, B, d)
+        h = self.mu_h + self.std_h * eps  # (*sample_shape, B, d)
         logits = h @ self.W.T + self.b  # (*sample_shape, B, K)
         return F.softmax(logits, dim=-1)
 
     def rsample_h(self, sample_shape: torch.Size = torch.Size([])) -> Tensor:
         """Reparameterized sample of the latent h (not the profile)."""
-        std_h = torch.exp(0.5 * self.logvar_h)
         eps = torch.randn(
             *sample_shape, *self.mu_h.shape, device=self.mu_h.device
         )
-        return self.mu_h + std_h * eps
+        return self.mu_h + self.std_h * eps
 
     def h_to_profile(self, h: Tensor) -> Tensor:
         """Deterministic map from latent h to profile vector."""
@@ -103,7 +101,7 @@ class ProfilePosterior:
         Returns: (B,) — KL per batch element.
         """
         sigma_p_sq = self.sigma_prior**2
-        sigma_q_sq = self.logvar_h.exp()
+        sigma_q_sq = self.std_h**2
 
         kl = 0.5 * (
             sigma_q_sq / sigma_p_sq
@@ -129,12 +127,12 @@ class LogisticNormalSurrogate(nn.Module):
         self.sigma_prior: float = float(basis.get("sigma_prior", 3.0))
 
         self.mu_head = nn.Linear(input_dim, self.d)
-        self.logvar_head = nn.Linear(input_dim, self.d)
+        self.std_head = nn.Linear(input_dim, self.d)
 
-        # Initialise logvar_head so initial sigma^2 ≈ exp(-2) ≈ 0.14
-        # (variance smaller than the prior sigma_p^2 = 9 → informative start)
-        nn.init.zeros_(self.logvar_head.weight)
-        nn.init.constant_(self.logvar_head.bias, -2.0)
+        # Initialise std_head so initial std ≈ exp(-1) ≈ 0.37
+        # softplus(-0.81) ≈ 0.37
+        nn.init.zeros_(self.std_head.weight)
+        nn.init.constant_(self.std_head.bias, -0.81)
 
     def forward(self, x: Tensor) -> ProfilePosterior:
         """Map encoder output to a ProfilePosterior.
@@ -149,11 +147,11 @@ class LogisticNormalSurrogate(nn.Module):
         ProfilePosterior
         """
         mu_h = self.mu_head(x)  # (B, d)
-        logvar_h = self.logvar_head(x).clamp(-10.0, 10.0)  # (B, d)
+        std_h = F.softplus(self.std_head(x))  # (B, d)
 
         return ProfilePosterior(
             mu_h=mu_h,
-            logvar_h=logvar_h,
+            std_h=std_h,
             W=self.W,
             b=self.b,
             sigma_prior=self.sigma_prior,
@@ -194,18 +192,20 @@ class LinearProfileSurrogate(nn.Module):
         self.sigma_prior: float = float(sigma_prior)
 
         self.mu_head = nn.Linear(input_dim, self.d)
-        self.logvar_head = nn.Linear(input_dim, self.d)
+        self.std_head = nn.Linear(input_dim, self.d)
         self.decoder = nn.Linear(self.d, output_dim)
 
-        nn.init.zeros_(self.logvar_head.weight)
-        nn.init.constant_(self.logvar_head.bias, -2.0)
+        # Initialise std_head so initial std ≈ exp(-1) ≈ 0.37
+        # softplus(-0.81) ≈ 0.37
+        nn.init.zeros_(self.std_head.weight)
+        nn.init.constant_(self.std_head.bias, -0.81)
 
     def forward(self, x: Tensor) -> ProfilePosterior:
         mu_h = self.mu_head(x)  # (B, d)
-        logvar_h = self.logvar_head(x).clamp(-10.0, 10.0)  # (B, d)
+        std_h = F.softplus(self.std_head(x))  # (B, d)
         return ProfilePosterior(
             mu_h=mu_h,
-            logvar_h=logvar_h,
+            std_h=std_h,
             W=self.decoder.weight,  # (output_dim, d) — trainable
             b=self.decoder.bias,  # (output_dim,)   — trainable
             sigma_prior=self.sigma_prior,
@@ -304,13 +304,13 @@ class PhysicalGaussianProfilePosterior(ProfilePosterior):
     def __init__(
         self,
         mu_h: Tensor,
-        logvar_h: Tensor,
+        std_h: Tensor,
         transform_config: dict,
         sigma_prior: float = 1.0,
     ) -> None:
         # Bypass ProfilePosterior.__init__ (which requires W, b).
         self.mu_h = mu_h
-        self.logvar_h = logvar_h
+        self.std_h = std_h
         self.sigma_prior = sigma_prior
         self._transform_config = transform_config
         self.concentration: Tensor | None = None  # Dirichlet compat shim
@@ -370,17 +370,19 @@ class PhysicalGaussianProfileSurrogate(nn.Module):
         }
 
         self.mu_head = nn.Linear(input_dim, self.d)
-        self.logvar_head = nn.Linear(input_dim, self.d)
+        self.std_head = nn.Linear(input_dim, self.d)
 
-        nn.init.zeros_(self.logvar_head.weight)
-        nn.init.constant_(self.logvar_head.bias, -2.0)
+        # Initialise std_head so initial std ≈ exp(-1) ≈ 0.37
+        # softplus(-0.81) ≈ 0.37
+        nn.init.zeros_(self.std_head.weight)
+        nn.init.constant_(self.std_head.bias, -0.81)
 
     def forward(self, x: Tensor) -> PhysicalGaussianProfilePosterior:
         mu_h = self.mu_head(x)  # (B, 5)
-        logvar_h = self.logvar_head(x).clamp(-10.0, 10.0)  # (B, 5)
+        std_h = F.softplus(self.std_head(x))  # (B, 5)
         return PhysicalGaussianProfilePosterior(
             mu_h=mu_h,
-            logvar_h=logvar_h,
+            std_h=std_h,
             transform_config=self._transform_config,
             sigma_prior=self.sigma_prior,
         )

@@ -3,7 +3,7 @@
 Covers:
   1. ProfilePosterior output sums to 1 (simplex constraint)
   2. KL is non-negative
-  3. KL == 0 when q matches p (mu=0, logvar=log(sigma_p^2))
+  3. KL == 0 when q matches p (mu=0, std=sigma_prior)
   4. Gradients flow through rsample to encoder parameters
   5. W and b do NOT receive gradients
   6. Loss.forward handles ProfilePosterior correctly
@@ -99,16 +99,15 @@ class TestProfilePosterior:
     def test_kl_zero_at_prior(self, tmp_basis):
         """KL should be (approximately) 0 when q matches the prior."""
         sigma_p = 3.0  # matches basis file
-        sigma_p_sq = sigma_p ** 2
-        # mu=0, logvar = log(sigma_p^2) → q = p
+        # mu=0, std=sigma_p → q = p
         mu_h = torch.zeros(B, D)
-        logvar_h = torch.full((B, D), math.log(sigma_p_sq))
+        std_h = torch.full((B, D), sigma_p)
 
         # We need W and b from the file
         basis = torch.load(tmp_basis, weights_only=False)
         pp = ProfilePosterior(
             mu_h=mu_h,
-            logvar_h=logvar_h,
+            std_h=std_h,
             W=basis["W"],
             b=basis["b"],
             sigma_prior=sigma_p,
@@ -156,7 +155,7 @@ class TestLogisticNormalSurrogate:
         assert surrogate.b.grad is None, "b should not have gradient"
 
     def test_encoder_params_get_grad(self, surrogate):
-        """Gradients must flow through rsample to mu_head and logvar_head."""
+        """Gradients must flow through rsample to mu_head and std_head."""
         x = torch.randn(B, INPUT_DIM)
         out = surrogate(x)
         prf = out.rsample([4])  # (4, B, K)
@@ -165,23 +164,29 @@ class TestLogisticNormalSurrogate:
         loss.backward()
 
         mu_grad = surrogate.mu_head.weight.grad
-        lv_grad = surrogate.logvar_head.weight.grad
+        std_grad = surrogate.std_head.weight.grad
         assert mu_grad is not None, "mu_head.weight has no gradient"
-        assert lv_grad is not None, "logvar_head.weight has no gradient"
+        assert std_grad is not None, "std_head.weight has no gradient"
         assert mu_grad.abs().sum() > 0, "mu_head.weight gradient is all zeros"
 
-    def test_logvar_clamp(self, surrogate):
-        """logvar_h must be clamped to [-10, 10]."""
-        # Force extreme logvar output by setting large bias
+    def test_std_positive(self, surrogate):
+        """std_h must be positive (softplus output)."""
+        # Force extreme output by setting large bias
         with torch.no_grad():
-            surrogate.logvar_head.bias.fill_(100.0)
+            surrogate.std_head.bias.fill_(100.0)
         x = torch.randn(B, INPUT_DIM)
         out = surrogate(x)
-        assert out.logvar_h.max() <= 10.0 + 1e-5
-        assert out.logvar_h.min() >= -10.0 - 1e-5
+        assert (out.std_h > 0).all()
+
+        # Also test with very negative bias
+        with torch.no_grad():
+            surrogate.std_head.bias.fill_(-100.0)
+        out = surrogate(x)
+        assert (out.std_h > 0).all()
+
         # Restore
         with torch.no_grad():
-            surrogate.logvar_head.bias.fill_(-2.0)
+            surrogate.std_head.bias.fill_(-0.81)
 
     def test_device_buffers_follow_model(self, surrogate):
         """Buffers should be accessible as tensors on the same device as the model."""
@@ -197,14 +202,14 @@ class TestLogisticNormalSurrogate:
         assert surrogate.sigma_prior == 3.0
 
     def test_kl_gradient_flows(self, surrogate):
-        """KL must be differentiable w.r.t. mu_head and logvar_head parameters."""
+        """KL must be differentiable w.r.t. mu_head and std_head parameters."""
         x = torch.randn(B, INPUT_DIM)
         out = surrogate(x)
         kl = out.kl_divergence().mean()
         kl.backward()
 
         assert surrogate.mu_head.weight.grad is not None
-        assert surrogate.logvar_head.weight.grad is not None
+        assert surrogate.std_head.weight.grad is not None
 
 
 # ---------------------------------------------------------------------------
@@ -260,4 +265,4 @@ class TestLossWithProfilePosterior:
         out["loss"].backward()
 
         assert surrogate.mu_head.weight.grad is not None
-        assert surrogate.logvar_head.weight.grad is not None
+        assert surrogate.std_head.weight.grad is not None

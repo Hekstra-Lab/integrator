@@ -4,7 +4,17 @@ Intensity prior — Wilson model (learned, per-bin):
     log K ~ Normal(μ_K, σ_K)         variational posterior q(log K)
     log B ~ Normal(μ_B, σ_B)         variational posterior q(log B)
     τ_k   = (1/K) · exp(2B · s_k²)  per-bin rate from Wilson formula
-    I_k   ~ Gamma(1, τ_k)           (= Exponential(τ_k))
+    Σ_k   = 1/τ_k = K · exp(-2B · s_k²)  per-bin expected intensity
+
+    When learn_concentration=False (default):
+        I_k  ~ Gamma(1, τ_k) = Exp(τ_k)
+
+    When learn_concentration=True:
+        I_k  ~ Gamma(α_k, α_k · τ_k)
+        where α_k is a learnable per-bin concentration parameter.
+        This keeps E[I_k] = Σ_k (Wilson mean) but allows the prior
+        variance to vary per bin:  Var[I_k] = Σ_k² / α_k.
+        When α_k = 1, this reduces to the standard Exponential.
 
 Background prior — empirical Bayes (fixed, per-bin):
     bg_k  ~ Exp(λ_k)               fixed per-group rate
@@ -15,12 +25,14 @@ Profile prior — depends on surrogate type:
 
 ELBO:
     L = E_q[ log p(x | I, prf, bg) ]
-      - KL(q(prf) || p(prf))                          — profile (see above)
-      - E_{q(K,B)}[ KL(q(I) || Gamma(1, τ_k(K,B))) ] — intensity (Wilson)
-      - KL(q(bg)  || Exp(λ_k))                        — background
-      - KL(q(log K) || p(log K)) / N                  — hyperprior
-      - KL(q(log B) || p(log B)) / N                  — hyperprior
+      - KL(q(prf) || p(prf))                              — profile (see above)
+      - E_{q(K,B)}[ KL(q(I) || Gamma(α_k, α_k·τ_k)) ]   — intensity (Wilson)
+      - KL(q(bg)  || Exp(λ_k))                            — background
+      - KL(q(log K) || p(log K)) / N                      — hyperprior
+      - KL(q(log B) || p(log B)) / N                      — hyperprior
 """
+
+import math
 
 import torch
 import torch.nn as nn
@@ -83,6 +95,13 @@ class WilsonPerBinLoss(nn.Module):
         Shape parameter for the background Gamma prior. Default 1.0
         gives Exp(lambda_k). Higher values give a tighter prior around
         mean = 1/lambda_k, with CV = 1/sqrt(bg_concentration).
+    learn_concentration : bool
+        If True, learn a per-bin concentration parameter α_k for the
+        intensity Gamma prior: I_k ~ Gamma(α_k, α_k·τ_k).
+        The Wilson mean is preserved (E[I_k] = Σ_k) but the variance
+        adapts per bin.  When False (default), α_k = 1 (Exponential).
+    init_alpha : float
+        Initial value for α_k when learn_concentration=True.
     pprf_weight, pbg_weight, pi_weight : float
         Scaling factors for each KL term (set all to 1.0 for a proper ELBO).
     dataset_size : int
@@ -110,14 +129,19 @@ class WilsonPerBinLoss(nn.Module):
         hp_log_B_loc: float = 3.4,
         hp_log_B_scale: float = 1.0,
         n_wilson_samples: int = 4,
-        # Weights
+        # Per-bin learnable concentration
+        learn_concentration: bool = False,
+        init_alpha: float = 1.0,
+        i_concentration_per_group: list[float] | str | None = None,
+        bg_concentration_per_group: list[float] | str | None = None,
+        # Prior configs (from YAML pi_cfg / pbg_cfg / pprf_cfg)
+        pi_cfg=None,
+        pbg_cfg=None,
+        pprf_cfg=None,
+        # Scalar fallback weights
         pprf_weight: float = 1.0,
         pbg_weight: float = 1.0,
         pi_weight: float = 1.0,
-        # Factory compat
-        pprf_cfg=None,
-        pbg_cfg=None,
-        pi_cfg=None,
         dataset_size: int = 1,
     ):
         super().__init__()
@@ -125,10 +149,11 @@ class WilsonPerBinLoss(nn.Module):
         self.eps = eps
         self.dataset_size = dataset_size
         self.bg_concentration = bg_concentration
-        self.pprf_weight = pprf_weight
-        self.pbg_weight = pbg_weight
-        self.pi_weight = pi_weight
+        self.pprf_weight = pprf_cfg.weight if pprf_cfg is not None else pprf_weight
+        self.pbg_weight = pbg_cfg.weight if pbg_cfg is not None else pbg_weight
+        self.pi_weight = pi_cfg.weight if pi_cfg is not None else pi_weight
         self.n_wilson_samples = n_wilson_samples
+        self.learn_concentration = learn_concentration
 
         # -- Fixed buffers (empirical Bayes, per-bin) -------------------------
         self.register_buffer(
@@ -141,6 +166,13 @@ class WilsonPerBinLoss(nn.Module):
             "concentration_per_group",
             _load_buffer(concentration_per_group).clamp(min=1e-6),
         )
+        if bg_concentration_per_group is not None:
+            self.register_buffer(
+                "bg_concentration_per_group",
+                _load_buffer(bg_concentration_per_group).clamp(min=0.1),
+            )
+        else:
+            self.bg_concentration_per_group = None
 
         # -- Auto-initialize from empirical tau if provided -------------------
         if tau_per_group is not None:
@@ -154,6 +186,19 @@ class WilsonPerBinLoss(nn.Module):
         self.q_log_K_log_scale = nn.Parameter(torch.tensor(-2.0))
         self.q_log_B_loc = nn.Parameter(torch.tensor(float(init_log_B)))
         self.q_log_B_log_scale = nn.Parameter(torch.tensor(-2.0))
+
+        # -- Per-bin learnable concentration (Gamma shape) ----------------------
+        if self.learn_concentration:
+            n_groups = len(self.s_squared_per_group)
+            if i_concentration_per_group is not None:
+                # Initialize from Gamma MLE alpha values
+                alpha_init = _load_buffer(i_concentration_per_group).clamp(min=0.1)
+                init_raw = torch.log(torch.expm1(alpha_init))
+            else:
+                init_raw = torch.full(
+                    (n_groups,), math.log(math.expm1(init_alpha))
+                )
+            self.log_alpha_per_group = nn.Parameter(init_raw)
 
         # -- Fixed hyperprior parameters
         self.register_buffer("hp_log_K_loc", torch.tensor(hp_log_K_loc))
@@ -229,12 +274,18 @@ class WilsonPerBinLoss(nn.Module):
         """
         s_K = F.softplus(self.q_log_K_log_scale)
         s_B = F.softplus(self.q_log_B_log_scale)
-        return {
+        out = {
             "K_mean": (self.q_log_K_loc + 0.5 * s_K**2).exp().item(),
             "B_mean": (self.q_log_B_loc + 0.5 * s_B**2).exp().item(),
             "K_std": self._lognormal_std(self.q_log_K_loc, s_K),
             "B_std": self._lognormal_std(self.q_log_B_loc, s_B),
         }
+        if self.learn_concentration:
+            alphas = F.softplus(self.log_alpha_per_group).detach()
+            out["alpha_mean"] = alphas.mean().item()
+            out["alpha_min"] = alphas.min().item()
+            out["alpha_max"] = alphas.max().item()
+        return out
 
     @staticmethod
     def _lognormal_std(mu: Tensor, sigma: Tensor) -> float:
@@ -244,10 +295,16 @@ class WilsonPerBinLoss(nn.Module):
 
     def extra_repr(self) -> str:
         means = self.posterior_means()
-        return (
+        s = (
             f"E[K]={means['K_mean']:.4f} +/- {means['K_std']:.4f}, "
             f"E[B]={means['B_mean']:.4f} +/- {means['B_std']:.4f}"
         )
+        if self.learn_concentration:
+            s += (
+                f", alpha: mean={means['alpha_mean']:.3f} "
+                f"[{means['alpha_min']:.3f}, {means['alpha_max']:.3f}]"
+            )
+        return s
 
     #  Forward
 
@@ -285,31 +342,43 @@ class WilsonPerBinLoss(nn.Module):
             )
         kl = kl + kl_prf
 
-        # Intensity KL: E_{q(K,B)}[ KL(q(I) || Gamma(1, tau_k(K,B))) ]
-        # (per-bin Wilson prior)
+        # Intensity KL: E_{q(K,B)}[ KL(q(I) || Gamma(α_k, α_k·τ_k)) ]
+        # When learn_concentration=False, α_k = 1 (Exponential).
+        # When True, α_k is a learnable per-bin parameter.
         s_sq = self.s_squared_per_group[groups]  # (B,)
+
+        if self.learn_concentration:
+            alpha_i = F.softplus(self.log_alpha_per_group[groups])  # (B,)
+        else:
+            alpha_i = None
+
         for _ in range(self.n_wilson_samples):
             log_K = self.q_log_K().rsample()  # scalar
             log_B = self.q_log_B().rsample()  # scalar
             K = torch.exp(log_K)
             B = torch.exp(log_B)
             tau = self.compute_tau(K, B, s_sq)  # (B,)
-            p_i = Gamma(
-                concentration=torch.ones_like(tau),
-                rate=tau,
-            )
+            if alpha_i is not None:
+                # Gamma(α_k, α_k·τ_k): mean = 1/τ_k (Wilson), var = 1/(α_k·τ_k²)
+                p_i = Gamma(concentration=alpha_i, rate=alpha_i * tau)
+            else:
+                p_i = Gamma(
+                    concentration=torch.ones_like(tau),
+                    rate=tau,
+                )
             kl_i = kl_i + _kl(qi, p_i, self.mc_samples, eps=self.eps)
         kl_i = kl_i / self.n_wilson_samples
         kl_i = kl_i * self.pi_weight
         kl = kl + kl_i
 
-        # Background KL: KL(q(bg) || Gamma(α, α·λ_k))
-        # α = bg_concentration (default 1.0 = Exponential)
-        # rate scaled by α to keep mean = 1/λ_k unchanged
+        # Background KL: KL(q(bg) || Gamma(alpha_bg, alpha_bg * lambda_k))
         bg_rate_per_refl = self.bg_rate_per_group[groups]  # (B,)
-        alpha_bg = self.bg_concentration
+        if self.bg_concentration_per_group is not None:
+            alpha_bg = self.bg_concentration_per_group[groups]  # (B,)
+        else:
+            alpha_bg = torch.full_like(bg_rate_per_refl, self.bg_concentration)
         p_bg = Gamma(
-            concentration=torch.full_like(bg_rate_per_refl, alpha_bg),
+            concentration=alpha_bg,
             rate=alpha_bg * bg_rate_per_refl,
         )
         kl_bg = _kl(qbg, p_bg, self.mc_samples, eps=self.eps) * self.pbg_weight

@@ -73,6 +73,9 @@ def main():
     from pathlib import Path
 
     import torch
+
+    torch.set_float32_matmul_precision("high")
+
     import yaml
 
     from integrator.callbacks import BatchPredWriter
@@ -117,7 +120,11 @@ def main():
     data_loader.setup()
 
     # path to input refl file (only needed for --write-refl)
-    refl_file = config.get("output", {}).get("refl_file") if args.write_refl else None
+    refl_file = config.get("output", {}).get("refl_file")
+    if args.write_refl and not refl_file:
+        raise ValueError(
+            "--write-refl requires 'output.refl_file' in the YAML config"
+        )
 
     epoch_re = re.compile(r"epoch=(\d+)")
     for ckpt in checkpoints:
