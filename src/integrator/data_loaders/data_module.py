@@ -23,6 +23,7 @@ SIMULATED_COLS = [
     "refl_ids",
     "is_test",
     "group_label",
+    "profile_group_label",
 ]
 
 # Default columns from rs.io.read_dials_stills
@@ -82,6 +83,7 @@ DEFAULT_DS_COLS = [
     "L",
     "is_test",
     "group_label",
+    "profile_group_label",
 ]
 
 

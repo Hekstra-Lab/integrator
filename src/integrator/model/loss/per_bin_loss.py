@@ -159,10 +159,14 @@ class PerBinLoss(nn.Module):
         kl_bg = torch.zeros(batch_size, device=device)
 
         # Profile KL: per-bin Dirichlet or global Normal (latent decoder)
+        # Use profile_group_label (2D binning) if available, else group_labels
         if isinstance(qp, ProfilePosterior):
             kl_prf = qp.kl_divergence() * self.pprf_weight
         else:
-            alpha = self.concentration_per_group[groups]  # (B, n_pixels)
+            meta = kwargs.get("metadata", {})
+            pgl = meta.get("profile_group_label") if isinstance(meta, dict) else None
+            prf_groups = pgl.long().to(device) if pgl is not None else groups
+            alpha = self.concentration_per_group[prf_groups]  # (B, n_pixels)
             p_prf = Dirichlet(alpha)
             kl_prf = (
                 _kl(qp, p_prf, self.mc_samples, eps=self.eps)
