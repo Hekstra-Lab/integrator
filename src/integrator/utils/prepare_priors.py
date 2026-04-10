@@ -208,6 +208,25 @@ def prepare_per_bin_priors(
         elif rebinned:
             # Resolution bins changed — profile bins must be regenerated too
             force_conc = True
+        else:
+            # Verify concentration file shape matches profile_group_label
+            n_expected = int(metadata_on_disk["profile_group_label"].max().item()) + 1
+            conc_fn = loss_args.get("concentration_per_group")
+            if isinstance(conc_fn, str):
+                conc_path = (
+                    Path(conc_fn) if Path(conc_fn).is_absolute()
+                    else data_dir / conc_fn
+                )
+                if conc_path.exists():
+                    conc_on_disk = torch.load(conc_path, weights_only=True)
+                    if conc_on_disk.shape[0] != n_expected:
+                        logger.warning(
+                            "concentration_per_group has %d bins but "
+                            "profile_group_label expects %d; regenerating",
+                            conc_on_disk.shape[0],
+                            n_expected,
+                        )
+                        force_conc = True
 
         if force_conc and "concentration_per_group" in loss_args:
             fn = loss_args["concentration_per_group"]
@@ -301,13 +320,6 @@ def prepare_per_bin_priors(
                 n_profile_bins,
             )
 
-            # Save diagnostic plot
-            _plot_profile_binning(
-                metadata, group_labels, profile_group_labels,
-                n_bins, azi_per_shell, max_azi_bins, beam_center,
-                save_path=data_dir / "profile_binning.png",
-            )
-
             concentration = _fit_dirichlet_per_group(
                 counts, masks, profile_group_labels, n_profile_bins,
                 D=D_dim, H=H_dim, W=W_dim,
@@ -316,6 +328,16 @@ def prepare_per_bin_priors(
                 f"adaptive 2D {n_bins}res x max{max_azi_bins}azi = "
                 f"{n_profile_bins} bins"
             )
+
+            # Save diagnostic plot (non-fatal)
+            try:
+                _plot_profile_binning(
+                    metadata, group_labels, profile_group_labels,
+                    n_bins, azi_per_shell, max_azi_bins, beam_center,
+                    save_path=data_dir / "profile_binning.png",
+                )
+            except Exception as exc:
+                logger.warning("Could not save profile binning plot: %s", exc)
         else:
             concentration = _fit_dirichlet_per_group(
                 counts, masks, group_labels, n_bins,

@@ -210,12 +210,13 @@ def main():
     # load data
     logger.info("Starting Training (simulated data)")
 
-    data_loader = construct_data_loader(cfg)
-    data_loader.setup()
-
     # Auto-generate prior files if needed by the loss
+    # (must run before data_loader.setup() so metadata.pt has all labels)
     prepare_per_bin_priors(cfg)
     prepare_global_priors(cfg)
+
+    data_loader = construct_data_loader(cfg)
+    data_loader.setup()
 
     # Tags for identification
     tags = [
