@@ -10,7 +10,7 @@ from .factory_utils import (
     save_run_artifacts,
 )
 from .mtzwriter import mtz_writer
-from .prepare_priors import prepare_per_bin_priors
+from .prepare_priors import prepare_global_priors, prepare_per_bin_priors
 from .parser import BaseParser
 
 # from .reflection_file_writer import reflection_file_writer
@@ -27,5 +27,6 @@ __all__ = [
     "BaseParser",
     "dump_yaml_config",
     "save_run_artifacts",
+    "prepare_global_priors",
     "prepare_per_bin_priors",
 ]

@@ -198,6 +198,7 @@ def main():
         construct_integrator,
         construct_trainer,
         load_config,
+        prepare_global_priors,
         prepare_per_bin_priors,
         save_run_artifacts,
     )
@@ -218,8 +219,9 @@ def main():
     data_loader = construct_data_loader(cfg)
     data_loader.setup()
 
-    # Auto-generate per-bin prior files if needed by the loss
+    # Auto-generate prior files if needed by the loss
     prepare_per_bin_priors(cfg)
+    prepare_global_priors(cfg)
 
     # Tags for identification
     tags = [

@@ -1,8 +1,11 @@
-"""Auto-generate per-bin prior buffers for hierarchical loss functions.
+"""Auto-generate prior buffers for loss functions.
 
-Called automatically during training when the loss requires per-bin priors
-(PerBinLoss, WilsonPerBinLoss) and the .pt files don't yet exist in the
-data directory.
+Called automatically during training when the loss requires prior files
+and the .pt files don't yet exist in the data directory.
+
+Supports:
+  - PerBinLoss / WilsonPerBinLoss: per-bin priors (resolution shells)
+  - Default Loss: global priors (single Dirichlet concentration vector)
 
 This avoids requiring users to run a separate preprocessing script.
 """
@@ -15,6 +18,77 @@ import torch
 from torch import Tensor
 
 logger = logging.getLogger(__name__)
+
+
+def prepare_global_priors(
+    cfg: dict,
+    *,
+    force: bool = False,
+) -> None:
+    """Generate global prior .pt files for the default Loss if needed.
+
+    When the default loss uses a Dirichlet profile prior
+    (``pprf_cfg.name = "dirichlet"``) with a ``.pt`` file path as the
+    concentration, this function generates that file using a global MOM
+    estimate (bg-subtracted, across all reflections with no binning).
+
+    Idempotent: skips if the file already exists unless force=True.
+
+    Parameters
+    ----------
+    cfg : dict
+        Full YAML config dict.
+    force : bool
+        Regenerate even if file already exists.
+    """
+    loss_name = cfg.get("loss", {}).get("name", "")
+    if loss_name != "default":
+        return
+
+    loss_args = cfg["loss"].get("args", {})
+    pprf_cfg = loss_args.get("pprf_cfg")
+    if pprf_cfg is None or pprf_cfg.get("name") != "dirichlet":
+        return
+
+    params = pprf_cfg.get("params", {})
+    conc_value = params.get("concentration")
+    if not isinstance(conc_value, str):
+        # Scalar concentration — nothing to generate
+        return
+
+    data_dir = Path(cfg["data_loader"]["args"]["data_dir"])
+    conc_path = (
+        Path(conc_value)
+        if Path(conc_value).is_absolute()
+        else data_dir / conc_value
+    )
+
+    if conc_path.exists() and not force:
+        return
+
+    logger.info("Generating global Dirichlet concentration: %s", conc_path)
+
+    counts, masks, metadata = _load_raw_data(data_dir, cfg)
+
+    dl_args = cfg.get("data_loader", {}).get("args", {})
+    D_dim = int(dl_args.get("D", dl_args.get("d", 1)))
+    H_dim = int(dl_args.get("H", dl_args.get("h", 21)))
+    W_dim = int(dl_args.get("W", dl_args.get("w", 21)))
+
+    # Single bin = global MOM across all reflections
+    N = counts.shape[0]
+    all_one_bin = torch.zeros(N, dtype=torch.long)
+    concentration = _fit_dirichlet_per_group(
+        counts, masks, all_one_bin, 1, D=D_dim, H=H_dim, W=W_dim
+    )
+    # Squeeze from (1, D*H*W) to (D*H*W,)
+    concentration = concentration.squeeze(0)
+
+    torch.save(concentration, conc_path)
+    logger.info(
+        "Saved global concentration.pt (MOM bg-sub, sum(alpha)=%.1f)",
+        concentration.sum().item(),
+    )
 
 
 def prepare_per_bin_priors(
