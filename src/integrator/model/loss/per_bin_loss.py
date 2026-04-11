@@ -83,7 +83,7 @@ class PerBinLoss(nn.Module):
         eps: float = 1e-6,
         tau_per_group: list[float] | str,
         bg_rate_per_group: list[float] | str,
-        concentration_per_group: str,
+        concentration_per_group: str | None = None,
         i_concentration_per_group: list[float] | str | None = None,
         bg_concentration_per_group: list[float] | str | None = None,
         bg_concentration: float = 1.0,
@@ -113,10 +113,13 @@ class PerBinLoss(nn.Module):
         self.register_buffer(
             "bg_rate_per_group", _load_buffer(bg_rate_per_group)
         )
-        self.register_buffer(
-            "concentration_per_group",
-            _load_buffer(concentration_per_group).clamp(min=1e-6),
-        )
+        if concentration_per_group is not None:
+            self.register_buffer(
+                "concentration_per_group",
+                _load_buffer(concentration_per_group).clamp(min=1e-6),
+            )
+        else:
+            self.concentration_per_group = None
 
         # -- Intensity concentration (Gamma MLE alpha per bin) ----------------
         if i_concentration_per_group is not None:
@@ -166,6 +169,10 @@ class PerBinLoss(nn.Module):
             prf_groups = pgl.long().to(device) if pgl is not None else groups
             kl_prf = qp.kl_divergence(prf_groups) * self.pprf_weight
         else:
+            if self.concentration_per_group is None:
+                raise RuntimeError(
+                    "concentration_per_group is required for Dirichlet profile surrogate"
+                )
             meta = kwargs.get("metadata", {})
             pgl = meta.get("profile_group_label") if isinstance(meta, dict) else None
             prf_groups = pgl.long().to(device) if pgl is not None else groups

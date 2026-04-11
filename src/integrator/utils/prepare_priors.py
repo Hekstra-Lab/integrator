@@ -200,14 +200,12 @@ def prepare_per_bin_priors(
 
     # Check profile_group_label consistency with 2D binning config
     profile_binning = loss_args.get("profile_binning")
+    need_2d_rebinning = False
     if profile_binning is not None:
-        force_conc = False
         if "profile_group_label" not in metadata_on_disk:
-            # 2D binning requested but profile_group_label missing
-            force_conc = True
+            need_2d_rebinning = True
         elif rebinned:
-            # Resolution bins changed — profile bins must be regenerated too
-            force_conc = True
+            need_2d_rebinning = True
         else:
             # Verify concentration file shape matches profile_group_label
             n_expected = int(metadata_on_disk["profile_group_label"].max().item()) + 1
@@ -226,16 +224,28 @@ def prepare_per_bin_priors(
                             conc_on_disk.shape[0],
                             n_expected,
                         )
-                        force_conc = True
+                        need_2d_rebinning = True
 
-        if force_conc and "concentration_per_group" in loss_args:
+        if need_2d_rebinning and "concentration_per_group" in loss_args:
             fn = loss_args["concentration_per_group"]
             if isinstance(fn, str):
                 needed["concentration_per_group"] = (
                     Path(fn) if Path(fn).is_absolute() else data_dir / fn
                 )
 
-    if not needed:
+    # Check if profile_basis_per_bin needs generating
+    basis_filename = loss_args.get("profile_basis_per_bin")
+    need_basis = False
+    if isinstance(basis_filename, str):
+        basis_path = (
+            Path(basis_filename)
+            if Path(basis_filename).is_absolute()
+            else data_dir / basis_filename
+        )
+        if force or not basis_path.exists():
+            need_basis = True
+
+    if not needed and not need_2d_rebinning and not need_basis:
         return
 
     logger.info(
@@ -285,59 +295,61 @@ def prepare_per_bin_priors(
             loss_args.get("tau_source", "dials"),
         )
 
+    # ── 2D profile binning (resolution × azimuthal) ──────────────────
+    # Run independently so profile_group_label is available for both
+    # concentration_per_group (Dirichlet) and profile_basis_per_bin (latent).
+    profile_binning = loss_args.get("profile_binning")
+    if profile_binning is not None and (need_2d_rebinning or "profile_group_label" not in metadata):
+        max_azi_bins = int(profile_binning.get("max_azi_bins", 16))
+        min_per_bin = int(profile_binning.get("min_per_bin", 200))
+        beam_center = profile_binning.get("beam_center")
+        if beam_center is None:
+            raise ValueError(
+                "profile_binning.beam_center is required for 2D profile binning"
+            )
+        beam_center = (float(beam_center[0]), float(beam_center[1]))
+
+        profile_group_labels, azi_per_shell, n_profile_bins = (
+            _bin_2d_for_profiles(
+                metadata, group_labels, n_bins, max_azi_bins,
+                beam_center, min_per_bin=min_per_bin,
+            )
+        )
+
+        # Save profile_group_label in metadata
+        metadata["profile_group_label"] = profile_group_labels
+        meta_path = _resolve_reference_path(data_dir, cfg)
+        torch.save(metadata, meta_path)
+        logger.info(
+            "Added 'profile_group_label' to %s (%d 2D bins)",
+            meta_path.name,
+            n_profile_bins,
+        )
+
+        # Save diagnostic plot (non-fatal)
+        try:
+            _plot_profile_binning(
+                metadata, group_labels, profile_group_labels,
+                n_bins, azi_per_shell, max_azi_bins, beam_center,
+                save_path=data_dir / "profile_binning.png",
+            )
+        except Exception as exc:
+            logger.warning("Could not save profile binning plot: %s", exc)
+
     if "concentration_per_group" in needed:
         dl_args = cfg.get("data_loader", {}).get("args", {})
         D_dim = int(dl_args.get("D", dl_args.get("d", 1)))
         H_dim = int(dl_args.get("H", dl_args.get("h", 21)))
         W_dim = int(dl_args.get("W", dl_args.get("w", 21)))
 
-        # Check for 2D profile binning config
-        profile_binning = loss_args.get("profile_binning")
-        if profile_binning is not None:
-            max_azi_bins = int(profile_binning.get("max_azi_bins", 16))
-            min_per_bin = int(profile_binning.get("min_per_bin", 200))
-            beam_center = profile_binning.get("beam_center")
-            if beam_center is None:
-                raise ValueError(
-                    "profile_binning.beam_center is required for 2D profile binning"
-                )
-            beam_center = (float(beam_center[0]), float(beam_center[1]))
-
-            profile_group_labels, azi_per_shell, n_profile_bins = (
-                _bin_2d_for_profiles(
-                    metadata, group_labels, n_bins, max_azi_bins,
-                    beam_center, min_per_bin=min_per_bin,
-                )
-            )
-
-            # Save profile_group_label in metadata
-            metadata["profile_group_label"] = profile_group_labels
-            meta_path = _resolve_reference_path(data_dir, cfg)
-            torch.save(metadata, meta_path)
-            logger.info(
-                "Added 'profile_group_label' to %s (%d 2D bins)",
-                meta_path.name,
-                n_profile_bins,
-            )
-
+        if "profile_group_label" in metadata:
+            profile_group_labels = metadata["profile_group_label"]
+            n_profile_bins = int(profile_group_labels.max().item()) + 1
             concentration = _fit_dirichlet_per_group(
                 counts, masks, profile_group_labels, n_profile_bins,
                 D=D_dim, H=H_dim, W=W_dim,
             )
-            binning_desc = (
-                f"adaptive 2D {n_bins}res x max{max_azi_bins}azi = "
-                f"{n_profile_bins} bins"
-            )
-
-            # Save diagnostic plot (non-fatal)
-            try:
-                _plot_profile_binning(
-                    metadata, group_labels, profile_group_labels,
-                    n_bins, azi_per_shell, max_azi_bins, beam_center,
-                    save_path=data_dir / "profile_binning.png",
-                )
-            except Exception as exc:
-                logger.warning("Could not save profile binning plot: %s", exc)
+            binning_desc = f"2D profile bins ({n_profile_bins} bins)"
         else:
             concentration = _fit_dirichlet_per_group(
                 counts, masks, group_labels, n_bins,
