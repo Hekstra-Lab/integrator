@@ -412,6 +412,40 @@ def prepare_per_bin_priors(
             tau_source,
         )
 
+    # ── Profile basis with per-bin latent priors ──────────────────────
+    basis_filename = loss_args.get("profile_basis_per_bin")
+    if isinstance(basis_filename, str):
+        basis_path = (
+            Path(basis_filename)
+            if Path(basis_filename).is_absolute()
+            else data_dir / basis_filename
+        )
+        if force or not basis_path.exists():
+            dl_args = cfg.get("data_loader", {}).get("args", {})
+            D_dim = int(dl_args.get("D", dl_args.get("d", 1)))
+            H_dim = int(dl_args.get("H", dl_args.get("h", 21)))
+            W_dim = int(dl_args.get("W", dl_args.get("w", 21)))
+
+            basis_type = str(loss_args.get("profile_basis_type", "hermite"))
+            basis_d = int(loss_args.get("profile_basis_d", 14))
+            basis_max_order = int(loss_args.get("profile_basis_max_order", 4))
+            basis_sigma_ref = float(loss_args.get("profile_basis_sigma_ref", 3.0))
+
+            # Use profile_group_labels if 2D binning was done, else group_labels
+            prf_labels = metadata.get("profile_group_label", group_labels)
+            n_prf_bins = int(prf_labels.max().item()) + 1
+
+            basis_data = _fit_profile_basis_per_bin(
+                counts, masks, prf_labels, n_prf_bins,
+                basis_type=basis_type, D=D_dim, H=H_dim, W=W_dim,
+                d=basis_d, max_order=basis_max_order, sigma_ref=basis_sigma_ref,
+            )
+            torch.save(basis_data, basis_path)
+            logger.info(
+                "Saved %s (type=%s, d=%d, %d bins)",
+                basis_path.name, basis_type, basis_data["d"], n_prf_bins,
+            )
+
 
 def _resolve_reference_path(data_dir: Path, cfg: dict) -> Path:
     """Find the metadata/reference .pt file from the config."""
@@ -1121,3 +1155,340 @@ def _fit_gamma_prior_per_group(
         alpha_per_group[b] = alpha.clamp(min=0.1)
         logger.debug("Bin %d: Gamma MLE alpha=%.3f (n=%d)", b, alpha.item(), len(sel))
     return alpha_per_group
+
+
+# ──────────────────────────────────────────────────────────────────────
+#  Profile basis construction (Hermite + PCA) with per-bin priors
+# ──────────────────────────────────────────────────────────────────────
+
+
+def _hermite_polynomial(n_order: int, x: Tensor) -> Tensor:
+    """Probabilist's Hermite polynomial H_n(x) by three-term recurrence."""
+    if n_order == 0:
+        return torch.ones_like(x)
+    if n_order == 1:
+        return x
+    h_prev2 = torch.ones_like(x)
+    h_prev1 = x
+    for k in range(2, n_order + 1):
+        h_curr = x * h_prev1 - (k - 1) * h_prev2
+        h_prev2 = h_prev1
+        h_prev1 = h_curr
+    return h_curr
+
+
+def _build_hermite_basis_2d(
+    H: int = 21,
+    W: int = 21,
+    max_order: int = 4,
+    sigma_ref: float = 3.0,
+) -> tuple[Tensor, Tensor, list[tuple[int, int]]]:
+    """2D Hermite function basis with half-Gaussian envelope.
+
+    Each basis function: φ_{nx,ny}(x,y) = H_nx(x/σ) · H_ny(y/σ) · exp(-r²/(4σ²))
+    Orthogonal in unweighted L²(R²).  The (0,0) mode is excluded (absorbed by b).
+
+    Returns
+    -------
+    W : (H*W, d) basis matrix
+    b : (H*W,) bias = log of reference Gaussian profile
+    orders : list of (nx, ny) tuples
+    """
+    cy, cx = (H - 1) / 2.0, (W - 1) / 2.0
+    yy, xx = torch.meshgrid(
+        torch.arange(H, dtype=torch.float64),
+        torch.arange(W, dtype=torch.float64),
+        indexing="ij",
+    )
+    x_norm = (xx - cx) / sigma_ref
+    y_norm = (yy - cy) / sigma_ref
+
+    # Half-Gaussian envelope
+    half_gaussian = torch.exp(-0.25 * (x_norm**2 + y_norm**2))
+
+    # Reference profile (for bias b)
+    full_gaussian = torch.exp(-0.5 * (x_norm**2 + y_norm**2))
+    ref = full_gaussian / full_gaussian.sum()
+    b = torch.log(ref.reshape(-1).clamp(min=1e-10)).float()
+
+    basis_list = []
+    orders = []
+    for nx in range(max_order + 1):
+        for ny in range(max_order + 1 - nx):
+            if nx == 0 and ny == 0:
+                continue
+            phi = (
+                _hermite_polynomial(nx, x_norm)
+                * _hermite_polynomial(ny, y_norm)
+                * half_gaussian
+            )
+            phi = phi / phi.norm()
+            basis_list.append(phi.reshape(-1))
+            orders.append((nx, ny))
+
+    W_basis = torch.stack(basis_list, dim=1).float()
+    return W_basis, b, orders
+
+
+def _build_hermite_basis_3d(
+    D: int,
+    H: int = 21,
+    W: int = 21,
+    max_order: int = 4,
+    sigma_ref: float = 3.0,
+    sigma_z: float = 1.0,
+) -> tuple[Tensor, Tensor, list[tuple[int, int, int]]]:
+    """3D Hermite function basis (frame × spatial) with half-Gaussian envelope.
+
+    Frame direction uses max order min(1, D-1) since D is typically small (3).
+    Spatial directions use the full max_order.
+
+    Returns
+    -------
+    W : (D*H*W, d) basis matrix
+    b : (D*H*W,) bias = log of reference 3D Gaussian profile
+    orders : list of (nx, ny, nz) tuples
+    """
+    cy, cx = (H - 1) / 2.0, (W - 1) / 2.0
+    cz = (D - 1) / 2.0
+
+    zz, yy, xx = torch.meshgrid(
+        torch.arange(D, dtype=torch.float64),
+        torch.arange(H, dtype=torch.float64),
+        torch.arange(W, dtype=torch.float64),
+        indexing="ij",
+    )
+    x_norm = (xx - cx) / sigma_ref
+    y_norm = (yy - cy) / sigma_ref
+    z_norm = (zz - cz) / sigma_z
+
+    # Half-Gaussian envelope in all 3 dims
+    half_gaussian = torch.exp(
+        -0.25 * (x_norm**2 + y_norm**2 + z_norm**2)
+    )
+
+    # Reference 3D Gaussian profile
+    full_gaussian = torch.exp(
+        -0.5 * (x_norm**2 + y_norm**2 + z_norm**2)
+    )
+    ref = full_gaussian / full_gaussian.sum()
+    b = torch.log(ref.reshape(-1).clamp(min=1e-10)).float()
+
+    max_order_z = min(1, D - 1)  # at most linear in frame direction
+
+    basis_list = []
+    orders = []
+    for nz in range(max_order_z + 1):
+        for nx in range(max_order + 1):
+            for ny in range(max_order + 1 - nx):
+                if nx == 0 and ny == 0 and nz == 0:
+                    continue
+                phi = (
+                    _hermite_polynomial(nx, x_norm)
+                    * _hermite_polynomial(ny, y_norm)
+                    * _hermite_polynomial(nz, z_norm)
+                    * half_gaussian
+                )
+                phi = phi / phi.norm()
+                basis_list.append(phi.reshape(-1))
+                orders.append((nx, ny, nz))
+
+    W_basis = torch.stack(basis_list, dim=1).float()
+    return W_basis, b, orders
+
+
+def _build_pca_basis(
+    signal: Tensor,
+    d: int = 8,
+    eps: float = 1e-8,
+) -> tuple[Tensor, Tensor, Tensor]:
+    """PCA basis from bg-subtracted, normalized profiles.
+
+    Parameters
+    ----------
+    signal : (N, K) bg-subtracted signal (already clamped >= 0)
+    d : number of principal components
+
+    Returns
+    -------
+    W : (K, d) basis matrix
+    b : (K,) mean of log-profiles (bias)
+    explained_var : (d,) fraction of variance explained per component
+    """
+    # Normalize to proportions
+    totals = signal.sum(dim=1, keepdim=True).clamp(min=1)
+    proportions = signal / totals
+
+    # Log-transform
+    log_profiles = torch.log(proportions.clamp(min=eps))
+
+    # Center
+    b = log_profiles.mean(dim=0)  # (K,)
+    centered = log_profiles - b
+
+    # SVD
+    _U, S, Vh = torch.linalg.svd(centered, full_matrices=False)
+
+    # Top d components
+    d_actual = min(d, S.shape[0])
+    W_basis = Vh[:d_actual].T  # (K, d_actual)
+
+    total_var = (S**2).sum()
+    explained_var = (S[:d_actual] ** 2) / total_var
+
+    return W_basis.float(), b.float(), explained_var.float()
+
+
+def _bg_subtract_signal(
+    counts: Tensor,
+    masks: Tensor,
+    D: int,
+    H: int,
+    W: int,
+) -> Tensor:
+    """Background-subtract raw shoebox counts.
+
+    Reuses the same logic as _fit_dirichlet_per_group: quietest-frame
+    for 3D, border-pixel average for 2D.
+
+    Returns
+    -------
+    signal : (N, D*H*W) non-negative bg-subtracted counts
+    """
+    n_pixels_per_frame = H * W
+    N = counts.shape[0]
+
+    counts_clean = counts.float().clamp(min=0)
+    masks_f = masks.float()
+    counts_masked = counts_clean * masks_f
+
+    counts_3d = counts_masked.reshape(N, D, n_pixels_per_frame)
+    masks_3d = masks_f.reshape(N, D, n_pixels_per_frame)
+
+    if D > 1:
+        frame_counts = counts_3d.sum(dim=-1)
+        frame_n_pixels = masks_3d.sum(dim=-1)
+        min_frame_idx = frame_counts.argmin(dim=-1)
+        bg_frame_counts = frame_counts.gather(
+            1, min_frame_idx.unsqueeze(-1)
+        ).squeeze(-1)
+        bg_frame_n_pixels = frame_n_pixels.gather(
+            1, min_frame_idx.unsqueeze(-1)
+        ).squeeze(-1)
+        bg_per_pixel = bg_frame_counts / bg_frame_n_pixels.clamp(min=1)
+    else:
+        frame = counts_3d[:, 0, :]
+        frame_2d = frame.reshape(N, H, W)
+        border_mask = torch.ones(H, W, dtype=torch.bool)
+        border_mask[2:-2, 2:-2] = False
+        border_vals = frame_2d[:, border_mask]
+        bg_per_pixel = border_vals.mean(dim=-1)
+
+    signal = counts_masked - bg_per_pixel.unsqueeze(-1) * masks_f
+    return signal.clamp(min=0)
+
+
+def _fit_profile_basis_per_bin(
+    counts: Tensor,
+    masks: Tensor,
+    group_labels: Tensor,
+    n_bins: int,
+    basis_type: str = "hermite",
+    D: int = 1,
+    H: int = 21,
+    W: int = 21,
+    d: int = 14,
+    max_order: int = 4,
+    sigma_ref: float = 3.0,
+) -> dict:
+    """Build a fixed profile basis and compute per-bin latent priors.
+
+    Parameters
+    ----------
+    counts, masks : (N, D*H*W) raw data
+    group_labels : (N,) bin assignment per reflection
+    n_bins : number of bins
+    basis_type : "hermite" or "pca"
+    D, H, W : shoebox dimensions
+    d : latent dimensionality (PCA only; Hermite uses max_order)
+    max_order : max Hermite polynomial order (Hermite only)
+    sigma_ref : reference Gaussian width in pixels (Hermite only)
+
+    Returns
+    -------
+    dict ready for torch.save as profile_basis_per_bin.pt
+    """
+    signal = _bg_subtract_signal(counts, masks, D, H, W)
+
+    if basis_type == "hermite":
+        if D > 1:
+            W_basis, b, orders = _build_hermite_basis_3d(
+                D, H, W, max_order, sigma_ref
+            )
+        else:
+            W_basis, b, orders = _build_hermite_basis_2d(
+                H, W, max_order, sigma_ref
+            )
+        d_actual = W_basis.shape[1]
+        explained_var = None
+        logger.info(
+            "Hermite basis: %dD, max_order=%d, sigma_ref=%.1f, d=%d",
+            3 if D > 1 else 2, max_order, sigma_ref, d_actual,
+        )
+    elif basis_type == "pca":
+        W_basis, b, explained_var = _build_pca_basis(signal, d)
+        d_actual = W_basis.shape[1]
+        orders = None
+        logger.info(
+            "PCA basis: d=%d, explained variance=%.3f",
+            d_actual, explained_var.sum().item(),
+        )
+    else:
+        raise ValueError(f"Unknown profile basis type: {basis_type!r}")
+
+    # Project all reflections into latent space
+    # For Hermite: project bg-subtracted signal (as log-proportions) onto basis
+    totals = signal.sum(dim=1, keepdim=True).clamp(min=1)
+    proportions = signal / totals
+    log_profiles = torch.log(proportions.clamp(min=1e-8))
+    centered = log_profiles - b  # (N, K)
+    h_all = centered @ W_basis  # (N, d)
+
+    # Per-bin mean and std of latent codes
+    mu_per_group = torch.zeros(n_bins, d_actual)
+    std_per_group = torch.ones(n_bins, d_actual)
+
+    for k in range(n_bins):
+        mask_k = group_labels == k
+        h_k = h_all[mask_k]
+        if h_k.shape[0] >= 2:
+            mu_per_group[k] = h_k.mean(dim=0)
+            std_per_group[k] = h_k.std(dim=0).clamp(min=0.1)
+        elif h_k.shape[0] == 1:
+            mu_per_group[k] = h_k[0]
+        logger.debug(
+            "Bin %d: n=%d, |mu|=%.2f, mean(std)=%.2f",
+            k, h_k.shape[0],
+            mu_per_group[k].norm().item(),
+            std_per_group[k].mean().item(),
+        )
+
+    # Global sigma_prior = std of all latent codes (for fallback)
+    sigma_prior = float(h_all.std().item())
+    sigma_prior = max(sigma_prior, 1.0)  # floor at 1.0
+
+    result = {
+        "W": W_basis,
+        "b": b,
+        "d": d_actual,
+        "mu_per_group": mu_per_group,
+        "std_per_group": std_per_group,
+        "sigma_prior": sigma_prior,
+        "basis_type": f"{basis_type}_per_bin",
+    }
+    if orders is not None:
+        result["orders"] = orders
+    if explained_var is not None:
+        result["explained_var"] = explained_var
+
+    return result

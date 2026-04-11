@@ -16,6 +16,8 @@ from .log_normal import LogNormalA, LogNormalDistribution
 from .logistic_normal import (
     LinearProfileSurrogate,
     LogisticNormalSurrogate,
+    PerBinLogisticNormalSurrogate,
+    PerBinProfilePosterior,
     PhysicalGaussianProfilePosterior,
     PhysicalGaussianProfileSurrogate,
     ProfilePosterior,
@@ -42,6 +44,8 @@ __all__ = [
     "LogNormalA",
     "LinearProfileSurrogate",
     "LogisticNormalSurrogate",
+    "PerBinLogisticNormalSurrogate",
+    "PerBinProfilePosterior",
     "PhysicalGaussianProfilePosterior",
     "PhysicalGaussianProfileSurrogate",
     "ProfilePosterior",

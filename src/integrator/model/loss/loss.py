@@ -376,6 +376,8 @@ class Loss(nn.Module):
         if isinstance(qp, ProfilePosterior):
             # LogisticNormal surrogate: closed-form Gaussian KL on h.
             # pprf_cfg.weight is honoured when present; defaults to 1.0.
+            # group_labels=None → base class ignores it (global prior);
+            # PerBinProfilePosterior would use it but default loss has no bins.
             weight = self.pprf_cfg.weight if self.pprf_cfg is not None else 1.0
             kl_prf = qp.kl_divergence() * weight
             kl += kl_prf

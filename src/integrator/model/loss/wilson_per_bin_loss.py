@@ -358,10 +358,13 @@ class WilsonPerBinLoss(nn.Module):
         kl_i = torch.zeros(batch_size, device=device)
         kl_bg = torch.zeros(batch_size, device=device)
 
-        # Profile KL: per-bin Dirichlet or global Normal (latent decoder)
+        # Profile KL: per-bin Dirichlet or latent Normal (global or per-bin)
         # Use profile_group_label (2D binning) if available, else group_labels
         if isinstance(qp, ProfilePosterior):
-            kl_prf = qp.kl_divergence() * self.pprf_weight
+            meta = kwargs.get("metadata", {})
+            pgl = meta.get("profile_group_label") if isinstance(meta, dict) else None
+            prf_groups = pgl.long().to(device) if pgl is not None else groups
+            kl_prf = qp.kl_divergence(prf_groups) * self.pprf_weight
         else:
             meta = kwargs.get("metadata", {})
             pgl = meta.get("profile_group_label") if isinstance(meta, dict) else None

@@ -124,7 +124,10 @@ class HierarchicalShoeboxLoss(nn.Module):
         # Profile KL
         if isinstance(qp, ProfilePosterior):
             weight = self.pprf_cfg.weight if self.pprf_cfg is not None else 1.0
-            kl_prf = qp.kl_divergence() * weight
+            meta = kwargs.get("metadata", {})
+            pgl = meta.get("profile_group_label") if isinstance(meta, dict) else None
+            prf_groups = pgl.long().to(device) if pgl is not None else group_labels.long()
+            kl_prf = qp.kl_divergence(prf_groups) * weight
             kl = kl + kl_prf
         elif self.pprf_cfg is not None and self.pprf_params is not None:
             kl_prf = _prior_kl(

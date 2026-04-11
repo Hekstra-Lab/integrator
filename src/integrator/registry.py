@@ -21,6 +21,7 @@ from integrator.model.distributions import (
     LogisticNormalSurrogate,
     LogNormalA,
     LogNormalDistribution,
+    PerBinLogisticNormalSurrogate,
     PhysicalGaussianProfileSurrogate,
     TotalFractionSurrogate,
 )
@@ -92,6 +93,7 @@ REGISTRY = {
         "bivariate_log_normal": BivariateLogNormalSurrogate,
         "linear_profile_surrogate": LinearProfileSurrogate,
         "logistic_normal_surrogate": LogisticNormalSurrogate,
+        "per_bin_logistic_normal": PerBinLogisticNormalSurrogate,
         "physical_gaussian_surrogate": PhysicalGaussianProfileSurrogate,
         "total_fraction_surrogate": TotalFractionSurrogate,
     },

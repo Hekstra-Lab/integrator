@@ -92,11 +92,17 @@ class ProfilePosterior:
     # KL divergence
     # ------------------------------------------------------------------
 
-    def kl_divergence(self) -> Tensor:
+    def kl_divergence(self, group_labels: Tensor | None = None) -> Tensor:
         """Closed-form KL(q(h) || p(h)).
 
         q(h) = N(mu_h, diag(sigma_h^2))
         p(h) = N(0,    sigma_p^2 * I)
+
+        Parameters
+        ----------
+        group_labels : Tensor | None
+            Ignored in the base class (global prior).  Subclasses like
+            ``PerBinProfilePosterior`` use this to select per-bin priors.
 
         Returns: (B,) — KL per batch element.
         """
@@ -385,4 +391,124 @@ class PhysicalGaussianProfileSurrogate(nn.Module):
             std_h=std_h,
             transform_config=self._transform_config,
             sigma_prior=self.sigma_prior,
+        )
+
+
+# ------------------------------------------------------------------
+# Per-bin latent profile prior
+# ------------------------------------------------------------------
+
+
+class PerBinProfilePosterior(ProfilePosterior):
+    """Profile posterior with per-bin Gaussian prior in latent space.
+
+    Instead of a single global prior N(0, σ²I), each resolution/azimuthal
+    bin k has its own prior N(μ_k, diag(σ_k²)).  The per-bin parameters
+    are estimated from data (PCA or Hermite projection of bg-subtracted
+    profiles) and stored as buffers in the surrogate module.
+
+    KL is still closed-form Gaussian, computed in the low-dimensional
+    latent space (d ~ 8-14), giving ~15-30 nats instead of the 200-500
+    nats typical of per-bin Dirichlet on the full simplex.
+    """
+
+    def __init__(
+        self,
+        mu_h: Tensor,
+        std_h: Tensor,
+        W: Tensor,
+        b: Tensor,
+        sigma_prior: float,
+        mu_prior: Tensor,
+        std_prior: Tensor,
+    ) -> None:
+        super().__init__(mu_h, std_h, W, b, sigma_prior)
+        self.mu_prior = mu_prior    # (n_bins, d)
+        self.std_prior = std_prior  # (n_bins, d)
+
+    def kl_divergence(self, group_labels: Tensor | None = None) -> Tensor:
+        """KL(q(h) || p_k(h)) with per-bin prior.
+
+        If group_labels is provided, uses per-bin prior N(μ_k, diag(σ_k²)).
+        Otherwise falls back to the global prior N(0, σ²I).
+
+        Parameters
+        ----------
+        group_labels : Tensor | None
+            Bin index per reflection, shape (B,).  Long tensor.
+
+        Returns
+        -------
+        Tensor, shape (B,)
+        """
+        if group_labels is None:
+            return super().kl_divergence()
+
+        mu_p = self.mu_prior[group_labels]    # (B, d)
+        std_p = self.std_prior[group_labels]  # (B, d)
+
+        var_q = self.std_h ** 2
+        var_p = std_p ** 2
+
+        kl = 0.5 * (
+            var_q / var_p
+            + (self.mu_h - mu_p) ** 2 / var_p
+            - 1.0
+            - torch.log(var_q / var_p)
+        ).sum(dim=-1)
+
+        return kl  # (B,)
+
+
+class PerBinLogisticNormalSurrogate(nn.Module):
+    """Profile surrogate with fixed basis (Hermite or PCA) and per-bin priors.
+
+    Loads a ``profile_basis_per_bin.pt`` file containing:
+        - W (K, d): basis matrix (Hermite functions or PCA components)
+        - b (K,): bias (log of reference profile or mean of log-profiles)
+        - mu_per_group (n_bins, d): per-bin prior mean in latent space
+        - std_per_group (n_bins, d): per-bin prior std in latent space
+        - sigma_prior (float): global fallback prior std
+        - d (int): latent dimensionality
+
+    Parameters
+    ----------
+    input_dim : int
+        Dimension of the encoder output.
+    basis_path : str
+        Path to profile_basis_per_bin.pt.
+    """
+
+    def __init__(self, input_dim: int, basis_path: str) -> None:
+        super().__init__()
+
+        basis = torch.load(basis_path, weights_only=False)
+
+        self.register_buffer("W", basis["W"])                    # (K, d)
+        self.register_buffer("b", basis["b"])                    # (K,)
+        self.register_buffer("mu_per_group", basis["mu_per_group"])    # (n_bins, d)
+        self.register_buffer("std_per_group", basis["std_per_group"])  # (n_bins, d)
+
+        self.d: int = int(basis["d"])
+        self.sigma_prior: float = float(basis.get("sigma_prior", 3.0))
+
+        self.mu_head = nn.Linear(input_dim, self.d)
+        self.std_head = nn.Linear(input_dim, self.d)
+
+        # Initialise std_head so initial std ≈ exp(-1) ≈ 0.37
+        nn.init.zeros_(self.std_head.weight)
+        nn.init.constant_(self.std_head.bias, -0.81)
+
+    def forward(self, x: Tensor) -> PerBinProfilePosterior:
+        mu_h = self.mu_head(x)              # (B, d)
+        std_h = F.softplus(self.std_head(x))  # (B, d)
+
+        return PerBinProfilePosterior(
+            mu_h=mu_h,
+            std_h=std_h,
+            W=self.W,
+            b=self.b,
+            sigma_prior=self.sigma_prior,
+            mu_prior=self.mu_per_group,
+            std_prior=self.std_per_group,
         )
