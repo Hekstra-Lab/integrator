@@ -105,12 +105,16 @@ def _get_surrogate_modules(
     """
     surrogates = {}
     data_dir = cfg.get("data_loader", {}).get("args", {}).get("data_dir", "")
+    n_bins = cfg.get("loss", {}).get("args", {}).get("n_bins")
     for key, surrogate_cfg in cfg["surrogates"].items():
         surrogate_cls = REGISTRY["surrogates"][surrogate_cfg["name"]]
         args = dict(surrogate_cfg["args"])
         if surrogate_cfg["name"] in ("logistic_normal_surrogate", "physical_gaussian_surrogate", "per_bin_logistic_normal") and "basis_path" in args:
             bp = args["basis_path"]
             if isinstance(bp, str) and not os.path.isabs(bp) and not bp.startswith("~"):
+                if n_bins is not None:
+                    p = Path(bp)
+                    bp = f"{p.stem}_{n_bins}{p.suffix}"
                 args["basis_path"] = os.path.join(data_dir, bp)
         surrogates[key] = surrogate_cls(**args)
     return surrogates
@@ -197,11 +201,16 @@ def _get_loss_module(
             kwargs[k] = v
 
     # Resolve relative .pt paths for custom loss buffers
+    # Include n_bins in filename to prevent concurrent runs from clobbering files
     data_dir = cfg.get("data_loader", {}).get("args", {}).get("data_dir", "")
+    n_bins = cfg.get("loss", {}).get("args", {}).get("n_bins")
     for pt_key in ("tau_per_group", "bg_rate_per_group", "concentration_per_group", "s_squared_per_group", "i_concentration_per_group", "bg_concentration_per_group"):
         if pt_key in kwargs and isinstance(kwargs[pt_key], str):
             path = kwargs[pt_key]
             if not os.path.isabs(path) and not path.startswith("~"):
+                if n_bins is not None:
+                    p = Path(path)
+                    path = f"{p.stem}_{n_bins}{p.suffix}"
                 kwargs[pt_key] = os.path.join(data_dir, path)
 
     return loss_cls(**kwargs)

@@ -20,6 +20,19 @@ from torch import Tensor
 logger = logging.getLogger(__name__)
 
 
+def _nbins_path(filename: str, n_bins: int, data_dir: Path) -> Path:
+    """Resolve a prior filename with n_bins suffix: 'foo.pt' → data_dir/'foo_30.pt'.
+
+    This prevents concurrent runs with different n_bins from clobbering
+    each other's prior files in the same data directory.
+    """
+    p = Path(filename)
+    suffixed = f"{p.stem}_{n_bins}{p.suffix}"
+    if p.is_absolute():
+        return p.parent / suffixed
+    return data_dir / suffixed
+
+
 def prepare_global_priors(
     cfg: dict,
     *,
@@ -163,11 +176,7 @@ def prepare_per_bin_priors(
             continue
         filename = loss_args[key]
         if isinstance(filename, str):
-            path = (
-                Path(filename)
-                if Path(filename).is_absolute()
-                else data_dir / filename
-            )
+            path = _nbins_path(filename, n_bins, data_dir)
             if force or not path.exists():
                 needed[key] = path
 
@@ -190,12 +199,7 @@ def prepare_per_bin_priors(
                     continue
                 filename = loss_args[key]
                 if isinstance(filename, str):
-                    path = (
-                        Path(filename)
-                        if Path(filename).is_absolute()
-                        else data_dir / filename
-                    )
-                    needed[key] = path
+                    needed[key] = _nbins_path(filename, n_bins, data_dir)
             rebinned = True
 
     # Check profile_group_label consistency with 2D binning config
@@ -211,10 +215,7 @@ def prepare_per_bin_priors(
             n_expected = int(metadata_on_disk["profile_group_label"].max().item()) + 1
             conc_fn = loss_args.get("concentration_per_group")
             if isinstance(conc_fn, str):
-                conc_path = (
-                    Path(conc_fn) if Path(conc_fn).is_absolute()
-                    else data_dir / conc_fn
-                )
+                conc_path = _nbins_path(conc_fn, n_bins, data_dir)
                 if conc_path.exists():
                     conc_on_disk = torch.load(conc_path, weights_only=True)
                     if conc_on_disk.shape[0] != n_expected:
@@ -229,19 +230,13 @@ def prepare_per_bin_priors(
         if need_2d_rebinning and "concentration_per_group" in loss_args:
             fn = loss_args["concentration_per_group"]
             if isinstance(fn, str):
-                needed["concentration_per_group"] = (
-                    Path(fn) if Path(fn).is_absolute() else data_dir / fn
-                )
+                needed["concentration_per_group"] = _nbins_path(fn, n_bins, data_dir)
 
     # Check if profile_basis_per_bin needs generating
     basis_filename = loss_args.get("profile_basis_per_bin")
     need_basis = False
     if isinstance(basis_filename, str):
-        basis_path = (
-            Path(basis_filename)
-            if Path(basis_filename).is_absolute()
-            else data_dir / basis_filename
-        )
+        basis_path = _nbins_path(basis_filename, n_bins, data_dir)
         if force or not basis_path.exists():
             need_basis = True
 
@@ -427,11 +422,7 @@ def prepare_per_bin_priors(
     # ── Profile basis with per-bin latent priors ──────────────────────
     basis_filename = loss_args.get("profile_basis_per_bin")
     if isinstance(basis_filename, str):
-        basis_path = (
-            Path(basis_filename)
-            if Path(basis_filename).is_absolute()
-            else data_dir / basis_filename
-        )
+        basis_path = _nbins_path(basis_filename, n_bins, data_dir)
         if force or not basis_path.exists():
             dl_args = cfg.get("data_loader", {}).get("args", {})
             D_dim = int(dl_args.get("D", dl_args.get("d", 1)))

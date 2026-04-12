@@ -141,6 +141,12 @@ def main():
 
         # Writing epoch prediction dir
         ckpt_dir = pred_dir / f"epoch_{epoch:04d}"
+
+        # Skip if predictions already exist (resume support)
+        if ckpt_dir.exists() and any(ckpt_dir.iterdir()):
+            logger.info("Skipping epoch %d (predictions already exist)", epoch)
+            continue
+
         ckpt_dir.mkdir(parents=True, exist_ok=True)
 
         # Construct callbacks
