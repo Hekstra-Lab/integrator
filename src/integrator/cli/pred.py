@@ -83,6 +83,7 @@ def main():
         construct_data_loader,
         construct_integrator,
         construct_trainer,
+        inject_binning_labels,
         load_config,
     )
 
@@ -118,6 +119,7 @@ def main():
     # load data
     data_loader = construct_data_loader(config)
     data_loader.setup()
+    inject_binning_labels(data_loader, config)
 
     # path to input refl file (only needed for --write-refl)
     refl_file = config.get("output", {}).get("refl_file")

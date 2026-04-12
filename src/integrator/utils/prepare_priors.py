@@ -182,14 +182,18 @@ def prepare_per_bin_priors(
 
     # Check group_label consistency with n_bins even if all files exist
     rebinned = False
-    ref_path = _resolve_reference_path(data_dir, cfg)
-    metadata_on_disk = torch.load(ref_path, weights_only=False)
-    if "group_label" in metadata_on_disk:
-        existing_n_bins = int(metadata_on_disk["group_label"].max().item()) + 1
+    need_group_labels = False
+    gl_path = _nbins_path("group_labels.pt", n_bins, data_dir)
+    if not gl_path.exists():
+        need_group_labels = True
+    else:
+        existing_gl = torch.load(gl_path, weights_only=True)
+        existing_n_bins = int(existing_gl.max().item()) + 1
         if existing_n_bins != n_bins:
             logger.warning(
-                "group_label has %d bins but config specifies n_bins=%d; "
+                "group_labels_%d.pt has %d bins but config specifies n_bins=%d; "
                 "re-binning and regenerating all per-bin files",
+                n_bins,
                 existing_n_bins,
                 n_bins,
             )
@@ -205,14 +209,16 @@ def prepare_per_bin_priors(
     # Check profile_group_label consistency with 2D binning config
     profile_binning = loss_args.get("profile_binning")
     need_2d_rebinning = False
+    pgl_path = _nbins_path("profile_group_labels.pt", n_bins, data_dir)
     if profile_binning is not None:
-        if "profile_group_label" not in metadata_on_disk:
+        if not pgl_path.exists():
             need_2d_rebinning = True
         elif rebinned:
             need_2d_rebinning = True
         else:
             # Verify concentration file shape matches profile_group_label
-            n_expected = int(metadata_on_disk["profile_group_label"].max().item()) + 1
+            existing_pgl = torch.load(pgl_path, weights_only=True)
+            n_expected = int(existing_pgl.max().item()) + 1
             conc_fn = loss_args.get("concentration_per_group")
             if isinstance(conc_fn, str):
                 conc_path = _nbins_path(conc_fn, n_bins, data_dir)
@@ -240,7 +246,7 @@ def prepare_per_bin_priors(
         if force or not basis_path.exists():
             need_basis = True
 
-    if not needed and not need_2d_rebinning and not need_basis:
+    if not needed and not need_2d_rebinning and not need_basis and not need_group_labels:
         return
 
     logger.info(
@@ -258,15 +264,12 @@ def prepare_per_bin_priors(
     group_labels, bin_edges, n_bins = _bin_by_resolution(d, n_bins)
     logger.info("Binned %d reflections into %d resolution shells", N, n_bins)
 
-    # Add or update group_label in metadata
-    if "group_label" not in metadata or rebinned:
-        metadata["group_label"] = group_labels
-        meta_path = _resolve_reference_path(data_dir, cfg)
-        torch.save(metadata, meta_path)
-        if rebinned:
-            logger.info("Updated 'group_label' in %s to %d bins", meta_path.name, n_bins)
-        else:
-            logger.info("Added 'group_label' to %s", meta_path.name)
+    # Save group_labels as a separate n_bins-suffixed file (never mutate metadata.pt)
+    # Also set in-memory for downstream prior computation in this function.
+    metadata["group_label"] = group_labels
+    gl_path = _nbins_path("group_labels.pt", n_bins, data_dir)
+    torch.save(group_labels, gl_path)
+    logger.info("Saved %s (%d bins)", gl_path.name, n_bins)
 
     # Generate each missing file
     if "bg_rate_per_group" in needed:
@@ -294,7 +297,8 @@ def prepare_per_bin_priors(
     # Run independently so profile_group_label is available for both
     # concentration_per_group (Dirichlet) and profile_basis_per_bin (latent).
     profile_binning = loss_args.get("profile_binning")
-    if profile_binning is not None and (need_2d_rebinning or "profile_group_label" not in metadata):
+    pgl_path = _nbins_path("profile_group_labels.pt", n_bins, data_dir)
+    if profile_binning is not None and (need_2d_rebinning or not pgl_path.exists()):
         max_azi_bins = int(profile_binning.get("max_azi_bins", 16))
         min_per_bin = int(profile_binning.get("min_per_bin", 200))
         beam_center = profile_binning.get("beam_center")
@@ -311,15 +315,12 @@ def prepare_per_bin_priors(
             )
         )
 
-        # Save profile_group_label in metadata
+        # Save profile_group_labels as a separate n_bins-suffixed file
+        # Also set in-memory for downstream prior computation in this function.
         metadata["profile_group_label"] = profile_group_labels
-        meta_path = _resolve_reference_path(data_dir, cfg)
-        torch.save(metadata, meta_path)
-        logger.info(
-            "Added 'profile_group_label' to %s (%d 2D bins)",
-            meta_path.name,
-            n_profile_bins,
-        )
+        pgl_path = _nbins_path("profile_group_labels.pt", n_bins, data_dir)
+        torch.save(profile_group_labels, pgl_path)
+        logger.info("Saved %s (%d 2D bins)", pgl_path.name, n_profile_bins)
 
         # Save diagnostic plot (non-fatal)
         try:
@@ -330,6 +331,10 @@ def prepare_per_bin_priors(
             )
         except Exception as exc:
             logger.warning("Could not save profile binning plot: %s", exc)
+
+    # If profile_group_labels file exists but wasn't just computed, load into metadata
+    if "profile_group_label" not in metadata and pgl_path.exists():
+        metadata["profile_group_label"] = torch.load(pgl_path, weights_only=True)
 
     if "concentration_per_group" in needed:
         dl_args = cfg.get("data_loader", {}).get("args", {})
@@ -448,6 +453,34 @@ def prepare_per_bin_priors(
                 "Saved %s (type=%s, d=%d, %d bins)",
                 basis_path.name, basis_type, basis_data["d"], n_prf_bins,
             )
+
+
+def inject_binning_labels(data_loader, cfg: dict) -> None:
+    """Load binning label files and inject into the dataset's metadata.
+
+    Called after data_loader.setup() to add group_label and
+    profile_group_label to the dataset without mutating metadata.pt.
+    Files are saved by prepare_per_bin_priors() as separate
+    n_bins-suffixed .pt files.
+
+    If the files don't exist (e.g. old data without per-bin priors),
+    this is a no-op and existing labels in metadata.pt are used.
+    """
+    loss_args = cfg.get("loss", {}).get("args", {})
+    n_bins = int(loss_args.get("n_bins", 20))
+    data_dir = Path(cfg["data_loader"]["args"]["data_dir"])
+
+    ref = data_loader.full_dataset.reference
+
+    gl_path = _nbins_path("group_labels.pt", n_bins, data_dir)
+    if gl_path.exists():
+        ref["group_label"] = torch.load(gl_path, weights_only=True)
+        logger.debug("Injected group_label from %s", gl_path.name)
+
+    pgl_path = _nbins_path("profile_group_labels.pt", n_bins, data_dir)
+    if pgl_path.exists():
+        ref["profile_group_label"] = torch.load(pgl_path, weights_only=True)
+        logger.debug("Injected profile_group_label from %s", pgl_path.name)
 
 
 def _resolve_reference_path(data_dir: Path, cfg: dict) -> Path:

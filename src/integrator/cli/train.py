@@ -197,6 +197,7 @@ def main():
         construct_data_loader,
         construct_integrator,
         construct_trainer,
+        inject_binning_labels,
         load_config,
         prepare_global_priors,
         prepare_per_bin_priors,
@@ -217,12 +218,12 @@ def main():
     logger.info("Starting Training")
 
     # Auto-generate prior files if needed by the loss
-    # (must run before data_loader.setup() so metadata.pt has all labels)
     prepare_per_bin_priors(cfg)
     prepare_global_priors(cfg)
 
     data_loader = construct_data_loader(cfg)
     data_loader.setup()
+    inject_binning_labels(data_loader, cfg)
 
     # Tags for identification
     tags = [
