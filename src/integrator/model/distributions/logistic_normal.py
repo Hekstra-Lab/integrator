@@ -499,7 +499,9 @@ class PerBinLogisticNormalSurrogate(nn.Module):
         nn.init.zeros_(self.std_head.weight)
         nn.init.constant_(self.std_head.bias, -0.81)
 
-    def forward(self, x: Tensor) -> PerBinProfilePosterior:
+    def forward(
+        self, x: Tensor, group_labels: Tensor | None = None,
+    ) -> PerBinProfilePosterior:
         mu_h = self.mu_head(x)              # (B, d)
         std_h = F.softplus(self.std_head(x))  # (B, d)
 

@@ -109,7 +109,7 @@ def _get_surrogate_modules(
     for key, surrogate_cfg in cfg["surrogates"].items():
         surrogate_cls = REGISTRY["surrogates"][surrogate_cfg["name"]]
         args = dict(surrogate_cfg["args"])
-        if surrogate_cfg["name"] in ("logistic_normal_surrogate", "physical_gaussian_surrogate", "per_bin_logistic_normal") and "basis_path" in args:
+        if surrogate_cfg["name"] in ("logistic_normal_surrogate", "physical_gaussian_surrogate", "per_bin_logistic_normal", "empirical_profile_surrogate") and "basis_path" in args:
             bp = args["basis_path"]
             if isinstance(bp, str) and not os.path.isabs(bp) and not bp.startswith("~"):
                 if n_bins is not None:
@@ -195,7 +195,7 @@ def _get_loss_module(
     kwargs = shallow_dict(loss_args)
 
     # Forward extra keys from loss.args for custom loss classes
-    standard_keys = {"mc_samples", "eps", "pprf_cfg", "pbg_cfg", "pi_cfg", "n_bins", "profile_binning", "profile_basis_per_bin", "profile_basis_type", "profile_basis_d", "profile_basis_max_order", "profile_basis_sigma_ref"}
+    standard_keys = {"mc_samples", "eps", "pprf_cfg", "pbg_cfg", "pi_cfg", "n_bins", "profile_binning", "profile_basis_per_bin", "profile_basis_type", "profile_basis_d", "profile_basis_max_order", "profile_basis_sigma_ref", "empirical_profile_basis_per_bin", "profile_smooth_sigma"}
     for k, v in cfg["loss"]["args"].items():
         if k not in standard_keys:
             kwargs[k] = v

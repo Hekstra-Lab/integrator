@@ -246,7 +246,21 @@ def prepare_per_bin_priors(
         if force or not basis_path.exists():
             need_basis = True
 
-    if not needed and not need_2d_rebinning and not need_basis and not need_group_labels:
+    # Check if empirical_profile_basis_per_bin needs generating
+    emp_basis_filename = loss_args.get("empirical_profile_basis_per_bin")
+    need_emp_basis = False
+    if isinstance(emp_basis_filename, str):
+        emp_basis_path = _nbins_path(emp_basis_filename, n_bins, data_dir)
+        if force or not emp_basis_path.exists():
+            need_emp_basis = True
+
+    if (
+        not needed
+        and not need_2d_rebinning
+        and not need_basis
+        and not need_emp_basis
+        and not need_group_labels
+    ):
         return
 
     logger.info(
@@ -453,6 +467,158 @@ def prepare_per_bin_priors(
                 "Saved %s (type=%s, d=%d, %d bins)",
                 basis_path.name, basis_type, basis_data["d"], n_prf_bins,
             )
+
+    # ── Empirical profile basis (per-bin empirical bias) ──────────────
+    emp_basis_filename = loss_args.get("empirical_profile_basis_per_bin")
+    if isinstance(emp_basis_filename, str):
+        emp_basis_path = _nbins_path(emp_basis_filename, n_bins, data_dir)
+        if force or not emp_basis_path.exists():
+            dl_args = cfg.get("data_loader", {}).get("args", {})
+            D_dim = int(dl_args.get("D", dl_args.get("d", 1)))
+            H_dim = int(dl_args.get("H", dl_args.get("h", 21)))
+            W_dim = int(dl_args.get("W", dl_args.get("w", 21)))
+
+            basis_max_order = int(loss_args.get("profile_basis_max_order", 4))
+            basis_sigma_ref = float(loss_args.get("profile_basis_sigma_ref", 3.0))
+            smooth_sigma = float(loss_args.get("profile_smooth_sigma", 0.0))
+
+            prf_labels = metadata.get("profile_group_label", group_labels)
+            n_prf_bins = int(prf_labels.max().item()) + 1
+
+            emp_basis_data = _fit_empirical_profile_basis(
+                counts, masks, prf_labels, n_prf_bins,
+                D=D_dim, H=H_dim, W=W_dim,
+                max_order=basis_max_order, sigma_ref=basis_sigma_ref,
+                smooth_sigma=smooth_sigma,
+            )
+            torch.save(emp_basis_data, emp_basis_path)
+            logger.info(
+                "Saved %s (empirical bias, d=%d, %d bins)",
+                emp_basis_path.name, emp_basis_data["d"], n_prf_bins,
+            )
+
+
+def _fit_empirical_profile_basis(
+    counts: Tensor,
+    masks: Tensor,
+    group_labels: Tensor,
+    n_bins: int,
+    D: int = 1,
+    H: int = 21,
+    W: int = 21,
+    d: int = 14,
+    max_order: int = 4,
+    sigma_ref: float = 3.0,
+    smooth_sigma: float = 0.0,
+) -> dict:
+    """Build a profile basis with per-bin empirical biases.
+
+    Like ``_fit_profile_basis_per_bin`` but replaces the single symmetric
+    Gaussian bias with per-bin empirical biases computed from the mean
+    bg-subtracted profile in each bin.  This means z=0 reproduces the
+    empirical average profile for each bin — the model only learns
+    per-reflection corrections.
+
+    Parameters
+    ----------
+    counts, masks : (N, D*H*W) raw data
+    group_labels : (N,) bin assignment per reflection
+    n_bins : number of bins
+    D, H, W : shoebox dimensions
+    d : unused (Hermite uses max_order)
+    max_order : max Hermite polynomial order
+    sigma_ref : reference Gaussian width in pixels
+    smooth_sigma : if > 0, apply Gaussian smoothing to each mean profile
+        before taking log.  Reduces noise in bins with few reflections.
+
+    Returns
+    -------
+    dict ready for torch.save as empirical_profile_basis_per_bin.pt
+    """
+    signal = _bg_subtract_signal(counts, masks, D, H, W)
+
+    # Build shared Hermite basis
+    if D > 1:
+        W_basis, b_ref, orders = _build_hermite_basis_3d(
+            D, H, W, max_order, sigma_ref
+        )
+    else:
+        W_basis, b_ref, orders = _build_hermite_basis_2d(
+            H, W, max_order, sigma_ref
+        )
+    d_actual = W_basis.shape[1]
+    K = signal.shape[1]
+    logger.info(
+        "Empirical profile basis: %dD, max_order=%d, sigma_ref=%.1f, d=%d",
+        3 if D > 1 else 2, max_order, sigma_ref, d_actual,
+    )
+
+    # Compute per-bin empirical biases from mean profiles
+    totals = signal.sum(dim=1, keepdim=True).clamp(min=1)
+    proportions = signal / totals
+    log_profiles = torch.log(proportions.clamp(min=1e-8))
+
+    b_per_group = torch.zeros(n_bins, K)
+    for k in range(n_bins):
+        mask_k = group_labels == k
+        props_k = proportions[mask_k]
+        if props_k.shape[0] >= 1:
+            mean_k = props_k.mean(dim=0)
+
+            # Remove noise floor: signal occupies a small fraction of
+            # the shoebox, so a high quantile of pixel values estimates
+            # the background level well
+            floor = mean_k.quantile(0.75)
+            mean_k = (mean_k - floor).clamp(min=0)
+
+            # Optional Gaussian smoothing in pixel space
+            if smooth_sigma > 0:
+                mean_3d = mean_k.reshape(D, H, W)
+                mean_3d = _gaussian_smooth_3d(mean_3d, smooth_sigma)
+                mean_k = mean_3d.reshape(-1)
+
+            mean_k = mean_k / mean_k.sum().clamp(min=1e-10)
+            b_per_group[k] = torch.log(mean_k.clamp(min=1e-8))
+        else:
+            b_per_group[k] = b_ref  # fallback to symmetric Gaussian
+    b_per_group = b_per_group.float()
+
+    # Project each reflection using its bin's empirical bias
+    b_selected = b_per_group[group_labels]  # (N, K)
+    centered = log_profiles - b_selected
+    h_all = centered @ W_basis  # (N, d)
+
+    # Per-bin latent statistics
+    mu_per_group = torch.zeros(n_bins, d_actual)
+    std_per_group = torch.ones(n_bins, d_actual)
+
+    for k in range(n_bins):
+        h_k = h_all[group_labels == k]
+        if h_k.shape[0] >= 2:
+            mu_per_group[k] = h_k.mean(dim=0)
+            std_per_group[k] = h_k.std(dim=0).clamp(min=0.1)
+        elif h_k.shape[0] == 1:
+            mu_per_group[k] = h_k[0]
+        logger.debug(
+            "Bin %d: n=%d, |mu|=%.2f, mean(std)=%.2f",
+            k, h_k.shape[0],
+            mu_per_group[k].norm().item(),
+            std_per_group[k].mean().item(),
+        )
+
+    sigma_prior = max(float(h_all.std().item()), 1.0)
+
+    result = {
+        "W": W_basis,
+        "b_per_group": b_per_group,
+        "d": d_actual,
+        "mu_per_group": mu_per_group,
+        "std_per_group": std_per_group,
+        "sigma_prior": sigma_prior,
+        "basis_type": "empirical_per_bin",
+        "orders": orders,
+    }
+    return result
 
 
 def inject_binning_labels(data_loader, cfg: dict) -> None:
@@ -1373,6 +1539,43 @@ def _build_pca_basis(
     explained_var = (S[:d_actual] ** 2) / total_var
 
     return W_basis.float(), b.float(), explained_var.float()
+
+
+def _gaussian_smooth_3d(vol: Tensor, sigma: float) -> Tensor:
+    """Apply Gaussian smoothing to a (D, H, W) volume (or (1, H, W) for 2D).
+
+    Uses separable 1D convolutions per axis. Kernel is truncated at 3*sigma.
+    """
+    import torch.nn.functional as F_smooth  # local to avoid top-level clash
+
+    ksize = max(int(math.ceil(sigma * 3)) * 2 + 1, 3)
+    half = ksize // 2
+    x = torch.arange(ksize, dtype=vol.dtype, device=vol.device) - half
+    kernel_1d = torch.exp(-0.5 * (x / sigma) ** 2)
+    kernel_1d = kernel_1d / kernel_1d.sum()
+
+    # Work in 5-D: (1, 1, D, H, W)
+    v = vol.unsqueeze(0).unsqueeze(0)
+    # Smooth along W (dim=-1)
+    kw = kernel_1d.reshape(1, 1, 1, 1, -1)
+    v = F_smooth.pad(v, (half, half, 0, 0, 0, 0), mode="reflect")
+    v = F_smooth.conv3d(v, kw)
+    # Smooth along H (dim=-2)
+    kh = kernel_1d.reshape(1, 1, 1, -1, 1)
+    v = F_smooth.pad(v, (0, 0, half, half, 0, 0), mode="reflect")
+    v = F_smooth.conv3d(v, kh)
+    # Smooth along D (dim=-3) only if D > kernel size
+    if vol.shape[0] > ksize:
+        kd = kernel_1d.reshape(1, 1, -1, 1, 1)
+        v = F_smooth.pad(v, (0, 0, 0, 0, half, half), mode="reflect")
+        v = F_smooth.conv3d(v, kd)
+    elif vol.shape[0] > 1:
+        # D is small — use a 3-tap kernel
+        kd_small = torch.tensor([0.25, 0.5, 0.25], dtype=vol.dtype, device=vol.device)
+        kd_small = kd_small.reshape(1, 1, -1, 1, 1)
+        v = F_smooth.pad(v, (0, 0, 0, 0, 1, 1), mode="reflect")
+        v = F_smooth.conv3d(v, kd_small)
+    return v.squeeze(0).squeeze(0).clamp(min=0)
 
 
 def _bg_subtract_signal(

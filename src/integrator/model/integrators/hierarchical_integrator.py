@@ -112,7 +112,10 @@ class HierarchicalIntegrator(BaseIntegrator):
 
         qbg = self.surrogates["qbg"](x_intensity)
         qi = self.surrogates["qi"](x_intensity)
-        qp = self.surrogates["qp"](x_profile)
+
+        prf_labels = metadata.get("profile_group_label", metadata.get("group_label"))
+        prf_labels = prf_labels.long() if prf_labels is not None else None
+        qp = self.surrogates["qp"](x_profile, group_labels=prf_labels)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
         zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
@@ -160,9 +163,52 @@ class HierarchicalIntegratorD(IntegratorModelD):
         mask: Tensor,
         metadata: dict,
     ) -> dict[str, Any]:
-        result = super()._forward_impl(counts, shoebox, mask, metadata)
-        _add_group_outputs(result["forward_out"], metadata, self.loss)
-        return result
+        counts = torch.clamp(counts, min=0)
+
+        b = shoebox.shape[0]
+        shoebox_reshaped = shoebox.reshape(b, 1, *self.shoebox_shape)
+
+        x_profile = self.encoders["profile"](shoebox_reshaped)
+        x_k_i = self.encoders["k_i"](shoebox_reshaped)
+        x_r_i = self.encoders["r_i"](shoebox_reshaped)
+        x_k_bg = self.encoders["k_bg"](shoebox_reshaped)
+        x_r_bg = self.encoders["r_bg"](shoebox_reshaped)
+
+        qbg = self.surrogates["qbg"](x_k_bg, x_r_bg)
+        qi = self.surrogates["qi"](x_k_i, x_r_i)
+
+        prf_labels = metadata.get("profile_group_label", metadata.get("group_label"))
+        prf_labels = prf_labels.long() if prf_labels is not None else None
+        qp = self.surrogates["qp"](x_profile, group_labels=prf_labels)
+
+        zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
+        zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+
+        rate = zI * zp + zbg
+
+        out = IntegratorBaseOutputs(
+            rates=rate,
+            counts=counts,
+            mask=mask,
+            qbg=qbg,
+            qp=qp,
+            qi=qi,
+            zp=zp,
+            zbg=zbg,
+            concentration=qp.concentration,
+            metadata=metadata,
+            compute_pred_var=self.cfg.compute_pred_var,
+        )
+        out = _assemble_outputs(out)
+        _add_group_outputs(out, metadata, self.loss)
+
+        return {
+            "forward_out": out,
+            "qp": qp,
+            "qi": qi,
+            "qbg": qbg,
+        }
 
     _step = _hierarchical_step
 
@@ -200,7 +246,10 @@ class HierarchicalIntegratorB(BaseIntegrator):
 
         qbg = self.surrogates["qbg"](x_k, x_r)
         qi = self.surrogates["qi"](x_k, x_r)
-        qp = self.surrogates["qp"](x_profile)
+
+        prf_labels = metadata.get("profile_group_label", metadata.get("group_label"))
+        prf_labels = prf_labels.long() if prf_labels is not None else None
+        qp = self.surrogates["qp"](x_profile, group_labels=prf_labels)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
         zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)

@@ -1,4 +1,5 @@
 from .bivariate_log_normal import BivariateLogNormal, BivariateLogNormalSurrogate
+from .empirical_profile import EmpiricalProfileSurrogate
 from .dirichlet import DirichletDistribution, DirichletDistributionB
 from .folded_normal import FoldedNormalA, FoldedNormalDistribution
 from .gamma import (
@@ -27,6 +28,7 @@ from .total_fraction import TotalFractionPosterior, TotalFractionSurrogate
 __all__ = [
     "BivariateLogNormal",
     "BivariateLogNormalSurrogate",
+    "EmpiricalProfileSurrogate",
     "DirichletDistribution",
     "GammaDistribution",
     "HalfNormalDistribution",

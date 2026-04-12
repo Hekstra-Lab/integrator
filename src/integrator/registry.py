@@ -6,6 +6,7 @@ from integrator.data_loaders import (
 from integrator.model.distributions import (
     BivariateLogNormalSurrogate,
     DirichletDistribution,
+    EmpiricalProfileSurrogate,
     DirichletDistributionB,
     FanoGammaRepamB,
     FanoGammaRepamD,
@@ -96,6 +97,7 @@ REGISTRY = {
         "per_bin_logistic_normal": PerBinLogisticNormalSurrogate,
         "physical_gaussian_surrogate": PhysicalGaussianProfileSurrogate,
         "total_fraction_surrogate": TotalFractionSurrogate,
+        "empirical_profile_surrogate": EmpiricalProfileSurrogate,
     },
     "data_loader": {
         "default": ShoeboxDataModule,
