@@ -1,16 +1,9 @@
-from dataclasses import dataclass
 from typing import Literal
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-
-
-@dataclass(slots=True)
-class MetaData:
-    masks: Tensor | None = None
-    metadata: Tensor | None = None
 
 
 class Constrain(nn.Module):

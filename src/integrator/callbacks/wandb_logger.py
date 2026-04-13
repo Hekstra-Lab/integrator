@@ -940,21 +940,39 @@ class LossTraceRecorder(Callback):
 
     # -- batch hooks --------------------------------------------------------
 
-    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
-        lc = outputs.get("loss_components") if isinstance(outputs, dict) else None
+    def on_train_batch_end(
+        self, trainer, pl_module, outputs, batch, batch_idx
+    ):
+        lc = (
+            outputs.get("loss_components")
+            if isinstance(outputs, dict)
+            else None
+        )
         if lc is None:
             return
-        row = {"epoch": trainer.current_epoch, "global_step": trainer.global_step}
+        row = {
+            "epoch": trainer.current_epoch,
+            "global_step": trainer.global_step,
+        }
         for k in self._KEYS:
             v = lc.get(k)
             row[k] = float(v) if v is not None else float("nan")
         self._rows.append(row)
 
-    def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
-        lc = outputs.get("loss_components") if isinstance(outputs, dict) else None
+    def on_validation_batch_end(
+        self, trainer, pl_module, outputs, batch, batch_idx
+    ):
+        lc = (
+            outputs.get("loss_components")
+            if isinstance(outputs, dict)
+            else None
+        )
         if lc is None:
             return
-        row = {"epoch": trainer.current_epoch, "global_step": trainer.global_step}
+        row = {
+            "epoch": trainer.current_epoch,
+            "global_step": trainer.global_step,
+        }
         for k in self._KEYS:
             v = lc.get(k)
             row[k] = float(v) if v is not None else float("nan")

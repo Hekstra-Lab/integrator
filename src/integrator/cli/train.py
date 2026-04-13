@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 def parse_args():
     parser = argparse.ArgumentParser(description="Train integrator model")
 
-    # --- Required ---
+    # Required
     parser.add_argument(
         "--config",
         type=str,
@@ -35,7 +35,7 @@ def parse_args():
         help="Path to run directory (saves config copy and run metadata)",
     )
 
-    # --- Paths ---
+    # Paths
     parser.add_argument(
         "--data-path",
         type=str,
@@ -49,7 +49,7 @@ def parse_args():
         help="Path to store local W&B logs",
     )
 
-    # --- Training ---
+    # Training
     parser.add_argument(
         "--max-epochs",
         type=int,
@@ -103,7 +103,7 @@ def parse_args():
         help="Run validation every N epochs",
     )
 
-    # --- Model ---
+    # Model
     parser.add_argument(
         "--integrator-name",
         type=str,
@@ -125,7 +125,7 @@ def parse_args():
         help="Number of Monte Carlo samples for KL estimation",
     )
 
-    # --- Loss weights ---
+    # Loss weights
     parser.add_argument(
         "--pprf-weight",
         type=float,
@@ -147,7 +147,7 @@ def parse_args():
         help="Number of resolution bins for per-bin priors",
     )
 
-    # --- Data ---
+    # Data
     parser.add_argument(
         "--val-split",
         type=float,
@@ -159,7 +159,7 @@ def parse_args():
         help="Use a subset of the data (for debugging)",
     )
 
-    # --- Misc ---
+    # Misc
     parser.add_argument(
         "-v",
         "--verbose",
@@ -324,9 +324,9 @@ def main():
         plotter = PlotterLD(
             n_profiles=10,
             plot_every_n_epochs=1,
-            d=cfg["wb_logger"]["d"],
-            h=cfg["wb_logger"]["h"],
-            w=cfg["wb_logger"]["w"],
+            d=cfg["integrator"]["args"]["d"],
+            h=cfg["integrator"]["args"]["h"],
+            w=cfg["integrator"]["args"]["w"],
         )
     else:
         raise ValueError(
@@ -373,47 +373,6 @@ def main():
 
     logger.info("Traning complete!")
 
-    # clean_from_memory(
-    #     pred_writer, pred_writer, pred_writer, checkpoint_callback
-    # )
-    #
-    # # prediction
-    # logdir = Path(logdir)
-    # pred_dir = logdir.parent / "predictions"
-    # pred_dir.mkdir(exist_ok=True)
-    #
-    # checkpoints = list(logdir.glob("**/*.ckpt"))
-    #
-    # pattern = re.compile(r"epoch=\d+")
-    # for ckpt in checkpoints:
-    #     if re.search(pattern, ckpt.as_posix()):
-    #         groups = re.findall(pattern, ckpt.as_posix())
-    #         epoch = groups[0].replace("=", "_")
-    #         out_dir = pred_dir.parent.as_posix() + f"/predictions/{epoch}"
-    #         Path(out_dir).mkdir(exist_ok=True)
-    #
-    #         pred_writer = PredWriter(
-    #             output_dir=out_dir,
-    #             write_interval="epoch",
-    #         )
-    #         trainer = construct_trainer(
-    #             cfg,
-    #             callbacks=[pred_writer],
-    #             logger=None,
-    #         )
-    #         ckpt_ = torch.load(ckpt.as_posix())
-    #         integrator = construct_integrator(cfg)
-    #         integrator.load_state_dict(ckpt_["state_dict"])
-    #         if torch.cuda.is_available():
-    #             integrator.to(torch.device("cuda"))
-    #         integrator.eval()
-    #         trainer.predict(
-    #             integrator,
-    #             return_predictions=False,
-    #             dataloaders=data_loader.predict_dataloader(),
-    #         )
-    #
-
 
 def write_mtz_files():
     pred_dir.glob("**/preds.pt")
@@ -457,167 +416,3 @@ def write_mtz_files():
 
 if __name__ == "__main__":
     main()
-
-    # import os
-    # from pathlib import Path
-    #
-    # import torch
-    # from pytorch_lightning.callbacks import ModelCheckpoint
-    # from pytorch_lightning.loggers import WandbLogger
-    #
-    # from integrator.callbacks import (
-    #     EpochMetricRecorder,
-    #     LogFano,
-    #     Plotter,
-    #     PlotterLD,
-    #     assign_labels,
-    # )
-    # from integrator.utils import (
-    #     construct_data_loader,
-    #     construct_integrator,
-    #     construct_trainer,
-    #     load_config,
-    # )
-    #
-    # torch.set_float32_matmul_precision("medium")
-    #
-    # # load configuration file
-    # path = "/Users/luis/temp/data/test_yaml.yaml"
-    # cfg = load_config(path)
-    #
-    # # cfg = apply_cli_overrides(
-    # #     cfg,
-    # #     epochs=args.epochs,
-    # #     batch_size=args.batch_size,
-    # #     data_path=args.data_path,
-    # # )
-    #
-    # # load data
-    # data_loader = construct_data_loader(cfg)
-    # data_loader.setup()
-    #
-    # # load wandb logger
-    # logger = WandbLogger(
-    #     project="local-default",
-    #     save_dir="/Users/luis/temp/wandb/",
-    # )
-    #
-    # # get logging directory
-    # logdir = Path(logger.experiment.dir)
-    #
-    # run_dir = Path("/Users/luis/integrator/temp_run_dir/")
-    #
-    # config_copy = logdir / "config_copy.yaml"
-    # cfg_json = deepcopy(cfg)
-    #
-    # logger.log_hyperparams(cfg_json)
-    #
-    # with open(config_copy, "w") as f:
-    #     yaml.safe_dump(cfg_json, f, sort_keys=False)
-    #
-    # metadata = {
-    #     "config": config_copy.as_posix(),
-    #     "slurm": {
-    #         "job_id": os.environ.get("SLURM_JOB_ID"),
-    #     },
-    #     "wandb": {
-    #         "project": "local-default",
-    #         "run_id": logger.experiment.id,
-    #         "entity": logger.experiment.entity,
-    #         "log_dir": logger.experiment.dir,
-    #     },
-    # }
-    #
-    # (run_dir / "run_metadata.yaml").write_text(yaml.safe_dump(metadata))
-    #
-    # # assign validation/train labels to each shoebox
-    # assign_labels(dataset=data_loader, save_dir=logdir.as_posix())
-    #
-    # # %%
-    # # create integrator
-    # integrator = construct_integrator(cfg)
-    #
-    # # Callbacks
-    # keys = [
-    #     "refl_ids",
-    #     "qi_mean",
-    #     "qi_var",
-    #     "qbg_mean",
-    #     "background.mean",
-    #     "intensity.prf.value",
-    #     "intensity.prf.variance",
-    #     "xyzcal.px.0",
-    #     "xyzcal.px.1",
-    #     "xyzcal.px.2",
-    #     "d",
-    # ]
-    # train_epoch_recorder = EpochMetricRecorder(
-    #     out_dir="logs/train_metrics",
-    #     keys=keys,
-    #     split="train",
-    #     every_n_epochs=1,
-    #     max_rows_per_epoch=200_000,  # safety valve
-    # )
-    #
-    # val_epoch_recorder = EpochMetricRecorder(
-    #     out_dir="logs/val_metrics",
-    #     keys=keys,
-    #     split="val",
-    # )
-    #
-    # data_dim = cfg["integrator"]["args"]["data_dim"]
-    # if data_dim == "3d":
-    #     plotter = Plotter(n_profiles=10)
-    # elif data_dim == "2d":
-    #     plotter = PlotterLD(
-    #         n_profiles=10,
-    #         plot_every_n_epochs=1,
-    #         d=cfg["wb_logger"]["d"],
-    #         h=cfg["wb_logger"]["h"],
-    #         w=cfg["wb_logger"]["w"],
-    #     )
-    # else:
-    #     raise ValueError(
-    #         f"Specified shoebox data dimension is incompatible: data_dim={data_dim}"
-    #     )
-    #
-    # fano_wb_logger = LogFano()
-    #
-    # # to save checkpoints
-    # ckpt_dir = logdir / "checkpoints"
-    # checkpoint_callback = ModelCheckpoint(
-    #     dirpath=ckpt_dir,
-    #     filename="{epoch:04d}",
-    #     every_n_epochs=1,
-    #     save_top_k=-1,
-    #     save_last="link",
-    # )
-    #
-    # # PyTorch-Lightning Trainer
-    # trainer = construct_trainer(
-    #     cfg,
-    #     callbacks=[
-    #         # fano_wb_logger,
-    #         val_epoch_recorder,
-    #         train_epoch_recorder,
-    #         checkpoint_callback,
-    #         # plotter,
-    #     ],
-    #     logger=logger,
-    # )
-    #
-    # # Fit the model
-    # trainer.fit(
-    #     integrator,
-    #     train_dataloaders=data_loader.train_dataloader(),
-    #     val_dataloaders=data_loader.val_dataloader(),
-    # )
-    #
-    # print("Traning complete!")
-    #
-    # # %%
-    # counts, sbox, masks, metadata = next(iter(data_loader.train_dataloader()))
-    # out = integrator.forward(counts, sbox, masks, metadata)
-    # forward_out = out["forward_out"]
-    #
-    # forward_out.keys()

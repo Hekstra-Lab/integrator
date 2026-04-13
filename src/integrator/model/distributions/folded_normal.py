@@ -65,290 +65,44 @@ class FoldedNormal(TransformedDistribution):
         return torch.logaddexp(n.log_prob(value), n.log_prob(-value))
 
 
-# class NormalIRSample(torch.autograd.Function):
-#     @staticmethod
-#     def forward(ctx, loc, scale, samples, dFdmu, dFdsig, q):
-#         dzdmu = -dFdmu / (q + 1e-4)
-#         dzdsig = -dFdsig / (q + 1e-4)
-#         ctx.save_for_backward(dzdmu, dzdsig)
-#         return samples
-#
-#     @staticmethod
-#     def backward(ctx, grad_output):
-#         (
-#             dzdmu,
-#             dzdsig,
-#         ) = ctx.saved_tensors
-#         return (
-#             grad_output * dzdmu,
-#             grad_output * dzdsig,
-#             None,
-#             None,
-#             None,
-#             None,
-#         )
-#
-#
-# class FoldedNormal(Distribution):
-#     """
-#     Folded Normal distribution class
-#
-#     Args:
-#         loc (float or Tensor): location parameter of the distribution
-#         scale (float or Tensor): scale parameter of the distribution (must be positive)
-#         validate_args (bool, optional): Whether to validate the arguments of the distribution.
-#         Default is None.
-#     """
-#
-#     arg_constraints = {
-#         "loc": dist.constraints.real,
-#         "scale": dist.constraints.positive,
-#     }
-#     support = torch.distributions.constraints.nonnegative
-#
-#     def __init__(self, loc, scale, var_thresh=5, validate_args=None):
-#         self.loc, self.scale = torch.distributions.utils.broadcast_all(
-#             loc, scale
-#         )
-#         batch_shape = self.loc.shape
-#         super().__init__(batch_shape, validate_args=validate_args)
-#         self._irsample = NormalIRSample.apply
-#         self.var_thresh = var_thresh
-#
-#     def log_prob(self, value):
-#         """
-#         Compute the log-probability of the given values under the Folded Normal distribution
-#
-#         Args:
-#             value (Tensor): The values at which to evaluate the log-probability
-#
-#         Returns:
-#             Tensor: The log-probabilities of the given values
-#         """
-#         if self._validate_args:
-#             self._validate_sample(value)
-#         loc = self.loc
-#         scale = self.scale
-#         log_prob = torch.logaddexp(
-#             torch.distributions.Normal(loc, scale).log_prob(value),
-#             torch.distributions.Normal(-loc, scale).log_prob(value),
-#         )
-#         return log_prob
-#
-#     def sample(self, sample_shape=torch.Size()):
-#         """
-#         Generate random samples from the Folded Normal distribution
-#
-#         Args:
-#             sample_shape (torch.Size, optional): The shape of the samples to generate.
-#             Default is an empty shape
-#
-#         Returns:
-#             Tensor: The generated random samples
-#         """
-#         shape = self._extended_shape(sample_shape)
-#         eps = torch.randn(shape, dtype=self.loc.dtype, device=self.loc.device)
-#         samples = torch.abs(eps * self.scale + self.loc)
-#
-#         return samples
-#
-#     @property
-#     def mean(self):
-#         """
-#         Compute the mean of the Folded Normal distribution
-#
-#         Returns:
-#             Tensor: The mean of the distribution.
-#         """
-#         loc = self.loc
-#         scale = self.scale
-#         return scale * torch.sqrt(torch.tensor(2.0) / torch.pi) * torch.exp(
-#             -0.5 * (loc / scale) ** 2
-#         ) + loc * (1 - 2 * torch.distributions.Normal(0, 1).cdf(-loc / scale))
-#
-#     @property
-#     def variance(self):
-#         """
-#         Compute the variance of the Folded Normal distribution
-#         with numerical safeguards for large loc/scale ratios.
-#         """
-#         loc = self.loc
-#         scale = self.scale
-#         a = loc / scale
-#         mean = self.mean
-#
-#         # threshold logic: use normal variance when a > 5
-#         var = torch.empty_like(loc)
-#         large = a > self.var_thresh
-#         small = ~large
-#
-#         if large.any():
-#             var[large] = scale[large] ** 2
-#
-#         if small.any():
-#             var[small] = loc[small] ** 2 + scale[small] ** 2 - mean[small] ** 2
-#
-#         return var
-#
-#     def cdf(self, value):
-#         """
-#         Args:
-#             value (Tensor): The values at which to evaluate the CDF
-#
-#         Returns:
-#             Tensor: The CDF values at the given values
-#         """
-#         if self._validate_args:
-#             self._validate_sample(value)
-#         value = torch.as_tensor(
-#             value, dtype=self.loc.dtype, device=self.loc.device
-#         )
-#         # return dist.Normal(loc, scale).cdf(value) - dist.Normal(-loc, scale).cdf(-value)
-#         return 0.5 * (
-#             torch.erf((value + self.loc) / (self.scale * np.sqrt(2.0)))
-#             + torch.erf((value - self.loc) / (self.scale * np.sqrt(2.0)))
-#         )
-#
-#     def dcdfdmu(self, value):
-#         return torch.exp(
-#             torch.distributions.Normal(-self.loc, self.scale).log_prob(value)
-#         ) - torch.exp(dist.Normal(self.loc, self.scale).log_prob(value))
-#
-#     def dcdfdsigma(self, value):
-#         A = (-(value + self.loc) / self.scale) * torch.exp(
-#             torch.distributions.Normal(-self.loc, self.scale).log_prob(value)
-#         )
-#         B = (-(value - self.loc) / self.scale) * torch.exp(
-#             torch.distributions.Normal(self.loc, self.scale).log_prob(value)
-#         )
-#         return A + B
-#
-#     def pdf(self, value):
-#         return torch.exp(self.log_prob(value))
-#
-#     def rsample(self, sample_shape=torch.Size()):
-#         """
-#         Generate differentiable random samples from the Folded Normal distribution.
-#         Gradients are implemented using implicit reparameterization (https://arxiv.org/abs/1805.08498).
-#
-#         Args:
-#             sample_shape (torch.Size, optional): The shape of the samples to generate.
-#             Default is an empty shape
-#
-#         Returns:
-#             Tensor: The generated random samples
-#         """
-#         samples = self.sample(sample_shape)
-#         # F = self.cdf(samples)
-#         q = self.pdf(samples)
-#         dFdmu = self.dcdfdmu(samples)
-#         dFdsigma = self.dcdfdsigma(samples)
-#         return self._irsample(
-#             self.loc, self.scale, samples, dFdmu, dFdsigma, q
-#         )
-#
-
-
 class FoldedNormalDistribution(nn.Module):
-    """
-    FoldedNormal distribution with parameters predicted by a linear layer.
+    """FoldedNormal distribution surrogate.
+
+    When `separate_inputs=False` (default), uses a single Linear(in, 2) and
+    splits, appropriate for single-encoder models.  When `True`, uses two
+    separate Linear(in, 1) layers so that `x` feeds loc and `x_` feeds
+    scale, appropriate for multi-encoder models.
     """
 
     def __init__(
         self,
         in_features: int = 64,
         eps: float = 0.1,
+        separate_inputs: bool = False,
         **kwargs,
     ):
         super().__init__()
-        self.fc = torch.nn.Linear(
-            in_features,
-            2,
-        )
         self.eps = eps
+        self.separate_inputs = separate_inputs
+
+        if separate_inputs:
+            self.linear_loc = nn.Linear(in_features, 1)
+            self.linear_scale = nn.Linear(in_features, 1)
+        else:
+            self.fc = nn.Linear(in_features, 2)
 
     def forward(
         self,
         x: Tensor,
+        x_: Tensor | None = None,
     ) -> FoldedNormal:
-        # raw params
-        raw_loc, raw_scale = self.fc(x).unbind(-1)
+        if self.separate_inputs:
+            raw_loc = self.linear_loc(x)
+            raw_scale = self.linear_scale(x_ if x_ is not None else x)
+        else:
+            raw_loc, raw_scale = self.fc(x).chunk(2, dim=-1)
 
-        # transform
-        loc = F.softplus(raw_loc) + self.eps
-        scale = F.softplus(raw_scale) + self.eps
-        return FoldedNormal(loc, scale)
-
-
-class FoldedNormalA(nn.Module):
-    def __init__(
-        self,
-        in_features: int = 64,
-        eps: float = 0.1,
-        **kwargs,
-    ):
-        super().__init__()
-        self.linear_loc = torch.nn.Linear(in_features, 1)
-        self.linear_scale = torch.nn.Linear(in_features, 1)
-        self.eps = eps
-
-    def forward(
-        self,
-        x: Tensor,
-        x_: Tensor,
-    ) -> FoldedNormal:
-        # raw params
-        raw_loc = self.linear_loc(x)
-        raw_scale = self.linear_scale(x_)
-
-        # transform
         loc = (F.softplus(raw_loc) + self.eps).squeeze()
         scale = (F.softplus(raw_scale) + self.eps).squeeze()
 
         return FoldedNormal(loc, scale)
-
-
-# class FoldedNormalDistribution(nn.Module):
-#     """
-#     FoldedNormal distribution with parameters predicted by a linear layer.
-#     """
-#
-#     def __init__(
-#         self,
-#         in_features: int = 64,
-#         constraint: Literal["exp", "softplus"] | None = "softplus",
-#         out_features: int = 2,
-#         eps: float = 0.1,
-#         beta: int = 1,
-#     ):
-#         super().__init__()
-#         self.linear_loc = torch.nn.Linear(in_features, 1)
-#         self.linear_scale = torch.nn.Linear(in_features, 1)
-#         self.constrain_fn = Constrain(
-#             constraint_fn=constraint,
-#             eps=eps,
-#             beta=beta,
-#         )
-#
-#     def forward(
-#         self,
-#         x: Tensor,
-#         x_: Tensor,
-#     ) -> FoldedNormal:
-#         # raw params
-#
-#         raw_loc = self.linear_loc(x)
-#         raw_scale = self.linear_scale(x_)
-#
-#         # transform
-#         loc = torch.exp(raw_loc)
-#         scale = self.constrain_fn(raw_scale)
-#
-#         return FoldedNormal(loc.flatten(), scale.flatten())
-
-
-if __name__ == "main":
-    foldednormal = FoldedNormalA(in_features=64)
-    representation = torch.randn(10, 64)
-
-    q = foldednormal(representation, representation)

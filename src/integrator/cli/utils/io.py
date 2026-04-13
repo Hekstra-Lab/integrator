@@ -46,7 +46,7 @@ def _apply_cli_overrides(
     def _loss_args(k, v):
         updates.setdefault("loss", {}).setdefault("args", {})[k] = v
 
-    # --- Training ---
+    # Training
     if getattr(args, "max_epochs", None) is not None:
         _trainer("max_epochs", args.max_epochs)
     if getattr(args, "gradient_clip_val", None) is not None:
@@ -60,7 +60,7 @@ def _apply_cli_overrides(
     if getattr(args, "check_val_every_n_epoch", None) is not None:
         _trainer("check_val_every_n_epoch", args.check_val_every_n_epoch)
 
-    # --- Data loader ---
+    # Data loader
     if getattr(args, "batch_size", None) is not None:
         _dl_args("batch_size", args.batch_size)
     if getattr(args, "data_path", None) is not None:
@@ -72,7 +72,7 @@ def _apply_cli_overrides(
     if getattr(args, "subset_size", None) is not None:
         _dl_args("subset_size", args.subset_size)
 
-    # --- Integrator ---
+    # Integrator
     if getattr(args, "integrator_name", None) is not None:
         updates.setdefault("integrator", {})["name"] = args.integrator_name
     if getattr(args, "lr", None) is not None:
@@ -82,13 +82,17 @@ def _apply_cli_overrides(
     if getattr(args, "mc_samples", None) is not None:
         _integrator_args("mc_samples", args.mc_samples)
 
-    # --- Surrogates ---
+    # Surrogates
     if getattr(args, "qi", None) is not None:
-        updates.setdefault("surrogates", {}).setdefault("qi", {})["name"] = args.qi
+        updates.setdefault("surrogates", {}).setdefault("qi", {})["name"] = (
+            args.qi
+        )
     if getattr(args, "qbg", None) is not None:
-        updates.setdefault("surrogates", {}).setdefault("qbg", {})["name"] = args.qbg
+        updates.setdefault("surrogates", {}).setdefault("qbg", {})["name"] = (
+            args.qbg
+        )
 
-    # --- Loss weights ---
+    # Loss weights
     if getattr(args, "pprf_weight", None) is not None:
         _loss_args("pprf_weight", args.pprf_weight)
     if getattr(args, "pbg_weight", None) is not None:
@@ -147,9 +151,6 @@ def get_pred_files(
         }
     else:
         raise ValueError(f"Unsupported filetype: {filetype}")
-
-    if data is None:
-        raise ValueError(f"Unsupported prediction file type: {suffix}")
 
     return data
 

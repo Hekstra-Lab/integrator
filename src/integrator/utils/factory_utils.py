@@ -1,7 +1,4 @@
-import gc
-import glob
 import os
-import re
 from dataclasses import asdict
 from importlib.resources import as_file
 from pathlib import Path
@@ -14,7 +11,6 @@ from pytorch_lightning.callbacks import Callback
 from pytorch_lightning.loggers import Logger
 
 from integrator import configs
-from integrator.callbacks import BatchPredWriter
 from integrator.configs import shallow_dict
 from integrator.model.integrators.base_integrator import BaseIntegrator
 from integrator.registry import REGISTRY
@@ -41,6 +37,18 @@ TUPLE_FIELDS = {
     "shape",
     "sbox_shape",
 }
+
+
+def _resolve_data_path(
+    path: str, data_dir: str, n_bins: int | None = None
+) -> str:
+    """Resolve a relative path against data_dir, optionally inserting n_bins suffix."""
+    if os.path.isabs(path) or path.startswith("~"):
+        return path
+    if n_bins is not None:
+        p = Path(path)
+        path = f"{p.stem}_{n_bins}{p.suffix}"
+    return os.path.join(data_dir, path)
 
 
 def _get_integrator_cls(name: str) -> type[BaseIntegrator]:
@@ -94,28 +102,46 @@ def _get_surrogate_modules(
 ) -> dict[str, nn.Module]:
     """Construct all surrogate distribution modules from config.
 
-    Iterates over all keys in ``cfg["surrogates"]`` so that any combination
-    of surrogates is supported (e.g., the standard ``qp``/``qi``/``qbg`` trio
-    or the joint ``qp``/``q_ib`` pair used by IntegratorModelC).  The raw
+    Iterates over all keys in `cfg["surrogates"]` so that any combination
+    of surrogates is supported (e.g., the standard `qp`/`qi`/`qbg` trio).  The raw
     args dict from the YAML is passed directly to each class constructor,
-    avoiding the need for a separate ``SurrogateArgs`` dataclass per class.
+    avoiding the need for a separate `SurrogateArgs` dataclass per class.
 
-    For ``logistic_normal_surrogate``, a relative ``basis_path`` is resolved
-    against ``data_loader.args.data_dir`` so the YAML only needs the filename.
+    For `logistic_normal_surrogate`, a relative `basis_path` is resolved
+    against `data_loader.args.data_dir` so the YAML only needs the filename.
     """
     surrogates = {}
     data_dir = cfg.get("data_loader", {}).get("args", {}).get("data_dir", "")
     n_bins = cfg.get("loss", {}).get("args", {}).get("n_bins")
+
+    # Models with >2 encoders have separate k/r heads for qi/qbg
+    integrator_cls = REGISTRY["integrator"].get(
+        cfg.get("integrator", {}).get("name", "")
+    )
+    separate_inputs = (
+        integrator_cls is not None
+        and len(integrator_cls.REQUIRED_ENCODERS) > 2
+    )
+
     for key, surrogate_cfg in cfg["surrogates"].items():
         surrogate_cls = REGISTRY["surrogates"][surrogate_cfg["name"]]
         args = dict(surrogate_cfg["args"])
-        if surrogate_cfg["name"] in ("logistic_normal_surrogate", "physical_gaussian_surrogate", "per_bin_logistic_normal", "empirical_profile_surrogate") and "basis_path" in args:
+        if (
+            surrogate_cfg["name"]
+            in (
+                "logistic_normal_surrogate",
+                "physical_gaussian_surrogate",
+                "per_bin_logistic_normal",
+                "empirical_profile_surrogate",
+            )
+            and "basis_path" in args
+        ):
             bp = args["basis_path"]
-            if isinstance(bp, str) and not os.path.isabs(bp) and not bp.startswith("~"):
-                if n_bins is not None:
-                    p = Path(bp)
-                    bp = f"{p.stem}_{n_bins}{p.suffix}"
-                args["basis_path"] = os.path.join(data_dir, bp)
+            if isinstance(bp, str):
+                args["basis_path"] = _resolve_data_path(bp, data_dir, n_bins)
+        # Auto-set separate_inputs for two-param surrogates (qi, qbg)
+        if key in ("qi", "qbg") and "separate_inputs" not in args:
+            args["separate_inputs"] = separate_inputs
         surrogates[key] = surrogate_cls(**args)
     return surrogates
 
@@ -138,8 +164,14 @@ def _get_prior_cfgs(
             # Resolve relative concentration paths for Dirichlet
             if p_name == "dirichlet" and "concentration" in p_params_dict:
                 conc = p_params_dict["concentration"]
-                if isinstance(conc, str) and not os.path.isabs(conc) and not conc.startswith("~"):
-                    p_params_dict["concentration"] = os.path.join(data_dir, conc)
+                if (
+                    isinstance(conc, str)
+                    and not os.path.isabs(conc)
+                    and not conc.startswith("~")
+                ):
+                    p_params_dict["concentration"] = os.path.join(
+                        data_dir, conc
+                    )
             p_params = PRIOR_PARAMS[p_name](**p_params_dict)
             p_prior_cfgs = configs.PriorConfig(
                 name=p_name,
@@ -195,7 +227,22 @@ def _get_loss_module(
     kwargs = shallow_dict(loss_args)
 
     # Forward extra keys from loss.args for custom loss classes
-    standard_keys = {"mc_samples", "eps", "pprf_cfg", "pbg_cfg", "pi_cfg", "n_bins", "profile_binning", "profile_basis_per_bin", "profile_basis_type", "profile_basis_d", "profile_basis_max_order", "profile_basis_sigma_ref", "empirical_profile_basis_per_bin", "profile_smooth_sigma"}
+    standard_keys = {
+        "mc_samples",
+        "eps",
+        "pprf_cfg",
+        "pbg_cfg",
+        "pi_cfg",
+        "n_bins",
+        "profile_binning",
+        "profile_basis_per_bin",
+        "profile_basis_type",
+        "profile_basis_d",
+        "profile_basis_max_order",
+        "profile_basis_sigma_ref",
+        "empirical_profile_basis_per_bin",
+        "profile_smooth_sigma",
+    }
     for k, v in cfg["loss"]["args"].items():
         if k not in standard_keys:
             kwargs[k] = v
@@ -204,14 +251,18 @@ def _get_loss_module(
     # Include n_bins in filename to prevent concurrent runs from clobbering files
     data_dir = cfg.get("data_loader", {}).get("args", {}).get("data_dir", "")
     n_bins = cfg.get("loss", {}).get("args", {}).get("n_bins")
-    for pt_key in ("tau_per_group", "bg_rate_per_group", "concentration_per_group", "s_squared_per_group", "i_concentration_per_group", "bg_concentration_per_group"):
+    for pt_key in (
+        "tau_per_group",
+        "bg_rate_per_group",
+        "concentration_per_group",
+        "s_squared_per_group",
+        "i_concentration_per_group",
+        "bg_concentration_per_group",
+    ):
         if pt_key in kwargs and isinstance(kwargs[pt_key], str):
-            path = kwargs[pt_key]
-            if not os.path.isabs(path) and not path.startswith("~"):
-                if n_bins is not None:
-                    p = Path(path)
-                    path = f"{p.stem}_{n_bins}{p.suffix}"
-                kwargs[pt_key] = os.path.join(data_dir, path)
+            kwargs[pt_key] = _resolve_data_path(
+                kwargs[pt_key], data_dir, n_bins
+            )
 
     return loss_cls(**kwargs)
 
@@ -284,7 +335,9 @@ def construct_trainer(
     if tr_cfg.gradient_clip_val is not None:
         trainer_kwargs["gradient_clip_val"] = tr_cfg.gradient_clip_val
     if tr_cfg.gradient_clip_algorithm is not None:
-        trainer_kwargs["gradient_clip_algorithm"] = tr_cfg.gradient_clip_algorithm
+        trainer_kwargs["gradient_clip_algorithm"] = (
+            tr_cfg.gradient_clip_algorithm
+        )
 
     return pl.Trainer(**trainer_kwargs)
 
@@ -307,7 +360,7 @@ def save_run_artifacts(
     loss_module = integrator.loss
     artifacts = {}
 
-    # --- Dirichlet prior concentration (rescaled) ---
+    # Dirichlet prior concentration (rescaled)
     pprf_params = getattr(loss_module, "pprf_params", None)
     if pprf_params is not None and "concentration" in pprf_params:
         conc = pprf_params["concentration"]
@@ -320,7 +373,7 @@ def save_run_artifacts(
             "mean": float(conc.mean()),
         }
 
-    # --- Prior configs ---
+    # Prior configs
     prior_summary = {}
     for attr, label in [
         ("pprf_cfg", "profile"),
@@ -342,14 +395,14 @@ def save_run_artifacts(
     if prior_summary:
         artifacts["priors"] = prior_summary
 
-    # --- Loss settings ---
+    # Loss settings
     artifacts["loss"] = {
         "name": cfg["loss"]["name"],
         "mc_samples": getattr(loss_module, "mc_samples", None),
         "eps": getattr(loss_module, "eps", None),
     }
 
-    # --- Model parameter counts ---
+    # Model parameter counts
     param_counts = {}
     for name, module in integrator.named_children():
         if isinstance(module, nn.ModuleDict):
@@ -362,73 +415,10 @@ def save_run_artifacts(
     param_counts["total"] = sum(p.numel() for p in integrator.parameters())
     artifacts["param_counts"] = param_counts
 
-    # --- Write summary YAML ---
+    # Write summary YAML
     with open(artifacts_dir / "run_artifacts.yaml", "w") as f:
         yaml.safe_dump(artifacts, f, sort_keys=False, default_flow_style=False)
 
-
-def override_config(args, config):
-    # Override config options from command line
-    if args.batch_size:
-        config["data_loader"]["args"]["batch_size"] = args.batch_size
-    if args.epochs:
-        config["trainer"]["args"]["max_epochs"] = args.epochs
-
-
-def clean_from_memory(trainer, pred_writer, pred_integrator, checkpoint_callback=None):
-    del trainer
-    del pred_writer
-    del pred_integrator
-    if checkpoint_callback is not None:
-        del checkpoint_callback
-    torch.cuda.empty_cache()
-    gc.collect()
-
-
-def predict_from_checkpoints(config, trainer, pred_integrator, data, version_dir, path):
-    for ckpt in glob.glob(path):
-        match = re.search(r"epoch=(\d+)", ckpt)
-        if match is None:
-            continue
-        epoch = match.group(1)
-        epoch = epoch.replace("=", "_")
-        ckpt_dir = version_dir + "/predictions/" + epoch
-        Path(ckpt_dir).mkdir(parents=True, exist_ok=True)
-
-        # prediction writer for current checkpoint
-        pred_writer = BatchPredWriter(
-            output_dir=ckpt_dir,
-            write_interval=config["trainer"]["args"]["callbacks"]["pred_writer"][
-                "write_interval"
-            ],
-        )
-
-        trainer.callbacks = [pred_writer]
-        print(f"checkpoint:{ckpt}")
-
-        checkpoint = torch.load(
-            ckpt,
-            weights_only=False,
-        )
-
-        pred_integrator.load_state_dict(checkpoint["state_dict"])
-
-        if torch.cuda.is_available():
-            pred_integrator.to(torch.device("cuda"))
-        pred_integrator.eval()
-
-        print("created integrator from checkpoint")
-        print("running trainer.predict")
-
-        trainer.predict(
-            pred_integrator,
-            return_predictions=False,
-            dataloaders=data.predict_dataloader(),
-        )
-
-        del pred_writer
-        torch.cuda.empty_cache()
-        gc.collect()
 
 
 def load_config(resource: str | Path) -> dict:

@@ -14,7 +14,6 @@ class IntegratorCfg:
     mc_samples: int = 4
     renyi_scale: float = 0.0
     predict_keys: Literal["default"] | list[str] = "default"
-    compute_pred_var: bool = False
     group_hidden_dim: int = 64
 
     def __post_init__(self):

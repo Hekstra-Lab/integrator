@@ -11,8 +11,6 @@ from .distributions import (
     Surrogates,
 )
 from .encoder import (
-    BorderPixelMLPEncoderArgs,
-    BorderStatsEncoderArgs,
     EncoderConfig,
     Encoders,
     IntensityEncoderArgs,
@@ -50,8 +48,6 @@ __all__ = [
     "DataFileNames",
     "DataLoaderConfig",
     "DataLoaderArgs",
-    "BorderPixelMLPEncoderArgs",
-    "BorderStatsEncoderArgs",
     "IntegratorCfg",
     "Encoders",
     "EncoderConfig",

@@ -2,7 +2,6 @@ from pathlib import Path
 
 import numpy as np
 import polars as pl
-import polars as plr
 import torch
 from pytorch_lightning.callbacks import BasePredictionWriter
 
@@ -11,25 +10,25 @@ def assign_labels(
     dataset,
     save_dir: str,
 ):
-    train_id_df = plr.DataFrame(schema=[("train_ids", int)])
-    val_id_df = plr.DataFrame(schema=[("val_ids", int)])
+    train_id_df = pl.DataFrame(schema=[("train_ids", int)])
+    val_id_df = pl.DataFrame(schema=[("val_ids", int)])
 
     with torch.no_grad():
         for batch in dataset.train_dataloader():
             _, _, _, reference = batch
             refl_key = "refl_ids" if "refl_ids" in reference else "refl_id"
-            train_ids = plr.DataFrame(
+            train_ids = pl.DataFrame(
                 {"train_ids": (reference[refl_key].int()).tolist()}
             )
-            train_id_df = plr.concat([train_id_df, train_ids])
+            train_id_df = pl.concat([train_id_df, train_ids])
 
         for batch in dataset.val_dataloader():
             _, _, _, reference = batch
             refl_key = "refl_ids" if "refl_ids" in reference else "refl_id"
-            val_ids = plr.DataFrame(
+            val_ids = pl.DataFrame(
                 {"val_ids": (reference[refl_key].int()).tolist()}
             )
-            val_id_df = plr.concat([val_id_df, val_ids])
+            val_id_df = pl.concat([val_id_df, val_ids])
 
     train_id_df.write_csv(save_dir + "/train_labels.csv")
     print(f"train labels saved to {save_dir + '/train_labels.csv'}")
@@ -73,83 +72,6 @@ class EpochPredWriter(BasePredictionWriter):
         torch.save(merged_predictions, preds_fname)
 
 
-## Parquet writer
-# class BatchPredWriter(BasePredictionWriter):
-#     def __init__(
-#         self,
-#         output_dir: Path,
-#         write_interval="batch",
-#         dtype=np.float32,
-#         epoch: int | None = None,
-#         filename_prefix: str = "preds",
-#     ):
-#         super().__init__(write_interval)
-#         self.output_dir = Path(output_dir)
-#         self.dtype = dtype
-#         self.epoch = epoch
-#         self.filename_prefix = filename_prefix
-#
-#     def write_on_batch_end(
-#         self,
-#         trainer,
-#         pl_module,
-#         prediction,
-#         batch_indices,
-#         batch,
-#         batch_idx,
-#         dataloader_idx,
-#     ):
-#         self.output_dir.mkdir(parents=True, exist_ok=True)
-#
-#         batch_cpu = {}
-#
-#         # ---- flatten prediction dict (unchanged logic) ----
-#         for k, v in prediction.items():
-#             if isinstance(v, torch.Tensor):
-#                 batch_cpu[k] = (
-#                     v.detach().cpu().numpy().astype(self.dtype, copy=False)
-#                 )
-#
-#             elif isinstance(v, dict):
-#                 for k_, v_ in v.items():
-#                     key = f"{k}.{k_}"
-#                     batch_cpu[key] = (
-#                         v_.detach()
-#                         .cpu()
-#                         .numpy()
-#                         .astype(self.dtype, copy=False)
-#                     )
-#
-#             elif isinstance(v, list):
-#                 batch_cpu[k] = np.asarray(v)
-#
-#         n_rows = next(iter(batch_cpu.values())).shape[0]
-#
-#         if self.epoch is not None:
-#             batch_cpu["epoch"] = np.full((n_rows,), self.epoch, dtype=np.int32)
-#
-#         df = pl.DataFrame(batch_cpu)
-#
-#         rank = trainer.global_rank
-#         fname = (
-#             f"{self.filename_prefix}"
-#             f"_epoch={self.epoch:04d}"
-#             f"_rank={rank}"
-#             f"_batch={batch_idx:06d}.parquet"
-#         )
-#
-#         path = self.output_dir / fname
-#         df.write_parquet(path)
-#
-#         del prediction
-#         torch.cuda.empty_cache()
-
-
-# TODO: Add argument to select writer based of pred.py --save-preds-as argument
-# We should have a writer for .h5, .parquet, and .pt files
-
-
-## Parquet writer
 class BatchPredWriter(BasePredictionWriter):
     def __init__(
         self,

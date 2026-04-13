@@ -1,4 +1,4 @@
-from math import lgamma, log, pi, prod
+from math import prod
 
 import numpy as np
 import torch
@@ -18,9 +18,6 @@ from torch.distributions import (
 from integrator.configs.config_utils import shallow_dict
 from integrator.configs.priors import DirichletParams, PriorConfig
 from integrator.model.distributions.logistic_normal import ProfilePosterior
-from integrator.model.distributions.total_fraction import (
-    TotalFractionPosterior,
-)
 
 PRIOR_MAP = {
     "gamma": Gamma,
@@ -116,12 +113,6 @@ def _kl(
     except NotImplementedError:
         samples = q.rsample(torch.Size([mc_samples]))
         if eps > 0:
-            # FoldedNormal (and similar distributions with nonnegative support) can
-            # produce samples at exactly 0 via AbsTransform.  Gamma.log_prob(0) is
-            # ±inf when alpha ≠ 1, giving NaN gradients.  Clamping to eps prevents
-            # this: the probability mass at x=0 is zero in continuous distributions,
-            # so the bias is negligible.  Gradient through the clamp is zero at the
-            # clamped values, which correctly suppresses the ill-conditioned updates.
             samples = samples.clamp(min=eps)
         log_q = q.log_prob(samples)
         log_p = p.log_prob(samples)
@@ -140,140 +131,6 @@ def _prior_kl(
     p = _build_prior(prior_cfg, params, device)
     kl_prior = _kl(q, p, mc_samples, eps=eps)
     return kl_prior * weight
-
-
-def _joint_prior_kl_analytic(
-    q_ib: Distribution,
-    alpha_I: float,
-    beta_I: float,
-    alpha_bg: float,
-    beta_bg: float,
-    kl_const_I: float,
-    kl_const_bg: float,
-    weight: float = 1.0,
-) -> torch.Tensor:
-    """Exact KL(BivariateLogNormal || Gamma(alpha_I, beta_I) x Gamma(alpha_bg, beta_bg)).
-
-    Exploits the log-normal identities:
-        E_q[log I] = mu1,   E_q[I] = exp(mu1 + s11/2)
-        E_q[log B] = mu2,   E_q[B] = exp(mu2 + s22/2)
-
-    The entropy of BivariateLogNormal is:
-        H = (1 + log 2π) + 0.5 log|Σ| + mu1 + mu2
-    where 0.5 log|Σ| = log L11 + log L22 for lower-triangular Cholesky L.
-
-    kl_const_I  = lgamma(alpha_I)  - alpha_I  * log(beta_I)   (precomputed scalar)
-    kl_const_bg = lgamma(alpha_bg) - alpha_bg * log(beta_bg)  (precomputed scalar)
-    """
-    mu = q_ib.loc  # (B, 2)
-    L = q_ib.scale_tril  # (B, 2, 2)
-    mu1, mu2 = mu[:, 0], mu[:, 1]
-
-    # Marginal log-space variances
-    s11 = L[:, 0, 0] ** 2  # Var[log I] = L11²
-    s22 = L[:, 1, 0] ** 2 + L[:, 1, 1] ** 2  # Var[log B] = L21² + L22²
-
-    # Differential entropy of BivariateLogNormal
-    log_det_half = L[:, 0, 0].log() + L[:, 1, 1].log()  # 0.5 log|Σ|
-    entropy = 1.0 + log(2.0 * pi) + log_det_half + mu1 + mu2
-
-    # -E[log p_I(I)] = -(α-1) E[log I]  + β E[I]  + (lgamma(α) - α log β)
-    neg_cross_I = (
-        -(alpha_I - 1.0) * mu1 + beta_I * (mu1 + 0.5 * s11).exp() + kl_const_I
-    )
-
-    neg_cross_bg = (
-        -(alpha_bg - 1.0) * mu2
-        + beta_bg * (mu2 + 0.5 * s22).exp()
-        + kl_const_bg
-    )
-
-    return (-entropy + neg_cross_I + neg_cross_bg) * weight
-
-
-def _joint_prior_kl(
-    q_ib: Distribution,
-    pi_cfg: PriorConfig | None,
-    pbg_cfg: PriorConfig | None,
-    pi_params: dict[str, torch.Tensor] | None,
-    pbg_params: dict[str, torch.Tensor] | None,
-    device: torch.device,
-    mc_samples: int,
-    weight: float = 1.0,
-) -> torch.Tensor:
-    p_i = (
-        _build_prior(pi_cfg, pi_params, device)
-        if (pi_cfg and pi_params)
-        else None
-    )
-    p_bg = (
-        _build_prior(pbg_cfg, pbg_params, device)
-        if (pbg_cfg and pbg_params)
-        else None
-    )
-
-    if p_i is None and p_bg is None:
-        return torch.zeros(q_ib.batch_shape, device=device)
-
-    samples_ib = q_ib.rsample([mc_samples])  # [S, B, 2]
-    log_q = q_ib.log_prob(samples_ib)  # [S, B]
-
-    log_p = torch.zeros_like(log_q)
-    if p_i is not None:
-        log_p = log_p + p_i.log_prob(samples_ib[..., 0])  # [S, B]
-    if p_bg is not None:
-        log_p = log_p + p_bg.log_prob(samples_ib[..., 1])  # [S, B]
-
-    return (log_q - log_p).mean(dim=0) * weight
-
-
-def _joint_prior_kl_tf(
-    q_ib: "TotalFractionPosterior",
-    pi_cfg: "PriorConfig | None",
-    pbg_cfg: "PriorConfig | None",
-    pi_params: "dict[str, torch.Tensor] | None",
-    pbg_params: "dict[str, torch.Tensor] | None",
-    device: torch.device,
-    mc_samples: int,
-    weight: float = 1.0,
-) -> torch.Tensor:
-    """MC KL for TotalFractionPosterior against any independent I/bg priors.
-
-    The induced prior on (T, f) is:
-        log p(T, f) = log p_I(f*T) + log p_bg((1-f)*T/n) + log T - log n
-    which is not a standard family, so we estimate the KL via MC.
-    Works with any prior supported by PRIOR_MAP (Gamma, LogNormal, etc.).
-    """
-    p_i = (
-        _build_prior(pi_cfg, pi_params, device)
-        if (pi_cfg and pi_params)
-        else None
-    )
-    p_bg = (
-        _build_prior(pbg_cfg, pbg_params, device)
-        if (pbg_cfg and pbg_params)
-        else None
-    )
-
-    if p_i is None and p_bg is None:
-        return torch.zeros(q_ib.batch_shape, device=device)
-
-    samples_Tf = q_ib.rsample([mc_samples])  # [S, B, 2]
-    T_s = samples_Tf[..., 0]  # [S, B]
-    f_s = samples_Tf[..., 1]  # [S, B]
-    I_s = f_s * T_s  # [S, B]
-    bg_s = (1.0 - f_s) * T_s / q_ib.n_pixels  # [S, B]
-
-    log_q = q_ib.log_prob(samples_Tf)  # [S, B]
-
-    # log p_induced(T, f) = log p_I(fT) + log p_bg((1-f)T/n) + log T - log n
-    log_p = T_s.log() - log(q_ib.n_pixels)
-    if p_i is not None:
-        log_p = log_p + p_i.log_prob(I_s)
-    if p_bg is not None:
-        log_p = log_p + p_bg.log_prob(bg_s)
-
-    return (log_q - log_p).mean(dim=0) * weight
 
 
 def _params_as_tensors(
@@ -318,29 +175,6 @@ class Loss(nn.Module):
             else None
         )
 
-        # Precompute scalar constants for the analytic joint KL.
-        # Only valid when both I and bg priors are Gamma (rate parameterization).
-        self._use_analytic_kl = (
-            pi_cfg is not None
-            and pi_cfg.name == "gamma"
-            and self.pi_params is not None
-            and pbg_cfg is not None
-            and pbg_cfg.name == "gamma"
-            and self.pbg_params is not None
-        )
-        if self._use_analytic_kl:
-            a_I = float(self.pi_params["concentration"])  # type: ignore[index]
-            b_I = float(self.pi_params["rate"])  # type: ignore[index]
-            a_bg = float(self.pbg_params["concentration"])  # type: ignore[index]
-            b_bg = float(self.pbg_params["rate"])  # type: ignore[index]
-            self._alpha_I = a_I
-            self._beta_I = b_I
-            self._alpha_bg = a_bg
-            self._beta_bg = b_bg
-            # lgamma(α) - α·log(β):  constant w.r.t. model params
-            self._kl_const_I = lgamma(a_I) - a_I * log(b_I)
-            self._kl_const_bg = lgamma(a_bg) - a_bg * log(b_bg)
-
     def forward(
         self,
         rate: Tensor,
@@ -349,15 +183,8 @@ class Loss(nn.Module):
         mask: Tensor,
         qi: Distribution | None = None,
         qbg: Distribution | None = None,
-        q_ib: Distribution | None = None,
     ):
-        """Compute the ELBO loss.
-
-        Supports two modes for the (I, B) posterior:
-          - Independent:  pass ``qi`` and ``qbg`` (original mean-field).
-          - Joint:        pass ``q_ib`` (BivariateLogNormal); ``qi``/``qbg``
-                          are then ignored and the joint KL is computed instead.
-        """
+        """Compute the ELBO loss."""
         # batch metadata
         device = rate.device
         batch_size = rate.shape[0]
@@ -372,12 +199,8 @@ class Loss(nn.Module):
         kl_i = torch.zeros(batch_size, device=device)
         kl_bg = torch.zeros(batch_size, device=device)
 
-        # Profile prior KL (always independent of the I/B mode)
+        # Profile prior KL
         if isinstance(qp, ProfilePosterior):
-            # LogisticNormal surrogate: closed-form Gaussian KL on h.
-            # pprf_cfg.weight is honoured when present; defaults to 1.0.
-            # group_labels=None → base class ignores it (global prior);
-            # PerBinProfilePosterior would use it but default loss has no bins.
             weight = self.pprf_cfg.weight if self.pprf_cfg is not None else 1.0
             kl_prf = qp.kl_divergence() * weight
             kl += kl_prf
@@ -393,80 +216,38 @@ class Loss(nn.Module):
             )
             kl += kl_prf
 
-        if q_ib is not None:
-            # Joint (I, B) mode: single KL term for the bivariate posterior.
-            # The joint KL weight is taken from pi_cfg; pbg_cfg.weight is ignored.
-            weight = self.pi_cfg.weight if self.pi_cfg is not None else 1.0
-            if isinstance(q_ib, TotalFractionPosterior):
-                # (T, f) reparameterization — MC KL with Jacobian-corrected log_p.
-                kl_i = _joint_prior_kl_tf(
-                    q_ib=q_ib,
-                    pi_cfg=self.pi_cfg,
-                    pbg_cfg=self.pbg_cfg,
-                    pi_params=self.pi_params,
-                    pbg_params=self.pbg_params,
-                    device=device,
-                    mc_samples=self.mc_samples,
-                    weight=weight,
-                )
-            elif self._use_analytic_kl:
-                # BivariateLogNormal with Gamma priors — exact analytic KL.
-                kl_i = _joint_prior_kl_analytic(
-                    q_ib,
-                    self._alpha_I,
-                    self._beta_I,
-                    self._alpha_bg,
-                    self._beta_bg,
-                    self._kl_const_I,
-                    self._kl_const_bg,
-                    weight=weight,
-                )
-            else:
-                # BivariateLogNormal with non-Gamma priors — MC fallback.
-                kl_i = _joint_prior_kl(
-                    q_ib=q_ib,
-                    pi_cfg=self.pi_cfg,
-                    pbg_cfg=self.pbg_cfg,
-                    pi_params=self.pi_params,
-                    pbg_params=self.pbg_params,
-                    device=device,
-                    mc_samples=self.mc_samples,
-                    weight=weight,
-                )
+        # Independent mean-field: separate KL for qi and qbg.
+        if (
+            self.pi_cfg is not None
+            and self.pi_params is not None
+            and qi is not None
+        ):
+            kl_i = _prior_kl(
+                prior_cfg=self.pi_cfg,
+                q=qi,
+                params=self.pi_params,
+                weight=self.pi_cfg.weight,
+                device=device,
+                mc_samples=self.mc_samples,
+                eps=self.eps,
+            )
             kl += kl_i
-        else:
-            # Independent mean-field mode: separate KL for qi and qbg.
-            if (
-                self.pi_cfg is not None
-                and self.pi_params is not None
-                and qi is not None
-            ):
-                kl_i = _prior_kl(
-                    prior_cfg=self.pi_cfg,
-                    q=qi,
-                    params=self.pi_params,
-                    weight=self.pi_cfg.weight,
-                    device=device,
-                    mc_samples=self.mc_samples,
-                    eps=self.eps,
-                )
-                kl += kl_i
 
-            if (
-                self.pbg_cfg is not None
-                and self.pbg_params is not None
-                and qbg is not None
-            ):
-                kl_bg = _prior_kl(
-                    prior_cfg=self.pbg_cfg,
-                    q=qbg,
-                    params=self.pbg_params,
-                    weight=self.pbg_cfg.weight,
-                    device=device,
-                    mc_samples=self.mc_samples,
-                    eps=self.eps,
-                )
-                kl += kl_bg
+        if (
+            self.pbg_cfg is not None
+            and self.pbg_params is not None
+            and qbg is not None
+        ):
+            kl_bg = _prior_kl(
+                prior_cfg=self.pbg_cfg,
+                q=qbg,
+                params=self.pbg_params,
+                weight=self.pbg_cfg.weight,
+                device=device,
+                mc_samples=self.mc_samples,
+                eps=self.eps,
+            )
+            kl += kl_bg
 
         # Calculating log likelihood
         ll = Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))

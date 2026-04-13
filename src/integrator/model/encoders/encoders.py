@@ -178,7 +178,6 @@ class IntensityEncoder(nn.Module):
             in_features=conv3_out_channels,
             out_features=encoder_out,
         )
-        self.mish = nn.Mish()
 
     def forward(self, x: Tensor) -> Tensor:
         x = F.relu(self.norm1(self.conv1(x)))
@@ -186,133 +185,8 @@ class IntensityEncoder(nn.Module):
         x = F.relu(self.norm2(self.conv2(x)))
         x = F.relu(self.norm3(self.conv3(x)))
         x = self.adaptive_pool(x)
-        # x = x.squeeze(-1).squeeze(-1)  # From (B, C, 1, 1) to (B, C)
-        x = x.squeeze()  # From (B, C, 1, 1) to (B, C)
+        x = x.flatten(1)  # From (B, C, 1, ...) to (B, C)
         x = self.fc(x)
         x = F.relu(x)
 
         return x
-
-
-def _extract_border_pixels(x: Tensor, D: int, H: int, W: int) -> Tensor:
-    """Extract the outer H×W ring across all D slices → (B, D*(2H+2W-4))."""
-    b = x.shape[0]
-    x = x.reshape(b, D, H, W)
-    top = x[:, :, 0, :]  # (B, D, W)
-    bottom = x[:, :, -1, :]  # (B, D, W)
-    left = x[:, :, 1:-1, 0]  # (B, D, H-2)
-    right = x[:, :, 1:-1, -1]  # (B, D, H-2)
-    return torch.cat(
-        [
-            top.reshape(b, -1),
-            bottom.reshape(b, -1),
-            left.reshape(b, -1),
-            right.reshape(b, -1),
-        ],
-        dim=-1,
-    )
-
-
-class BorderPixelMLPEncoder(nn.Module):
-    """MLP encoder that operates only on the border pixels of a shoebox.
-
-    Extracts the outer H×W ring across all D slices (pixels where h=0,
-    h=H-1, w=0, or w=W-1), flattening them to a 1-D vector of length
-    n_border = D * (2H + 2W - 4), and passes that through a small MLP.
-
-    Args:
-        D, H, W: shoebox spatial dimensions
-        encoder_out: output embedding size
-        hidden_dim: width of hidden layers
-        depth: number of hidden residual-style blocks (Linear + LayerNorm + GELU)
-    """
-
-    def __init__(
-        self,
-        D: int,
-        H: int,
-        W: int,
-        encoder_out: int = 64,
-        hidden_dim: int = 128,
-        depth: int = 2,
-    ):
-        super().__init__()
-        self.D, self.H, self.W = D, H, W
-        n_border = D * (2 * H + 2 * W - 4)
-        layers = [
-            nn.LayerNorm(n_border),
-            nn.Linear(n_border, hidden_dim),
-            nn.GELU(),
-        ]
-        for _ in range(depth):
-            layers += [
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.LayerNorm(hidden_dim),
-                nn.GELU(),
-            ]
-        layers += [nn.Linear(hidden_dim, encoder_out), nn.ReLU()]
-        self.mlp = nn.Sequential(*layers)
-
-    def forward(self, x: Tensor) -> Tensor:
-        border = _extract_border_pixels(
-            x, self.D, self.H, self.W
-        )  # (B, n_border)
-        return self.mlp(border)  # (B, encoder_out)
-
-
-class BorderStatsEncoder(nn.Module):
-    """Encoder that summarises border pixels as 6 scalar statistics per shoebox.
-
-    Computes mean, std, min, max, median, and total (sum) over all border
-    pixels (the outer H×W ring across all D slices), then projects the
-    resulting 6-feature vector to ``encoder_out`` via a small MLP.
-
-    Args:
-        D, H, W: shoebox spatial dimensions
-        encoder_out: output embedding size
-        hidden_dim: width of the single hidden layer (default 32)
-    """
-
-    N_STATS = 6  # mean, std, min, max, median, total
-
-    def __init__(
-        self,
-        D: int,
-        H: int,
-        W: int,
-        encoder_out: int = 64,
-        hidden_dim: int = 32,
-    ):
-        super().__init__()
-        self.D, self.H, self.W = D, H, W
-        self.mlp = nn.Sequential(
-            nn.Linear(self.N_STATS, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, encoder_out),
-            nn.ReLU(),
-        )
-
-    def forward(self, x: Tensor) -> Tensor:
-        border = _extract_border_pixels(
-            x, self.D, self.H, self.W
-        )  # (B, n_border)
-        mean = border.mean(dim=-1, keepdim=True)  # (B, 1)
-        std = border.std(dim=-1, keepdim=True)  # (B, 1)
-        mn = border.min(dim=-1, keepdim=True).values  # (B, 1)
-        mx = border.max(dim=-1, keepdim=True).values  # (B, 1)
-        median = border.median(dim=-1, keepdim=True).values  # (B, 1)
-        total = border.sum(dim=-1, keepdim=True)  # (B, 1)
-        stats = torch.cat([mean, std, mn, mx, median, total], dim=-1)  # (B, 6)
-        return self.mlp(stats)  # (B, encoder_out)
-
-
-if __name__ == "__main__":
-    import torch
-
-    A = torch.ones(100, 21)
-    B = torch.ones(100, 21)
-    C = torch.ones(100, 3)
-
-    concentration = torch.einsum("bi,bj,bl -> blij", A, B, C).reshape(
-        -1, 3 * 21 * 21
-    )

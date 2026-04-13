@@ -69,9 +69,8 @@ def parse_args():
     return parser.parse_args()
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
+
 
 def _get_bins(edges: list) -> tuple[list[str], "pl.DataFrame"]:
     """Build bin labels and a base DataFrame for joining."""
@@ -98,13 +97,14 @@ def _compute_intensity_edges(I_true: "torch.Tensor") -> list:
 
     strong = I_true[I_true <= 250]
     n_bins = min(15, max(5, len(strong) // 200))
-    edges = torch.quantile(strong, torch.linspace(0, 1, n_bins + 1)).tolist()[1:]
+    edges = torch.quantile(strong, torch.linspace(0, 1, n_bins + 1)).tolist()[
+        1:
+    ]
     return [round(e) for e in edges]
 
 
-# ---------------------------------------------------------------------------
 # Analysis routines
-# ---------------------------------------------------------------------------
+
 
 def compute_error_metrics(
     pred_lf: "pl.LazyFrame",
@@ -152,7 +152,12 @@ def compute_error_metrics(
         pred_bias_ratio=pl.col("pred_mean") / pl.col("true_mean"),
     )
 
-    return base_df.lazy().join(agg, on="bin_labels", how="left").collect().sort("bin_id")
+    return (
+        base_df.lazy()
+        .join(agg, on="bin_labels", how="left")
+        .collect()
+        .sort("bin_id")
+    )
 
 
 def compute_loss_curves(
@@ -205,20 +210,26 @@ def compute_profile_metrics(
 ) -> "pl.DataFrame | None":
     """Compute profile quality metrics per bin per epoch.
 
-    Uses the normalized ``concentration_per_group`` as the reference profile
-    for each resolution bin. Predictions must contain ``qp_mean``.
+    Uses the normalized `concentration_per_group` as the reference profile
+    for each resolution bin. Predictions must contain `qp_mean`.
     """
+    from pathlib import Path
+
     import polars as pl
     import torch
 
-    from pathlib import Path
-
-    conc_full_path = Path(concentration_path) if Path(concentration_path).is_absolute() else data_dir / concentration_path
+    conc_full_path = (
+        Path(concentration_path)
+        if Path(concentration_path).is_absolute()
+        else data_dir / concentration_path
+    )
     if not conc_full_path.exists():
         logger.warning("concentration file not found: %s", conc_full_path)
         return None
 
-    conc = torch.load(conc_full_path, weights_only=True).float()  # (n_bins, 441)
+    conc = torch.load(
+        conc_full_path, weights_only=True
+    ).float()  # (n_bins, 441)
     ref = torch.load(data_dir / "reference.pt", weights_only=False)
 
     # Normalize to get expected profiles per resolution bin
@@ -230,13 +241,17 @@ def compute_profile_metrics(
     # Reference profile per reflection: (N_total, 441)
     ref_per_refl = ref_profiles[group_labels]
 
-    # Map refl_id → row index for fast lookup
-    refl_id_to_idx = {float(rid): i for i, rid in enumerate(refl_ids_ref.tolist())}
+    # Map refl_id -> row index for fast lookup
+    refl_id_to_idx = {
+        float(rid): i for i, rid in enumerate(refl_ids_ref.tolist())
+    }
 
     # Check first file for qp_mean column
     first_schema = pl.read_parquet_schema(str(pred_paths[0]))
     if "qp_mean" not in first_schema:
-        logger.info("Predictions do not contain qp_mean; skipping profile metrics")
+        logger.info(
+            "Predictions do not contain qp_mean; skipping profile metrics"
+        )
         return None
 
     all_aggs: list[pl.DataFrame] = []
@@ -273,23 +288,29 @@ def compute_profile_metrics(
         # Total variation
         tv = 0.5 * (qp - ref_p).abs().sum(dim=-1)
 
-        refl_df = pl.DataFrame({
-            "intensity": df["intensity"].to_numpy().astype("float32"),
-            "cosine_similarity": cos_sim.numpy(),
-            "l2_error": l2.numpy(),
-            "tv": tv.numpy(),
-        })
+        refl_df = pl.DataFrame(
+            {
+                "intensity": df["intensity"].to_numpy().astype("float32"),
+                "cosine_similarity": cos_sim.numpy(),
+                "l2_error": l2.numpy(),
+                "tv": tv.numpy(),
+            }
+        )
         refl_df = refl_df.with_columns(
             pl.col("intensity")
             .cut(breaks=intensity_edges, labels=bin_labels)
             .alias("bin_labels")
         )
 
-        agg = refl_df.group_by("bin_labels").agg(
-            mean_cos_sim=pl.col("cosine_similarity").mean(),
-            mean_tv=pl.col("tv").mean(),
-            mean_l2_error=pl.col("l2_error").mean(),
-        ).with_columns(pl.lit(epoch_val).alias("epoch"))
+        agg = (
+            refl_df.group_by("bin_labels")
+            .agg(
+                mean_cos_sim=pl.col("cosine_similarity").mean(),
+                mean_tv=pl.col("tv").mean(),
+                mean_l2_error=pl.col("l2_error").mean(),
+            )
+            .with_columns(pl.lit(epoch_val).alias("epoch"))
+        )
         all_aggs.append(agg)
 
     if not all_aggs:
@@ -297,7 +318,7 @@ def compute_profile_metrics(
 
     prof_agg = pl.concat(all_aggs)
 
-    # Multiple flush files per epoch → aggregate to one row per (bin, epoch)
+    # Multiple flush files per epoch, aggregate to one row per (bin, epoch)
     prof_agg = prof_agg.group_by(["bin_labels", "epoch"]).agg(
         mean_cos_sim=pl.col("mean_cos_sim").mean(),
         mean_tv=pl.col("mean_tv").mean(),
@@ -325,8 +346,9 @@ def compute_crlb_curves(
     Uses the average (normalised) concentration profile across bins and the
     mean background rate.
     """
-    import torch
     from pathlib import Path
+
+    import torch
 
     # Load concentration and bg_rate
     conc_path = loss_args.get("concentration_per_group")
@@ -334,8 +356,14 @@ def compute_crlb_curves(
     if conc_path is None or bg_path is None:
         return None
 
-    conc_full = Path(conc_path) if Path(conc_path).is_absolute() else data_dir / conc_path
-    bg_full = Path(bg_path) if Path(bg_path).is_absolute() else data_dir / bg_path
+    conc_full = (
+        Path(conc_path)
+        if Path(conc_path).is_absolute()
+        else data_dir / conc_path
+    )
+    bg_full = (
+        Path(bg_path) if Path(bg_path).is_absolute() else data_dir / bg_path
+    )
 
     if not conc_full.exists() or not bg_full.exists():
         return None
@@ -381,9 +409,8 @@ def compute_crlb_curves(
     }
 
 
-# ---------------------------------------------------------------------------
 # Plotting functions
-# ---------------------------------------------------------------------------
+
 
 def plot_error_metric_evolution(
     error_df: "pl.DataFrame",
@@ -399,25 +426,36 @@ def plot_error_metric_evolution(
     import matplotlib.pyplot as plt
     import polars as pl
 
-    plot_df = error_df.select(["bin_id", "bin_labels", "epoch", metric]).filter(
-        pl.col("epoch").is_not_null()
-    )
+    plot_df = error_df.select(
+        ["bin_id", "bin_labels", "epoch", metric]
+    ).filter(pl.col("epoch").is_not_null())
     epochs = sorted(plot_df["epoch"].unique())
     if not epochs:
         fig, ax = plt.subplots()
-        ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+        ax.text(
+            0.5,
+            0.5,
+            "No data",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+        )
         return fig
 
     cmap = plt.cm.viridis
     norm = mcolors.Normalize(vmin=min(epochs), vmax=max(epochs))
 
-    wide = plot_df.pivot(on="epoch", index="bin_id", values=metric).sort("bin_id")
+    wide = plot_df.pivot(on="epoch", index="bin_id", values=metric).sort(
+        "bin_id"
+    )
 
     fig, ax = plt.subplots(1, figsize=(7, 4.5))
     for epoch in epochs:
         col = str(epoch)
         if col in wide.columns:
-            ax.plot(wide["bin_id"], wide[col], color=cmap(norm(epoch)), alpha=0.8)
+            ax.plot(
+                wide["bin_id"], wide[col], color=cmap(norm(epoch)), alpha=0.8
+            )
 
     ax.set_ylabel(ylabel or metric)
     ax.set_xlabel("intensity bin")
@@ -538,7 +576,9 @@ def plot_noise_to_signal(
 
     if crlb is not None:
         ax.plot(crlb["x"], crlb["crlb_ns"], label="CRLB", color="tab:orange")
-        ax.plot(crlb["x"], crlb["laplace_ns"], label="Laplace", color="tab:green")
+        ax.plot(
+            crlb["x"], crlb["laplace_ns"], label="Laplace", color="tab:green"
+        )
 
     ax.scatter(x_model, y_model, alpha=0.2, s=3, rasterized=True)
     ax.axhline(1, linestyle="dotted", color="red", label="signal = noise")
@@ -568,7 +608,11 @@ def plot_sbc_ranks(
     ncols = min(n_bins, 5)
     nrows = (n_bins + ncols - 1) // ncols
     fig, axes = plt.subplots(
-        nrows, ncols, figsize=(3 * ncols, 3 * nrows), sharey=True, squeeze=False,
+        nrows,
+        ncols,
+        figsize=(3 * ncols, 3 * nrows),
+        sharey=True,
+        squeeze=False,
     )
 
     for idx, b in enumerate(bin_ids):
@@ -602,9 +646,8 @@ def plot_sbc_ranks(
     return fig
 
 
-# ---------------------------------------------------------------------------
 # SBC
-# ---------------------------------------------------------------------------
+
 
 def run_sbc(
     config: dict,
@@ -620,19 +663,22 @@ def run_sbc(
     For each resolution bin, samples intensities, backgrounds, and profiles
     from that bin's prior, generates synthetic shoeboxes, runs inference,
     and computes SBC ranks.  Returns a DataFrame with one row per simulated
-    reflection, labelled by resolution ``bin_id``.
+    reflection, labelled by resolution `bin_id`.
     """
+    from pathlib import Path
+
     import polars as pl
     import torch
-    from pathlib import Path
 
     from integrator.utils import construct_integrator
 
-    stats_train = torch.load(data_dir / "stats_anscombe.pt", weights_only=False)
+    stats_train = torch.load(
+        data_dir / "stats_anscombe.pt", weights_only=False
+    )
 
     loss_args = config.get("loss", {}).get("args", {})
 
-    # --- Load per-bin priors ---
+    # Load per-bin priors
     def _load_pt(key: str, default: "torch.Tensor") -> "torch.Tensor":
         p = loss_args.get(key)
         if p is None:
@@ -640,9 +686,9 @@ def run_sbc(
         fp = Path(p) if Path(p).is_absolute() else data_dir / p
         return torch.load(fp, weights_only=True)
 
-    tau = _load_pt("tau_per_group", torch.tensor([0.001]))            # (n_bins,)
-    bg_rate = _load_pt("bg_rate_per_group", torch.tensor([1.0]))      # (n_bins,)
-    concentration = _load_pt(                                          # (n_bins, 441)
+    tau = _load_pt("tau_per_group", torch.tensor([0.001]))  # (n_bins,)
+    bg_rate = _load_pt("bg_rate_per_group", torch.tensor([1.0]))  # (n_bins,)
+    concentration = _load_pt(  # (n_bins, 441)
         "concentration_per_group", torch.ones(1, 441) * 1e-3
     )
 
@@ -659,7 +705,7 @@ def run_sbc(
 
     H, W = 21, 21
 
-    # --- Load model ---
+    # Load model
     integrator = construct_integrator(config)
 
     ckpts = sorted(wandb_dir.glob("**/epoch*.ckpt"))
@@ -669,6 +715,7 @@ def run_sbc(
 
     if checkpoint_epoch is not None:
         import re
+
         epoch_re = re.compile(r"epoch=(\d+)")
         target = None
         for c in ckpts:
@@ -689,7 +736,7 @@ def run_sbc(
     integrator.load_state_dict(ckpt_data["state_dict"])
     integrator.eval()
 
-    # --- Run SBC per resolution bin ---
+    # Run SBC per resolution bin
     all_rows: list[dict] = []
 
     for b in range(n_bins):
@@ -705,18 +752,16 @@ def run_sbc(
         prf_s = pprf.sample([nsamples_per_bin])  # (N, 441)
 
         # Generate shoeboxes
-        rates = (
-            i_s.view(nsamples_per_bin, 1, 1)
-            * prf_s.view(nsamples_per_bin, H, W)
-            + bg_s.view(nsamples_per_bin, 1, 1)
-        )
+        rates = i_s.view(nsamples_per_bin, 1, 1) * prf_s.view(
+            nsamples_per_bin, H, W
+        ) + bg_s.view(nsamples_per_bin, 1, 1)
         shoeboxes = torch.poisson(rates).unsqueeze(1)  # (N, 1, H, W)
 
         # Standardise (Anscombe)
         anscombe = 2 * (shoeboxes.float() + 0.375).sqrt()
         shoeboxes_std = (anscombe - stats_train[0]) / stats_train[1].sqrt()
 
-        # Build model inputs — group_label = b for every sample
+        # Build model inputs (group_label = b for every sample)
         counts_flat = shoeboxes.squeeze(1).reshape(nsamples_per_bin, -1)
         masks_flat = torch.ones_like(counts_flat)
         meta = {
@@ -737,8 +782,10 @@ def run_sbc(
             for start in range(0, nsamples_per_bin, batch_size):
                 end = min(start + batch_size, nsamples_per_bin)
                 bc = counts_flat[start:end]
-                bs = shoeboxes_std[start:end].squeeze(1).reshape(
-                    end - start, -1
+                bs = (
+                    shoeboxes_std[start:end]
+                    .squeeze(1)
+                    .reshape(end - start, -1)
                 )
                 bm = masks_flat[start:end]
                 bmet = {k: v[start:end] for k, v in meta.items()}
@@ -751,7 +798,7 @@ def run_sbc(
         qi_mean = torch.cat(qi_mean_parts)
         qi_var = torch.cat(qi_var_parts)
 
-        # Recover Gamma params: mean=c/r, var=c/r² → r=mean/var, c=mean²/var
+        # Recover Gamma params: mean=c/r, var=c/r^2; r=mean/var, c=mean^2/var
         qi_rate = qi_mean / qi_var.clamp(min=1e-12)
         qi_conc = qi_mean.pow(2) / qi_var.clamp(min=1e-12)
 
@@ -759,33 +806,40 @@ def run_sbc(
         post_samples = torch.distributions.Gamma(qi_conc, qi_rate).sample([K])
         ranks = (post_samples < i_s.unsqueeze(0)).sum(dim=0)
 
-        all_rows.append({
-            "rank": ranks.numpy().astype("int32"),
-            "I_true": i_s.numpy().astype("float32"),
-            "bin_id": [b] * nsamples_per_bin,
-        })
+        all_rows.append(
+            {
+                "rank": ranks.numpy().astype("int32"),
+                "I_true": i_s.numpy().astype("float32"),
+                "bin_id": [b] * nsamples_per_bin,
+            }
+        )
 
     # Assemble DataFrame
     import numpy as np
 
-    df_sbc = pl.DataFrame({
-        "rank": np.concatenate([r["rank"] for r in all_rows]),
-        "I_true": np.concatenate([r["I_true"] for r in all_rows]),
-        "bin_id": np.concatenate([r["bin_id"] for r in all_rows]).astype("int32"),
-    })
+    df_sbc = pl.DataFrame(
+        {
+            "rank": np.concatenate([r["rank"] for r in all_rows]),
+            "I_true": np.concatenate([r["I_true"] for r in all_rows]),
+            "bin_id": np.concatenate([r["bin_id"] for r in all_rows]).astype(
+                "int32"
+            ),
+        }
+    )
     return df_sbc
 
 
-# ---------------------------------------------------------------------------
 # Main
-# ---------------------------------------------------------------------------
+
 
 def main():
     from pathlib import Path
 
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+
     plt.rcParams["text.usetex"] = False
     import polars as pl
     import torch
@@ -806,7 +860,7 @@ def main():
 
     _log("Starting analysis")
 
-    # --- Load run metadata ---
+    # Load run metadata
     run_dir = Path(args.run_dir)
     meta = yaml.safe_load((run_dir / "run_metadata.yaml").read_text())
     config = load_config(meta["config"])
@@ -820,17 +874,17 @@ def main():
     _log(f"Data dir: {data_dir}")
     _log(f"Source run: {wandb_info.get('run_id', 'unknown')}")
 
-    # --- Load reference data ---
+    # Load reference data
     reference = torch.load(data_dir / "reference.pt", weights_only=False)
     I_true = torch.tensor(reference["intensity"])
     _log(f"Loaded {len(I_true)} reflections from reference")
 
-    # --- Compute intensity bin edges ---
+    # Compute intensity bin edges
     intensity_edges = _compute_intensity_edges(I_true)
     bin_labels, base_df = _get_bins(intensity_edges)
     _log(f"Intensity edges ({len(intensity_edges)} bins): {intensity_edges}")
 
-    # --- Initialize W&B analysis run ---
+    # Initialize W&B analysis run
     wb_project = args.wb_project or wandb_info.get("project", "sim-analysis")
     wandb.init(
         project=wb_project,
@@ -843,7 +897,7 @@ def main():
         },
     )
 
-    # --- Load predictions ---
+    # Load predictions
     pred_dir = wandb_dir / "predictions"
     pred_paths = sorted(pred_dir.glob("**/preds_epoch_*.parquet"))
 
@@ -858,6 +912,7 @@ def main():
     # Filter to requested epochs if specified
     if args.epochs is not None:
         import re
+
         epoch_re = re.compile(r"epoch_(\d+)")
         filtered = []
         epoch_set = set(args.epochs)
@@ -871,32 +926,40 @@ def main():
     pred_lf = pl.scan_parquet([str(p) for p in pred_paths])
 
     # Discover all available epochs
-    all_epochs = sorted(pred_lf.select("epoch").unique().collect()["epoch"].to_list())
-    _log(f"Epochs available: {len(all_epochs)} (min={min(all_epochs)}, max={max(all_epochs)})")
+    all_epochs = sorted(
+        pred_lf.select("epoch").unique().collect()["epoch"].to_list()
+    )
+    _log(
+        f"Epochs available: {len(all_epochs)} (min={min(all_epochs)}, max={max(all_epochs)})"
+    )
 
     last_epoch = max(all_epochs)
 
-    # --- Compute error metrics (all epochs) ---
+    # Compute error metrics (all epochs)
     _log("Computing error metrics...")
-    error_df = compute_error_metrics(pred_lf, intensity_edges, bin_labels, base_df)
+    error_df = compute_error_metrics(
+        pred_lf, intensity_edges, bin_labels, base_df
+    )
 
-    # --- Per-epoch global metrics → wandb time series ---
+    # Per-epoch global metrics -> wandb time series
     _log("Logging per-epoch global metrics...")
     for epoch in all_epochs:
         epoch_metrics = error_df.filter(pl.col("epoch") == epoch)
         if len(epoch_metrics) == 0:
             continue
-        wandb.log({
-            "epoch": epoch,
-            "global/mae": epoch_metrics["mae"].mean(),
-            "global/rmse": epoch_metrics["rmse"].mean(),
-            "global/mre": epoch_metrics["mre"].mean(),
-            "global/bias": epoch_metrics["bias"].mean(),
-            "global/corr_i": epoch_metrics["corr_i"].mean(),
-            "global/corr_bg": epoch_metrics["corr_bg"].mean(),
-        })
+        wandb.log(
+            {
+                "epoch": epoch,
+                "global/mae": epoch_metrics["mae"].mean(),
+                "global/rmse": epoch_metrics["rmse"].mean(),
+                "global/mre": epoch_metrics["mre"].mean(),
+                "global/bias": epoch_metrics["bias"].mean(),
+                "global/corr_i": epoch_metrics["corr_i"].mean(),
+                "global/corr_bg": epoch_metrics["corr_bg"].mean(),
+            }
+        )
 
-    # --- Compute profile metrics (all epochs, file by file) ---
+    # Compute profile metrics (all epochs, file by file)
     loss_args = config.get("loss", {}).get("args", {})
     conc_path = loss_args.get("concentration_per_group")
 
@@ -904,8 +967,12 @@ def main():
     if conc_path is not None:
         _log("Computing profile metrics...")
         profile_df = compute_profile_metrics(
-            pred_paths, data_dir, conc_path,
-            intensity_edges, bin_labels, base_df,
+            pred_paths,
+            data_dir,
+            conc_path,
+            intensity_edges,
+            bin_labels,
+            base_df,
         )
         if profile_df is not None:
             _log(f"  Profile metrics: {len(profile_df)} rows")
@@ -914,14 +981,14 @@ def main():
     else:
         _log("No concentration_per_group in config; skipping profile metrics")
 
-    # --- Compute CRLB / Laplace curves ---
+    # Compute CRLB / Laplace curves
     crlb_data = compute_crlb_curves(data_dir, loss_args)
     if crlb_data is not None:
         _log("Computed CRLB / Laplace bounds")
     else:
         _log("CRLB: skipped (missing concentration or bg_rate files)")
 
-    # --- Compute loss curves ---
+    # Compute loss curves
     _log("Computing loss curves...")
     train_loss_df, val_loss_df = compute_loss_curves(wandb_dir)
 
@@ -930,9 +997,7 @@ def main():
     if val_loss_df is not None:
         _log(f"  Val loss: {len(val_loss_df)} epochs")
 
-    # ===================================================================
     # Generate and log plots
-    # ===================================================================
 
     n_plots_ok = 0
     n_plots_fail = 0
@@ -945,29 +1010,44 @@ def main():
         except Exception as e:
             n_plots_fail += 1
             logger.warning("Failed to plot %s: %s", name, e)
-            summary_lines.append(f"  FAILED: {name} — {e}")
+            summary_lines.append(f"  FAILED: {name} - {e}")
 
     # 1. Error metric evolution plots
     METRICS = {
-        "mre": {"ylabel": "Mean Relative Error", "yscale": "linear", "ylim": (0, 10)},
+        "mre": {
+            "ylabel": "Mean Relative Error",
+            "yscale": "linear",
+            "ylim": (0, 10),
+        },
         "mae": {"ylabel": "MAE", "yscale": "symlog"},
         "rmse": {"ylabel": "RMSE", "yscale": "log"},
         "bias": {"ylabel": "Bias", "yscale": "symlog"},
-        "corr_i": {"ylabel": "Intensity Correlation", "yscale": "linear", "ylim": (0, 1)},
-        "corr_bg": {"ylabel": "Background Correlation", "yscale": "linear", "ylim": (0.9, 1)},
+        "corr_i": {
+            "ylabel": "Intensity Correlation",
+            "yscale": "linear",
+            "ylim": (0, 1),
+        },
+        "corr_bg": {
+            "ylabel": "Background Correlation",
+            "yscale": "linear",
+            "ylim": (0.9, 1),
+        },
         "var": {"ylabel": "Variance", "yscale": "log"},
     }
 
     for metric_name, metric_cfg in METRICS.items():
+
         def _plot_metric(mn=metric_name, mc=metric_cfg):
             fig = plot_error_metric_evolution(
-                error_df, mn,
+                error_df,
+                mn,
                 ylabel=mc.get("ylabel"),
                 yscale=mc.get("yscale", "linear"),
                 ylim=mc.get("ylim"),
             )
             wandb.log({f"metrics/{mn}": wandb.Image(fig)})
             plt.close(fig)
+
         _try_plot(f"metrics/{metric_name}", _plot_metric)
 
     # 1b. Profile metric evolution plots
@@ -978,30 +1058,39 @@ def main():
             "mean_tv": {"ylabel": "Total Variation"},
         }
         for pm_name, pm_cfg in PROFILE_METRICS.items():
+
             def _plot_prof(mn=pm_name, mc=pm_cfg):
                 fig = plot_error_metric_evolution(
-                    profile_df, mn, ylabel=mc["ylabel"],
+                    profile_df,
+                    mn,
+                    ylabel=mc["ylabel"],
                 )
                 wandb.log({f"profile/{mn}": wandb.Image(fig)})
                 plt.close(fig)
+
             _try_plot(f"profile/{pm_name}", _plot_prof)
 
     # 2. Loss curves
     for component in ["loss", "nll", "kl"]:
+
         def _plot_loss(c=component):
             fig = plot_loss_curves(train_loss_df, val_loss_df, c)
             wandb.log({f"loss/{c}": wandb.Image(fig)})
             plt.close(fig)
+
         _try_plot(f"loss/{component}", _plot_loss)
 
     # 3. Loss gap
     if train_loss_df is not None and val_loss_df is not None:
+
         def _plot_gaps():
             gap_df = (
                 val_loss_df.with_columns(pl.col("epoch").cast(pl.Int32))
                 .sort("epoch")
                 .join_asof(
-                    train_loss_df.with_columns(pl.col("epoch").cast(pl.Int32)).sort("epoch"),
+                    train_loss_df.with_columns(
+                        pl.col("epoch").cast(pl.Int32)
+                    ).sort("epoch"),
                     on="epoch",
                     strategy="nearest",
                     suffix="_train",
@@ -1023,6 +1112,7 @@ def main():
                 fig.tight_layout()
                 wandb.log({f"loss/{gap_name}": wandb.Image(fig)})
                 plt.close(fig)
+
         _try_plot("loss/gaps", _plot_gaps)
 
     # 4. Scatter plots for multiple epochs (first, middle, last)
@@ -1031,29 +1121,44 @@ def main():
 
     for ep in scatter_epochs:
         epoch_lf = pred_lf.filter(pl.col("epoch") == ep)
-        epoch_df = epoch_lf.select([
-            "qi_mean", "qi_var", "qbg_mean", "intensity", "background",
-        ]).collect()
+        epoch_df = epoch_lf.select(
+            [
+                "qi_mean",
+                "qi_var",
+                "qbg_mean",
+                "intensity",
+                "background",
+            ]
+        ).collect()
 
         def _plot_scatter_i(df=epoch_df, e=ep):
             fig = plot_scatter(
-                df, "qi_mean", "intensity",
-                xlabel="estimated intensity", ylabel="true intensity",
-                symlog=True, xlim=(0, 1e4),
+                df,
+                "qi_mean",
+                "intensity",
+                xlabel="estimated intensity",
+                ylabel="true intensity",
+                symlog=True,
+                xlim=(0, 1e4),
             )
             fig.suptitle(f"epoch {e}", fontsize=9)
             wandb.log({f"scatter/I_vs_hatI_epoch{e}": wandb.Image(fig)})
             plt.close(fig)
+
         _try_plot(f"scatter/I_epoch{ep}", _plot_scatter_i)
 
         def _plot_scatter_bg(df=epoch_df, e=ep):
             fig = plot_scatter(
-                df, "qbg_mean", "background",
-                xlabel="estimated background", ylabel="true background",
+                df,
+                "qbg_mean",
+                "background",
+                xlabel="estimated background",
+                ylabel="true background",
             )
             fig.suptitle(f"epoch {e}", fontsize=9)
             wandb.log({f"scatter/bg_vs_hatbg_epoch{e}": wandb.Image(fig)})
             plt.close(fig)
+
         _try_plot(f"scatter/bg_epoch{ep}", _plot_scatter_bg)
 
         def _plot_ns(df=epoch_df, e=ep, cr=crlb_data):
@@ -1061,6 +1166,7 @@ def main():
             fig.suptitle(f"epoch {e}", fontsize=9)
             wandb.log({f"scatter/noise_to_signal_epoch{e}": wandb.Image(fig)})
             plt.close(fig)
+
         _try_plot(f"scatter/noise_to_signal_epoch{ep}", _plot_ns)
 
     # 5. Final-epoch summary
@@ -1082,11 +1188,10 @@ def main():
         for k, v in summary_dict.items():
             _log(f"  {k}: {v:.6f}" if isinstance(v, float) else f"  {k}: {v}")
 
-    # 6. SBC (optional) — one check per resolution bin
+    # 6. SBC (optional, one check per resolution bin)
     if args.sbc:
         _log(
-            f"Running SBC: {args.sbc_nsamples} samples/bin, "
-            f"K={args.sbc_K}..."
+            f"Running SBC: {args.sbc_nsamples} samples/bin, K={args.sbc_K}..."
         )
         try:
             df_sbc = run_sbc(
@@ -1105,10 +1210,11 @@ def main():
 
                 # Per-bin KS p-values
                 from scipy import stats as sp_stats
+
                 for b in sorted(df_sbc["bin_id"].unique().to_list()):
-                    ranks_b = df_sbc.filter(
-                        pl.col("bin_id") == b
-                    )["rank"].to_numpy()
+                    ranks_b = df_sbc.filter(pl.col("bin_id") == b)[
+                        "rank"
+                    ].to_numpy()
                     _, pv = sp_stats.kstest(
                         ranks_b, "uniform", args=(0, args.sbc_K + 1)
                     )
@@ -1130,7 +1236,9 @@ def main():
     wandb.finish()
 
 
-def _pick_scatter_epochs(all_epochs: list[int], max_scatter: int = 5) -> list[int]:
+def _pick_scatter_epochs(
+    all_epochs: list[int], max_scatter: int = 5
+) -> list[int]:
     """Pick a few representative epochs for scatter plots."""
     if len(all_epochs) <= max_scatter:
         return all_epochs

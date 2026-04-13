@@ -33,11 +33,11 @@ class ResidualLayer(nn.Module):
         super().__init__()
         # First layer
         self.fc1 = Linear(width, width)
-        self.norm1 = nn.LayerNorm(width)  #
+        self.norm1 = nn.LayerNorm(width)
 
         # Second layer
         self.fc2 = Linear(width, width)
-        self.norm2 = nn.LayerNorm(width)  #
+        self.norm2 = nn.LayerNorm(width)
 
         # Activation and dropout
         self.relu = nn.ReLU(inplace=True)
@@ -62,32 +62,3 @@ class ResidualLayer(nn.Module):
         out = self.relu(out)
 
         return out
-
-
-class MLP(nn.Module):
-    def __init__(self, feature_dim, depth=10, dropout=0.0, output_dims=None):
-        super().__init__()
-        layers = []
-        hidden_dim = feature_dim * 2
-
-        # Input projection layer
-        layers.append(Linear(feature_dim, hidden_dim))
-        layers.append(nn.LayerNorm(hidden_dim))  #
-        layers.append(nn.ReLU(inplace=True))
-
-        # Residual blocks
-        for _ in range(depth):
-            layers.append(ResidualLayer(hidden_dim, dropout_rate=dropout))
-
-        # Output layer if needed
-        if output_dims is not None:
-            layers.append(nn.LayerNorm(hidden_dim))
-            layers.append(nn.ReLU(inplace=True))
-            layers.append(Linear(hidden_dim, output_dims))
-
-        self.model = nn.Sequential(*layers)
-
-    def forward(self, x):
-        # Process through the model
-        x = self.model(x)
-        return x

@@ -1,16 +1,17 @@
 from .base_integrator import BaseIntegrator
-from .hierarchical_integrator import HierarchicalIntegrator, HierarchicalIntegratorB, HierarchicalIntegratorD
-from .integrator import IntegratorModelA, IntegratorModelB, IntegratorModelC, IntegratorModelD, IntegratorModelE, IntegratorModelF
+from .hierarchical_integrator import (
+    HierarchicalIntegratorA,
+    HierarchicalIntegratorB,
+    HierarchicalIntegratorC,
+)
+from .integrator import IntegratorModelA, IntegratorModelB, IntegratorModelC
 
 __all__ = [
     "BaseIntegrator",
-    "HierarchicalIntegrator",
+    "HierarchicalIntegratorA",
     "HierarchicalIntegratorB",
-    "HierarchicalIntegratorD",
+    "HierarchicalIntegratorC",
     "IntegratorModelA",
     "IntegratorModelB",
     "IntegratorModelC",
-    "IntegratorModelD",
-    "IntegratorModelE",
-    "IntegratorModelF",
 ]

@@ -51,25 +51,15 @@ def fit_priors_from_experimental(
 ) -> dict:
     """Fit per-bin priors from experimental DIALS data.
 
-    Parameters
-    ----------
-    data_dir : Path
-        Directory containing counts.pt, masks.pt, reference.pt.
-    cfg : dict
-        Integrator-style config dict (needs `data_loader.args` keys).
-    n_bins : int
-        Target number of resolution bins.
-    min_intensity : float
-        Floor for intensity when computing tau.
+    Args:
+        data_dir: Directory containing counts.pt, masks.pt, reference.pt.
+        cfg: Integrator-style config dict (needs `data_loader.args` keys).
+        n_bins: Target number of resolution bins.
+        min_intensity: Floor for intensity when computing tau.
 
-    Returns
-    -------
-    dict with keys:
-        tau         : (n_bins,) Exponential rate for intensity
-        bg_rate     : (n_bins,) Exponential rate for background
-        s_squared   : (n_bins,) Wilson parameter 1/(4d²)
-        concentration : (n_bins, 441) Dirichlet concentration
-        n_bins      : int, actual number of bins used
+    Returns:
+        Dict with keys: tau (n_bins,), bg_rate (n_bins,), s_squared (n_bins,),
+        concentration (n_bins, 441), and n_bins (int).
     """
     counts, masks, metadata = _load_raw_data(data_dir, cfg)
 
@@ -118,23 +108,20 @@ def make_config_priors(prior_cfg: dict) -> dict:
 
     Supports two ways of specifying the intensity prior:
 
-    1. **Direct tau**: provide ``tau`` (scalar or list).
-    2. **Wilson model**: provide ``K``, ``B``, and ``s_squared`` (or
-       ``mean_d``).  tau is derived as ``(1/K) * exp(2*B*s²)``.
-       Both ``tau_per_group.pt`` and ``s_squared_per_group.pt`` are
-       saved so that ``PerBinLoss`` and ``WilsonPerBinLoss`` produce
+    1. **Direct tau**: provide `tau` (scalar or list).
+    2. **Wilson model**: provide `K`, `B`, and `s_squared` (or
+       `mean_d`).  tau is derived as `(1/K) * exp(2*B*s^2)`.
+       Both `tau_per_group.pt` and `s_squared_per_group.pt` are
+       saved so that `PerBinLoss` and `WilsonPerBinLoss` produce
        equivalent effective priors.
 
-    Parameters
-    ----------
-    prior_cfg : dict
-        Must contain ``n_bins`` and ``bg_rate``.
-        Intensity: either ``tau`` directly, or ``K``, ``B`` with
-        ``s_squared`` (or ``mean_d``).
+    Args:
+        prior_cfg: Must contain `n_bins` and `bg_rate`.
+            Intensity: either `tau` directly, or `K`, `B` with
+            `s_squared` (or `mean_d`).
 
-    Returns
-    -------
-    dict with same structure as :func:`fit_priors_from_experimental`.
+    Returns:
+        Dict with same structure as :func:`fit_priors_from_experimental`.
     """
     n_bins = prior_cfg.get("n_bins", len(DEFAULT_MEAN_D))
 

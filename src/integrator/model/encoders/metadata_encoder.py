@@ -37,18 +37,3 @@ class MLPMetadataEncoder(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         x = self.model(x)
         return x
-
-
-# -
-if __name__ == "__main__":
-    import torch
-
-    x = torch.randn(10, 10)
-    encoder = MLPMetadataEncoder(
-        encoder_in=10,
-        encoder_out=64,
-        depth=5,
-        dropout=0.0,
-    )
-
-    out = encoder(x)

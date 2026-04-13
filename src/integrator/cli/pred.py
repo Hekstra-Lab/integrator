@@ -15,10 +15,6 @@ from integrator.cli.utils.logger import setup_logging
 logger = logging.getLogger(__name__)
 
 
-def _concat_npz_file():
-    pass
-
-
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Predict from a set of pytorch.ckpt files"

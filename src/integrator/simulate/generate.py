@@ -42,9 +42,9 @@ def _fit_concentration_from_profiles(
         var_p = sel.var(dim=0)
         valid = p_bar > 1e-6
         if valid.sum() > 0:
-            ratio = (
-                p_bar[valid] * (1 - p_bar[valid])
-            ) / var_p[valid].clamp(min=1e-12) - 1
+            ratio = (p_bar[valid] * (1 - p_bar[valid])) / var_p[valid].clamp(
+                min=1e-12
+            ) - 1
             kappa = ratio.median().clamp(min=1.0)
         else:
             kappa = torch.tensor(1.0)
@@ -67,33 +67,20 @@ def simulate(
 ) -> dict:
     """Simulate shoeboxes with 2D Gaussian profiles.
 
-    Parameters
-    ----------
-    n_per_bin : int
-        Number of reflections per resolution bin.
-    n_bins : int
-        Number of resolution bins.
-    tau : Tensor, shape (n_bins,)
-        Exponential rate for intensity per bin.
-    bg_rate : Tensor, shape (n_bins,)
-        Exponential rate for background per bin.
-    H, W : int
-        Spatial dimensions (default 21 x 21).
-    n_frames : int
-        Number of frames per shoebox (default 3, same profile per frame).
-    profile_kwargs : dict, optional
-        Extra kwargs passed to :func:`sample_profiles`.
-    seed : int, optional
-        Random seed for reproducibility.
+    Args:
+        n_per_bin: Number of reflections per resolution bin.
+        n_bins: Number of resolution bins.
+        tau: Exponential rate for intensity per bin, shape (n_bins,).
+        bg_rate: Exponential rate for background per bin, shape (n_bins,).
+        H: Spatial height (default 21).
+        W: Spatial width (default 21).
+        n_frames: Number of frames per shoebox (default 3, same profile per frame).
+        profile_kwargs: Extra kwargs passed to :func:`sample_profiles`.
+        seed: Random seed for reproducibility.
 
-    Returns
-    -------
-    dict with keys:
-        counts      : (N, n_frames * H * W)
-        profiles    : (N, H * W)
-        intensity   : (N,)
-        background  : (N,)
-        group_label : (N,) long
+    Returns:
+        Dict with keys: counts (N, n_frames * H * W), profiles (N, H * W),
+        intensity (N,), background (N,), and group_label (N,).
     """
     if seed is not None:
         torch.manual_seed(seed)
@@ -102,7 +89,10 @@ def simulate(
     pkw = profile_kwargs or {}
 
     logger.info(
-        "Simulating %d reflections (%d bins x %d per bin)", N, n_bins, n_per_bin
+        "Simulating %d reflections (%d bins x %d per bin)",
+        N,
+        n_bins,
+        n_per_bin,
     )
 
     # Sample all profiles at once
@@ -110,18 +100,17 @@ def simulate(
 
     # Assign bin labels
     group_label = (
-        torch.arange(n_bins)
-        .unsqueeze(1)
-        .expand(n_bins, n_per_bin)
-        .reshape(-1)
+        torch.arange(n_bins).unsqueeze(1).expand(n_bins, n_per_bin).reshape(-1)
     )  # (N,)
 
     # Sample intensity and background per reflection from bin-specific priors
-    tau_per_refl = tau[group_label]          # (N,)
+    tau_per_refl = tau[group_label]  # (N,)
     bg_rate_per_refl = bg_rate[group_label]  # (N,)
 
     intensity = torch.distributions.Exponential(tau_per_refl).sample()  # (N,)
-    background = torch.distributions.Exponential(bg_rate_per_refl).sample()  # (N,)
+    background = torch.distributions.Exponential(
+        bg_rate_per_refl
+    ).sample()  # (N,)
 
     # Poisson rate per pixel: I * profile + bg
     # profiles: (N, K), intensity: (N,), background: (N,)
@@ -163,23 +152,18 @@ def save_dataset(
 ) -> None:
     """Write .pt files consumable by SimulatedShoeboxLoader.
 
-    Parameters
-    ----------
-    sim : dict
-        Output of :func:`simulate`.
-    tau, bg_rate : Tensor
-        Per-bin prior rates.
-    save_dir : Path
-        Output directory (created if needed).
-    s_squared : Tensor, optional
-        Wilson parameter per bin. Saved if provided.
-    concentration : Tensor, optional
-        Dirichlet concentration per bin. Saved if provided.
-    K_true, B_true : float, optional
-        Ground truth Wilson parameters. Saved to ``ground_truth.pt``
-        for diagnostics (hyperparameter recovery checks).
-    test_frac : float
-        Fraction of reflections to mark as test.
+    Args:
+        sim: Output of :func:`simulate`.
+        tau: Per-bin prior rate for intensity.
+        bg_rate: Per-bin prior rate for background.
+        save_dir: Output directory (created if needed).
+        s_squared: Wilson parameter per bin. Saved if provided.
+        concentration: Dirichlet concentration per bin. Saved if provided.
+        K_true: Ground truth Wilson K parameter. Saved to `ground_truth.pt`
+            for diagnostics (hyperparameter recovery checks).
+        B_true: Ground truth Wilson B parameter. Saved to `ground_truth.pt`
+            for diagnostics (hyperparameter recovery checks).
+        test_frac: Fraction of reflections to mark as test.
     """
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -240,7 +224,9 @@ def save_dataset(
     # Physical Gaussian profile basis (for physical_gaussian_surrogate)
     # Use profile_kwargs from simulation if available, otherwise defaults
     pkw = sim.get("profile_kwargs", {})
-    center_base = pkw.get("center_base", (sim["profiles"].shape[1] ** 0.5 - 1) / 2.0)
+    center_base = pkw.get(
+        "center_base", (sim["profiles"].shape[1] ** 0.5 - 1) / 2.0
+    )
     profile_basis = {
         "basis_type": "physical_gaussian",
         "d": 5,

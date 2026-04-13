@@ -1,10 +1,3 @@
-"""Hierarchical Integrators with fixed per-group intensity priors.
-
-Identical to IntegratorModelA / IntegratorModelB / IntegratorModelD except:
-  1. _step passes group_labels from metadata to the loss
-  2. forward_out includes group_label and tau_per_refl for SBC/prediction
-"""
-
 from typing import Any, Literal
 
 import torch
@@ -16,7 +9,10 @@ from integrator.model.integrators.base_integrator import (
     BaseIntegrator,
     _log_loss,
 )
-from integrator.model.integrators.integrator import IntegratorModelD
+from integrator.model.integrators.integrator import (
+    IntegratorModelA,
+    IntegratorModelC,
+)
 from integrator.model.integrators.integrator_utils import (
     IntegratorBaseOutputs,
     IntegratorModelArgs,
@@ -31,13 +27,15 @@ def _add_group_outputs(out: dict, metadata: dict, loss) -> None:
     if hasattr(loss, "tau_per_group"):
         out["tau_per_refl"] = loss.tau_per_group[group_labels]
     if hasattr(loss, "log_alpha_per_group"):
-        out["alpha_per_refl"] = F.softplus(loss.log_alpha_per_group[group_labels])
+        out["alpha_per_refl"] = F.softplus(
+            loss.log_alpha_per_group[group_labels]
+        )
     elif getattr(loss, "i_concentration_per_group", None) is not None:
         out["alpha_per_refl"] = loss.i_concentration_per_group[group_labels]
 
 
 def _hierarchical_step(self, batch, step: Literal["train", "val"]):
-    """Shared _step for hierarchical integrators — passes group_labels to loss."""
+    """Shared _step for hierarchical integrators; passes group_labels to loss."""
     counts, shoebox, mask, metadata = batch
     outputs = self(counts, shoebox, mask, metadata)
     forward_out = outputs["forward_out"]
@@ -83,17 +81,12 @@ def _hierarchical_step(self, batch, step: Literal["train", "val"]):
     }
 
 
-class HierarchicalIntegrator(BaseIntegrator):
-    """ModelA variant with fixed per-group intensity priors.
-    Metadata must contain ``group_label`` (integer tensor [B]).
+class HierarchicalIntegratorA(IntegratorModelA):
+    """ModelA variant with fixed per-group priors.
+
+    Like ModelA, uses two encoders (profile + shared intensity).
+    Metadata must contain `group_label` (integer tensor [B]).
     """
-
-    REQUIRED_ENCODERS = {
-        "profile": configs.ShoeboxEncoderArgs,
-        "intensity": configs.IntensityEncoderArgs,
-    }
-
-    ARGS = IntegratorModelArgs
 
     def _forward_impl(
         self,
@@ -113,71 +106,9 @@ class HierarchicalIntegrator(BaseIntegrator):
         qbg = self.surrogates["qbg"](x_intensity)
         qi = self.surrogates["qi"](x_intensity)
 
-        prf_labels = metadata.get("profile_group_label", metadata.get("group_label"))
-        prf_labels = prf_labels.long() if prf_labels is not None else None
-        qp = self.surrogates["qp"](x_profile, group_labels=prf_labels)
-
-        zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
-        zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
-        zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
-
-        rate = zI * zp + zbg
-
-        out = IntegratorBaseOutputs(
-            rates=rate,
-            counts=counts,
-            mask=mask,
-            qbg=qbg,
-            qp=qp,
-            qi=qi,
-            zp=zp,
-            zbg=zbg,
-            concentration=qp.concentration,
-            metadata=metadata,
-            compute_pred_var=self.cfg.compute_pred_var,
+        prf_labels = metadata.get(
+            "profile_group_label", metadata.get("group_label")
         )
-        out = _assemble_outputs(out)
-        _add_group_outputs(out, metadata, self.loss)
-
-        return {
-            "forward_out": out,
-            "qp": qp,
-            "qi": qi,
-            "qbg": qbg,
-        }
-
-    _step = _hierarchical_step
-
-
-class HierarchicalIntegratorD(IntegratorModelD):
-    """ModelD variant with fixed per-group priors.
-
-    Like ModelD, uses five fully decoupled encoders (profile, k_i, r_i, k_bg, r_bg).
-    Metadata must contain `group_labe`` (integer tensor [B]).
-    """
-
-    def _forward_impl(
-        self,
-        counts: Tensor,
-        shoebox: Tensor,
-        mask: Tensor,
-        metadata: dict,
-    ) -> dict[str, Any]:
-        counts = torch.clamp(counts, min=0)
-
-        b = shoebox.shape[0]
-        shoebox_reshaped = shoebox.reshape(b, 1, *self.shoebox_shape)
-
-        x_profile = self.encoders["profile"](shoebox_reshaped)
-        x_k_i = self.encoders["k_i"](shoebox_reshaped)
-        x_r_i = self.encoders["r_i"](shoebox_reshaped)
-        x_k_bg = self.encoders["k_bg"](shoebox_reshaped)
-        x_r_bg = self.encoders["r_bg"](shoebox_reshaped)
-
-        qbg = self.surrogates["qbg"](x_k_bg, x_r_bg)
-        qi = self.surrogates["qi"](x_k_i, x_r_i)
-
-        prf_labels = metadata.get("profile_group_label", metadata.get("group_label"))
         prf_labels = prf_labels.long() if prf_labels is not None else None
         qp = self.surrogates["qp"](x_profile, group_labels=prf_labels)
 
@@ -198,7 +129,6 @@ class HierarchicalIntegratorD(IntegratorModelD):
             zbg=zbg,
             concentration=qp.concentration,
             metadata=metadata,
-            compute_pred_var=self.cfg.compute_pred_var,
         )
         out = _assemble_outputs(out)
         _add_group_outputs(out, metadata, self.loss)
@@ -217,7 +147,7 @@ class HierarchicalIntegratorB(BaseIntegrator):
     """ModelB variant with fixed per-group intensity priors.
 
     Like ModelB, uses separate encoders for the two Gamma parameters (k, r).
-    Metadata must contain ``group_label`` (integer tensor [B]).
+    Metadata must contain `group_label` (integer tensor [B]).
     """
 
     REQUIRED_ENCODERS = {
@@ -247,7 +177,9 @@ class HierarchicalIntegratorB(BaseIntegrator):
         qbg = self.surrogates["qbg"](x_k, x_r)
         qi = self.surrogates["qi"](x_k, x_r)
 
-        prf_labels = metadata.get("profile_group_label", metadata.get("group_label"))
+        prf_labels = metadata.get(
+            "profile_group_label", metadata.get("group_label")
+        )
         prf_labels = prf_labels.long() if prf_labels is not None else None
         qp = self.surrogates["qp"](x_profile, group_labels=prf_labels)
 
@@ -268,7 +200,71 @@ class HierarchicalIntegratorB(BaseIntegrator):
             zbg=zbg,
             concentration=qp.concentration,
             metadata=metadata,
-            compute_pred_var=self.cfg.compute_pred_var,
+        )
+        out = _assemble_outputs(out)
+        _add_group_outputs(out, metadata, self.loss)
+
+        return {
+            "forward_out": out,
+            "qp": qp,
+            "qi": qi,
+            "qbg": qbg,
+        }
+
+    _step = _hierarchical_step
+
+
+class HierarchicalIntegratorC(IntegratorModelC):
+    """ModelC variant with fixed per-group priors.
+
+    Like ModelC, uses five fully decoupled encoders (profile, k_i, r_i, k_bg, r_bg).
+    Metadata must contain `group_label` (integer tensor [B]).
+    """
+
+    def _forward_impl(
+        self,
+        counts: Tensor,
+        shoebox: Tensor,
+        mask: Tensor,
+        metadata: dict,
+    ) -> dict[str, Any]:
+        counts = torch.clamp(counts, min=0)
+
+        b = shoebox.shape[0]
+        shoebox_reshaped = shoebox.reshape(b, 1, *self.shoebox_shape)
+
+        x_profile = self.encoders["profile"](shoebox_reshaped)
+        x_k_i = self.encoders["k_i"](shoebox_reshaped)
+        x_r_i = self.encoders["r_i"](shoebox_reshaped)
+        x_k_bg = self.encoders["k_bg"](shoebox_reshaped)
+        x_r_bg = self.encoders["r_bg"](shoebox_reshaped)
+
+        qbg = self.surrogates["qbg"](x_k_bg, x_r_bg)
+        qi = self.surrogates["qi"](x_k_i, x_r_i)
+
+        prf_labels = metadata.get(
+            "profile_group_label", metadata.get("group_label")
+        )
+        prf_labels = prf_labels.long() if prf_labels is not None else None
+        qp = self.surrogates["qp"](x_profile, group_labels=prf_labels)
+
+        zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
+        zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+
+        rate = zI * zp + zbg
+
+        out = IntegratorBaseOutputs(
+            rates=rate,
+            counts=counts,
+            mask=mask,
+            qbg=qbg,
+            qp=qp,
+            qi=qi,
+            zp=zp,
+            zbg=zbg,
+            concentration=qp.concentration,
+            metadata=metadata,
         )
         out = _assemble_outputs(out)
         _add_group_outputs(out, metadata, self.loss)

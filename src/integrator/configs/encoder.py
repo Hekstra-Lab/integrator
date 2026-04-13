@@ -20,7 +20,14 @@ class ShoeboxEncoderArgs:
     norm2_num_groups: int
 
     def __post_init__(self):
-        pass
+        if self.in_channels < 1:
+            raise ValueError(
+                f"in_channels must be >= 1, got {self.in_channels}"
+            )
+        if self.encoder_out < 1:
+            raise ValueError(
+                f"encoder_out must be >= 1, got {self.encoder_out}"
+            )
 
 
 @dataclass
@@ -44,32 +51,14 @@ class IntensityEncoderArgs:
     norm3_num_groups: int
 
     def __post_init__(self):
-        pass
-
-
-@dataclass
-class BorderStatsEncoderArgs:
-    D: int
-    H: int
-    W: int
-    encoder_out: int
-    hidden_dim: int = 32
-
-    def __post_init__(self):
-        pass
-
-
-@dataclass
-class BorderPixelMLPEncoderArgs:
-    D: int
-    H: int
-    W: int
-    encoder_out: int
-    hidden_dim: int = 128
-    depth: int = 2
-
-    def __post_init__(self):
-        pass
+        if self.in_channels < 1:
+            raise ValueError(
+                f"in_channels must be >= 1, got {self.in_channels}"
+            )
+        if self.encoder_out < 1:
+            raise ValueError(
+                f"encoder_out must be >= 1, got {self.encoder_out}"
+            )
 
 
 @dataclass
@@ -77,13 +66,7 @@ class EncoderConfig:
     name: str
     args: ShoeboxEncoderArgs | IntensityEncoderArgs
 
-    def __post_init__(self):
-        pass
-
 
 @dataclass
 class Encoders:
     encoders: list[EncoderConfig]
-
-    def __post_init__(self):
-        pass

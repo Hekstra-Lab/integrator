@@ -1,39 +1,13 @@
-"""Per-bin loss with fully Bayesian Wilson intensity prior.
+"""Per-bin loss with learned Wilson intensity prior.
 
-Intensity prior — Wilson model (learned, per-bin):
-    log K ~ Normal(μ_K, σ_K)         variational posterior q(log K)
-    log B ~ Normal(μ_B, σ_B)         variational posterior q(log B)
-    τ_k   = (1/K) · exp(2B · s_k²)  per-bin rate from Wilson formula
-    Σ_k   = 1/τ_k = K · exp(-2B · s_k²)  per-bin expected intensity
+Wilson model: tau_k = (1/K) * exp(2B * s_k^2), where K and B are
+global hyperparameters inferred via variational inference.
 
-    When pi_cfg.name = "exponential" (or pi_cfg is None):
-        I_k  ~ Gamma(1, τ_k) = Exp(τ_k)
-
-    When pi_cfg.name = "gamma":
-        I_k  ~ Gamma(α_k, α_k · τ_k)
-        where α_k is a learnable per-bin concentration parameter,
-        initialized from Gamma MLE if i_concentration_per_group is
-        provided.  This keeps E[I_k] = Σ_k (Wilson mean) but allows
-        the prior variance to vary per bin:  Var[I_k] = Σ_k² / α_k.
-        When α_k = 1, this reduces to the standard Exponential.
-
-Background prior — empirical Bayes (fixed, per-bin):
-    When pbg_cfg.name = "exponential" (or pbg_cfg is None):
-        bg_k  ~ Exp(λ_k)               fixed per-group rate
-    When pbg_cfg.name = "gamma":
-        bg_k  ~ Gamma(α_bg_k, α_bg_k · λ_k)   per-group MLE alpha
-
-Profile prior — depends on surrogate type:
-    Dirichlet surrogate:  prf_k ~ Dir(α_k)          fixed per-group concentration
-    Latent decoder (ProfilePosterior):  h ~ N(0, σ²I)  global prior
-
-ELBO:
-    L = E_q[ log p(x | I, prf, bg) ]
-      - KL(q(prf) || p(prf))                              — profile (see above)
-      - E_{q(K,B)}[ KL(q(I) || Gamma(α_k, α_k·τ_k)) ]   — intensity (Wilson)
-      - KL(q(bg)  || Exp(λ_k))                            — background
-      - KL(q(log K) || p(log K)) / N                      — hyperprior
-      - KL(q(log B) || p(log B)) / N                      — hyperprior
+Intensity prior: I_k ~ Gamma(alpha_k, alpha_k * tau_k)
+  alpha_k = 1 gives Exponential; learnable alpha_k when pi_cfg.name = "gamma".
+Background prior: bg_k ~ Gamma(alpha_bg, alpha_bg * lambda_k) (fixed, per-bin).
+Profile prior: Dirichlet (per-bin) or latent Normal (global).
+Hyperprior: KL(q(log K) || p(log K)) + KL(q(log B) || p(log B)), amortized over N.
 """
 
 import math
@@ -43,7 +17,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 from torch.distributions import (
-    Dirichlet,
     Distribution,
     Gamma,
     Normal,
@@ -52,6 +25,7 @@ from torch.distributions import (
 )
 
 from integrator.model.distributions.logistic_normal import ProfilePosterior
+from integrator.model.loss.kl_helpers import compute_bg_kl, compute_profile_kl
 from integrator.model.loss.loss import _kl
 from integrator.model.loss.per_bin_loss import _load_buffer
 
@@ -60,69 +34,49 @@ class WilsonPerBinLoss(nn.Module):
     """ELBO loss with learned Wilson intensity prior and empirical Bayes bg/profile.
 
     The Wilson distribution models expected intensity in bin k as:
-        Σ_k = K · exp(-2B · s_k²)
-    where s_k² = 1/(4d_k²) is precomputed per bin. The prior rate for
-    bin k is τ_k = 1/Σ_k = (1/K) · exp(2B · s_k²).
+        Sigma_k = K * exp(-2B * s_k^2)
+    where s_k^2 = 1/(4d_k^2) is precomputed per bin. The prior rate for
+    bin k is tau_k = 1/Sigma_k = (1/K) * exp(2B * s_k^2).
 
     K and B are two global hyperparameters inferred via variational inference.
     Background and profile priors remain per-bin empirical Bayes.
 
-    Parameters
-    ----------
-    mc_samples : int
-        Monte Carlo samples for KL estimation.
-    eps : float
-        Numerical stability constant for Poisson rate.
-    s_squared_per_group : list[float] or str
-        1/(4d²) per resolution bin.
-    bg_rate_per_group : list[float] or str
-        Exponential rates for background prior, one per group.
-    concentration_per_group : str
-        Path to .pt file with Dirichlet concentrations (n_groups, n_pixels).
-        Only used when the profile surrogate returns a Distribution (Dirichlet).
-        Ignored when the surrogate returns a ProfilePosterior (latent decoder),
-        which uses a global N(0, sigma_prior²I) prior instead.
-    tau_per_group : list[float] or str or None
-        Empirical per-bin rates.  Used to auto-initialize q(log K) and
-        q(log B) via linear regression of log(τ) on s² when
-        ``init_from_tau=True``.
-    init_from_tau : bool
-        Whether to initialize K, B from ``tau_per_group`` via linear
-        regression.  When False, uses ``init_log_K`` / ``init_log_B``
-        directly.  Default True.
-    init_log_K : float
-        Initial μ for q(log K). Used when init_from_tau=False or
-        tau_per_group is not provided.
-    init_log_B : float
-        Initial μ for q(log B). Used when init_from_tau=False or
-        tau_per_group is not provided.
-    hp_log_K_loc, hp_log_K_scale : float
-        Hyperprior p(log K) ~ Normal(loc, scale).
-    hp_log_B_loc, hp_log_B_scale : float
-        Hyperprior p(log B) ~ Normal(loc, scale).
-    n_wilson_samples : int
-        MC samples over (K, B) for the intensity KL outer expectation.
-    bg_concentration : float
-        Shape parameter for the background Gamma prior. Default 1.0
-        gives Exp(lambda_k). Higher values give a tighter prior around
-        mean = 1/lambda_k, with CV = 1/sqrt(bg_concentration).
-    learn_concentration : bool
-        If True, learn a per-bin concentration parameter α_k for the
-        intensity Gamma prior: I_k ~ Gamma(α_k, α_k·τ_k).
-        Automatically set to True when ``pi_cfg.name = "gamma"``.
-        When False (default), α_k = 1 (Exponential).
+    Args:
+        mc_samples: Monte Carlo samples for KL estimation.
+        eps: Numerical stability constant for Poisson rate.
+        s_squared_per_group: 1/(4d^2) per resolution bin.
+        bg_rate_per_group: Exponential rates for background prior, one per group.
+        concentration_per_group: Path to .pt file with Dirichlet concentrations
+            (n_groups, n_pixels). Only used when the profile surrogate returns a
+            Distribution (Dirichlet). Ignored when the surrogate returns a
+            ProfilePosterior (latent decoder), which uses a global
+            N(0, sigma_prior^2 I) prior instead.
+        tau_per_group: Empirical per-bin rates. Used to auto-initialize q(log K)
+            and q(log B) via linear regression of log(tau) on s^2 when
+            `init_from_tau=True`.
+        init_from_tau: Whether to initialize K, B from `tau_per_group` via
+            linear regression. When False, uses `init_log_K` / `init_log_B`
+            directly. Default True.
+        init_log_K: Initial mean for q(log K). Used when init_from_tau=False.
+        init_log_B: Initial mean for q(log B). Used when init_from_tau=False.
+        hp_log_K_loc, hp_log_K_scale: Hyperprior p(log K) ~ Normal(loc, scale).
+        hp_log_B_loc, hp_log_B_scale: Hyperprior p(log B) ~ Normal(loc, scale).
+        n_wilson_samples: MC samples over (K, B) for the intensity KL outer
+            expectation.
+        bg_concentration: Shape parameter for the background Gamma prior.
+            Default 1.0 gives Exp(lambda_k). Higher values give a tighter prior
+            around mean = 1/lambda_k, with CV = 1/sqrt(bg_concentration).
+        learn_concentration: If True, learn per-bin alpha_k for Gamma intensity
+            prior.
+        Auto-set True when pi_cfg.name = "gamma". Default False (Exponential).
     init_alpha : float
-        Initial value for α_k when learn_concentration=True.
+        Initial value for alpha_k when learn_concentration=True.
     pi_cfg : PriorConfig or None
-        Intensity prior config.  ``pi_cfg.name`` selects the distribution:
-        ``"exponential"`` (default, α=1) or ``"gamma"`` (learnable α_k).
-        ``pi_cfg.weight`` scales the intensity KL term.
+        Intensity prior config. name selects "exponential" or "gamma".
     pbg_cfg : PriorConfig or None
-        Background prior config.  ``pbg_cfg.name`` selects the distribution:
-        ``"exponential"`` (default, α=1) or ``"gamma"`` (per-bin MLE α).
-        ``pbg_cfg.weight`` scales the background KL term.
+        Background prior config. name selects "exponential" or "gamma".
     pprf_cfg : PriorConfig or None
-        Profile prior config.  ``pprf_cfg.weight`` scales the profile KL term.
+        Profile prior config. `pprf_cfg.weight` scales the profile KL term.
     pprf_weight, pbg_weight, pi_weight : float
         Scalar fallback weights when *_cfg is not provided.
     dataset_size : int
@@ -171,19 +125,23 @@ class WilsonPerBinLoss(nn.Module):
         self.eps = eps
         self.dataset_size = dataset_size
         self.bg_concentration = bg_concentration
-        self.pprf_weight = pprf_cfg.weight if pprf_cfg is not None else pprf_weight
+        self.pprf_weight = (
+            pprf_cfg.weight if pprf_cfg is not None else pprf_weight
+        )
         self.pbg_weight = pbg_cfg.weight if pbg_cfg is not None else pbg_weight
         self.pi_weight = pi_cfg.weight if pi_cfg is not None else pi_weight
         self.n_wilson_samples = n_wilson_samples
 
-        # Derive learn_concentration from pi_cfg when provided:
-        #   pi_cfg.name == "gamma"  → learn per-bin alpha (Gamma prior)
-        #   pi_cfg.name == "exponential" or pi_cfg is None → alpha=1 (Exp prior)
-        if pi_cfg is not None and hasattr(pi_cfg, "name") and pi_cfg.name == "gamma":
+        # pi_cfg.name == "gamma" -> learn per-bin alpha
+        if (
+            pi_cfg is not None
+            and hasattr(pi_cfg, "name")
+            and pi_cfg.name == "gamma"
+        ):
             learn_concentration = True
         self.learn_concentration = learn_concentration
 
-        # -- Fixed buffers (empirical Bayes, per-bin) -------------------------
+        # Fixed buffers (per-bin)
         self.register_buffer(
             "s_squared_per_group", _load_buffer(s_squared_per_group)
         )
@@ -202,25 +160,27 @@ class WilsonPerBinLoss(nn.Module):
         else:
             self.bg_concentration_per_group = None
 
-        # -- Auto-initialize K,B from empirical tau via linear regression -----
+        # Auto-initialize K, B from empirical tau via linear regression
         if init_from_tau and tau_per_group is not None:
             tau = _load_buffer(tau_per_group)
             init_log_K, init_log_B = self._fit_wilson_init(
                 tau, self.s_squared_per_group
             )
 
-        # -- Learnable variational parameters for q(log K), q(log B) ---------
+        # Learnable variational parameters for q(log K), q(log B)
         self.q_log_K_loc = nn.Parameter(torch.tensor(float(init_log_K)))
         self.q_log_K_log_scale = nn.Parameter(torch.tensor(-2.0))
         self.q_log_B_loc = nn.Parameter(torch.tensor(float(init_log_B)))
         self.q_log_B_log_scale = nn.Parameter(torch.tensor(-2.0))
 
-        # -- Per-bin learnable concentration (Gamma shape) ----------------------
+        # Per-bin learnable concentration (Gamma shape)
         if self.learn_concentration:
             n_groups = len(self.s_squared_per_group)
             if i_concentration_per_group is not None:
                 # Initialize from Gamma MLE alpha values
-                alpha_init = _load_buffer(i_concentration_per_group).clamp(min=0.1)
+                alpha_init = _load_buffer(i_concentration_per_group).clamp(
+                    min=0.1
+                )
                 init_raw = torch.log(torch.expm1(alpha_init))
             else:
                 init_raw = torch.full(
@@ -228,7 +188,7 @@ class WilsonPerBinLoss(nn.Module):
                 )
             self.log_alpha_per_group = nn.Parameter(init_raw)
 
-        # -- Fixed hyperprior parameters
+        # Fixed hyperprior parameters
         self.register_buffer("hp_log_K_loc", torch.tensor(hp_log_K_loc))
         self.register_buffer("hp_log_K_scale", torch.tensor(hp_log_K_scale))
         self.register_buffer("hp_log_B_loc", torch.tensor(hp_log_B_loc))
@@ -358,28 +318,22 @@ class WilsonPerBinLoss(nn.Module):
         kl_i = torch.zeros(batch_size, device=device)
         kl_bg = torch.zeros(batch_size, device=device)
 
-        # Profile KL: per-bin Dirichlet or latent Normal (global or per-bin)
-        # Use profile_group_label (2D binning) if available, else group_labels
-        if isinstance(qp, ProfilePosterior):
-            meta = kwargs.get("metadata", {})
-            pgl = meta.get("profile_group_label") if isinstance(meta, dict) else None
-            prf_groups = pgl.long().to(device) if pgl is not None else groups
-            kl_prf = qp.kl_divergence(prf_groups) * self.pprf_weight
-        else:
-            meta = kwargs.get("metadata", {})
-            pgl = meta.get("profile_group_label") if isinstance(meta, dict) else None
-            prf_groups = pgl.long().to(device) if pgl is not None else groups
-            alpha = self.concentration_per_group[prf_groups]  # (B, n_pixels)
-            p_prf = Dirichlet(alpha)
-            kl_prf = (
-                _kl(qp, p_prf, self.mc_samples, eps=self.eps)
-                * self.pprf_weight
-            )
+        # Profile KL
+        kl_prf = compute_profile_kl(
+            qp,
+            groups,
+            self.concentration_per_group,
+            self.pprf_weight,
+            self.mc_samples,
+            self.eps,
+            device,
+            metadata=kwargs.get("metadata"),
+        )
         kl = kl + kl_prf
 
-        # Intensity KL: E_{q(K,B)}[ KL(q(I) || Gamma(α_k, α_k·τ_k)) ]
-        # When learn_concentration=False, α_k = 1 (Exponential).
-        # When True, α_k is a learnable per-bin parameter.
+        # Intensity KL: E_{q(K,B)}[ KL(q(I) || Gamma(alpha_k, alpha_k*tau_k)) ]
+        # When learn_concentration=False, alpha_k = 1 (Exponential).
+        # When True, alpha_k is a learnable per-bin parameter.
         s_sq = self.s_squared_per_group[groups]  # (B,)
 
         if self.learn_concentration:
@@ -394,7 +348,7 @@ class WilsonPerBinLoss(nn.Module):
             B = torch.exp(log_B)
             tau = self.compute_tau(K, B, s_sq)  # (B,)
             if alpha_i is not None:
-                # Gamma(α_k, α_k·τ_k): mean = 1/τ_k (Wilson), var = 1/(α_k·τ_k²)
+                # Gamma(alpha_k, alpha_k*tau_k): mean = 1/tau_k, var = 1/(alpha_k*tau_k^2)
                 p_i = Gamma(concentration=alpha_i, rate=alpha_i * tau)
             else:
                 p_i = Gamma(
@@ -406,17 +360,17 @@ class WilsonPerBinLoss(nn.Module):
         kl_i = kl_i * self.pi_weight
         kl = kl + kl_i
 
-        # Background KL: KL(q(bg) || Gamma(alpha_bg, alpha_bg * lambda_k))
-        bg_rate_per_refl = self.bg_rate_per_group[groups]  # (B,)
-        if self.bg_concentration_per_group is not None:
-            alpha_bg = self.bg_concentration_per_group[groups]  # (B,)
-        else:
-            alpha_bg = torch.full_like(bg_rate_per_refl, self.bg_concentration)
-        p_bg = Gamma(
-            concentration=alpha_bg,
-            rate=alpha_bg * bg_rate_per_refl,
+        # Background KL
+        kl_bg = compute_bg_kl(
+            qbg,
+            groups,
+            self.bg_rate_per_group,
+            self.bg_concentration_per_group,
+            self.bg_concentration,
+            self.pbg_weight,
+            self.mc_samples,
+            self.eps,
         )
-        kl_bg = _kl(qbg, p_bg, self.mc_samples, eps=self.eps) * self.pbg_weight
         kl = kl + kl_bg
 
         # Hyperprior KL (amortized over dataset)

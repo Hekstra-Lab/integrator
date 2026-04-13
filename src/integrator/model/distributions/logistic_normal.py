@@ -1,7 +1,14 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+
+
+def _softplus_inverse(x: float) -> float:
+    """Inverse of softplus: log(exp(x) - 1)."""
+    return math.log(math.exp(x) - 1.0)
 
 
 class ProfilePosterior:
@@ -26,22 +33,16 @@ class ProfilePosterior:
         # Dirichlet compatibility: integrators store qp.concentration
         self.concentration: Tensor | None = None
 
-    # ------------------------------------------------------------------
     # Sampling
-    # ------------------------------------------------------------------
 
     def rsample(self, sample_shape: torch.Size = torch.Size([])) -> Tensor:
         """Reparameterized profile sample.
 
-        Parameters
-        ----------
-        sample_shape : torch.Size
-            Leading sample dimensions (e.g. [S] for S MC samples).
+        Args:
+            sample_shape: Leading sample dimensions (e.g. [S] for S MC samples).
 
-        Returns
-        -------
-        Tensor, shape (*sample_shape, B, K)
-            Probability vectors on the simplex.
+        Returns:
+            Probability vectors on the simplex, shape (*sample_shape, B, K).
         """
         eps = torch.randn(
             *sample_shape, *self.mu_h.shape, device=self.mu_h.device
@@ -62,9 +63,7 @@ class ProfilePosterior:
         logits = h @ self.W.T + self.b
         return F.softmax(logits, dim=-1)
 
-    # ------------------------------------------------------------------
     # Properties
-    # ------------------------------------------------------------------
 
     @property
     def mean(self) -> Tensor:
@@ -80,7 +79,7 @@ class ProfilePosterior:
 
     @property
     def mean_profile(self) -> Tensor:
-        """Alias for .mean — profile at posterior mean h."""
+        """Alias for .mean -- profile at posterior mean h."""
         return self.mean
 
     @property
@@ -88,9 +87,7 @@ class ProfilePosterior:
         """Posterior mean of h.  Shape: (B, d)"""
         return self.mu_h
 
-    # ------------------------------------------------------------------
     # KL divergence
-    # ------------------------------------------------------------------
 
     def kl_divergence(self, group_labels: Tensor | None = None) -> Tensor:
         """Closed-form KL(q(h) || p(h)).
@@ -98,13 +95,12 @@ class ProfilePosterior:
         q(h) = N(mu_h, diag(sigma_h^2))
         p(h) = N(0,    sigma_p^2 * I)
 
-        Parameters
-        ----------
-        group_labels : Tensor | None
-            Ignored in the base class (global prior).  Subclasses like
-            ``PerBinProfilePosterior`` use this to select per-bin priors.
+        Args:
+            group_labels: Ignored in the base class (global prior). Subclasses
+                like `PerBinProfilePosterior` use this to select per-bin priors.
 
-        Returns: (B,) — KL per batch element.
+        Returns:
+            KL per batch element, shape (B,).
         """
         sigma_p_sq = self.sigma_prior**2
         sigma_q_sq = self.std_h**2
@@ -121,7 +117,12 @@ class ProfilePosterior:
 
 # %%
 class LogisticNormalSurrogate(nn.Module):
-    def __init__(self, input_dim: int, basis_path: str) -> None:
+    def __init__(
+        self,
+        input_dim: int,
+        basis_path: str,
+        init_std: float = 0.5,
+    ) -> None:
         super().__init__()
 
         basis = torch.load(basis_path, weights_only=False)
@@ -135,22 +136,17 @@ class LogisticNormalSurrogate(nn.Module):
         self.mu_head = nn.Linear(input_dim, self.d)
         self.std_head = nn.Linear(input_dim, self.d)
 
-        # Initialise std_head so initial std ≈ exp(-1) ≈ 0.37
-        # softplus(-0.81) ≈ 0.37
         nn.init.zeros_(self.std_head.weight)
-        nn.init.constant_(self.std_head.bias, -0.81)
+        nn.init.constant_(self.std_head.bias, _softplus_inverse(init_std))
 
     def forward(self, x: Tensor) -> ProfilePosterior:
         """Map encoder output to a ProfilePosterior.
 
-        Parameters
-        ----------
-        x : Tensor, shape (B, input_dim)
-            Output of the profile encoder.
+        Args:
+            x: Output of the profile encoder, shape (B, input_dim).
 
-        Returns
-        -------
-        ProfilePosterior
+        Returns:
+            ProfilePosterior instance.
         """
         mu_h = self.mu_head(x)  # (B, d)
         std_h = F.softplus(self.std_head(x))  # (B, d)
@@ -164,25 +160,18 @@ class LogisticNormalSurrogate(nn.Module):
         )
 
 
-# Learned linear decoder surrogate
-
-
+# %%
 class LinearProfileSurrogate(nn.Module):
     """Profile surrogate with a learned linear decoder.
 
         prf = softmax(W @ h + b)
-        q(h | x) = N(mu_h(x), diag(sigma_h(x)²))
+        q(h | x) = N(mu_h(x), diag(sigma_h(x)^2))
 
-    Parameters
-    ----------
-    input_dim : int
-        Dimension of the encoder output.
-    latent_dim : int
-        Dimension of the latent h. Default 8.
-    output_dim : int
-        Number of profile pixels (H * W). Default 441.
-    sigma_prior : float
-        Prior std for h ~ N(0, sigma_prior² I). Default 3.0.
+    Args:
+        input_dim: Dimension of the encoder output.
+        latent_dim: Dimension of the latent h. Default 8.
+        output_dim: Number of profile pixels (H * W). Default 441.
+        sigma_prior: Prior std for h ~ N(0, sigma_prior^2 I). Default 3.0.
     """
 
     def __init__(
@@ -191,6 +180,7 @@ class LinearProfileSurrogate(nn.Module):
         latent_dim: int = 8,
         output_dim: int = 441,
         sigma_prior: float = 3.0,
+        init_std: float = 0.5,
     ) -> None:
         super().__init__()
 
@@ -201,10 +191,8 @@ class LinearProfileSurrogate(nn.Module):
         self.std_head = nn.Linear(input_dim, self.d)
         self.decoder = nn.Linear(self.d, output_dim)
 
-        # Initialise std_head so initial std ≈ exp(-1) ≈ 0.37
-        # softplus(-0.81) ≈ 0.37
         nn.init.zeros_(self.std_head.weight)
-        nn.init.constant_(self.std_head.bias, -0.81)
+        nn.init.constant_(self.std_head.bias, _softplus_inverse(init_std))
 
     def forward(self, x: Tensor) -> ProfilePosterior:
         mu_h = self.mu_head(x)  # (B, d)
@@ -212,12 +200,13 @@ class LinearProfileSurrogate(nn.Module):
         return ProfilePosterior(
             mu_h=mu_h,
             std_h=std_h,
-            W=self.decoder.weight,  # (output_dim, d) — trainable
-            b=self.decoder.bias,  # (output_dim,)   — trainable
+            W=self.decoder.weight,  # (output_dim, d) trainable
+            b=self.decoder.bias,  # (output_dim,)   trainable
             sigma_prior=self.sigma_prior,
         )
 
 
+# %%
 # Gaussian profile
 def _h_to_physical_params(
     h: Tensor,
@@ -226,7 +215,7 @@ def _h_to_physical_params(
     log_sigma_base: float = 0.7,
     width_scale: float = 0.4,
 ) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
-    """Map latent h (..., 5) → physical Gaussian parameters.
+    """Map latent h (..., 5) -> physical Gaussian parameters.
 
     Returns (cx, cy, sigma1, sigma2, theta), all shape (...,).
     """
@@ -289,7 +278,7 @@ def _h_to_profile_physical(
     H: int = 21,
     W: int = 21,
 ) -> Tensor:
-    """Full pipeline: h (..., 5) → normalized profile (..., H*W)."""
+    """Full pipeline: h (..., 5) -> normalized profile (..., H*W)."""
     cx, cy, s1, s2, th = _h_to_physical_params(
         h, center_base, center_scale, log_sigma_base, width_scale
     )
@@ -299,8 +288,8 @@ def _h_to_profile_physical(
 class PhysicalGaussianProfilePosterior(ProfilePosterior):
     """Profile posterior using a physical 2-D Gaussian parameterization.
 
-    h ∈ R^5 encodes (cx, cy, log σ₁, log σ₂, θ_raw).
-    The profile is a normalized rotated Gaussian on the H×W grid.
+    h in R^5 encodes (cx, cy, log sigma1, log sigma2, theta_raw).
+    The profile is a normalized rotated Gaussian on the H*W grid.
 
     Inherits from ProfilePosterior so loss.py's isinstance check works.
     kl_divergence() and rsample_h() are unchanged (pure h-space ops).
@@ -327,7 +316,7 @@ class PhysicalGaussianProfilePosterior(ProfilePosterior):
         return _h_to_profile_physical(h, **self._transform_config)
 
     def h_to_profile(self, h: Tensor) -> Tensor:
-        """Deterministic map h → profile."""
+        """Deterministic map h -> profile."""
         return _h_to_profile_physical(h, **self._transform_config)
 
     @property
@@ -343,20 +332,22 @@ class PhysicalGaussianProfilePosterior(ProfilePosterior):
 class PhysicalGaussianProfileSurrogate(nn.Module):
     """Profile surrogate using a physical 2-D Gaussian parameterization.
 
-    Reads scalar hyper-parameters from ``profile_basis.pt`` saved by
+    Reads scalar hyper-parameters from `profile_basis.pt` saved by
     simulate_shoeboxes_mvn.py (basis_type='physical_gaussian').  Unlike the
-    Hermite surrogate there is no W/b matrix — the file just holds d,
+    Hermite surrogate there is no W/b matrix; the file just holds d,
     sigma_prior, and the transform scalars.
 
-    Parameters
-    ----------
-    input_dim : int
-        Dimension of the encoder output.
-    basis_path : str
-        Path to profile_basis.pt with basis_type == 'physical_gaussian'.
+    Args:
+        input_dim: Dimension of the encoder output.
+        basis_path: Path to profile_basis.pt with basis_type == 'physical_gaussian'.
     """
 
-    def __init__(self, input_dim: int, basis_path: str) -> None:
+    def __init__(
+        self,
+        input_dim: int,
+        basis_path: str,
+        init_std: float = 0.5,
+    ) -> None:
         super().__init__()
 
         config = torch.load(basis_path, weights_only=False)
@@ -378,10 +369,8 @@ class PhysicalGaussianProfileSurrogate(nn.Module):
         self.mu_head = nn.Linear(input_dim, self.d)
         self.std_head = nn.Linear(input_dim, self.d)
 
-        # Initialise std_head so initial std ≈ exp(-1) ≈ 0.37
-        # softplus(-0.81) ≈ 0.37
         nn.init.zeros_(self.std_head.weight)
-        nn.init.constant_(self.std_head.bias, -0.81)
+        nn.init.constant_(self.std_head.bias, _softplus_inverse(init_std))
 
     def forward(self, x: Tensor) -> PhysicalGaussianProfilePosterior:
         mu_h = self.mu_head(x)  # (B, 5)
@@ -394,16 +383,12 @@ class PhysicalGaussianProfileSurrogate(nn.Module):
         )
 
 
-# ------------------------------------------------------------------
 # Per-bin latent profile prior
-# ------------------------------------------------------------------
-
-
 class PerBinProfilePosterior(ProfilePosterior):
     """Profile posterior with per-bin Gaussian prior in latent space.
 
-    Instead of a single global prior N(0, σ²I), each resolution/azimuthal
-    bin k has its own prior N(μ_k, diag(σ_k²)).  The per-bin parameters
+    Instead of a single global prior N(0, sigma^2 I), each resolution/azimuthal
+    bin k has its own prior N(mu_k, diag(sigma_k^2)).  The per-bin parameters
     are estimated from data (PCA or Hermite projection of bg-subtracted
     profiles) and stored as buffers in the surrogate module.
 
@@ -423,32 +408,29 @@ class PerBinProfilePosterior(ProfilePosterior):
         std_prior: Tensor,
     ) -> None:
         super().__init__(mu_h, std_h, W, b, sigma_prior)
-        self.mu_prior = mu_prior    # (n_bins, d)
+        self.mu_prior = mu_prior  # (n_bins, d)
         self.std_prior = std_prior  # (n_bins, d)
 
     def kl_divergence(self, group_labels: Tensor | None = None) -> Tensor:
         """KL(q(h) || p_k(h)) with per-bin prior.
 
-        If group_labels is provided, uses per-bin prior N(μ_k, diag(σ_k²)).
-        Otherwise falls back to the global prior N(0, σ²I).
+        If group_labels is provided, uses per-bin prior N(mu_k, diag(sigma_k^2)).
+        Otherwise falls back to the global prior N(0, sigma^2 I).
 
-        Parameters
-        ----------
-        group_labels : Tensor | None
-            Bin index per reflection, shape (B,).  Long tensor.
+        Args:
+            group_labels: Bin index per reflection, shape (B,). Long tensor.
 
-        Returns
-        -------
-        Tensor, shape (B,)
+        Returns:
+            KL per batch element, shape (B,).
         """
         if group_labels is None:
             return super().kl_divergence()
 
-        mu_p = self.mu_prior[group_labels]    # (B, d)
+        mu_p = self.mu_prior[group_labels]  # (B, d)
         std_p = self.std_prior[group_labels]  # (B, d)
 
-        var_q = self.std_h ** 2
-        var_p = std_p ** 2
+        var_q = self.std_h**2
+        var_p = std_p**2
 
         kl = 0.5 * (
             var_q / var_p
@@ -463,7 +445,7 @@ class PerBinProfilePosterior(ProfilePosterior):
 class PerBinLogisticNormalSurrogate(nn.Module):
     """Profile surrogate with fixed basis (Hermite or PCA) and per-bin priors.
 
-    Loads a ``profile_basis_per_bin.pt`` file containing:
+    Loads a `profile_basis_per_bin.pt` file containing:
         - W (K, d): basis matrix (Hermite functions or PCA components)
         - b (K,): bias (log of reference profile or mean of log-profiles)
         - mu_per_group (n_bins, d): per-bin prior mean in latent space
@@ -471,23 +453,29 @@ class PerBinLogisticNormalSurrogate(nn.Module):
         - sigma_prior (float): global fallback prior std
         - d (int): latent dimensionality
 
-    Parameters
-    ----------
-    input_dim : int
-        Dimension of the encoder output.
-    basis_path : str
-        Path to profile_basis_per_bin.pt.
+    Args:
+        input_dim: Dimension of the encoder output.
+        basis_path: Path to profile_basis_per_bin.pt.
     """
 
-    def __init__(self, input_dim: int, basis_path: str) -> None:
+    def __init__(
+        self,
+        input_dim: int,
+        basis_path: str,
+        init_std: float = 0.5,
+    ) -> None:
         super().__init__()
 
         basis = torch.load(basis_path, weights_only=False)
 
-        self.register_buffer("W", basis["W"])                    # (K, d)
-        self.register_buffer("b", basis["b"])                    # (K,)
-        self.register_buffer("mu_per_group", basis["mu_per_group"])    # (n_bins, d)
-        self.register_buffer("std_per_group", basis["std_per_group"])  # (n_bins, d)
+        self.register_buffer("W", basis["W"])  # (K, d)
+        self.register_buffer("b", basis["b"])  # (K,)
+        self.register_buffer(
+            "mu_per_group", basis["mu_per_group"]
+        )  # (n_bins, d)
+        self.register_buffer(
+            "std_per_group", basis["std_per_group"]
+        )  # (n_bins, d)
 
         self.d: int = int(basis["d"])
         self.sigma_prior: float = float(basis.get("sigma_prior", 3.0))
@@ -495,14 +483,15 @@ class PerBinLogisticNormalSurrogate(nn.Module):
         self.mu_head = nn.Linear(input_dim, self.d)
         self.std_head = nn.Linear(input_dim, self.d)
 
-        # Initialise std_head so initial std ≈ exp(-1) ≈ 0.37
         nn.init.zeros_(self.std_head.weight)
-        nn.init.constant_(self.std_head.bias, -0.81)
+        nn.init.constant_(self.std_head.bias, _softplus_inverse(init_std))
 
     def forward(
-        self, x: Tensor, group_labels: Tensor | None = None,
+        self,
+        x: Tensor,
+        group_labels: Tensor | None = None,
     ) -> PerBinProfilePosterior:
-        mu_h = self.mu_head(x)              # (B, d)
+        mu_h = self.mu_head(x)  # (B, d)
         std_h = F.softplus(self.std_head(x))  # (B, d)
 
         return PerBinProfilePosterior(

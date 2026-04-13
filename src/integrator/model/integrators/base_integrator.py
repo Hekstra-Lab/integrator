@@ -7,12 +7,15 @@ import torch.nn as nn
 from torch import Tensor
 
 DEFAULT_PREDICT_KEYS = [
+    "refl_ids",
+    "is_test",
     "qi_mean",
     "qi_var",
-    "refl_ids",
+    "qi_params",
     "qbg_mean",
     "qbg_var",
     "qbg_scale",
+    "qbg_params",
     "intensity.prf.value",
     "intensity.prf.variance",
     "intensity.sum.value",
@@ -26,98 +29,6 @@ DEFAULT_PREDICT_KEYS = [
     "K",
     "L",
 ]
-
-# Extended keys for IntegratorModelC: includes the joint (I,B) Cholesky parameters
-# so the full BivariateLogNormal can be reconstructed from prediction files.
-DEFAULT_PREDICT_KEYS_MODELC = DEFAULT_PREDICT_KEYS + [
-    "q_ib_mu_I",                 # [B] — log-space mean of I
-    "q_ib_mu_B",                 # [B] — log-space mean of B
-    "q_ib_L11",                  # [B] — Cholesky L[0,0], controls Var[log I]
-    "q_ib_L21",                  # [B] — Cholesky L[1,0], controls I-B covariance
-    "q_ib_L22",                  # [B] — Cholesky L[1,1], residual Var[log B]
-    "ib_log_space_correlation",  # [B] — Pearson corr of (log I, log B)
-]
-
-
-def _log_forward_out(
-    self,
-    forward_out: dict,
-    step: Literal["train", "val"],
-):
-    # if step != "val":
-    #     return
-    self.log(
-        f"{step}: mean(qi.mean)",
-        forward_out["qi_mean"].mean(),
-        on_step=False,
-        on_epoch=True,
-    )
-    self.log(
-        f"{step}: min(qi.mean)",
-        forward_out["qi_mean"].min(),
-        on_step=False,
-        on_epoch=True,
-    )
-    self.log(
-        f"{step}: max(qi.mean)",
-        forward_out["qi_mean"].max(),
-        on_step=False,
-        on_epoch=True,
-    )
-    self.log(
-        f"{step}: max(qi.variance)",
-        forward_out["qi_var"].max(),
-        on_step=False,
-        on_epoch=True,
-    )
-    self.log(
-        f"{step}: min(qi.variance)",
-        forward_out["qi_var"].min(),
-        on_step=False,
-        on_epoch=True,
-    )
-    self.log(
-        f"{step}: mean(qi.variance)",
-        forward_out["qi_var"].mean(),
-        on_step=False,
-        on_epoch=True,
-    )
-    self.log(
-        f"{step}: mean(qbg.mean)",
-        forward_out["qbg_mean"].mean(),
-        on_step=False,
-        on_epoch=True,
-    )
-    self.log(
-        f"{step}: min(qbg.mean)",
-        forward_out["qbg_mean"].min(),
-        on_step=False,
-        on_epoch=True,
-    )
-    self.log(
-        f"{step}: max(qbg.mean)",
-        forward_out["qbg_mean"].max(),
-        on_step=False,
-        on_epoch=True,
-    )
-    self.log(
-        f"{step}: mean(qbg.variance)",
-        forward_out["qbg_var"].mean(),
-        on_step=False,
-        on_epoch=True,
-    )
-    self.log(
-        f"{step}: max(qbg.variance)",
-        forward_out["qbg_var"].max(),
-        on_step=False,
-        on_epoch=True,
-    )
-    self.log(
-        f"{step}: min(qbg.variance)",
-        forward_out["qbg_var"].min(),
-        on_step=False,
-        on_epoch=True,
-    )
 
 
 def _log_loss(
@@ -165,7 +76,9 @@ class BaseIntegrator(pl.LightningModule):
 
         # predict step keys
         self.predict_keys = (
-            DEFAULT_PREDICT_KEYS if cfg.predict_keys == "default" else cfg.predict_keys
+            DEFAULT_PREDICT_KEYS
+            if cfg.predict_keys == "default"
+            else cfg.predict_keys
         )
 
         self.encoders = nn.ModuleDict(encoders)
@@ -225,11 +138,21 @@ class BaseIntegrator(pl.LightningModule):
         )
 
         # Log hyperprior diagnostics if present (HierarchicalLoss)
-        for key in ("kl_global", "hp_alpha_mean", "hp_beta_mean",
-                    "hp_alpha_std", "hp_beta_std", "hp_prior_mean"):
+        for key in (
+            "kl_global",
+            "hp_alpha_mean",
+            "hp_beta_mean",
+            "hp_alpha_std",
+            "hp_beta_std",
+            "hp_prior_mean",
+        ):
             if key in loss_dict:
-                self.log(f"{step} {key}", loss_dict[key],
-                         on_step=False, on_epoch=True)
+                self.log(
+                    f"{step} {key}",
+                    loss_dict[key],
+                    on_step=False,
+                    on_epoch=True,
+                )
 
         return {
             "loss": total_loss,
@@ -255,7 +178,9 @@ class BaseIntegrator(pl.LightningModule):
         outputs = self(counts, shoebox, mask, metadata)
 
         return {
-            k: v for k, v in outputs["forward_out"].items() if k in self.predict_keys
+            k: v
+            for k, v in outputs["forward_out"].items()
+            if k in self.predict_keys
         }
 
     def configure_optimizers(self):

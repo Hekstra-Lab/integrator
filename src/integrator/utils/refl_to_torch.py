@@ -1,5 +1,7 @@
 import argparse
 
+from integrator.data_loaders.data_module import DEFAULT_DS_COLS
+
 DEFAULT_EXCLUDED_COLS = ["BATCH", "PARTIAL"]
 
 EXTRA_COLS = [
@@ -30,63 +32,6 @@ EXTRA_COLS = [
     "xyzobs.px.value",
     "xyzobs.px.variance",
     "zeta",
-]
-
-
-DEFAULT_DS_COLS = [
-    "zeta",
-    "xyzobs.px.variance.0",
-    "xyzobs.px.variance.1",
-    "xyzobs.px.variance.2",
-    "xyzobs.px.value.0",
-    "xyzobs.px.value.1",
-    "xyzobs.px.value.2",
-    "xyzobs.mm.variance.0",
-    "xyzobs.mm.variance.1",
-    "xyzobs.mm.variance.2",
-    "xyzobs.mm.value.0",
-    "xyzobs.mm.value.1",
-    "xyzobs.mm.value.2",
-    "xyzcal.mm.0",
-    "xyzcal.mm.1",
-    "xyzcal.mm.2",
-    "refl_ids",
-    "qe",
-    "profile.correlation",
-    "partiality",
-    "partial_id",
-    "panel",
-    "num_pixels.valid",
-    "num_pixels.foreground",
-    "num_pixels.background_used",
-    "num_pixels.background",
-    "lp",
-    "intensity.prf.variance",
-    "intensity.prf.value",
-    "imageset_id",
-    "flags",
-    "entering",
-    "d",
-    "bbox.0",
-    "bbox.1",
-    "bbox.2",
-    "bbox.3",
-    "bbox.4",
-    "bbox.5",
-    "background.sum.variance",
-    "background.sum.value",
-    "background.mean",
-    "s1.0",
-    "s1.1",
-    "s1.2",
-    "xyzcal.px.0",
-    "xyzcal.px.1",
-    "xyzcal.px.2",
-    "intensity.sum.variance",
-    "intensity.sum.value",
-    "H",
-    "K",
-    "L",
 ]
 
 

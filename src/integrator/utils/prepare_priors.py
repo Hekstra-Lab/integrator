@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 def _nbins_path(filename: str, n_bins: int, data_dir: Path) -> Path:
-    """Resolve a prior filename with n_bins suffix: 'foo.pt' → data_dir/'foo_30.pt'.
+    """Resolve a prior filename with n_bins suffix: 'foo.pt' -> data_dir/'foo_30.pt'.
 
     This prevents concurrent runs with different n_bins from clobbering
     each other's prior files in the same data directory.
@@ -41,18 +41,15 @@ def prepare_global_priors(
     """Generate global prior .pt files for the default Loss if needed.
 
     When the default loss uses a Dirichlet profile prior
-    (``pprf_cfg.name = "dirichlet"``) with a ``.pt`` file path as the
+    (`pprf_cfg.name = "dirichlet"`) with a `.pt` file path as the
     concentration, this function generates that file using a global MOM
     estimate (bg-subtracted, across all reflections with no binning).
 
     Idempotent: skips if the file already exists unless force=True.
 
-    Parameters
-    ----------
-    cfg : dict
-        Full YAML config dict.
-    force : bool
-        Regenerate even if file already exists.
+    Args:
+        cfg: Full YAML config dict.
+        force: Regenerate even if file already exists.
     """
     loss_name = cfg.get("loss", {}).get("name", "")
     if loss_name != "default":
@@ -66,7 +63,7 @@ def prepare_global_priors(
     params = pprf_cfg.get("params", {})
     conc_value = params.get("concentration")
     if not isinstance(conc_value, str):
-        # Scalar concentration — nothing to generate
+        # Scalar concentration, nothing to generate
         return
 
     data_dir = Path(cfg["data_loader"]["args"]["data_dir"])
@@ -119,19 +116,14 @@ def prepare_per_bin_priors(
 
     Idempotent: skips files that already exist unless force=True.
 
-    Parameters
-    ----------
-    cfg : dict
-        Full YAML config dict.  If ``loss.args.n_bins`` is set in the
-        config, it is used as the number of resolution bins (unless
-        overridden by the *n_bins* argument).
-    n_bins : int
-        Number of resolution bins.  When <= 0 (default), reads from
-        ``cfg["loss"]["args"]["n_bins"]``, falling back to 20.
-    min_intensity : float
-        Minimum intensity for tau estimation.
-    force : bool
-        Regenerate even if files already exist.
+    Args:
+        cfg: Full YAML config dict.  If `loss.args.n_bins` is set in the
+            config, it is used as the number of resolution bins (unless
+            overridden by the *n_bins* argument).
+        n_bins: Number of resolution bins.  When <= 0 (default), reads from
+            `cfg["loss"]["args"]["n_bins"]`, falling back to 20.
+        min_intensity: Minimum intensity for tau estimation.
+        force: Regenerate even if files already exist.
     """
     loss_name = cfg.get("loss", {}).get("name", "")
     if loss_name not in ("per_bin", "wilson_per_bin"):
@@ -158,7 +150,9 @@ def prepare_per_bin_priors(
         and pbg_cfg.get("name") == "gamma"
         and "bg_concentration_per_group" not in loss_args
     ):
-        loss_args["bg_concentration_per_group"] = "bg_concentration_per_group.pt"
+        loss_args["bg_concentration_per_group"] = (
+            "bg_concentration_per_group.pt"
+        )
 
     # Determine which files are referenced and which are missing
     per_bin_keys = [
@@ -236,7 +230,9 @@ def prepare_per_bin_priors(
         if need_2d_rebinning and "concentration_per_group" in loss_args:
             fn = loss_args["concentration_per_group"]
             if isinstance(fn, str):
-                needed["concentration_per_group"] = _nbins_path(fn, n_bins, data_dir)
+                needed["concentration_per_group"] = _nbins_path(
+                    fn, n_bins, data_dir
+                )
 
     # Check if profile_basis_per_bin needs generating
     basis_filename = loss_args.get("profile_basis_per_bin")
@@ -307,12 +303,14 @@ def prepare_per_bin_priors(
             loss_args.get("tau_source", "dials"),
         )
 
-    # ── 2D profile binning (resolution × azimuthal) ──────────────────
+    # 2D profile binning (resolution x azimuthal)
     # Run independently so profile_group_label is available for both
     # concentration_per_group (Dirichlet) and profile_basis_per_bin (latent).
     profile_binning = loss_args.get("profile_binning")
     pgl_path = _nbins_path("profile_group_labels.pt", n_bins, data_dir)
-    if profile_binning is not None and (need_2d_rebinning or not pgl_path.exists()):
+    if profile_binning is not None and (
+        need_2d_rebinning or not pgl_path.exists()
+    ):
         max_azi_bins = int(profile_binning.get("max_azi_bins", 16))
         min_per_bin = int(profile_binning.get("min_per_bin", 200))
         beam_center = profile_binning.get("beam_center")
@@ -324,8 +322,12 @@ def prepare_per_bin_priors(
 
         profile_group_labels, azi_per_shell, n_profile_bins = (
             _bin_2d_for_profiles(
-                metadata, group_labels, n_bins, max_azi_bins,
-                beam_center, min_per_bin=min_per_bin,
+                metadata,
+                group_labels,
+                n_bins,
+                max_azi_bins,
+                beam_center,
+                min_per_bin=min_per_bin,
             )
         )
 
@@ -339,8 +341,13 @@ def prepare_per_bin_priors(
         # Save diagnostic plot (non-fatal)
         try:
             _plot_profile_binning(
-                metadata, group_labels, profile_group_labels,
-                n_bins, azi_per_shell, max_azi_bins, beam_center,
+                metadata,
+                group_labels,
+                profile_group_labels,
+                n_bins,
+                azi_per_shell,
+                max_azi_bins,
+                beam_center,
                 save_path=data_dir / "profile_binning.png",
             )
         except Exception as exc:
@@ -348,7 +355,9 @@ def prepare_per_bin_priors(
 
     # If profile_group_labels file exists but wasn't just computed, load into metadata
     if "profile_group_label" not in metadata and pgl_path.exists():
-        metadata["profile_group_label"] = torch.load(pgl_path, weights_only=True)
+        metadata["profile_group_label"] = torch.load(
+            pgl_path, weights_only=True
+        )
 
     if "concentration_per_group" in needed:
         dl_args = cfg.get("data_loader", {}).get("args", {})
@@ -360,14 +369,24 @@ def prepare_per_bin_priors(
             profile_group_labels = metadata["profile_group_label"]
             n_profile_bins = int(profile_group_labels.max().item()) + 1
             concentration = _fit_dirichlet_per_group(
-                counts, masks, profile_group_labels, n_profile_bins,
-                D=D_dim, H=H_dim, W=W_dim,
+                counts,
+                masks,
+                profile_group_labels,
+                n_profile_bins,
+                D=D_dim,
+                H=H_dim,
+                W=W_dim,
             )
             binning_desc = f"2D profile bins ({n_profile_bins} bins)"
         else:
             concentration = _fit_dirichlet_per_group(
-                counts, masks, group_labels, n_bins,
-                D=D_dim, H=H_dim, W=W_dim,
+                counts,
+                masks,
+                group_labels,
+                n_bins,
+                D=D_dim,
+                H=H_dim,
+                W=W_dim,
             )
             binning_desc = f"{n_bins} resolution bins"
 
@@ -451,21 +470,34 @@ def prepare_per_bin_priors(
             basis_type = str(loss_args.get("profile_basis_type", "hermite"))
             basis_d = int(loss_args.get("profile_basis_d", 14))
             basis_max_order = int(loss_args.get("profile_basis_max_order", 4))
-            basis_sigma_ref = float(loss_args.get("profile_basis_sigma_ref", 3.0))
+            basis_sigma_ref = float(
+                loss_args.get("profile_basis_sigma_ref", 3.0)
+            )
 
             # Use profile_group_labels if 2D binning was done, else group_labels
             prf_labels = metadata.get("profile_group_label", group_labels)
             n_prf_bins = int(prf_labels.max().item()) + 1
 
             basis_data = _fit_profile_basis_per_bin(
-                counts, masks, prf_labels, n_prf_bins,
-                basis_type=basis_type, D=D_dim, H=H_dim, W=W_dim,
-                d=basis_d, max_order=basis_max_order, sigma_ref=basis_sigma_ref,
+                counts,
+                masks,
+                prf_labels,
+                n_prf_bins,
+                basis_type=basis_type,
+                D=D_dim,
+                H=H_dim,
+                W=W_dim,
+                d=basis_d,
+                max_order=basis_max_order,
+                sigma_ref=basis_sigma_ref,
             )
             torch.save(basis_data, basis_path)
             logger.info(
                 "Saved %s (type=%s, d=%d, %d bins)",
-                basis_path.name, basis_type, basis_data["d"], n_prf_bins,
+                basis_path.name,
+                basis_type,
+                basis_data["d"],
+                n_prf_bins,
             )
 
     # ── Empirical profile basis (per-bin empirical bias) ──────────────
@@ -479,22 +511,32 @@ def prepare_per_bin_priors(
             W_dim = int(dl_args.get("W", dl_args.get("w", 21)))
 
             basis_max_order = int(loss_args.get("profile_basis_max_order", 4))
-            basis_sigma_ref = float(loss_args.get("profile_basis_sigma_ref", 3.0))
+            basis_sigma_ref = float(
+                loss_args.get("profile_basis_sigma_ref", 3.0)
+            )
             smooth_sigma = float(loss_args.get("profile_smooth_sigma", 0.0))
 
             prf_labels = metadata.get("profile_group_label", group_labels)
             n_prf_bins = int(prf_labels.max().item()) + 1
 
             emp_basis_data = _fit_empirical_profile_basis(
-                counts, masks, prf_labels, n_prf_bins,
-                D=D_dim, H=H_dim, W=W_dim,
-                max_order=basis_max_order, sigma_ref=basis_sigma_ref,
+                counts,
+                masks,
+                prf_labels,
+                n_prf_bins,
+                D=D_dim,
+                H=H_dim,
+                W=W_dim,
+                max_order=basis_max_order,
+                sigma_ref=basis_sigma_ref,
                 smooth_sigma=smooth_sigma,
             )
             torch.save(emp_basis_data, emp_basis_path)
             logger.info(
                 "Saved %s (empirical bias, d=%d, %d bins)",
-                emp_basis_path.name, emp_basis_data["d"], n_prf_bins,
+                emp_basis_path.name,
+                emp_basis_data["d"],
+                n_prf_bins,
             )
 
 
@@ -513,27 +555,28 @@ def _fit_empirical_profile_basis(
 ) -> dict:
     """Build a profile basis with per-bin empirical biases.
 
-    Like ``_fit_profile_basis_per_bin`` but replaces the single symmetric
+    Like `_fit_profile_basis_per_bin` but replaces the single symmetric
     Gaussian bias with per-bin empirical biases computed from the mean
     bg-subtracted profile in each bin.  This means z=0 reproduces the
-    empirical average profile for each bin — the model only learns
+    empirical average profile for each bin; the model only learns
     per-reflection corrections.
 
-    Parameters
-    ----------
-    counts, masks : (N, D*H*W) raw data
-    group_labels : (N,) bin assignment per reflection
-    n_bins : number of bins
-    D, H, W : shoebox dimensions
-    d : unused (Hermite uses max_order)
-    max_order : max Hermite polynomial order
-    sigma_ref : reference Gaussian width in pixels
-    smooth_sigma : if > 0, apply Gaussian smoothing to each mean profile
-        before taking log.  Reduces noise in bins with few reflections.
+    Args:
+        counts: (N, D*H*W) raw data.
+        masks: (N, D*H*W) raw data.
+        group_labels: (N,) bin assignment per reflection.
+        n_bins: Number of bins.
+        D: Shoebox depth (frames).
+        H: Shoebox height.
+        W: Shoebox width.
+        d: Unused (Hermite uses max_order).
+        max_order: Max Hermite polynomial order.
+        sigma_ref: Reference Gaussian width in pixels.
+        smooth_sigma: If > 0, apply Gaussian smoothing to each mean profile
+            before taking log.  Reduces noise in bins with few reflections.
 
-    Returns
-    -------
-    dict ready for torch.save as empirical_profile_basis_per_bin.pt
+    Returns:
+        Dict ready for torch.save as empirical_profile_basis_per_bin.pt.
     """
     signal = _bg_subtract_signal(counts, masks, D, H, W)
 
@@ -550,7 +593,10 @@ def _fit_empirical_profile_basis(
     K = signal.shape[1]
     logger.info(
         "Empirical profile basis: %dD, max_order=%d, sigma_ref=%.1f, d=%d",
-        3 if D > 1 else 2, max_order, sigma_ref, d_actual,
+        3 if D > 1 else 2,
+        max_order,
+        sigma_ref,
+        d_actual,
     )
 
     # Compute per-bin empirical biases from mean profiles
@@ -601,7 +647,8 @@ def _fit_empirical_profile_basis(
             mu_per_group[k] = h_k[0]
         logger.debug(
             "Bin %d: n=%d, |mu|=%.2f, mean(std)=%.2f",
-            k, h_k.shape[0],
+            k,
+            h_k.shape[0],
             mu_per_group[k].norm().item(),
             std_per_group[k].mean().item(),
         )
@@ -736,30 +783,21 @@ def _bin_2d_for_profiles(
     where the rectangular detector doesn't fill all azimuthal angles)
     automatically get fewer sectors.
 
-    Parameters
-    ----------
-    metadata : dict
-        Must contain ``xyzcal.px.0`` (x) and ``xyzcal.px.1`` (y).
-    res_labels : Tensor
-        Resolution bin per reflection, shape ``(N,)``.
-    n_res_bins : int
-        Number of resolution bins.
-    max_azi_bins : int
-        Maximum number of azimuthal sectors to try per shell.
-    beam_center : tuple[float, float]
-        Beam center on the detector in pixels ``(x, y)``.
-    min_per_bin : int
-        Minimum reflections per 2D bin.  Azimuthal sectors are reduced
-        per shell until this threshold is met.
+    Args:
+        metadata: Must contain `xyzcal.px.0` (x) and `xyzcal.px.1` (y).
+        res_labels: Resolution bin per reflection, shape `(N,)`.
+        n_res_bins: Number of resolution bins.
+        max_azi_bins: Maximum number of azimuthal sectors to try per shell.
+        beam_center: Beam center on the detector in pixels `(x, y)`.
+        min_per_bin: Minimum reflections per 2D bin.  Azimuthal sectors are
+            reduced per shell until this threshold is met.
 
-    Returns
-    -------
-    profile_group_labels : Tensor
-        Flat 2D bin index per reflection, shape ``(N,)``.
-    azi_bins_per_shell : list[int]
-        Number of azimuthal bins actually used in each resolution shell.
-    n_profile_bins : int
-        Total number of 2D bins (sum of azi_bins_per_shell).
+    Returns:
+        Tuple of (profile_group_labels, azi_bins_per_shell, n_profile_bins)
+        where profile_group_labels is a flat 2D bin index per reflection
+        of shape `(N,)`, azi_bins_per_shell is the number of azimuthal
+        bins actually used in each resolution shell, and n_profile_bins is
+        the total number of 2D bins.
     """
     x_det = metadata["xyzcal.px.0"]
     y_det = metadata["xyzcal.px.1"]
@@ -838,6 +876,7 @@ def _plot_profile_binning(
     """
     try:
         import matplotlib
+
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         import numpy as np
@@ -859,9 +898,13 @@ def _plot_profile_binning(
     # ── Left: color by profile group label ──
     ax = axes[0]
     ax.scatter(
-        dx, dy,
+        dx,
+        dy,
         c=profile_group_labels.numpy(),
-        cmap="nipy_spectral", s=0.3, alpha=0.4, rasterized=True,
+        cmap="nipy_spectral",
+        s=0.3,
+        alpha=0.4,
+        rasterized=True,
     )
     # Draw finest sector lines for reference
     azi_edges = np.linspace(-np.pi, np.pi, max_azi_bins + 1)
@@ -869,7 +912,9 @@ def _plot_profile_binning(
         ax.plot(
             [0, r_max * np.cos(edge)],
             [0, r_max * np.sin(edge)],
-            "k-", linewidth=0.3, alpha=0.3,
+            "k-",
+            linewidth=0.3,
+            alpha=0.3,
         )
     ax.plot(0, 0, "r+", markersize=10, markeredgewidth=2)
     ax.set_aspect("equal")
@@ -880,15 +925,21 @@ def _plot_profile_binning(
     # ── Center: color by resolution bin ──
     ax = axes[1]
     sc = ax.scatter(
-        dx, dy,
+        dx,
+        dy,
         c=res_labels.numpy(),
-        cmap="viridis", s=0.3, alpha=0.4, rasterized=True,
+        cmap="viridis",
+        s=0.3,
+        alpha=0.4,
+        rasterized=True,
     )
     for edge in azi_edges:
         ax.plot(
             [0, r_max * np.cos(edge)],
             [0, r_max * np.sin(edge)],
-            "k-", linewidth=0.3, alpha=0.3,
+            "k-",
+            linewidth=0.3,
+            alpha=0.3,
         )
     ax.plot(0, 0, "r+", markersize=10, markeredgewidth=2)
     ax.set_aspect("equal")
@@ -900,7 +951,13 @@ def _plot_profile_binning(
     ax = axes[2]
     shells = np.arange(n_res_bins)
     ax.bar(shells, azi_bins_per_shell, color="steelblue", edgecolor="white")
-    ax.axhline(max_azi_bins, color="red", linestyle="--", linewidth=1, label=f"max={max_azi_bins}")
+    ax.axhline(
+        max_azi_bins,
+        color="red",
+        linestyle="--",
+        linewidth=1,
+        label=f"max={max_azi_bins}",
+    )
     ax.set_xlabel("Resolution shell")
     ax.set_ylabel("Azimuthal bins")
     ax.set_title("Adaptive azi bins per shell")
@@ -927,7 +984,7 @@ def _compute_bg_rate_per_group(
     """Exponential rate for background: lambda_k = 1 / mean(bg_k).
 
     Works with any per-reflection background estimate (DIALS
-    ``background.mean`` or crude quietest-frame estimate).
+    `background.mean` or crude quietest-frame estimate).
     """
     bg_rate = torch.zeros(n_bins)
     for b in range(n_bins):
@@ -960,21 +1017,14 @@ def _compute_crude_intensity(
     frame is subtracted from the total shoebox counts to give a crude
     intensity estimate.
 
-    Parameters
-    ----------
-    counts : Tensor
-        Raw shoebox counts, shape ``(N, n_frames * n_pixels_per_frame)``.
-    masks : Tensor
-        Valid-pixel masks, same shape as *counts*.
-    n_frames : int
-        Number of frames per shoebox (typically 3).
-    n_pixels_per_frame : int
-        Pixels per frame (e.g. 21*21 = 441).
+    Args:
+        counts: Raw shoebox counts, shape `(N, n_frames * n_pixels_per_frame)`.
+        masks: Valid-pixel masks, same shape as *counts*.
+        n_frames: Number of frames per shoebox (typically 3).
+        n_pixels_per_frame: Pixels per frame (e.g. 21*21 = 441).
 
-    Returns
-    -------
-    Tensor
-        Crude intensity estimate per reflection, shape ``(N,)``.
+    Returns:
+        Crude intensity estimate per reflection, shape `(N,)`.
         Can be negative for weak / noise-dominated reflections.
     """
     N = counts.shape[0]
@@ -984,7 +1034,9 @@ def _compute_crude_intensity(
     masks_f = masks.float()
 
     # Reshape to (N, n_frames, n_pixels_per_frame)
-    counts_3d = (counts_clean * masks_f).reshape(N, n_frames, n_pixels_per_frame)
+    counts_3d = (counts_clean * masks_f).reshape(
+        N, n_frames, n_pixels_per_frame
+    )
     masks_3d = masks_f.reshape(N, n_frames, n_pixels_per_frame)
 
     # Total masked counts per frame: (N, n_frames)
@@ -995,8 +1047,12 @@ def _compute_crude_intensity(
 
     # Quietest frame = frame with minimum total counts
     min_frame_idx = frame_counts.argmin(dim=-1)  # (N,)
-    bg_frame_counts = frame_counts.gather(1, min_frame_idx.unsqueeze(-1)).squeeze(-1)
-    bg_frame_n_pixels = frame_n_pixels.gather(1, min_frame_idx.unsqueeze(-1)).squeeze(-1)
+    bg_frame_counts = frame_counts.gather(
+        1, min_frame_idx.unsqueeze(-1)
+    ).squeeze(-1)
+    bg_frame_n_pixels = frame_n_pixels.gather(
+        1, min_frame_idx.unsqueeze(-1)
+    ).squeeze(-1)
 
     # Background rate per pixel from quietest frame
     bg_per_pixel = bg_frame_counts / bg_frame_n_pixels.clamp(min=1)
@@ -1068,29 +1124,23 @@ def _fit_dirichlet_per_group(
       1. Subtract per-reflection crude background (quietest-frame estimate)
          to isolate the signal profile.
       2. Clamp and normalize bg-subtracted counts to proportions over all
-         ``D*H*W`` pixels.
+         `D*H*W` pixels.
       3. Estimate Dirichlet precision kappa via method of moments.
-      4. Return ``concentration = kappa * p_bar``.
+      4. Return `concentration = kappa * p_bar`.
 
-    Handles both 2D (``D=1``, stills/Laue) and 3D (``D>1``, rotation) cases.
+    Handles both 2D (`D=1`, stills/Laue) and 3D (`D>1`, rotation) cases.
 
-    Parameters
-    ----------
-    counts : Tensor
-        Raw shoebox counts, shape ``(N, D*H*W)``.
-    masks : Tensor
-        Valid-pixel masks, same shape as *counts*.
-    group_labels : Tensor
-        Bin assignment per reflection, shape ``(N,)``.
-    n_bins : int
-        Number of resolution bins.
-    D, H, W : int
-        Shoebox dimensions (frames, height, width).
+    Args:
+        counts: Raw shoebox counts, shape `(N, D*H*W)`.
+        masks: Valid-pixel masks, same shape as *counts*.
+        group_labels: Bin assignment per reflection, shape `(N,)`.
+        n_bins: Number of resolution bins.
+        D: Shoebox depth (frames).
+        H: Shoebox height.
+        W: Shoebox width.
 
-    Returns
-    -------
-    Tensor
-        Dirichlet concentration, shape ``(n_bins, D*H*W)``.
+    Returns:
+        Dirichlet concentration, shape `(n_bins, D*H*W)`.
     """
     n_pixels = D * H * W
     n_pixels_per_frame = H * W
@@ -1148,11 +1198,9 @@ def _fit_dirichlet_per_group(
         var_p = sel_norm.var(dim=0)
         valid = p_bar > 1e-6
         if valid.sum() > 0:
-            ratio = (
-                (p_bar[valid] * (1 - p_bar[valid]))
-                / var_p[valid].clamp(min=1e-12)
-                - 1
-            )
+            ratio = (p_bar[valid] * (1 - p_bar[valid])) / var_p[valid].clamp(
+                min=1e-12
+            ) - 1
             kappa = ratio.median().clamp(min=1.0)
         else:
             kappa = torch.tensor(1.0)
@@ -1237,38 +1285,37 @@ def _compute_crude_background(
 
     For each shoebox, the frame with the lowest total (masked) counts is
     treated as pure background.  Returns the mean counts per pixel in that
-    frame — analogous to DIALS ``background.mean``.
+    frame, analogous to DIALS `background.mean`.
 
-    Parameters
-    ----------
-    counts : Tensor
-        Raw shoebox counts, shape ``(N, n_frames * n_pixels_per_frame)``.
-    masks : Tensor
-        Valid-pixel masks, same shape as *counts*.
-    n_frames : int
-        Number of frames per shoebox (typically 3).
-    n_pixels_per_frame : int
-        Pixels per frame (e.g. 21*21 = 441).
+    Args:
+        counts: Raw shoebox counts, shape `(N, n_frames * n_pixels_per_frame)`.
+        masks: Valid-pixel masks, same shape as *counts*.
+        n_frames: Number of frames per shoebox (typically 3).
+        n_pixels_per_frame: Pixels per frame (e.g. 21*21 = 441).
 
-    Returns
-    -------
-    Tensor
-        Per-pixel background rate per reflection, shape ``(N,)``.
+    Returns:
+        Per-pixel background rate per reflection, shape `(N,)`.
     """
     N = counts.shape[0]
 
     counts_clean = counts.float().clamp(min=0)
     masks_f = masks.float()
 
-    counts_3d = (counts_clean * masks_f).reshape(N, n_frames, n_pixels_per_frame)
+    counts_3d = (counts_clean * masks_f).reshape(
+        N, n_frames, n_pixels_per_frame
+    )
     masks_3d = masks_f.reshape(N, n_frames, n_pixels_per_frame)
 
     frame_counts = counts_3d.sum(dim=-1)  # (N, n_frames)
     frame_n_pixels = masks_3d.sum(dim=-1)  # (N, n_frames)
 
     min_frame_idx = frame_counts.argmin(dim=-1)  # (N,)
-    bg_frame_counts = frame_counts.gather(1, min_frame_idx.unsqueeze(-1)).squeeze(-1)
-    bg_frame_n_pixels = frame_n_pixels.gather(1, min_frame_idx.unsqueeze(-1)).squeeze(-1)
+    bg_frame_counts = frame_counts.gather(
+        1, min_frame_idx.unsqueeze(-1)
+    ).squeeze(-1)
+    bg_frame_n_pixels = frame_n_pixels.gather(
+        1, min_frame_idx.unsqueeze(-1)
+    ).squeeze(-1)
 
     bg_per_pixel = bg_frame_counts / bg_frame_n_pixels.clamp(min=1)
 
@@ -1288,17 +1335,12 @@ def _fit_gamma_mle(
 ) -> tuple[Tensor, Tensor]:
     """Fit Gamma distribution via Newton MLE on the profile log-likelihood.
 
-    Parameters
-    ----------
-    x : Tensor
-        Positive-valued samples (1-D).
-    n_iter : int
-        Newton iterations.
+    Args:
+        x: Positive-valued samples (1-D).
+        n_iter: Newton iterations.
 
-    Returns
-    -------
-    alpha, beta : Tensor, Tensor
-        MLE shape (concentration) and rate parameters.
+    Returns:
+        Tuple of (alpha, beta) -- MLE shape (concentration) and rate parameters.
     """
     xbar = x.mean()
     s = xbar.log() - x.log().mean()  # >= 0 by Jensen
@@ -1324,21 +1366,15 @@ def _fit_gamma_prior_per_group(
 ) -> Tensor:
     """Fit Gamma MLE per resolution bin and return alpha (shape) per group.
 
-    Parameters
-    ----------
-    intensity : Tensor
-        Per-reflection intensity estimates, shape ``(N,)``.
-    group_labels : Tensor
-        Bin assignment per reflection, shape ``(N,)``.
-    n_bins : int
-        Number of resolution bins.
-    min_intensity : float
-        Minimum intensity threshold (exclude weak/negative reflections).
+    Args:
+        intensity: Per-reflection intensity estimates, shape `(N,)`.
+        group_labels: Bin assignment per reflection, shape `(N,)`.
+        n_bins: Number of resolution bins.
+        min_intensity: Minimum intensity threshold (exclude weak/negative
+            reflections).
 
-    Returns
-    -------
-    Tensor
-        Alpha (concentration) per bin, shape ``(n_bins,)``.
+    Returns:
+        Alpha (concentration) per bin, shape `(n_bins,)`.
     """
     alpha_per_group = torch.ones(n_bins)
     for b in range(n_bins):
@@ -1350,18 +1386,20 @@ def _fit_gamma_prior_per_group(
             logger.warning(
                 "Bin %d has only %d reflections with I > %.2f; "
                 "defaulting alpha=1 (exponential)",
-                b, len(sel), min_intensity,
+                b,
+                len(sel),
+                min_intensity,
             )
             continue
         alpha, _beta = _fit_gamma_mle(sel)
         alpha_per_group[b] = alpha.clamp(min=0.1)
-        logger.debug("Bin %d: Gamma MLE alpha=%.3f (n=%d)", b, alpha.item(), len(sel))
+        logger.debug(
+            "Bin %d: Gamma MLE alpha=%.3f (n=%d)", b, alpha.item(), len(sel)
+        )
     return alpha_per_group
 
 
-# ──────────────────────────────────────────────────────────────────────
 #  Profile basis construction (Hermite + PCA) with per-bin priors
-# ──────────────────────────────────────────────────────────────────────
 
 
 def _hermite_polynomial(n_order: int, x: Tensor) -> Tensor:
@@ -1387,14 +1425,13 @@ def _build_hermite_basis_2d(
 ) -> tuple[Tensor, Tensor, list[tuple[int, int]]]:
     """2D Hermite function basis with half-Gaussian envelope.
 
-    Each basis function: φ_{nx,ny}(x,y) = H_nx(x/σ) · H_ny(y/σ) · exp(-r²/(4σ²))
-    Orthogonal in unweighted L²(R²).  The (0,0) mode is excluded (absorbed by b).
+    Each basis function: phi_{nx,ny}(x,y) = H_nx(x/s) * H_ny(y/s) * exp(-r^2/(4s^2))
+    Orthogonal in unweighted L^2(R^2).  The (0,0) mode is excluded (absorbed by b).
 
-    Returns
-    -------
-    W : (H*W, d) basis matrix
-    b : (H*W,) bias = log of reference Gaussian profile
-    orders : list of (nx, ny) tuples
+    Returns:
+        Tuple of (W, b, orders) where W is a (H*W, d) basis matrix, b is a
+        (H*W,) bias (log of reference Gaussian profile), and orders is a
+        list of (nx, ny) tuples.
     """
     cy, cx = (H - 1) / 2.0, (W - 1) / 2.0
     yy, xx = torch.meshgrid(
@@ -1440,16 +1477,15 @@ def _build_hermite_basis_3d(
     sigma_ref: float = 3.0,
     sigma_z: float = 1.0,
 ) -> tuple[Tensor, Tensor, list[tuple[int, int, int]]]:
-    """3D Hermite function basis (frame × spatial) with half-Gaussian envelope.
+    """3D Hermite function basis (frame x spatial) with half-Gaussian envelope.
 
     Frame direction uses max order min(1, D-1) since D is typically small (3).
     Spatial directions use the full max_order.
 
-    Returns
-    -------
-    W : (D*H*W, d) basis matrix
-    b : (D*H*W,) bias = log of reference 3D Gaussian profile
-    orders : list of (nx, ny, nz) tuples
+    Returns:
+        Tuple of (W, b, orders) where W is a (D*H*W, d) basis matrix, b is a
+        (D*H*W,) bias (log of reference 3D Gaussian profile), and orders is a
+        list of (nx, ny, nz) tuples.
     """
     cy, cx = (H - 1) / 2.0, (W - 1) / 2.0
     cz = (D - 1) / 2.0
@@ -1465,14 +1501,10 @@ def _build_hermite_basis_3d(
     z_norm = (zz - cz) / sigma_z
 
     # Half-Gaussian envelope in all 3 dims
-    half_gaussian = torch.exp(
-        -0.25 * (x_norm**2 + y_norm**2 + z_norm**2)
-    )
+    half_gaussian = torch.exp(-0.25 * (x_norm**2 + y_norm**2 + z_norm**2))
 
     # Reference 3D Gaussian profile
-    full_gaussian = torch.exp(
-        -0.5 * (x_norm**2 + y_norm**2 + z_norm**2)
-    )
+    full_gaussian = torch.exp(-0.5 * (x_norm**2 + y_norm**2 + z_norm**2))
     ref = full_gaussian / full_gaussian.sum()
     b = torch.log(ref.reshape(-1).clamp(min=1e-10)).float()
 
@@ -1506,16 +1538,14 @@ def _build_pca_basis(
 ) -> tuple[Tensor, Tensor, Tensor]:
     """PCA basis from bg-subtracted, normalized profiles.
 
-    Parameters
-    ----------
-    signal : (N, K) bg-subtracted signal (already clamped >= 0)
-    d : number of principal components
+    Args:
+        signal: (N, K) bg-subtracted signal (already clamped >= 0).
+        d: Number of principal components.
 
-    Returns
-    -------
-    W : (K, d) basis matrix
-    b : (K,) mean of log-profiles (bias)
-    explained_var : (d,) fraction of variance explained per component
+    Returns:
+        Tuple of (W, b, explained_var) where W is a (K, d) basis matrix,
+        b is a (K,) mean of log-profiles (bias), and explained_var is a
+        (d,) fraction of variance explained per component.
     """
     # Normalize to proportions
     totals = signal.sum(dim=1, keepdim=True).clamp(min=1)
@@ -1570,8 +1600,10 @@ def _gaussian_smooth_3d(vol: Tensor, sigma: float) -> Tensor:
         v = F_smooth.pad(v, (0, 0, 0, 0, half, half), mode="reflect")
         v = F_smooth.conv3d(v, kd)
     elif vol.shape[0] > 1:
-        # D is small — use a 3-tap kernel
-        kd_small = torch.tensor([0.25, 0.5, 0.25], dtype=vol.dtype, device=vol.device)
+        # D is small, use a 3-tap kernel
+        kd_small = torch.tensor(
+            [0.25, 0.5, 0.25], dtype=vol.dtype, device=vol.device
+        )
         kd_small = kd_small.reshape(1, 1, -1, 1, 1)
         v = F_smooth.pad(v, (0, 0, 0, 0, 1, 1), mode="reflect")
         v = F_smooth.conv3d(v, kd_small)
@@ -1590,9 +1622,8 @@ def _bg_subtract_signal(
     Reuses the same logic as _fit_dirichlet_per_group: quietest-frame
     for 3D, border-pixel average for 2D.
 
-    Returns
-    -------
-    signal : (N, D*H*W) non-negative bg-subtracted counts
+    Returns:
+        Non-negative bg-subtracted counts, shape (N, D*H*W).
     """
     n_pixels_per_frame = H * W
     N = counts.shape[0]
@@ -1642,20 +1673,21 @@ def _fit_profile_basis_per_bin(
 ) -> dict:
     """Build a fixed profile basis and compute per-bin latent priors.
 
-    Parameters
-    ----------
-    counts, masks : (N, D*H*W) raw data
-    group_labels : (N,) bin assignment per reflection
-    n_bins : number of bins
-    basis_type : "hermite" or "pca"
-    D, H, W : shoebox dimensions
-    d : latent dimensionality (PCA only; Hermite uses max_order)
-    max_order : max Hermite polynomial order (Hermite only)
-    sigma_ref : reference Gaussian width in pixels (Hermite only)
+    Args:
+        counts: (N, D*H*W) raw data.
+        masks: (N, D*H*W) raw data.
+        group_labels: (N,) bin assignment per reflection.
+        n_bins: Number of bins.
+        basis_type: "hermite" or "pca".
+        D: Shoebox depth (frames).
+        H: Shoebox height.
+        W: Shoebox width.
+        d: Latent dimensionality (PCA only; Hermite uses max_order).
+        max_order: Max Hermite polynomial order (Hermite only).
+        sigma_ref: Reference Gaussian width in pixels (Hermite only).
 
-    Returns
-    -------
-    dict ready for torch.save as profile_basis_per_bin.pt
+    Returns:
+        Dict ready for torch.save as profile_basis_per_bin.pt.
     """
     signal = _bg_subtract_signal(counts, masks, D, H, W)
 
@@ -1672,7 +1704,10 @@ def _fit_profile_basis_per_bin(
         explained_var = None
         logger.info(
             "Hermite basis: %dD, max_order=%d, sigma_ref=%.1f, d=%d",
-            3 if D > 1 else 2, max_order, sigma_ref, d_actual,
+            3 if D > 1 else 2,
+            max_order,
+            sigma_ref,
+            d_actual,
         )
     elif basis_type == "pca":
         W_basis, b, explained_var = _build_pca_basis(signal, d)
@@ -1680,7 +1715,8 @@ def _fit_profile_basis_per_bin(
         orders = None
         logger.info(
             "PCA basis: d=%d, explained variance=%.3f",
-            d_actual, explained_var.sum().item(),
+            d_actual,
+            explained_var.sum().item(),
         )
     else:
         raise ValueError(f"Unknown profile basis type: {basis_type!r}")
@@ -1707,7 +1743,8 @@ def _fit_profile_basis_per_bin(
             mu_per_group[k] = h_k[0]
         logger.debug(
             "Bin %d: n=%d, |mu|=%.2f, mean(std)=%.2f",
-            k, h_k.shape[0],
+            k,
+            h_k.shape[0],
             mu_per_group[k].norm().item(),
             std_per_group[k].mean().item(),
         )

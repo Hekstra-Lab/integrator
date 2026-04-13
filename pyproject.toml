@@ -92,6 +92,9 @@ docstring-code-format = true
 # Only ignore variables named "_"
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
 [tool.mypy]
 python_version = "3.12"
 warn_unused_ignores = true

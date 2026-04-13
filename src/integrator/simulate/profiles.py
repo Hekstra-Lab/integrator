@@ -30,25 +30,17 @@ def sample_profiles(
 ) -> Tensor:
     """Sample 2D Gaussian profiles from h ~ N(0, I_5).
 
-    Parameters
-    ----------
-    N : int
-        Number of profiles to generate.
-    H, W : int
-        Grid dimensions (default 21 x 21).
-    center_base : float, optional
-        Center of the grid in pixels. Defaults to (H-1)/2.
-    center_scale : float
-        Std of center jitter in pixels.
-    log_sigma_base : float
-        Base log-width. exp(0.7) ~ 2.0 pixels.
-    width_scale : float
-        Std of log-width variation.
+    Args:
+        N: Number of profiles to generate.
+        H: Grid height (default 21).
+        W: Grid width (default 21).
+        center_base: Center of the grid in pixels. Defaults to (H-1)/2.
+        center_scale: Std of center jitter in pixels.
+        log_sigma_base: Base log-width. exp(0.7) ~ 2.0 pixels.
+        width_scale: Std of log-width variation.
 
-    Returns
-    -------
-    profiles : Tensor, shape (N, H*W)
-        Each row sums to 1.
+    Returns:
+        Profiles tensor of shape (N, H*W). Each row sums to 1.
     """
     if center_base is None:
         center_base = (H - 1) / 2.0
@@ -75,11 +67,10 @@ def h_to_physical_params(
 ) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
     """Map latent h to physical profile parameters.
 
-    Returns
-    -------
-    cx, cy : (...,) center coordinates in pixel space
-    sigma1, sigma2 : (...,) widths in pixel space (positive)
-    theta : (...,) rotation angle in (0, pi)
+    Returns:
+        Tuple of (cx, cy, sigma1, sigma2, theta) where cx, cy are center
+        coordinates in pixel space, sigma1, sigma2 are widths (positive),
+        and theta is the rotation angle in (0, pi). All have shape (...,).
     """
     cx = center_base + h[..., 0] * center_scale
     cy = center_base + h[..., 1] * center_scale
@@ -100,13 +91,17 @@ def physical_params_to_profile(
 ) -> Tensor:
     """Render normalized 2D Gaussian profiles from physical parameters.
 
-    Parameters
-    ----------
-    cx, cy, sigma1, sigma2, theta : (...,) batch of parameters
+    Args:
+        cx: Center x-coordinates, shape (...,).
+        cy: Center y-coordinates, shape (...,).
+        sigma1: First width parameter, shape (...,).
+        sigma2: Second width parameter, shape (...,).
+        theta: Rotation angle, shape (...,).
+        H: Grid height (default 21).
+        W: Grid width (default 21).
 
-    Returns
-    -------
-    profiles : (..., H*W) normalized profiles
+    Returns:
+        Normalized profiles tensor of shape (..., H*W).
     """
     yy, xx = torch.meshgrid(
         torch.arange(H, dtype=torch.float32),
@@ -153,13 +148,14 @@ def h_to_profile(
 ) -> Tensor:
     """Full pipeline: h -> physical params -> normalized profile.
 
-    Parameters
-    ----------
-    h : (..., 5) latent vector
+    Args:
+        h: Latent vector of shape (..., 5).
+        H: Grid height (default 21).
+        W: Grid width (default 21).
+        **param_kwargs: Extra kwargs passed to :func:`h_to_physical_params`.
 
-    Returns
-    -------
-    profiles : (..., H*W) normalized profiles
+    Returns:
+        Normalized profiles tensor of shape (..., H*W).
     """
     cx, cy, sigma1, sigma2, theta = h_to_physical_params(h, **param_kwargs)
     return physical_params_to_profile(cx, cy, sigma1, sigma2, theta, H, W)

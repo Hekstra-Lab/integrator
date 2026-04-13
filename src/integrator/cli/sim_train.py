@@ -16,7 +16,7 @@ def parse_args():
         description="Train model on simulated shoebox data"
     )
 
-    # --- Required ---
+    # Required
     parser.add_argument(
         "--config",
         type=str,
@@ -36,7 +36,7 @@ def parse_args():
         help="Path to run directory (saves config copy and run metadata)",
     )
 
-    # --- Paths ---
+    #  Paths
     parser.add_argument(
         "--data-path",
         type=str,
@@ -50,7 +50,7 @@ def parse_args():
         help="Path to store local W&B logs",
     )
 
-    # --- Training ---
+    # Training
     parser.add_argument(
         "--max-epochs",
         type=int,
@@ -104,7 +104,7 @@ def parse_args():
         help="Run validation every N epochs",
     )
 
-    # --- Model ---
+    # Model
     parser.add_argument(
         "--integrator-name",
         type=str,
@@ -126,7 +126,7 @@ def parse_args():
         help="Number of Monte Carlo samples for KL estimation",
     )
 
-    # --- Loss weights ---
+    # Loss weights
     parser.add_argument(
         "--pprf-weight",
         type=float,
@@ -148,7 +148,7 @@ def parse_args():
         help="Number of resolution bins for per-bin priors",
     )
 
-    # --- Data ---
+    #  Data
     parser.add_argument(
         "--val-split",
         type=float,
@@ -160,7 +160,7 @@ def parse_args():
         help="Use a subset of the data (for debugging)",
     )
 
-    # --- Misc ---
+    #  other
     parser.add_argument(
         "-v",
         "--verbose",
@@ -277,7 +277,7 @@ def main():
     # create integrator
     integrator = construct_integrator(cfg)
 
-    # Set dataset_size for losses that need it (e.g. HierarchicalShoeboxLoss)
+    # Set dataset_size for losses that need it
     # Must be done here because sim_train passes raw dataloaders, not the
     # data module, so trainer.datamodule is None during model.setup().
     if hasattr(integrator.loss, "dataset_size"):
@@ -286,7 +286,7 @@ def main():
     # save prior artifacts (rescaled concentration, param counts, etc.)
     save_run_artifacts(integrator, cfg, logdir)
 
-    # Callbacks — simulated-appropriate keys (no DIALS metadata)
+    # Callbacks (simulated-appropriate keys, no DIALS metadata)
     keys = [
         "refl_ids",
         "is_test",

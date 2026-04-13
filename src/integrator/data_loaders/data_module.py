@@ -1,7 +1,10 @@
+import logging
 import os
 from pathlib import Path
 
 import torch
+
+logger = logging.getLogger(__name__)
 from torch.utils.data import (
     DataLoader,
     Dataset,
@@ -10,7 +13,7 @@ from torch.utils.data import (
     random_split,
 )
 
-from integrator.data_loaders import BaseDataModule
+import pytorch_lightning as pl
 
 SIMULATED_COLS = [
     "shoebox_median",
@@ -129,16 +132,17 @@ def _remove_flagged_variance(
     metadata: dict,
     filter_key: str = "intensity.prf.variance",
 ) -> tuple[torch.Tensor, torch.Tensor, dict]:
-    filter_ = metadata[filter_key] == -1
-
-    counts = counts[~filter_]
-    masks = masks[~filter_]
-    metadata = {k: v[~filter_] for k, v in metadata.items()}
-
+    bad = metadata[filter_key] < 0
+    n_bad = bad.sum().item()
+    if n_bad > 0:
+        logger.info("Removed %d reflections with %s < 0", n_bad, filter_key)
+    counts = counts[~bad]
+    masks = masks[~bad]
+    metadata = {k: v[~bad] for k, v in metadata.items()}
     return counts, masks, metadata
 
 
-class ShoeboxDataModule2D(BaseDataModule):
+class ShoeboxDataModule2D(pl.LightningDataModule):
     """
 
     Attributes:
@@ -214,7 +218,7 @@ class ShoeboxDataModule2D(BaseDataModule):
         self.get_dxyz = get_dxyz
         self.anscombe = anscombe
 
-    def setup(self):
+    def setup(self, stage=None):
         counts = torch.load(
             os.path.join(self.data_dir, self.shoebox_file_names["counts"]),
         )
@@ -342,7 +346,7 @@ class ShoeboxDataModule2D(BaseDataModule):
         )
 
 
-class ShoeboxDataModule(BaseDataModule):
+class ShoeboxDataModule(pl.LightningDataModule):
     """
 
     Attributes:
@@ -355,6 +359,7 @@ class ShoeboxDataModule(BaseDataModule):
         single_sample_index:
         num_workers:
         cutoff:
+        min_valid_pixels:
         full_dataset:
         use_metadata:
         shoebox_file_names:
@@ -363,7 +368,7 @@ class ShoeboxDataModule(BaseDataModule):
         D:
         standardized_counts:
         get_dxyz:
-        anscombe: Boolean indicating whether to use Anscome transformation
+        anscombe: Boolean indicating whether to use Anscombe transformation
         full_dataset:
     """
 
@@ -378,6 +383,7 @@ class ShoeboxDataModule(BaseDataModule):
         subset_size: int | None = None,
         single_sample_index=None,
         cutoff: float | None = None,
+        min_valid_pixels: int = 10,
         use_metadata: bool | None = None,
         persistent_workers: bool = True,
         shoebox_file_names={
@@ -404,6 +410,7 @@ class ShoeboxDataModule(BaseDataModule):
         self.single_sample_index = single_sample_index
         self.num_workers = num_workers
         self.cutoff = cutoff
+        self.min_valid_pixels = min_valid_pixels
         self.full_dataset = None  # Will store the full dataset
         self.use_metadata = use_metadata
         self.shoebox_file_names = shoebox_file_names
@@ -428,10 +435,15 @@ class ShoeboxDataModule(BaseDataModule):
             os.path.join(self.data_dir, self.shoebox_file_names["reference"])
         )
 
-        # Filter out all refls with less than 10 valid pixels
-        all_dead = masks.sum(-1) < 10
-
-        # filter out samples with all dead pixels
+        # Filter out reflections with too few valid pixels
+        all_dead = masks.sum(-1) < self.min_valid_pixels
+        n_dead = all_dead.sum().item()
+        if n_dead > 0:
+            logger.info(
+                "Removed %d reflections with < %d valid pixels",
+                n_dead,
+                self.min_valid_pixels,
+            )
         counts = counts[~all_dead]
         masks = masks[~all_dead]
         reference = {k: v[~all_dead] for k, v in reference.items()}
@@ -440,51 +452,46 @@ class ShoeboxDataModule(BaseDataModule):
             counts, masks, reference
         )
 
-        # Apply cutoff before standardization to ensure we only process needed data
+        # Apply resolution cutoff before standardization
         if self.cutoff is not None:
-            # Make sure we're checking the first column of reference against cutoff
-            # Ensure reference has the right shape before filtering
-
-            if reference.dim() > 1:
-                selection = reference[:, 13] < self.cutoff
-            else:
-                selection = reference < self.cutoff
-
-            # Apply selection filter to all tensors
+            selection = reference["d"] < self.cutoff
+            n_cut = (~selection).sum().item()
+            if n_cut > 0:
+                logger.info(
+                    "Removed %d reflections with d >= %.2f",
+                    n_cut,
+                    self.cutoff,
+                )
             counts = counts[selection]
             masks = masks[selection]
-            reference = reference[selection]
+            reference = {k: v[selection] for k, v in reference.items()}
 
-        else:
-            if counts.dim() == 2:
-                if self.anscombe:
-                    anscombe_transformed = 2 * (counts.clamp(min=0) + 0.375).sqrt()
-                    standardized_counts = (
-                        (anscombe_transformed - stats[1]) / stats[1].sqrt()
-                    ) * masks
-                else:
-                    standardized_counts = (
-                        (counts * masks) - stats[0]
-                    ) / stats[1].sqrt()
+        # Standardize counts
+        if counts.dim() == 2:
+            if self.anscombe:
+                anscombe_transformed = 2 * (counts.clamp(min=0) + 0.375).sqrt()
+                standardized_counts = (
+                    (anscombe_transformed - stats[1]) / stats[1].sqrt()
+                ) * masks
             else:
-                standardized_counts = (counts[..., -1] * masks) - stats[
-                    0
-                ] / stats[1].sqrt()
-                # Normalize first three channels of counts
-                # Only attempt this if counts has enough dimensions
-                if counts.dim() >= 3 and counts.size(-1) >= 3:
-                    counts[:, :, 0] = (
-                        2 * (counts[:, :, 0] / (counts[:, :, 0].max() + 1e-8))
-                        - 1
-                    )
-                    counts[:, :, 1] = (
-                        2 * (counts[:, :, 1] / (counts[:, :, 1].max() + 1e-8))
-                        - 1
-                    )
-                    counts[:, :, 2] = (
-                        2 * (counts[:, :, 2] / (counts[:, :, 2].max() + 1e-8))
-                        - 1
-                    )
+                standardized_counts = ((counts * masks) - stats[0]) / stats[
+                    1
+                ].sqrt()
+        else:
+            standardized_counts = (
+                (counts[..., -1] * masks) - stats[0]
+            ) / stats[1].sqrt()
+            # Normalize first three channels of counts
+            if counts.dim() >= 3 and counts.size(-1) >= 3:
+                counts[:, :, 0] = (
+                    2 * (counts[:, :, 0] / (counts[:, :, 0].max() + 1e-8)) - 1
+                )
+                counts[:, :, 1] = (
+                    2 * (counts[:, :, 1] / (counts[:, :, 1].max() + 1e-8)) - 1
+                )
+                counts[:, :, 2] = (
+                    2 * (counts[:, :, 2] / (counts[:, :, 2].max() + 1e-8)) - 1
+                )
 
         self.full_dataset = IntegratorDataset(
             counts,
@@ -566,7 +573,7 @@ class ShoeboxDataModule(BaseDataModule):
         )
 
 
-class SimulatedShoeboxLoader(BaseDataModule):
+class SimulatedShoeboxLoader(pl.LightningDataModule):
     """
 
     Attributes:
@@ -579,6 +586,7 @@ class SimulatedShoeboxLoader(BaseDataModule):
         single_sample_index:
         num_workers:
         cutoff:
+        min_valid_pixels:
         full_dataset:
         use_metadata:
         shoebox_file_names:
@@ -587,7 +595,7 @@ class SimulatedShoeboxLoader(BaseDataModule):
         D:
         standardized_counts:
         get_dxyz:
-        anscombe: Boolean indicating whether to use Anscome transformation
+        anscombe: Boolean indicating whether to use Anscombe transformation
         full_dataset:
     """
 
@@ -602,6 +610,7 @@ class SimulatedShoeboxLoader(BaseDataModule):
         subset_size: int | None = None,
         single_sample_index=None,
         cutoff: float | None = None,
+        min_valid_pixels: int = 10,
         use_metadata: bool | None = None,
         persistent_workers: bool = True,
         shoebox_file_names={
@@ -628,6 +637,7 @@ class SimulatedShoeboxLoader(BaseDataModule):
         self.single_sample_index = single_sample_index
         self.num_workers = num_workers
         self.cutoff = cutoff
+        self.min_valid_pixels = min_valid_pixels
         self.full_dataset = None  # Will store the full dataset
         self.use_metadata = use_metadata
         self.shoebox_file_names = shoebox_file_names
@@ -753,42 +763,3 @@ class SimulatedShoeboxLoader(BaseDataModule):
             num_workers=self.num_workers,
             pin_memory=True,
         )
-
-
-# %%
-if __name__ == "__main__":
-    data_dir = Path(
-        "/Users/luis/master/notebooks/integrator_notes/code/simulating_shoeboxes/"
-    )
-
-    loader = SimulatedShoeboxLoader(
-        data_dir=data_dir,
-        shoebox_file_names={
-            "counts": "counts.pt",
-            "masks": "masks.pt",
-            "stats": "stats_anscombe.pt",
-            "reference": "reference.pt",
-            "standardized_counts": None,
-        },
-        include_test=True,
-        num_workers=0,
-    )
-
-    loader.setup()
-
-    next(iter(loader.train_dataloader()))
-
-    from integrator.utils import load_config
-
-    yaml = "/Users/luis/master/notebooks/integrator_notes/code/simulating_shoeboxes/simulated_data_config.yaml"
-
-    import os
-
-    import torch
-
-    from integrator.utils import (
-        construct_data_loader,
-    )
-
-    cfg = load_config(yaml)
-    data_loader = construct_data_loader(cfg)

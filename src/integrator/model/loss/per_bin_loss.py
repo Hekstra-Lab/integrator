@@ -1,29 +1,22 @@
 """Per-bin resolution loss with group-dependent priors.
 
-ELBO decomposition:
-    L = E_q[ log p(x | I, prf, bg) ]             — Poisson NLL
-      - KL( q(prf) || p(prf) )                    — profile prior
-      - KL( q(I_i)   || p_I(tau_{k(i)}) )         — per-group intensity prior
-      - KL( q(bg_i)  || p_bg(lambda_{k(i)}) )     — per-group background prior
+ELBO = E_q[log p(x | I, prf, bg)] - KL(prf) - KL(I) - KL(bg)
 
-Intensity and background priors are controlled by ``pi_cfg`` and ``pbg_cfg``:
-  - ``pi_cfg.name = "exponential"``:  I_k ~ Exp(tau_k)
-  - ``pi_cfg.name = "gamma"``:       I_k ~ Gamma(alpha_k, alpha_k * tau_k)
-    where alpha_k is fitted via Gamma MLE per bin.
+Intensity/background prior type selected by pi_cfg.name / pbg_cfg.name:
+  "exponential": I_k ~ Gamma(1, tau_k)
+  "gamma":       I_k ~ Gamma(alpha_k, alpha_k * tau_k)
 
-Profile prior depends on the surrogate type:
-  - Dirichlet surrogate:  KL( q(prf_i) || Dir(alpha_{k(i)}) )  per-bin
-  - Latent decoder (ProfilePosterior):  KL( q(h) || N(0, sigma²I) )  global
-
-All prior parameters are fixed (not learned), loaded from simulation output.
+Profile prior: Dirichlet (per-bin) or latent Normal (global).
+All prior parameters are fixed, loaded from data.
 """
 
 import torch
 import torch.nn as nn
 from torch import Tensor
-from torch.distributions import Dirichlet, Distribution, Gamma, Poisson
+from torch.distributions import Distribution, Gamma, Poisson
 
 from integrator.model.distributions.logistic_normal import ProfilePosterior
+from integrator.model.loss.kl_helpers import compute_bg_kl, compute_profile_kl
 from integrator.model.loss.loss import _kl
 
 
@@ -41,39 +34,29 @@ def _load_buffer(value: list[float] | str) -> Tensor:
 class PerBinLoss(nn.Module):
     """ELBO loss with per-group priors for intensity, background, and profile.
 
-    Parameters
-    ----------
-    mc_samples : int
-        Monte Carlo samples for KL estimation.
-    eps : float
-        Numerical stability constant for Poisson rate.
-    tau_per_group : list[float] or str
-        Exponential rates for intensity prior, one per group.
-    bg_rate_per_group : list[float] or str
-        Exponential rates for background prior, one per group.
-    concentration_per_group : str
-        Path to .pt file with Dirichlet concentrations (n_groups, n_pixels).
-    pi_cfg : PriorConfig or None
-        Intensity prior config.  ``pi_cfg.name`` selects the distribution:
-        ``"exponential"`` (default) or ``"gamma"`` (per-bin MLE alpha).
-        ``pi_cfg.weight`` scales the intensity KL term.
-    pbg_cfg : PriorConfig or None
-        Background prior config.  ``pbg_cfg.name`` selects the distribution:
-        ``"exponential"`` (default) or ``"gamma"`` (per-bin MLE alpha).
-        ``pbg_cfg.weight`` scales the background KL term.
-    pprf_cfg : PriorConfig or None
-        Profile prior config.  ``pprf_cfg.weight`` scales the profile KL term.
-    i_concentration_per_group : list[float] or str or None
-        Per-bin Gamma shape (alpha) for intensity.  Auto-loaded when
-        ``pi_cfg.name = "gamma"``.
-    bg_concentration_per_group : list[float] or str or None
-        Per-bin Gamma shape (alpha) for background.  Auto-loaded when
-        ``pbg_cfg.name = "gamma"``.
-    bg_concentration : float
-        Scalar fallback shape for background Gamma prior.  Only used when
-        ``bg_concentration_per_group`` is not provided.  Default 1.0 = Exp.
-    pprf_weight, pbg_weight, pi_weight : float
-        Scalar fallback weights when *_cfg is not provided.
+    Args:
+        mc_samples: Monte Carlo samples for KL estimation.
+        eps: Numerical stability constant for Poisson rate.
+        tau_per_group: Exponential rates for intensity prior, one per group.
+        bg_rate_per_group: Exponential rates for background prior, one per group.
+        concentration_per_group: Path to .pt file with Dirichlet concentrations
+            (n_groups, n_pixels).
+        pi_cfg: Intensity prior config. `pi_cfg.name` selects the distribution:
+            "exponential" (default) or "gamma" (per-bin MLE alpha).
+            `pi_cfg.weight` scales the intensity KL term.
+        pbg_cfg: Background prior config. `pbg_cfg.name` selects the distribution:
+            "exponential" (default) or "gamma" (per-bin MLE alpha).
+            `pbg_cfg.weight` scales the background KL term.
+        pprf_cfg: Profile prior config. `pprf_cfg.weight` scales the profile KL term.
+        i_concentration_per_group: Per-bin Gamma shape (alpha) for intensity.
+            Auto-loaded when `pi_cfg.name = "gamma"`.
+        bg_concentration_per_group: Per-bin Gamma shape (alpha) for background.
+            Auto-loaded when `pbg_cfg.name = "gamma"`.
+        bg_concentration: Scalar fallback shape for background Gamma prior.
+            Only used when `bg_concentration_per_group` is not provided.
+            Default 1.0 = Exp.
+        pprf_weight, pbg_weight, pi_weight: Scalar fallback weights when
+            *_cfg is not provided.
     """
 
     def __init__(
@@ -104,11 +87,13 @@ class PerBinLoss(nn.Module):
         self.bg_concentration = bg_concentration
 
         # Resolve weights: prefer *_cfg.weight, fall back to scalar
-        self.pprf_weight = pprf_cfg.weight if pprf_cfg is not None else pprf_weight
+        self.pprf_weight = (
+            pprf_cfg.weight if pprf_cfg is not None else pprf_weight
+        )
         self.pbg_weight = pbg_cfg.weight if pbg_cfg is not None else pbg_weight
         self.pi_weight = pi_cfg.weight if pi_cfg is not None else pi_weight
 
-        # -- Fixed buffers (per-bin) ------------------------------------------
+        # Fixed buffers (per-bin)
         self.register_buffer("tau_per_group", _load_buffer(tau_per_group))
         self.register_buffer(
             "bg_rate_per_group", _load_buffer(bg_rate_per_group)
@@ -121,7 +106,7 @@ class PerBinLoss(nn.Module):
         else:
             self.concentration_per_group = None
 
-        # -- Intensity concentration (Gamma MLE alpha per bin) ----------------
+        #  Intensity concentration (Gamma MLE alpha per bin)
         if i_concentration_per_group is not None:
             self.register_buffer(
                 "i_concentration_per_group",
@@ -130,7 +115,7 @@ class PerBinLoss(nn.Module):
         else:
             self.i_concentration_per_group = None
 
-        # -- Background concentration (Gamma MLE alpha per bin) ---------------
+        # Background concentration (Gamma MLE alpha per bin)
         if bg_concentration_per_group is not None:
             self.register_buffer(
                 "bg_concentration_per_group",
@@ -161,27 +146,17 @@ class PerBinLoss(nn.Module):
         kl_i = torch.zeros(batch_size, device=device)
         kl_bg = torch.zeros(batch_size, device=device)
 
-        # Profile KL: per-bin Dirichlet or latent Normal (global or per-bin)
-        # Use profile_group_label (2D binning) if available, else group_labels
-        if isinstance(qp, ProfilePosterior):
-            meta = kwargs.get("metadata", {})
-            pgl = meta.get("profile_group_label") if isinstance(meta, dict) else None
-            prf_groups = pgl.long().to(device) if pgl is not None else groups
-            kl_prf = qp.kl_divergence(prf_groups) * self.pprf_weight
-        else:
-            if self.concentration_per_group is None:
-                raise RuntimeError(
-                    "concentration_per_group is required for Dirichlet profile surrogate"
-                )
-            meta = kwargs.get("metadata", {})
-            pgl = meta.get("profile_group_label") if isinstance(meta, dict) else None
-            prf_groups = pgl.long().to(device) if pgl is not None else groups
-            alpha = self.concentration_per_group[prf_groups]  # (B, n_pixels)
-            p_prf = Dirichlet(alpha)
-            kl_prf = (
-                _kl(qp, p_prf, self.mc_samples, eps=self.eps)
-                * self.pprf_weight
-            )
+        # Profile KL
+        kl_prf = compute_profile_kl(
+            qp,
+            groups,
+            self.concentration_per_group,
+            self.pprf_weight,
+            self.mc_samples,
+            self.eps,
+            device,
+            metadata=kwargs.get("metadata"),
+        )
         kl = kl + kl_prf
 
         # Intensity KL: KL(q(I_i) || Gamma(alpha_k, alpha_k * tau_k))
@@ -198,17 +173,17 @@ class PerBinLoss(nn.Module):
         kl_i = _kl(qi, p_i, self.mc_samples, eps=self.eps) * self.pi_weight
         kl = kl + kl_i
 
-        # Background KL: KL(q(bg_i) || Gamma(alpha_bg, alpha_bg * lambda_k))
-        bg_rate_per_refl = self.bg_rate_per_group[groups]  # (B,)
-        if self.bg_concentration_per_group is not None:
-            alpha_bg = self.bg_concentration_per_group[groups]  # (B,)
-        else:
-            alpha_bg = torch.full_like(bg_rate_per_refl, self.bg_concentration)
-        p_bg = Gamma(
-            concentration=alpha_bg,
-            rate=alpha_bg * bg_rate_per_refl,
+        # Background KL
+        kl_bg = compute_bg_kl(
+            qbg,
+            groups,
+            self.bg_rate_per_group,
+            self.bg_concentration_per_group,
+            self.bg_concentration,
+            self.pbg_weight,
+            self.mc_samples,
+            self.eps,
         )
-        kl_bg = _kl(qbg, p_bg, self.mc_samples, eps=self.eps) * self.pbg_weight
         kl = kl + kl_bg
 
         # Poisson NLL

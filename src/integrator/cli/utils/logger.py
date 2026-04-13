@@ -4,10 +4,6 @@ import sys
 from rich.logging import RichHandler
 
 
-def is_tty():
-    return sys.stderr.isatty()
-
-
 def setup_logging(verbosity: int = 0):
     """
     verbosity = 0 -> WARNING
