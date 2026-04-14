@@ -30,6 +30,12 @@ def compute_profile_kl(
         raise RuntimeError(
             "concentration_per_group is required for Dirichlet profile surrogate"
         )
+    # Fall back to resolution-only groups when profile_group_label has more
+    # bins than the concentration buffer (e.g. 2D binning labels with a
+    # 1D-expanded concentration).
+    n_conc_groups = concentration_per_group.shape[0]
+    if prf_groups.max() >= n_conc_groups:
+        prf_groups = groups
     alpha = concentration_per_group[prf_groups]
     p_prf = Dirichlet(alpha)
     return _kl(qp, p_prf, mc_samples, eps=eps) * pprf_weight
