@@ -247,6 +247,14 @@ def _get_loss_module(
         if k not in standard_keys:
             kwargs[k] = v
 
+    # Auto-compute pprf_n_pixels for scalar concentration_per_group
+    conc_val = kwargs.get("concentration_per_group")
+    if isinstance(conc_val, (int, float)) and "pprf_n_pixels" not in kwargs:
+        d = cfg["integrator"]["args"].get("d", 3)
+        h = cfg["integrator"]["args"].get("h", 21)
+        w = cfg["integrator"]["args"].get("w", 21)
+        kwargs["pprf_n_pixels"] = d * h * w
+
     # Resolve relative .pt paths for custom loss buffers
     # Include n_bins in filename to prevent concurrent runs from clobbering files
     data_dir = cfg.get("data_loader", {}).get("args", {}).get("data_dir", "")

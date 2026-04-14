@@ -66,7 +66,8 @@ class PerBinLoss(nn.Module):
         eps: float = 1e-6,
         tau_per_group: list[float] | str,
         bg_rate_per_group: list[float] | str,
-        concentration_per_group: str | None = None,
+        concentration_per_group: str | float | None = None,
+        pprf_n_pixels: int | None = None,
         pprf_quantile: float | None = None,
         pprf_conc_factor: float = 40.0,
         i_concentration_per_group: list[float] | str | None = None,
@@ -101,14 +102,25 @@ class PerBinLoss(nn.Module):
             "bg_rate_per_group", _load_buffer(bg_rate_per_group)
         )
         if concentration_per_group is not None:
-            conc = _load_buffer(concentration_per_group)
-            if pprf_quantile is not None:
-                threshold = torch.quantile(conc.float(), pprf_quantile)
-                conc[conc > threshold] *= pprf_conc_factor
-                conc = conc / conc.max()
-            if conc.dim() == 1:
-                n_bins = self.tau_per_group.shape[0]
-                conc = conc.unsqueeze(0).expand(n_bins, -1).contiguous()
+            n_bins = int(self.tau_per_group.shape[0])
+            if isinstance(concentration_per_group, (int, float)):
+                if pprf_n_pixels is None:
+                    raise ValueError(
+                        "pprf_n_pixels is required when concentration_per_group"
+                        " is a scalar"
+                    )
+                conc = torch.full(
+                    (n_bins, pprf_n_pixels),
+                    float(concentration_per_group),
+                )
+            else:
+                conc = _load_buffer(concentration_per_group)
+                if pprf_quantile is not None:
+                    threshold = torch.quantile(conc.float(), pprf_quantile)
+                    conc[conc > threshold] *= pprf_conc_factor
+                    conc = conc / conc.max()
+                if conc.dim() == 1:
+                    conc = conc.unsqueeze(0).expand(n_bins, -1).contiguous()
             self.register_buffer(
                 "concentration_per_group",
                 conc.clamp(min=1e-6),
