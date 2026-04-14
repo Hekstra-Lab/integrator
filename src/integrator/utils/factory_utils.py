@@ -251,6 +251,9 @@ def _get_loss_module(
     # Include n_bins in filename to prevent concurrent runs from clobbering files
     data_dir = cfg.get("data_loader", {}).get("args", {}).get("data_dir", "")
     n_bins = cfg.get("loss", {}).get("args", {}).get("n_bins")
+    # When pprf_quantile is set, the user provides a global concentration
+    # file that should not get an n_bins suffix.
+    global_conc = "pprf_quantile" in kwargs
     for pt_key in (
         "tau_per_group",
         "bg_rate_per_group",
@@ -260,8 +263,9 @@ def _get_loss_module(
         "bg_concentration_per_group",
     ):
         if pt_key in kwargs and isinstance(kwargs[pt_key], str):
+            nbins = None if (pt_key == "concentration_per_group" and global_conc) else n_bins
             kwargs[pt_key] = _resolve_data_path(
-                kwargs[pt_key], data_dir, n_bins
+                kwargs[pt_key], data_dir, nbins
             )
 
     return loss_cls(**kwargs)

@@ -67,6 +67,8 @@ class PerBinLoss(nn.Module):
         tau_per_group: list[float] | str,
         bg_rate_per_group: list[float] | str,
         concentration_per_group: str | None = None,
+        pprf_quantile: float | None = None,
+        pprf_conc_factor: float = 40.0,
         i_concentration_per_group: list[float] | str | None = None,
         bg_concentration_per_group: list[float] | str | None = None,
         bg_concentration: float = 1.0,
@@ -99,9 +101,17 @@ class PerBinLoss(nn.Module):
             "bg_rate_per_group", _load_buffer(bg_rate_per_group)
         )
         if concentration_per_group is not None:
+            conc = _load_buffer(concentration_per_group)
+            if pprf_quantile is not None:
+                threshold = torch.quantile(conc.float(), pprf_quantile)
+                conc[conc > threshold] *= pprf_conc_factor
+                conc = conc / conc.max()
+            if conc.dim() == 1:
+                n_bins = self.tau_per_group.shape[0]
+                conc = conc.unsqueeze(0).expand(n_bins, -1).contiguous()
             self.register_buffer(
                 "concentration_per_group",
-                _load_buffer(concentration_per_group).clamp(min=1e-6),
+                conc.clamp(min=1e-6),
             )
         else:
             self.concentration_per_group = None

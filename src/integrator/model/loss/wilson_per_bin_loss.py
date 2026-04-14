@@ -93,6 +93,8 @@ class WilsonPerBinLoss(nn.Module):
         # Empirical Bayes priors (per-bin)
         bg_rate_per_group: list[float] | str,
         concentration_per_group: str,
+        pprf_quantile: float | None = None,
+        pprf_conc_factor: float = 40.0,
         bg_concentration: float = 1.0,
         # Wilson initialization
         tau_per_group: list[float] | str | None = None,
@@ -148,9 +150,17 @@ class WilsonPerBinLoss(nn.Module):
         self.register_buffer(
             "bg_rate_per_group", _load_buffer(bg_rate_per_group)
         )
+        conc = _load_buffer(concentration_per_group)
+        if pprf_quantile is not None:
+            threshold = torch.quantile(conc.float(), pprf_quantile)
+            conc[conc > threshold] *= pprf_conc_factor
+            conc = conc / conc.max()
+        if conc.dim() == 1:
+            n_bins = self.s_squared_per_group.shape[0]
+            conc = conc.unsqueeze(0).expand(n_bins, -1).contiguous()
         self.register_buffer(
             "concentration_per_group",
-            _load_buffer(concentration_per_group).clamp(min=1e-6),
+            conc.clamp(min=1e-6),
         )
         if bg_concentration_per_group is not None:
             self.register_buffer(

@@ -164,9 +164,15 @@ def prepare_per_bin_priors(
         "tau_per_group",
     ]
 
+    # When pprf_quantile is set, the user provides a global concentration
+    # file that should not get an n_bins suffix or be auto-generated.
+    global_conc = "pprf_quantile" in loss_args
+
     needed = {}
     for key in per_bin_keys:
         if key not in loss_args:
+            continue
+        if key == "concentration_per_group" and global_conc:
             continue
         filename = loss_args[key]
         if isinstance(filename, str):
