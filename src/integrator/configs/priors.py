@@ -9,6 +9,8 @@ P = TypeVar("P")
 class DirichletParams:
     concentration: float | str
     shape: tuple[int, int, int]
+    quantile: float | None = None
+    conc_factor: float = 40.0
 
     def __post_init__(self):
         if isinstance(self.concentration, str):
@@ -32,6 +34,11 @@ class DirichletParams:
                 The input shape must have three elements ([depth, height, width]),
                 but only {len(self.shape)} were passed.
                 """
+            )
+
+        if self.quantile is not None and not 0.0 < self.quantile < 1.0:
+            raise ValueError(
+                f"quantile must be in (0, 1), got {self.quantile}"
             )
 
 

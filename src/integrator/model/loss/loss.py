@@ -82,9 +82,11 @@ def _get_dirichlet_prior(
 
     if isinstance(conc, str):
         loaded = torch.load(conc)
-        # loaded[loaded > 2] *= 40 # NOTE: For testing
-        # n_components = loaded.numel()
-        # loaded = loaded / loaded.sum() * n_components  # avg alpha = 1.0
+        quantile = prior.params.quantile
+        if quantile is not None:
+            threshold = torch.quantile(loaded.float(), quantile)
+            loaded[loaded > threshold] *= prior.params.conc_factor
+            loaded = loaded / loaded.max()
         return {"concentration": loaded.reshape(-1)}
 
     raise TypeError(f"Unsupported concentration type: {type(conc)}")

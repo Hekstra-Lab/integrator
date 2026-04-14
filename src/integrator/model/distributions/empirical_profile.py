@@ -10,6 +10,7 @@ average for that bin; the model only learns per-reflection corrections.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.nn.utils.parametrizations as P
 from torch import Tensor
 
 from .logistic_normal import (
@@ -35,6 +36,9 @@ class EmpiricalProfileSurrogate(nn.Module):
         input_dim: Dimension of the encoder output.
         basis_path: Path to the empirical_profile_basis_per_bin.pt file.
         learn_W: If True, W is a learnable parameter; otherwise a frozen buffer.
+        orthogonal_W: If True, W is a learnable parameter constrained to have
+            orthonormal columns (Stiefel manifold) via Householder
+            parametrization. Implies `learn_W=True`.
         global_prior: If True, use a single global N(0, sigma_prior^2 I) prior
             on h instead of per-bin N(mu_k, diag(std_k^2)) priors.
     """
@@ -44,6 +48,7 @@ class EmpiricalProfileSurrogate(nn.Module):
         input_dim: int,
         basis_path: str,
         learn_W: bool = False,
+        orthogonal_W: bool = False,
         global_prior: bool = False,
         init_std: float = 0.5,
     ) -> None:
@@ -51,8 +56,10 @@ class EmpiricalProfileSurrogate(nn.Module):
 
         basis = torch.load(basis_path, weights_only=False)
 
-        if learn_W:
+        if orthogonal_W or learn_W:
             self.W = nn.Parameter(basis["W"].clone())  # (K, d)
+            if orthogonal_W:
+                P.orthogonal(self, name="W")
         else:
             self.register_buffer("W", basis["W"])  # (K, d)
         self.register_buffer(
