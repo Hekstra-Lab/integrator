@@ -9,6 +9,7 @@ from .gamma import (
 )
 from .log_normal import LogNormalDistribution
 from .profile_surrogates import (
+    CPProfileSurrogate,
     FixedBasisProfileSurrogate,
     LearnedBasisProfileSurrogate,
     PerBinProfileSurrogate,
@@ -16,6 +17,7 @@ from .profile_surrogates import (
 )
 
 __all__ = [
+    "CPProfileSurrogate",
     "EmpiricalProfileSurrogate",
     "DirichletDistribution",
     "LogNormalDistribution",

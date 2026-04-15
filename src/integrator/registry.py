@@ -4,6 +4,7 @@ from integrator.data_loaders import (
     SimulatedShoeboxLoader,
 )
 from integrator.model.distributions import (
+    CPProfileSurrogate,
     DirichletDistribution,
     EmpiricalProfileSurrogate,
     FixedBasisProfileSurrogate,
@@ -65,6 +66,7 @@ REGISTRY = {
         "learned_basis_profile": LearnedBasisProfileSurrogate,
         "fixed_basis_profile": FixedBasisProfileSurrogate,
         "per_bin_profile": PerBinProfileSurrogate,
+        "cp_profile": CPProfileSurrogate,
 
         # Legacy aliases
         "linear_profile_surrogate": LearnedBasisProfileSurrogate,

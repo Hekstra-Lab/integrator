@@ -4,7 +4,9 @@ import torch
 from torch import Tensor
 
 from integrator import configs
-from integrator.model.distributions.profile_surrogates import ProfileSurrogateOutput
+from integrator.model.distributions.profile_surrogates import (
+    ProfileSurrogateOutput,
+)
 from integrator.model.integrators import BaseIntegrator
 
 from .integrator_utils import (
