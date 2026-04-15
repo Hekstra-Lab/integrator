@@ -8,7 +8,6 @@ from torch.distributions import Dirichlet
 
 class DirichletDistribution(torch.nn.Module):
     """
-
     Attributes:
         n_pixels:
         eps:
@@ -26,7 +25,7 @@ class DirichletDistribution(torch.nn.Module):
             self.alpha_layer = nn.Linear(in_features, self.n_pixels)
         self.eps = eps
 
-    def forward(self, x, group_labels=None):
+    def forward(self, x, mc_samples=None, group_labels=None):
         x = self.alpha_layer(x)
 
         x = F.softplus(x) + self.eps

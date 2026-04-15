@@ -5,7 +5,7 @@ import torch
 from torch import Tensor, nn
 
 from integrator.configs.integrator import IntegratorCfg
-from integrator.model.distributions.logistic_normal import ProfilePosterior
+from integrator.model.distributions.profile_surrogates import ProfileSurrogateOutput
 
 
 @dataclass
@@ -19,7 +19,6 @@ class IntegratorBaseOutputs:
     zp: Tensor
     zbg: Tensor
     metadata: dict[str, torch.Tensor]
-    concentration: Tensor | None = None
 
 
 @dataclass
@@ -33,6 +32,10 @@ class IntegratorModelArgs:
 def _assemble_outputs(
     out: IntegratorBaseOutputs,
 ) -> dict[str, Any]:
+    is_profile_output = isinstance(out.qp, ProfileSurrogateOutput)
+
+    qp_mean = out.qp.mean_profile if is_profile_output else out.qp.mean
+
     base = {
         "rates": out.rates,
         "counts": out.counts,
@@ -40,16 +43,15 @@ def _assemble_outputs(
         "zp": out.zp,
         "qbg_mean": out.qbg.mean,
         "qbg_var": out.qbg.variance,
-        "qp_mean": out.qp.mean,
+        "qp_mean": qp_mean,
         "qi_mean": out.qi.mean,
         "qi_var": out.qi.variance,
-        "profile": out.qp.mean,
-        "concentration": out.concentration,
+        "profile": qp_mean,
     }
 
-    if isinstance(out.qp, ProfilePosterior):
-        base["qp_mu_h"] = out.qp.mu_h  # (B, d) posterior mean of h
-        base["qp_std_h"] = out.qp.std_h  # (B, d) posterior std of h
+    if is_profile_output:
+        base["qp_mu_h"] = out.qp.mu_h
+        base["qp_std_h"] = out.qp.std_h
 
     if out.metadata is None:
         return base

@@ -6,16 +6,15 @@ from integrator.data_loaders import (
 from integrator.model.distributions import (
     DirichletDistribution,
     EmpiricalProfileSurrogate,
+    FixedBasisProfileSurrogate,
     FoldedNormalDistribution,
     GammaDistributionRepamA,
     GammaDistributionRepamB,
     GammaDistributionRepamC,
     GammaDistributionRepamD,
-    LinearProfileSurrogate,
-    LogisticNormalSurrogate,
+    LearnedBasisProfileSurrogate,
     LogNormalDistribution,
-    PerBinLogisticNormalSurrogate,
-    PhysicalGaussianProfileSurrogate,
+    PerBinProfileSurrogate,
 )
 from integrator.model.encoders import (
     IntensityEncoder,
@@ -63,10 +62,14 @@ REGISTRY = {
         "log_normal": LogNormalDistribution,
         "folded_normal": FoldedNormalDistribution,
         "dirichlet": DirichletDistribution,
-        "linear_profile_surrogate": LinearProfileSurrogate,
-        "logistic_normal_surrogate": LogisticNormalSurrogate,
-        "per_bin_logistic_normal": PerBinLogisticNormalSurrogate,
-        "physical_gaussian_surrogate": PhysicalGaussianProfileSurrogate,
+        "learned_basis_profile": LearnedBasisProfileSurrogate,
+        "fixed_basis_profile": FixedBasisProfileSurrogate,
+        "per_bin_profile": PerBinProfileSurrogate,
+
+        # Legacy aliases
+        "linear_profile_surrogate": LearnedBasisProfileSurrogate,
+        "logistic_normal_surrogate": FixedBasisProfileSurrogate,
+        "per_bin_logistic_normal": PerBinProfileSurrogate,
         "empirical_profile_surrogate": EmpiricalProfileSurrogate,
     },
     "data_loader": {

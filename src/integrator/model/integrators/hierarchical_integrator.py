@@ -12,6 +12,7 @@ from integrator.model.integrators.base_integrator import (
 from integrator.model.integrators.integrator import (
     IntegratorModelA,
     IntegratorModelC,
+    _sample_profile,
 )
 from integrator.model.integrators.integrator_utils import (
     IntegratorBaseOutputs,
@@ -110,10 +111,12 @@ class HierarchicalIntegratorA(IntegratorModelA):
             "profile_group_label", metadata.get("group_label")
         )
         prf_labels = prf_labels.long() if prf_labels is not None else None
-        qp = self.surrogates["qp"](x_profile, group_labels=prf_labels)
+        qp = self.surrogates["qp"](
+            x_profile, mc_samples=self.mc_samples, group_labels=prf_labels
+        )
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
-        zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
+        zp = _sample_profile(qp, self.mc_samples)
         zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
         rate = zI * zp + zbg
@@ -127,7 +130,6 @@ class HierarchicalIntegratorA(IntegratorModelA):
             qi=qi,
             zp=zp,
             zbg=zbg,
-            concentration=qp.concentration,
             metadata=metadata,
         )
         out = _assemble_outputs(out)
@@ -181,10 +183,12 @@ class HierarchicalIntegratorB(BaseIntegrator):
             "profile_group_label", metadata.get("group_label")
         )
         prf_labels = prf_labels.long() if prf_labels is not None else None
-        qp = self.surrogates["qp"](x_profile, group_labels=prf_labels)
+        qp = self.surrogates["qp"](
+            x_profile, mc_samples=self.mc_samples, group_labels=prf_labels
+        )
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
-        zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
+        zp = _sample_profile(qp, self.mc_samples)
         zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
         rate = zI * zp + zbg
@@ -198,7 +202,6 @@ class HierarchicalIntegratorB(BaseIntegrator):
             qi=qi,
             zp=zp,
             zbg=zbg,
-            concentration=qp.concentration,
             metadata=metadata,
         )
         out = _assemble_outputs(out)
@@ -246,10 +249,12 @@ class HierarchicalIntegratorC(IntegratorModelC):
             "profile_group_label", metadata.get("group_label")
         )
         prf_labels = prf_labels.long() if prf_labels is not None else None
-        qp = self.surrogates["qp"](x_profile, group_labels=prf_labels)
+        qp = self.surrogates["qp"](
+            x_profile, mc_samples=self.mc_samples, group_labels=prf_labels
+        )
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
-        zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
+        zp = _sample_profile(qp, self.mc_samples)
         zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
         rate = zI * zp + zbg
@@ -263,7 +268,6 @@ class HierarchicalIntegratorC(IntegratorModelC):
             qi=qi,
             zp=zp,
             zbg=zbg,
-            concentration=qp.concentration,
             metadata=metadata,
         )
         out = _assemble_outputs(out)

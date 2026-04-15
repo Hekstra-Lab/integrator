@@ -107,7 +107,7 @@ def _get_surrogate_modules(
     args dict from the YAML is passed directly to each class constructor,
     avoiding the need for a separate `SurrogateArgs` dataclass per class.
 
-    For `logistic_normal_surrogate`, a relative `basis_path` is resolved
+    For `fixed_basis_profile` (and similar), a relative `basis_path` is resolved
     against `data_loader.args.data_dir` so the YAML only needs the filename.
     """
     surrogates = {}
@@ -129,10 +129,15 @@ def _get_surrogate_modules(
         if (
             surrogate_cfg["name"]
             in (
-                "logistic_normal_surrogate",
-                "physical_gaussian_surrogate",
-                "per_bin_logistic_normal",
+                "fixed_basis_profile",
+                "learned_basis_profile",
+
+                "per_bin_profile",
                 "empirical_profile_surrogate",
+                # Legacy aliases
+                "logistic_normal_surrogate",
+                "per_bin_logistic_normal",
+                "linear_profile_surrogate",
             )
             and "basis_path" in args
         ):
@@ -235,12 +240,10 @@ def _get_loss_module(
         "pi_cfg",
         "n_bins",
         "profile_binning",
-        "profile_basis_per_bin",
         "profile_basis_type",
         "profile_basis_d",
         "profile_basis_max_order",
         "profile_basis_sigma_ref",
-        "empirical_profile_basis_per_bin",
         "profile_smooth_sigma",
     }
     for k, v in cfg["loss"]["args"].items():
@@ -254,6 +257,12 @@ def _get_loss_module(
         h = cfg["integrator"]["args"].get("h", 21)
         w = cfg["integrator"]["args"].get("w", 21)
         kwargs["pprf_n_pixels"] = d * h * w
+
+    # Map empirical_profile_basis_per_bin -> profile_basis_per_bin
+    if "empirical_profile_basis_per_bin" in kwargs and "profile_basis_per_bin" not in kwargs:
+        kwargs["profile_basis_per_bin"] = kwargs.pop("empirical_profile_basis_per_bin")
+    elif "empirical_profile_basis_per_bin" in kwargs:
+        kwargs.pop("empirical_profile_basis_per_bin")
 
     # Resolve relative .pt paths for custom loss buffers
     # Include n_bins in filename to prevent concurrent runs from clobbering files
@@ -269,9 +278,16 @@ def _get_loss_module(
         "s_squared_per_group",
         "i_concentration_per_group",
         "bg_concentration_per_group",
+        "profile_basis_per_bin",
+        "empirical_profile_basis_per_bin",
     ):
         if pt_key in kwargs and isinstance(kwargs[pt_key], str):
-            nbins = None if (pt_key == "concentration_per_group" and global_conc) else n_bins
+            # Basis files and global concentration don't get n_bins suffix
+            skip_nbins = (
+                pt_key in ("profile_basis_per_bin", "empirical_profile_basis_per_bin")
+                or (pt_key == "concentration_per_group" and global_conc)
+            )
+            nbins = None if skip_nbins else n_bins
             kwargs[pt_key] = _resolve_data_path(
                 kwargs[pt_key], data_dir, nbins
             )

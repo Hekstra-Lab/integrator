@@ -8,14 +8,11 @@ from .gamma import (
     GammaDistributionRepamD,
 )
 from .log_normal import LogNormalDistribution
-from .logistic_normal import (
-    LinearProfileSurrogate,
-    LogisticNormalSurrogate,
-    PerBinLogisticNormalSurrogate,
-    PerBinProfilePosterior,
-    PhysicalGaussianProfilePosterior,
-    PhysicalGaussianProfileSurrogate,
-    ProfilePosterior,
+from .profile_surrogates import (
+    FixedBasisProfileSurrogate,
+    LearnedBasisProfileSurrogate,
+    PerBinProfileSurrogate,
+    ProfileSurrogateOutput,
 )
 
 __all__ = [
@@ -27,11 +24,8 @@ __all__ = [
     "GammaDistributionRepamB",
     "GammaDistributionRepamC",
     "GammaDistributionRepamD",
-    "LinearProfileSurrogate",
-    "LogisticNormalSurrogate",
-    "PerBinLogisticNormalSurrogate",
-    "PerBinProfilePosterior",
-    "PhysicalGaussianProfilePosterior",
-    "PhysicalGaussianProfileSurrogate",
-    "ProfilePosterior",
+    "FixedBasisProfileSurrogate",
+    "LearnedBasisProfileSurrogate",
+    "PerBinProfileSurrogate",
+    "ProfileSurrogateOutput",
 ]

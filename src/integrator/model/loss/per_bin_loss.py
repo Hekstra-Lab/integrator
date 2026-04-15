@@ -15,9 +15,9 @@ import torch.nn as nn
 from torch import Tensor
 from torch.distributions import Distribution, Gamma, Poisson
 
-from integrator.model.distributions.logistic_normal import ProfilePosterior
+from integrator.model.distributions.profile_surrogates import ProfileSurrogateOutput
 from integrator.model.loss.kl_helpers import compute_bg_kl, compute_profile_kl
-from integrator.model.loss.loss import _kl
+from integrator.model.loss.kl_helpers import _kl
 
 
 def _load_buffer(value: list[float] | str) -> Tensor:
@@ -73,6 +73,9 @@ class PerBinLoss(nn.Module):
         i_concentration_per_group: list[float] | str | None = None,
         bg_concentration_per_group: list[float] | str | None = None,
         bg_concentration: float = 1.0,
+        # Profile prior from basis file
+        profile_basis_per_bin: str | None = None,
+        profile_sigma_prior: float = 3.0,
         # Prior configs (from YAML pi_cfg / pbg_cfg / pprf_cfg)
         pi_cfg=None,
         pbg_cfg=None,
@@ -88,6 +91,7 @@ class PerBinLoss(nn.Module):
         self.eps = eps
         self.dataset_size = dataset_size
         self.bg_concentration = bg_concentration
+        self.profile_sigma_prior = profile_sigma_prior
 
         # Resolve weights: prefer *_cfg.weight, fall back to scalar
         self.pprf_weight = (
@@ -95,6 +99,26 @@ class PerBinLoss(nn.Module):
         )
         self.pbg_weight = pbg_cfg.weight if pbg_cfg is not None else pbg_weight
         self.pi_weight = pi_cfg.weight if pi_cfg is not None else pi_weight
+
+        # Profile prior params from basis file
+        if profile_basis_per_bin is not None:
+            basis = torch.load(profile_basis_per_bin, weights_only=False)
+            self.profile_sigma_prior = float(
+                basis.get("sigma_prior", profile_sigma_prior)
+            )
+            if "mu_per_group" in basis:
+                self.register_buffer(
+                    "profile_mu_prior", basis["mu_per_group"]
+                )
+                self.register_buffer(
+                    "profile_std_prior", basis["std_per_group"]
+                )
+            else:
+                self.profile_mu_prior = None
+                self.profile_std_prior = None
+        else:
+            self.profile_mu_prior = None
+            self.profile_std_prior = None
 
         # Fixed buffers (per-bin)
         self.register_buffer("tau_per_group", _load_buffer(tau_per_group))
@@ -150,7 +174,7 @@ class PerBinLoss(nn.Module):
         self,
         rate: Tensor,
         counts: Tensor,
-        qp: Distribution | ProfilePosterior,
+        qp: Distribution | ProfileSurrogateOutput,
         qi: Distribution,
         qbg: Distribution,
         mask: Tensor,
@@ -172,6 +196,9 @@ class PerBinLoss(nn.Module):
         kl_prf = compute_profile_kl(
             qp,
             groups,
+            self.profile_sigma_prior,
+            self.profile_mu_prior,
+            self.profile_std_prior,
             self.concentration_per_group,
             self.pprf_weight,
             self.mc_samples,

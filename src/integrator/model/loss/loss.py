@@ -17,7 +17,8 @@ from torch.distributions import (
 
 from integrator.configs.config_utils import shallow_dict
 from integrator.configs.priors import DirichletParams, PriorConfig
-from integrator.model.distributions.logistic_normal import ProfilePosterior
+from integrator.model.distributions.profile_surrogates import ProfileSurrogateOutput
+from integrator.model.loss.kl_helpers import _kl, compute_profile_kl_global
 
 PRIOR_MAP = {
     "gamma": Gamma,
@@ -104,23 +105,6 @@ def _build_prior(
     return dist(**{k: v.to(device) for k, v in params.items()})
 
 
-def _kl(
-    q: Distribution,
-    p: Distribution,
-    mc_samples: int,
-    eps: float = 0.0,
-):
-    try:
-        return torch.distributions.kl.kl_divergence(q, p)
-    except NotImplementedError:
-        samples = q.rsample(torch.Size([mc_samples]))
-        if eps > 0:
-            samples = samples.clamp(min=eps)
-        log_q = q.log_prob(samples)
-        log_p = p.log_prob(samples)
-        return (log_q - log_p).mean(dim=0)
-
-
 def _prior_kl(
     prior_cfg: PriorConfig,
     q: Distribution,
@@ -153,11 +137,13 @@ class Loss(nn.Module):
         pbg_cfg: PriorConfig | None,
         mc_samples: int = 100,
         eps: float = 1e-6,
+        profile_sigma_prior: float = 3.0,
     ):
         super().__init__()
 
         self.eps = eps
         self.mc_samples = mc_samples
+        self.profile_sigma_prior = profile_sigma_prior
 
         # Always set attributes so forward() can do unconditional `is not None` checks.
         self.pi_cfg = pi_cfg
@@ -181,7 +167,7 @@ class Loss(nn.Module):
         self,
         rate: Tensor,
         counts: Tensor,
-        qp: Distribution | ProfilePosterior,
+        qp: Distribution | ProfileSurrogateOutput,
         mask: Tensor,
         qi: Distribution | None = None,
         qbg: Distribution | None = None,
@@ -202,9 +188,11 @@ class Loss(nn.Module):
         kl_bg = torch.zeros(batch_size, device=device)
 
         # Profile prior KL
-        if isinstance(qp, ProfilePosterior):
+        if isinstance(qp, ProfileSurrogateOutput):
             weight = self.pprf_cfg.weight if self.pprf_cfg is not None else 1.0
-            kl_prf = qp.kl_divergence() * weight
+            kl_prf = compute_profile_kl_global(
+                qp.mu_h, qp.std_h, self.profile_sigma_prior
+            ) * weight
             kl += kl_prf
         elif self.pprf_cfg is not None and self.pprf_params is not None:
             kl_prf = _prior_kl(

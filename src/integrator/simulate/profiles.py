@@ -1,19 +1,3 @@
-"""Sample 2D Gaussian profiles on a pixel grid.
-
-Each profile is generated from a 5D latent h ~ N(0, I_5) mapped to
-physical parameters (cx, cy, sigma1, sigma2, theta) via the same
-transform used by PhysicalGaussianProfileSurrogate:
-
-    cx     = center_base + h[0] * center_scale
-    cy     = center_base + h[1] * center_scale
-    sigma1 = exp(log_sigma_base + h[2] * width_scale)
-    sigma2 = exp(log_sigma_base + h[3] * width_scale)
-    theta  = pi * sigmoid(h[4])
-
-This ensures the simulated profiles live in exactly the same family
-as the surrogate posterior, which is required for valid SBC.
-"""
-
 import torch
 from torch import Tensor
 
@@ -134,7 +118,9 @@ def physical_params_to_profile(
     profile = torch.exp(-0.5 * (x_rot**2 / sigma1**2 + y_rot**2 / sigma2**2))
 
     # Normalize to sum to 1
-    profile = profile / profile.sum(dim=(-2, -1), keepdim=True).clamp(min=1e-10)
+    profile = profile / profile.sum(dim=(-2, -1), keepdim=True).clamp(
+        min=1e-10
+    )
 
     # Flatten spatial dims
     return profile.reshape(*batch_dims, H * W)

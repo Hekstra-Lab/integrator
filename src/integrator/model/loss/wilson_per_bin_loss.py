@@ -24,9 +24,9 @@ from torch.distributions import (
     kl_divergence,
 )
 
-from integrator.model.distributions.logistic_normal import ProfilePosterior
+from integrator.model.distributions.profile_surrogates import ProfileSurrogateOutput
 from integrator.model.loss.kl_helpers import compute_bg_kl, compute_profile_kl
-from integrator.model.loss.loss import _kl
+from integrator.model.loss.kl_helpers import _kl
 from integrator.model.loss.per_bin_loss import _load_buffer
 
 
@@ -49,7 +49,7 @@ class WilsonPerBinLoss(nn.Module):
         concentration_per_group: Path to .pt file with Dirichlet concentrations
             (n_groups, n_pixels). Only used when the profile surrogate returns a
             Distribution (Dirichlet). Ignored when the surrogate returns a
-            ProfilePosterior (latent decoder), which uses a global
+            ProfileSurrogateOutput (latent decoder), which uses a global
             N(0, sigma_prior^2 I) prior instead.
         tau_per_group: Empirical per-bin rates. Used to auto-initialize q(log K)
             and q(log B) via linear regression of log(tau) on s^2 when
@@ -97,6 +97,9 @@ class WilsonPerBinLoss(nn.Module):
         pprf_quantile: float | None = None,
         pprf_conc_factor: float = 40.0,
         bg_concentration: float = 1.0,
+        # Profile prior from basis file
+        profile_basis_per_bin: str | None = None,
+        profile_sigma_prior: float = 3.0,
         # Wilson initialization
         tau_per_group: list[float] | str | None = None,
         init_from_tau: bool = True,
@@ -128,6 +131,7 @@ class WilsonPerBinLoss(nn.Module):
         self.eps = eps
         self.dataset_size = dataset_size
         self.bg_concentration = bg_concentration
+        self.profile_sigma_prior = profile_sigma_prior
         self.pprf_weight = (
             pprf_cfg.weight if pprf_cfg is not None else pprf_weight
         )
@@ -143,6 +147,26 @@ class WilsonPerBinLoss(nn.Module):
         ):
             learn_concentration = True
         self.learn_concentration = learn_concentration
+
+        # Profile prior params from basis file
+        if profile_basis_per_bin is not None:
+            basis = torch.load(profile_basis_per_bin, weights_only=False)
+            self.profile_sigma_prior = float(
+                basis.get("sigma_prior", profile_sigma_prior)
+            )
+            if "mu_per_group" in basis:
+                self.register_buffer(
+                    "profile_mu_prior", basis["mu_per_group"]
+                )
+                self.register_buffer(
+                    "profile_std_prior", basis["std_per_group"]
+                )
+            else:
+                self.profile_mu_prior = None
+                self.profile_std_prior = None
+        else:
+            self.profile_mu_prior = None
+            self.profile_std_prior = None
 
         # Fixed buffers (per-bin)
         self.register_buffer(
@@ -325,7 +349,7 @@ class WilsonPerBinLoss(nn.Module):
         self,
         rate: Tensor,
         counts: Tensor,
-        qp: Distribution | ProfilePosterior,
+        qp: Distribution | ProfileSurrogateOutput,
         qi: Distribution,
         qbg: Distribution,
         mask: Tensor,
@@ -347,6 +371,9 @@ class WilsonPerBinLoss(nn.Module):
         kl_prf = compute_profile_kl(
             qp,
             groups,
+            self.profile_sigma_prior,
+            self.profile_mu_prior,
+            self.profile_std_prior,
             self.concentration_per_group,
             self.pprf_weight,
             self.mc_samples,

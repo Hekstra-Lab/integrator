@@ -1,21 +1,12 @@
-"""Empirical profile surrogate with per-bin bias from data.
-
-Instead of a single symmetric Gaussian bias shared across all bins
-(as in `PerBinLogisticNormalSurrogate`), this surrogate uses per-bin
-empirical biases computed from the mean bg-subtracted profile in each
-resolution/azimuthal bin.  At z=0, the profile reproduces the empirical
-average for that bin; the model only learns per-reflection corrections.
-"""
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.utils.parametrizations as P
 from torch import Tensor
 
-from .logistic_normal import (
-    PerBinProfilePosterior,
-    ProfilePosterior,
+from .profile_surrogates import (
+    ProfileSurrogateOutput,
+    _sample_and_decode,
     _softplus_inverse,
 )
 
@@ -27,9 +18,6 @@ class EmpiricalProfileSurrogate(nn.Module):
 
     - `W`             (K, d):       basis matrix (Hermite)
     - `b_per_group`   (n_bins, K):  per-bin log(mean_profile)
-    - `mu_per_group`  (n_bins, d):  per-bin prior mean in latent space
-    - `std_per_group` (n_bins, d):  per-bin prior std in latent space
-    - `sigma_prior`   float:        global prior std
     - `d`             int:          latent dimensionality
 
     Args:
@@ -39,8 +27,6 @@ class EmpiricalProfileSurrogate(nn.Module):
         orthogonal_W: If True, W is a learnable parameter constrained to have
             orthonormal columns (Stiefel manifold) via Householder
             parametrization. Implies `learn_W=True`.
-        global_prior: If True, use a single global N(0, sigma_prior^2 I) prior
-            on h instead of per-bin N(mu_k, diag(std_k^2)) priors.
     """
 
     def __init__(
@@ -49,7 +35,6 @@ class EmpiricalProfileSurrogate(nn.Module):
         basis_path: str,
         learn_W: bool = False,
         orthogonal_W: bool = False,
-        global_prior: bool = False,
         init_std: float = 0.5,
     ) -> None:
         super().__init__()
@@ -65,16 +50,8 @@ class EmpiricalProfileSurrogate(nn.Module):
         self.register_buffer(
             "b_per_group", basis["b_per_group"]
         )  # (n_bins, K)
-        self.register_buffer(
-            "mu_per_group", basis["mu_per_group"]
-        )  # (n_bins, d)
-        self.register_buffer(
-            "std_per_group", basis["std_per_group"]
-        )  # (n_bins, d)
 
         self.d: int = int(basis["d"])
-        self.sigma_prior: float = float(basis.get("sigma_prior", 3.0))
-        self.global_prior: bool = global_prior
 
         self.mu_head = nn.Linear(input_dim, self.d)
         self.std_head = nn.Linear(input_dim, self.d)
@@ -85,12 +62,14 @@ class EmpiricalProfileSurrogate(nn.Module):
     def forward(
         self,
         x: Tensor,
+        mc_samples: int = 1,
         group_labels: Tensor | None = None,
-    ) -> ProfilePosterior:
-        """Map encoder output to a profile posterior.
+    ) -> ProfileSurrogateOutput:
+        """Map encoder output to profile samples.
 
         Args:
             x: Encoder output, shape (B, input_dim).
+            mc_samples: Number of Monte Carlo profile samples.
             group_labels: Bin index per reflection, shape (B,) long tensor.
                 Selects the per-bin empirical bias for each reflection.
                 When None, uses the mean bias across all bins as a fallback.
@@ -103,21 +82,13 @@ class EmpiricalProfileSurrogate(nn.Module):
         else:
             b = self.b_per_group.mean(dim=0)  # (K,) fallback
 
-        if self.global_prior:
-            return ProfilePosterior(
-                mu_h=mu_h,
-                std_h=std_h,
-                W=self.W,
-                b=b,
-                sigma_prior=self.sigma_prior,
-            )
+        zp, mean_profile = _sample_and_decode(
+            mu_h, std_h, self.W, b, mc_samples
+        )
 
-        return PerBinProfilePosterior(
+        return ProfileSurrogateOutput(
+            zp=zp,
+            mean_profile=mean_profile,
             mu_h=mu_h,
             std_h=std_h,
-            W=self.W,
-            b=b,
-            sigma_prior=self.sigma_prior,
-            mu_prior=self.mu_per_group,
-            std_prior=self.std_per_group,
         )

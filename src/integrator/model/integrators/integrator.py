@@ -4,6 +4,7 @@ import torch
 from torch import Tensor
 
 from integrator import configs
+from integrator.model.distributions.profile_surrogates import ProfileSurrogateOutput
 from integrator.model.integrators import BaseIntegrator
 
 from .integrator_utils import (
@@ -11,6 +12,13 @@ from .integrator_utils import (
     IntegratorModelArgs,
     _assemble_outputs,
 )
+
+
+def _sample_profile(qp, mc_samples: int) -> Tensor:
+    """Sample profiles, handling both ProfileSurrogateOutput and Distribution."""
+    if isinstance(qp, ProfileSurrogateOutput):
+        return qp.zp.permute(1, 0, 2)  # (B, S, K)
+    return qp.rsample([mc_samples]).permute(1, 0, 2)
 
 
 # %%
@@ -31,28 +39,22 @@ class IntegratorModelA(BaseIntegrator):
     ) -> dict[str, Any]:
         counts = torch.clamp(counts, min=0)
 
-        # Reshape inputs for CNN
         b = shoebox.shape[0]
         shoebox_reshaped = shoebox.reshape(b, 1, *self.shoebox_shape)
 
-        # Getting representations
         x_profile = self.encoders["profile"](shoebox_reshaped)
         x_intensity = self.encoders["intensity"](shoebox_reshaped)
 
-        # Surrogate modules
         qbg = self.surrogates["qbg"](x_intensity)
         qi = self.surrogates["qi"](x_intensity)
-        qp = self.surrogates["qp"](x_profile)
+        qp = self.surrogates["qp"](x_profile, mc_samples=self.mc_samples)
 
-        # Monte Carlo samples
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
-        zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
+        zp = _sample_profile(qp, self.mc_samples)
         zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
-        # Poisson rate
         rate = zI * zp + zbg
 
-        # Getting outputs
         out = IntegratorBaseOutputs(
             rates=rate,
             counts=counts,
@@ -62,7 +64,6 @@ class IntegratorModelA(BaseIntegrator):
             qi=qi,
             zp=zp,
             zbg=zbg,
-            concentration=qp.concentration,  # if using Dirichlet
             metadata=metadata,
         )
         out = _assemble_outputs(out)
@@ -94,29 +95,23 @@ class IntegratorModelB(BaseIntegrator):
     ) -> dict[str, Any]:
         counts = torch.clamp(counts, min=0)
 
-        # Reshape inputs for CNN
         b = shoebox.shape[0]
         shoebox_reshaped = shoebox.reshape(b, 1, *self.shoebox_shape)
 
-        # Getting representations
         x_profile = self.encoders["profile"](shoebox_reshaped)
         x_k = self.encoders["k"](shoebox_reshaped)
         x_r = self.encoders["r"](shoebox_reshaped)
 
-        # Surrogate modules
         qbg = self.surrogates["qbg"](x_k, x_r)
         qi = self.surrogates["qi"](x_k, x_r)
-        qp = self.surrogates["qp"](x_profile)
+        qp = self.surrogates["qp"](x_profile, mc_samples=self.mc_samples)
 
-        # Monte Carlo Samples
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
-        zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
+        zp = _sample_profile(qp, self.mc_samples)
         zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
-        # Poisson rate
         rate = zI * zp + zbg
 
-        # Getting outputs
         out = IntegratorBaseOutputs(
             rates=rate,
             counts=counts,
@@ -127,7 +122,6 @@ class IntegratorModelB(BaseIntegrator):
             zp=zp,
             zbg=zbg,
             metadata=metadata,
-            concentration=qp.concentration,
         )
         out = _assemble_outputs(out)
 
@@ -178,10 +172,10 @@ class IntegratorModelC(BaseIntegrator):
 
         qbg = self.surrogates["qbg"](x_k_bg, x_r_bg)
         qi = self.surrogates["qi"](x_k_i, x_r_i)
-        qp = self.surrogates["qp"](x_profile)
+        qp = self.surrogates["qp"](x_profile, mc_samples=self.mc_samples)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
-        zp = qp.rsample([self.mc_samples]).permute(1, 0, 2)
+        zp = _sample_profile(qp, self.mc_samples)
         zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
         rate = zI * zp + zbg
@@ -195,7 +189,6 @@ class IntegratorModelC(BaseIntegrator):
             qi=qi,
             zp=zp,
             zbg=zbg,
-            concentration=qp.concentration,
             metadata=metadata,
         )
         out = _assemble_outputs(out)
