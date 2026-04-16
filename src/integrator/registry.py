@@ -4,11 +4,11 @@ from integrator.data_loaders import (
     SimulatedShoeboxLoader,
 )
 from integrator.model.distributions import (
-    CPProfileSurrogate,
     DirichletDistribution,
     EmpiricalProfileSurrogate,
     FixedBasisProfileSurrogate,
     FoldedNormalDistribution,
+    GammaDistributionLogMean,
     GammaDistributionRepamA,
     GammaDistributionRepamB,
     GammaDistributionRepamC,
@@ -62,13 +62,13 @@ REGISTRY = {
         "gammaB": GammaDistributionRepamB,
         "gammaC": GammaDistributionRepamC,
         "gammaD": GammaDistributionRepamD,
+        "gamma_logmean": GammaDistributionLogMean,
         "log_normal": LogNormalDistribution,
         "folded_normal": FoldedNormalDistribution,
         "dirichlet": DirichletDistribution,
         "learned_basis_profile": LearnedBasisProfileSurrogate,
         "fixed_basis_profile": FixedBasisProfileSurrogate,
         "per_bin_profile": PerBinProfileSurrogate,
-        "cp_profile": CPProfileSurrogate,
 
         # Legacy aliases
         "linear_profile_surrogate": LearnedBasisProfileSurrogate,

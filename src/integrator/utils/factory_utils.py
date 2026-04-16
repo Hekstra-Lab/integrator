@@ -2,6 +2,7 @@ import os
 from dataclasses import asdict
 from importlib.resources import as_file
 from pathlib import Path
+from typing import Any
 
 import pytorch_lightning as pl
 import torch
@@ -49,6 +50,31 @@ def _resolve_data_path(
         p = Path(path)
         path = f"{p.stem}_{n_bins}{p.suffix}"
     return os.path.join(data_dir, path)
+
+
+def _require(cfg: dict, *path: str) -> Any:
+    """Fetch `cfg[path[0]][path[1]]...`, raising a clear KeyError if any step is missing."""
+    node: Any = cfg
+    traversed: list[str] = []
+    for key in path:
+        if not isinstance(node, dict) or key not in node:
+            trail = ".".join(traversed) or "<root>"
+            raise KeyError(
+                f"Config missing required key '{key}' under '{trail}'"
+            )
+        node = node[key]
+        traversed.append(key)
+    return node
+
+
+def _get_data_dir(cfg: dict) -> str:
+    return str(_require(cfg, "data_loader", "args", "data_dir"))
+
+
+def _get_n_bins(cfg: dict) -> int | None:
+    # n_bins is genuinely optional (some losses don't use it).
+    loss_args = _require(cfg, "loss", "args")
+    return loss_args.get("n_bins")
 
 
 def _get_integrator_cls(name: str) -> type[BaseIntegrator]:
@@ -103,25 +129,19 @@ def _get_surrogate_modules(
     """Construct all surrogate distribution modules from config.
 
     Iterates over all keys in `cfg["surrogates"]` so that any combination
-    of surrogates is supported (e.g., the standard `qp`/`qi`/`qbg` trio).  The raw
-    args dict from the YAML is passed directly to each class constructor,
-    avoiding the need for a separate `SurrogateArgs` dataclass per class.
+    of surrogates is supported.
 
     For `fixed_basis_profile` (and similar), a relative `basis_path` is resolved
     against `data_loader.args.data_dir` so the YAML only needs the filename.
     """
     surrogates = {}
-    data_dir = cfg.get("data_loader", {}).get("args", {}).get("data_dir", "")
-    n_bins = cfg.get("loss", {}).get("args", {}).get("n_bins")
+    data_dir = _get_data_dir(cfg)
+    n_bins = _get_n_bins(cfg)
 
     # Models with >2 encoders have separate k/r heads for qi/qbg
-    integrator_cls = REGISTRY["integrator"].get(
-        cfg.get("integrator", {}).get("name", "")
-    )
-    separate_inputs = (
-        integrator_cls is not None
-        and len(integrator_cls.REQUIRED_ENCODERS) > 2
-    )
+    integrator_name = _require(cfg, "integrator", "name")
+    integrator_cls = REGISTRY["integrator"][integrator_name]
+    separate_inputs = len(integrator_cls.REQUIRED_ENCODERS) > 2
 
     for key, surrogate_cfg in cfg["surrogates"].items():
         surrogate_cls = REGISTRY["surrogates"][surrogate_cfg["name"]]
@@ -131,7 +151,6 @@ def _get_surrogate_modules(
             in (
                 "fixed_basis_profile",
                 "learned_basis_profile",
-
                 "per_bin_profile",
                 "empirical_profile_surrogate",
                 # Legacy aliases
@@ -160,7 +179,7 @@ def _get_prior_cfgs(
     # Building loss class
     priors = {}
     prior_cfgs = dict(cfg)
-    data_dir = cfg.get("data_loader", {}).get("args", {}).get("data_dir", "")
+    data_dir = _get_data_dir(cfg)
     for p in (pprf_cfg, pbg_cfg, pi_cfg):
         p_dict = prior_cfgs["loss"]["args"].get(p)
         if p_dict is not None:
@@ -259,15 +278,20 @@ def _get_loss_module(
         kwargs["pprf_n_pixels"] = d * h * w
 
     # Map empirical_profile_basis_per_bin -> profile_basis_per_bin
-    if "empirical_profile_basis_per_bin" in kwargs and "profile_basis_per_bin" not in kwargs:
-        kwargs["profile_basis_per_bin"] = kwargs.pop("empirical_profile_basis_per_bin")
+    if (
+        "empirical_profile_basis_per_bin" in kwargs
+        and "profile_basis_per_bin" not in kwargs
+    ):
+        kwargs["profile_basis_per_bin"] = kwargs.pop(
+            "empirical_profile_basis_per_bin"
+        )
     elif "empirical_profile_basis_per_bin" in kwargs:
         kwargs.pop("empirical_profile_basis_per_bin")
 
     # Resolve relative .pt paths for custom loss buffers
     # Include n_bins in filename to prevent concurrent runs from clobbering files
-    data_dir = cfg.get("data_loader", {}).get("args", {}).get("data_dir", "")
-    n_bins = cfg.get("loss", {}).get("args", {}).get("n_bins")
+    data_dir = _get_data_dir(cfg)
+    n_bins = _get_n_bins(cfg)
     # When pprf_quantile is set, the user provides a global concentration
     # file that should not get an n_bins suffix.
     global_conc = "pprf_quantile" in kwargs
@@ -283,9 +307,7 @@ def _get_loss_module(
     ):
         if pt_key in kwargs and isinstance(kwargs[pt_key], str):
             # Global concentration doesn't get n_bins suffix
-            skip_nbins = (
-                pt_key == "concentration_per_group" and global_conc
-            )
+            skip_nbins = pt_key == "concentration_per_group" and global_conc
             nbins = None if skip_nbins else n_bins
             kwargs[pt_key] = _resolve_data_path(
                 kwargs[pt_key], data_dir, nbins
@@ -294,9 +316,55 @@ def _get_loss_module(
     return loss_cls(**kwargs)
 
 
+def _check_name(category: str, name: str) -> None:
+    options = REGISTRY[category]
+    if name not in options:
+        valid = ", ".join(sorted(options))
+        raise ValueError(
+            f"Unknown {category} name '{name}'. Valid options: {valid}"
+        )
+
+
+def _validate_registry_names(cfg: dict) -> None:
+    """Validate all REGISTRY name references in cfg before construction.
+
+    Produces a single, clear error listing valid options instead of a deep
+    KeyError raised mid-construction.
+    """
+    _check_name("integrator", _require(cfg, "integrator", "name"))
+    _check_name("loss", _require(cfg, "loss", "name"))
+    _check_name("data_loader", _require(cfg, "data_loader", "name"))
+
+    encoders = _require(cfg, "encoders")
+    if not isinstance(encoders, list):
+        raise TypeError(
+            f"cfg['encoders'] must be a list, got {type(encoders).__name__}"
+        )
+    for i, enc in enumerate(encoders):
+        if not isinstance(enc, dict) or "name" not in enc:
+            raise ValueError(
+                f"cfg['encoders'][{i}] must be a dict with a 'name' key"
+            )
+        _check_name("encoders", enc["name"])
+
+    surrogates = _require(cfg, "surrogates")
+    if not isinstance(surrogates, dict):
+        raise TypeError(
+            f"cfg['surrogates'] must be a dict, got {type(surrogates).__name__}"
+        )
+    for key, sur in surrogates.items():
+        if not isinstance(sur, dict) or "name" not in sur:
+            raise ValueError(
+                f"cfg['surrogates'][{key!r}] must be a dict with a 'name' key"
+            )
+        _check_name("surrogates", sur["name"])
+
+
 def construct_integrator(
     cfg: dict,
 ) -> BaseIntegrator:
+    _validate_registry_names(cfg)
+
     # integrator class
     integrator_cls = _get_integrator_cls(cfg["integrator"]["name"])
 
@@ -377,7 +445,7 @@ def save_run_artifacts(
 
     Saves:
         - prior_concentration.pt: the rescaled Dirichlet concentration vector
-          actually used during training (after load/amplify/normalize)
+          used during training
         - run_artifacts.yaml: prior configs, model param counts, loss settings
     """
     artifacts_dir = Path(logdir) / "artifacts"
@@ -446,10 +514,7 @@ def save_run_artifacts(
         yaml.safe_dump(artifacts, f, sort_keys=False, default_flow_style=False)
 
 
-
 def load_config(resource: str | Path) -> dict:
-    """resource is a Traversable from get_configs()."""
-
     if isinstance(resource, str):
         resource = Path(resource)
 

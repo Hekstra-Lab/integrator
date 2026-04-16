@@ -137,8 +137,14 @@ def compute_profile_kl(
             "concentration_per_group is required for Dirichlet profile surrogate"
         )
     n_conc_groups = concentration_per_group.shape[0]
-    if prf_groups.max() >= n_conc_groups:
-        prf_groups = groups
+    if prf_groups.numel() > 0 and int(prf_groups.max()) >= n_conc_groups:
+        raise RuntimeError(
+            f"Profile group labels out of range: max index "
+            f"{int(prf_groups.max())} but concentration_per_group has "
+            f"{n_conc_groups} rows. Check that "
+            f"metadata['profile_group_label'] is aligned with the "
+            f"concentration tensor."
+        )
     alpha = concentration_per_group[prf_groups]
     p_prf = Dirichlet(alpha)
     return _kl(qp, p_prf, mc_samples, eps=eps) * pprf_weight

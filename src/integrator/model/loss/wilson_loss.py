@@ -374,7 +374,13 @@ class WilsonLoss(nn.Module):
 
         # Intensity KL: E_{q(G,B)}[ KL(q(I) || Gamma(alpha_k, alpha_k*tau_i)) ]
         # s^2 computed per-reflection from metadata["d"]
-        metadata = kwargs.get("metadata", {})
+        metadata = kwargs.get("metadata")
+        if metadata is None or "d" not in metadata:
+            raise ValueError(
+                "WilsonLoss requires metadata['d'] (per-reflection resolution) "
+                "to compute s^2. Ensure the integrator forwards metadata to "
+                "loss() and that the data loader populates 'd'."
+            )
         d = metadata["d"].to(device)
         s_sq = 1.0 / (4.0 * d.clamp(min=self.eps).pow(2))  # (B,)
 
