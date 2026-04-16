@@ -282,7 +282,6 @@ def construct_yaml_configuration(
         include_test=False,
         subset_size=100,
         cutoff=None,
-        use_metadata=True,
         shoebox_file_names=data_file_names,
         D=global_cfg.d,
         H=global_cfg.h,

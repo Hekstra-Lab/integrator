@@ -330,7 +330,6 @@ def construct_data_loader(cfg):
         include_test=dl_args.include_test,
         subset_size=dl_args.subset_size,
         cutoff=dl_args.cutoff,
-        use_metadata=dl_args.use_metadata,
         shoebox_file_names=dl_args.shoebox_file_names,
         D=dl_args.D,
         H=dl_args.H,

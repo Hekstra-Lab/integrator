@@ -41,7 +41,6 @@ class DataLoaderArgs:
     include_test: bool
     subset_size: int
     cutoff: int | None
-    use_metadata: bool
     shoebox_file_names: DataFileNames
     D: int
     H: int

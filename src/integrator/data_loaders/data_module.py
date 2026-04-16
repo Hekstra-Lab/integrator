@@ -156,7 +156,7 @@ class ShoeboxDataModule2D(pl.LightningDataModule):
         num_workers:
         cutoff:
         full_dataset:
-        use_metadata:
+
         shoebox_file_names:
         H:
         W:
@@ -178,7 +178,6 @@ class ShoeboxDataModule2D(pl.LightningDataModule):
         subset_size: int | None = None,
         single_sample_index: None = None,
         cutoff=None,
-        use_metadata=None,
         persistent_workers: bool = False,
         shoebox_file_names={
             "counts": "counts.pt",
@@ -208,7 +207,6 @@ class ShoeboxDataModule2D(pl.LightningDataModule):
         self.num_workers = num_workers
         self.cutoff = cutoff
         self.full_dataset = None  # Will store the full dataset
-        self.use_metadata = use_metadata
         self.shoebox_file_names = shoebox_file_names
         self.H = H
         self.W = W
@@ -247,7 +245,7 @@ class ShoeboxDataModule2D(pl.LightningDataModule):
 
         if self.anscombe:
             ans = 2 * torch.sqrt(processed_counts + (3.0 / 8.0))
-            standardized_counts = (ans - stats[1]) / stats[1].sqrt()
+            standardized_counts = (ans - stats[0]) / stats[1].sqrt()
         else:
             standardized_counts = ((processed_counts) - stats[0]) / stats[
                 1
@@ -361,7 +359,7 @@ class ShoeboxDataModule(pl.LightningDataModule):
         cutoff:
         min_valid_pixels:
         full_dataset:
-        use_metadata:
+
         shoebox_file_names:
         H:
         W:
@@ -384,7 +382,6 @@ class ShoeboxDataModule(pl.LightningDataModule):
         single_sample_index=None,
         cutoff: float | None = None,
         min_valid_pixels: int = 10,
-        use_metadata: bool | None = None,
         persistent_workers: bool = True,
         shoebox_file_names={
             "counts": "counts.pt",
@@ -412,7 +409,6 @@ class ShoeboxDataModule(pl.LightningDataModule):
         self.cutoff = cutoff
         self.min_valid_pixels = min_valid_pixels
         self.full_dataset = None  # Will store the full dataset
-        self.use_metadata = use_metadata
         self.shoebox_file_names = shoebox_file_names
         self.H = H
         self.W = W
@@ -588,7 +584,7 @@ class SimulatedShoeboxLoader(pl.LightningDataModule):
         cutoff:
         min_valid_pixels:
         full_dataset:
-        use_metadata:
+
         shoebox_file_names:
         H:
         W:
@@ -611,7 +607,6 @@ class SimulatedShoeboxLoader(pl.LightningDataModule):
         single_sample_index=None,
         cutoff: float | None = None,
         min_valid_pixels: int = 10,
-        use_metadata: bool | None = None,
         persistent_workers: bool = True,
         shoebox_file_names={
             "counts": "counts.pt",
@@ -639,7 +634,6 @@ class SimulatedShoeboxLoader(pl.LightningDataModule):
         self.cutoff = cutoff
         self.min_valid_pixels = min_valid_pixels
         self.full_dataset = None  # Will store the full dataset
-        self.use_metadata = use_metadata
         self.shoebox_file_names = shoebox_file_names
         self.H = H
         self.W = W
