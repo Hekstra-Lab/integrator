@@ -282,10 +282,9 @@ def _get_loss_module(
         "empirical_profile_basis_per_bin",
     ):
         if pt_key in kwargs and isinstance(kwargs[pt_key], str):
-            # Basis files and global concentration don't get n_bins suffix
+            # Global concentration doesn't get n_bins suffix
             skip_nbins = (
-                pt_key in ("profile_basis_per_bin", "empirical_profile_basis_per_bin")
-                or (pt_key == "concentration_per_group" and global_conc)
+                pt_key == "concentration_per_group" and global_conc
             )
             nbins = None if skip_nbins else n_bins
             kwargs[pt_key] = _resolve_data_path(
