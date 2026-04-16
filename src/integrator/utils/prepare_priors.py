@@ -126,7 +126,7 @@ def prepare_per_bin_priors(
         force: Regenerate even if files already exist.
     """
     loss_name = cfg.get("loss", {}).get("name", "")
-    if loss_name not in ("per_bin", "wilson_per_bin"):
+    if loss_name not in ("per_bin", "wilson_per_bin", "wilson"):
         return
 
     data_dir = Path(cfg["data_loader"]["args"]["data_dir"])
