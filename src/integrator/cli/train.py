@@ -214,7 +214,6 @@ def main():
     cfg = _apply_cli_overrides(cfg, args=args)
 
     # load data
-
     logger.info("Starting Training")
 
     # Auto-generate prior files if needed by the loss

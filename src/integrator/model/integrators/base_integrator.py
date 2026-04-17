@@ -67,6 +67,7 @@ class BaseIntegrator(pl.LightningModule):
         # hyperparams
         self.lr = cfg.lr
         self.weight_decay = cfg.weight_decay
+        self.decoder_weight_decay = cfg.decoder_weight_decay
         self.mc_samples = cfg.mc_samples
         self.renyi_scale = cfg.renyi_scale
         if cfg.data_dim == "2d":
@@ -184,8 +185,39 @@ class BaseIntegrator(pl.LightningModule):
         }
 
     def configure_optimizers(self):
+        if self.decoder_weight_decay is None:
+            return torch.optim.Adam(
+                self.parameters(),
+                lr=self.lr,
+                weight_decay=self.weight_decay,
+            )
+
+        # Decoder-specific weight decay: only targets the learned profile
+        # basis W (nn.Linear.weight of qp.decoder). All other parameters
+        # keep the base weight_decay.
+        decoder_params: list[nn.Parameter] = []
+        other_params: list[nn.Parameter] = []
+        for name, param in self.named_parameters():
+            if not param.requires_grad:
+                continue
+            if name.endswith("surrogates.qp.decoder.weight"):
+                decoder_params.append(param)
+            else:
+                other_params.append(param)
+        if not decoder_params:
+            raise RuntimeError(
+                "decoder_weight_decay is set but no "
+                "'surrogates.qp.decoder.weight' parameter was found. "
+                "Only the learned_basis_profile surrogate exposes this; "
+                "set decoder_weight_decay=null for other surrogates."
+            )
         return torch.optim.Adam(
-            self.parameters(),
+            [
+                {"params": other_params, "weight_decay": self.weight_decay},
+                {
+                    "params": decoder_params,
+                    "weight_decay": self.decoder_weight_decay,
+                },
+            ],
             lr=self.lr,
-            weight_decay=self.weight_decay,
         )

@@ -11,6 +11,7 @@ class IntegratorCfg:
     lr: float = 0.001
     encoder_out: int = 64
     weight_decay: float = 0.0
+    decoder_weight_decay: float | None = None
     mc_samples: int = 4
     renyi_scale: float = 0.0
     predict_keys: Literal["default"] | list[str] = "default"
@@ -33,6 +34,15 @@ class IntegratorCfg:
         if self.weight_decay < 0:
             raise ValueError(
                 f"weight_decay must be non-negative, got {self.weight_decay}"
+            )
+
+        if (
+            self.decoder_weight_decay is not None
+            and self.decoder_weight_decay < 0
+        ):
+            raise ValueError(
+                "decoder_weight_decay must be non-negative, got "
+                f"{self.decoder_weight_decay}"
             )
 
         if self.mc_samples < 1:
