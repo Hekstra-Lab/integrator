@@ -220,9 +220,22 @@ def main():
     # load data
     logger.info("Starting Training")
 
-    # Auto-generate prior files if needed by the loss
-    prepare_per_bin_priors(cfg)
+    # Auto-generate prior files if needed by the loss. Collect a structured
+    # summary of what was done (files created, regenerated with reason, or
+    # reused from cache) so we can echo it clearly and stash it in the
+    # run_metadata for post-hoc audit.
+    prior_events: list[dict] = []
+    prepare_per_bin_priors(cfg, events_out=prior_events)
     prepare_global_priors(cfg)
+
+    for event in prior_events:
+        action = event["action"]
+        if action == "reused":
+            logger.info(f"Prior file reused: {event['file']}")
+        else:
+            logger.info(
+                f"Prior file {action}: {event['file']} — {event['reason']}"
+            )
 
     # load data
     data_loader = construct_data_loader(cfg)
@@ -260,6 +273,13 @@ def main():
     # log hyperparameters
     wb_logger.log_hyperparams(cfg_json)
 
+    # Resolve every file the factory will load, with absolute paths,
+    # existence flags, and sizes. Populate into run_metadata so the run
+    # log records exactly which files fed this run (including n_bins-
+    # suffixed Hermite bases, bg_rate_per_group, etc.).
+    from integrator.utils.factory_utils import _collect_resolved_paths
+    resolved_paths = _collect_resolved_paths(cfg)
+
     # Run metadata
     metadata = {
         "config": config_copy.as_posix(),
@@ -272,6 +292,8 @@ def main():
             "entity": wb_logger.experiment.entity,
             "log_dir": wb_logger.experiment.dir,
         },
+        "resolved_paths": resolved_paths,
+        "prior_events": prior_events,
     }
 
     wb_logger.log_hyperparams(metadata)
@@ -290,12 +312,11 @@ def main():
     # save prior artifacts (rescaled concentration, param counts, etc.)
     save_run_artifacts(integrator, cfg, logdir)
 
-    # Echo resolved file paths
-    resolved = _collect_resolved_paths(cfg)
-    logger.info(f"data_dir: {resolved.get('data_dir')}")
-    logger.info(f"n_bins: {resolved.get('n_bins')}")
+    # Echo resolved file paths (same data that's also in run_metadata.yaml)
+    logger.info(f"data_dir: {resolved_paths.get('data_dir')}")
+    logger.info(f"n_bins: {resolved_paths.get('n_bins')}")
     for section in ("data_loader", "surrogates", "loss"):
-        entries = resolved.get(section, {})
+        entries = resolved_paths.get(section, {})
         if not entries:
             continue
         logger.info(f"Resolved {section} paths:")

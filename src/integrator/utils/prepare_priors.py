@@ -95,6 +95,7 @@ def prepare_per_bin_priors(
     n_bins: int = 0,
     min_intensity: float = 0.01,
     force: bool = False,
+    events_out: list[dict] | None = None,
 ) -> None:
     """Generate per-bin prior .pt files if the loss config requires them.
 
@@ -112,6 +113,10 @@ def prepare_per_bin_priors(
             `cfg["loss"]["args"]["n_bins"]`, falling back to 20.
         min_intensity: Minimum intensity for tau estimation.
         force: Regenerate even if files already exist.
+        events_out: Optional list that will be appended with structured
+            event dicts describing each file action ("created",
+            "regenerated", "reused") and the reason. Lets the CLI echo
+            a summary and record what happened in run_metadata.yaml.
     """
     loss_name = cfg.get("loss", {}).get("name", "")
     if loss_name not in ("per_bin", "wilson"):
@@ -493,18 +498,38 @@ def prepare_per_bin_priors(
         basis_paths.add(_nbins_path(warmstart, n_bins, data_dir))
 
     for basis_path in basis_paths:
-        need_regen = force or not basis_path.exists()
-        if not need_regen:
-            reason = _basis_provenance_mismatch_reason(basis_path, expected_prov)
-            if reason is not None:
-                logger.warning(
-                    "Regenerating %s because provenance mismatch: %s",
-                    basis_path.name, reason,
-                )
-                need_regen = True
+        existed = basis_path.exists()
+        reason: str | None = None
+        if force:
+            reason = "force=True"
+        elif not existed:
+            reason = "file did not exist"
+        else:
+            mismatch = _basis_provenance_mismatch_reason(
+                basis_path, expected_prov
+            )
+            if mismatch is not None:
+                reason = f"provenance mismatch: {mismatch}"
 
-        if not need_regen:
+        if reason is None:
+            if events_out is not None:
+                events_out.append(
+                    {
+                        "file": basis_path.name,
+                        "action": "reused",
+                        "path": str(basis_path),
+                        "reason": "cached file matches config",
+                    }
+                )
             continue
+
+        if existed:
+            logger.warning(
+                "Regenerating %s because %s", basis_path.name, reason,
+            )
+            action = "regenerated"
+        else:
+            action = "created"
 
         basis_data = _fit_profile_basis_per_bin(
             counts,
@@ -530,6 +555,20 @@ def prepare_per_bin_priors(
             basis_sigma_ref,
             basis_sigma_z,
         )
+        if events_out is not None:
+            events_out.append(
+                {
+                    "file": basis_path.name,
+                    "action": action,
+                    "path": str(basis_path),
+                    "reason": reason,
+                    "basis_type": basis_type,
+                    "d": int(basis_data["d"]),
+                    "n_bins": n_prf_bins,
+                    "sigma_ref": basis_sigma_ref,
+                    "sigma_z": basis_sigma_z,
+                }
+            )
 
     # ── Empirical profile basis (per-bin empirical bias) ──────────────
     emp_basis_filename = loss_args.get("empirical_profile_basis_per_bin")
