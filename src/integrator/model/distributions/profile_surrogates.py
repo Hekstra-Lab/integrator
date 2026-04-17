@@ -139,6 +139,7 @@ class LearnedBasisProfileSurrogate(nn.Module):
         sigma_prior: float = 3.0,
         init_std: float = 0.5,
         warmstart_basis_path: str | None = None,
+        freeze_bias: bool = False,
     ) -> None:
         super().__init__()
 
@@ -153,6 +154,9 @@ class LearnedBasisProfileSurrogate(nn.Module):
 
         if warmstart_basis_path is not None:
             self._warmstart_from_basis(warmstart_basis_path, output_dim)
+
+        if freeze_bias:
+            self.decoder.bias.requires_grad_(False)
 
     def _warmstart_from_basis(
         self, basis_path: str, output_dim: int
