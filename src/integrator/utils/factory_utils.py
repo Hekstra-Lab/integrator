@@ -260,6 +260,9 @@ def _get_loss_module(
     kwargs = shallow_dict(loss_args)
 
     # Forward extra keys from loss.args for custom loss classes
+    # Keys consumed by the prior-prep pipeline or globally, not by
+    # individual loss classes. Filter them out before forwarding
+    # loss.args kwargs to the loss constructor.
     standard_keys = {
         "mc_samples",
         "eps",
@@ -272,6 +275,7 @@ def _get_loss_module(
         "profile_basis_d",
         "profile_basis_max_order",
         "profile_basis_sigma_ref",
+        "profile_basis_sigma_z",
         "profile_smooth_sigma",
     }
     for k, v in cfg["loss"]["args"].items():
