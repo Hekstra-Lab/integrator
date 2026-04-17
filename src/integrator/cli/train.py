@@ -204,9 +204,13 @@ def main():
         save_run_artifacts,
     )
 
+    # parse args
     args = parse_args()
+
+    # logger
     setup_logging(args.verbose)
 
+    # to use gpu
     torch.set_float32_matmul_precision("medium")
 
     # load configuration file
@@ -220,6 +224,7 @@ def main():
     prepare_per_bin_priors(cfg)
     prepare_global_priors(cfg)
 
+    # load data
     data_loader = construct_data_loader(cfg)
     data_loader.setup()
     inject_binning_labels(data_loader, cfg)
@@ -289,6 +294,7 @@ def main():
     # alongside the rest of the startup info. The full record (with sizes +
     # existence checks) is written to run_artifacts.yaml.
     from integrator.utils.factory_utils import _collect_resolved_paths
+
     resolved = _collect_resolved_paths(cfg)
     logger.info(f"data_dir: {resolved.get('data_dir')}")
     logger.info(f"n_bins: {resolved.get('n_bins')}")

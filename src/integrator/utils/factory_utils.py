@@ -163,6 +163,15 @@ def _get_surrogate_modules(
             bp = args["basis_path"]
             if isinstance(bp, str):
                 args["basis_path"] = _resolve_data_path(bp, data_dir, n_bins)
+        # warmstart_basis_path for learned_basis_profile: same data_dir +
+        # n_bins suffix handling as basis_path above.
+        if (
+            surrogate_cfg["name"] == "learned_basis_profile"
+            and isinstance(args.get("warmstart_basis_path"), str)
+        ):
+            args["warmstart_basis_path"] = _resolve_data_path(
+                args["warmstart_basis_path"], data_dir, n_bins,
+            )
         # Auto-set separate_inputs for two-param surrogates (qi, qbg)
         if key in ("qi", "qbg") and "separate_inputs" not in args:
             args["separate_inputs"] = separate_inputs
@@ -529,7 +538,11 @@ def _collect_resolved_paths(cfg: dict) -> dict:
             continue
         params = p_dict.get("params") or {}
         conc = params.get("concentration")
-        if isinstance(conc, str) and not os.path.isabs(conc) and not conc.startswith("~"):
+        if (
+            isinstance(conc, str)
+            and not os.path.isabs(conc)
+            and not conc.startswith("~")
+        ):
             loss_paths[f"{p_key}.concentration"] = _resolved_path_info(
                 os.path.join(data_dir, conc)
             )

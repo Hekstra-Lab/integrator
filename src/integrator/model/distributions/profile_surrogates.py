@@ -124,6 +124,11 @@ class LearnedBasisProfileSurrogate(nn.Module):
         input_dim: Dimension of the encoder output.
         latent_dim: Dimension of the latent h. Default 8.
         output_dim: Number of profile pixels (H * W). Default 441.
+        warmstart_basis_path: Optional .pt file with keys 'W' (K, d) and
+            'b' (K,) to warm-start the decoder. When `latent_dim` differs
+            from the basis's `d`, the first `min(latent_dim, basis_d)`
+            columns of W are copied; any extra columns stay randomly
+            initialized.
     """
 
     def __init__(
@@ -133,6 +138,7 @@ class LearnedBasisProfileSurrogate(nn.Module):
         output_dim: int = 441,
         sigma_prior: float = 3.0,
         init_std: float = 0.5,
+        warmstart_basis_path: str | None = None,
     ) -> None:
         super().__init__()
 
@@ -144,6 +150,35 @@ class LearnedBasisProfileSurrogate(nn.Module):
 
         nn.init.zeros_(self.std_head.weight)
         nn.init.constant_(self.std_head.bias, _softplus_inverse(init_std))
+
+        if warmstart_basis_path is not None:
+            self._warmstart_from_basis(warmstart_basis_path, output_dim)
+
+    def _warmstart_from_basis(
+        self, basis_path: str, output_dim: int
+    ) -> None:
+        basis = torch.load(basis_path, weights_only=False)
+        W = basis["W"].float()   # (K, d_basis)
+        b = basis["b"].float()   # (K,)
+        if W.shape[0] != output_dim:
+            raise ValueError(
+                f"warmstart basis W has K={W.shape[0]} but output_dim="
+                f"{output_dim}. Basis shape doesn't match the surrogate's "
+                "profile size."
+            )
+        if b.shape[0] != output_dim:
+            raise ValueError(
+                f"warmstart basis b has K={b.shape[0]} but output_dim="
+                f"{output_dim}."
+            )
+        d_basis = W.shape[1]
+        d_copy = min(self.d, d_basis)
+        # nn.Linear.weight has shape (out_features, in_features) = (K, d).
+        # Basis W is also (K, d). Copy the first d_copy columns into the
+        # corresponding decoder columns; leave extra columns at random init.
+        with torch.no_grad():
+            self.decoder.weight.data[:, :d_copy].copy_(W[:, :d_copy])
+            self.decoder.bias.data.copy_(b)
 
     def forward(
         self,

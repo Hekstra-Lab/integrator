@@ -1,15 +1,3 @@
-"""Auto-generate prior buffers for loss functions.
-
-Called automatically during training when the loss requires prior files
-and the .pt files don't yet exist in the data directory.
-
-Supports:
-  - PerBinLoss / WilsonPerBinLoss: per-bin priors (resolution shells)
-  - Default Loss: global priors (single Dirichlet concentration vector)
-
-This avoids requiring users to run a separate preprocessing script.
-"""
-
 import logging
 import math
 from pathlib import Path
@@ -676,7 +664,6 @@ def _fit_empirical_profile_basis(
 
 def inject_binning_labels(data_loader, cfg: dict) -> None:
     """Load binning label files and inject into the dataset's metadata.
-
     Called after data_loader.setup() to add group_label and
     profile_group_label to the dataset without mutating metadata.pt.
     Files are saved by prepare_per_bin_priors() as separate
