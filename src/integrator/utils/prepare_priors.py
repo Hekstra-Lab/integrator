@@ -21,6 +21,69 @@ def _nbins_path(filename: str, n_bins: int, data_dir: Path) -> Path:
     return data_dir / suffixed
 
 
+def _gammaB_wants_mean_init(cfg: dict, sur_key: str) -> bool:
+    """True if surrogates[sur_key] is gammaB and has no explicit mean_init.
+
+    Used to decide whether we need to compute a dataset-level mean estimate
+    from raw counts to seed the Gamma head's bias.
+    """
+    sur = cfg.get("surrogates", {}).get(sur_key, {})
+    if not isinstance(sur, dict) or sur.get("name") != "gammaB":
+        return False
+    args = sur.get("args", {}) or {}
+    return "mean_init" not in args
+
+
+def _compute_qi_qbg_mean_init(
+    counts, masks, D: int, H: int, W: int,
+) -> dict:
+    """Estimate sensible (qi, qbg) mean_init values directly from counts.
+
+    Uses the same quiet-frame / border-pixel background subtraction as
+    `_bg_subtract_signal` — fully independent of DIALS estimates.
+    Returns both median and mean for each; the factory defaults to using
+    the median (more robust to the heavy-tail of strong reflections).
+    """
+    import torch as _t
+
+    signal = _bg_subtract_signal(counts, masks, D, H, W)
+    intensity = signal.sum(dim=1)
+    pos = intensity[intensity > 0]
+
+    counts_clean = counts.float().clamp(min=0)
+    masks_f = masks.float()
+    counts_3d = (counts_clean * masks_f).reshape(counts.shape[0], D, H * W)
+    masks_3d = masks_f.reshape(counts.shape[0], D, H * W)
+    if D > 1:
+        frame_sums = counts_3d.sum(dim=-1)
+        frame_n = masks_3d.sum(dim=-1)
+        min_idx = frame_sums.argmin(dim=-1)
+        bg_tot = frame_sums.gather(1, min_idx.unsqueeze(-1)).squeeze(-1)
+        bg_n = frame_n.gather(1, min_idx.unsqueeze(-1)).squeeze(-1).clamp(min=1)
+        bg_rate = bg_tot / bg_n
+    else:
+        frame = counts_clean.reshape(counts.shape[0], H, W)
+        border = _t.ones(H, W, dtype=_t.bool)
+        border[2:-2, 2:-2] = False
+        bg_rate = frame[:, border].mean(dim=-1)
+
+    return {
+        "qi_median": float(pos.median().item()) if pos.numel() > 0 else 1.0,
+        "qi_mean": float(pos.mean().item()) if pos.numel() > 0 else 1.0,
+        "qbg_median": float(bg_rate.median().item()),
+        "qbg_mean": float(bg_rate.mean().item()),
+        "n_reflections": int(counts.shape[0]),
+        "n_positive_intensity": int(pos.numel()),
+        "note": (
+            "Computed from raw counts only (no DIALS). Intensity = sum of "
+            "bg-subtracted counts per reflection; bg = per-pixel rate from "
+            "quiet-frame estimator. Use qi_median/qbg_median as default "
+            "mean_init for GammaB — more robust to heavy-tail peaks than "
+            "the mean."
+        ),
+    }
+
+
 def prepare_global_priors(
     cfg: dict,
     *,
@@ -233,12 +296,21 @@ def prepare_per_bin_priors(
                     fn, n_bins, data_dir
                 )
 
-    # Check if profile_basis_per_bin needs generating
+    # Check if profile_basis_per_bin needs generating. Two separate sources
+    # can request a Hermite basis file: loss.args.profile_basis_per_bin
+    # (for per-bin KL priors) and surrogates.qp.args.warmstart_basis_path
+    # (for decoder warmstart). Either missing/stale path counts.
     basis_filename = loss_args.get("profile_basis_per_bin")
     need_basis = False
     if isinstance(basis_filename, str):
         basis_path = _nbins_path(basis_filename, n_bins, data_dir)
         if force or not basis_path.exists():
+            need_basis = True
+    qp_args = (cfg.get("surrogates", {}).get("qp", {}) or {}).get("args", {}) or {}
+    warmstart_filename = qp_args.get("warmstart_basis_path")
+    if isinstance(warmstart_filename, str):
+        ws_path = _nbins_path(warmstart_filename, n_bins, data_dir)
+        if force or not ws_path.exists():
             need_basis = True
 
     # Check if empirical_profile_basis_per_bin needs generating
@@ -249,12 +321,22 @@ def prepare_per_bin_priors(
         if force or not emp_basis_path.exists():
             need_emp_basis = True
 
+    # Check if mean_init needs computing for any gammaB surrogate (qi/qbg)
+    # that didn't set it explicitly. Cached to qi_qbg_mean_init.pt to avoid
+    # recomputing on every run; any explicit YAML value takes precedence.
+    init_path = data_dir / "qi_qbg_mean_init.pt"
+    need_init = (
+        _gammaB_wants_mean_init(cfg, "qi")
+        or _gammaB_wants_mean_init(cfg, "qbg")
+    ) and (force or not init_path.exists())
+
     if (
         not needed
         and not need_2d_rebinning
         and not need_basis
         and not need_emp_basis
         and not need_group_labels
+        and not need_init
     ):
         return
 
@@ -607,6 +689,38 @@ def prepare_per_bin_priors(
                 emp_basis_path.name,
                 emp_basis_data["d"],
                 n_prf_bins,
+            )
+
+    # ── qi / qbg mean_init from raw counts ─────────────────────────────
+    # Computes a dataset-level estimate of the typical intensity and bg
+    # rate using the same bg-subtraction logic as _bg_subtract_signal, so
+    # it's fully independent of DIALS. The factory injects these into
+    # GammaB surrogate args at construction time (when mean_init isn't
+    # explicitly set in the YAML), removing the "grow mu from 0.7 over
+    # many epochs" early-training phase.
+    if need_init:
+        init_stats = _compute_qi_qbg_mean_init(counts, masks, D_dim, H_dim, W_dim)
+        torch.save(init_stats, init_path)
+        logger.info(
+            "Saved qi_qbg_mean_init.pt "
+            "(qi_median=%.2f, qi_mean=%.2f, qbg_median=%.3f, qbg_mean=%.3f)",
+            init_stats["qi_median"],
+            init_stats["qi_mean"],
+            init_stats["qbg_median"],
+            init_stats["qbg_mean"],
+        )
+        if events_out is not None:
+            events_out.append(
+                {
+                    "file": "qi_qbg_mean_init.pt",
+                    "action": "created",
+                    "path": str(init_path),
+                    "reason": "GammaB qi/qbg without explicit mean_init",
+                    "qi_median": init_stats["qi_median"],
+                    "qi_mean": init_stats["qi_mean"],
+                    "qbg_median": init_stats["qbg_median"],
+                    "qbg_mean": init_stats["qbg_mean"],
+                }
             )
 
 

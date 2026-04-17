@@ -143,9 +143,36 @@ def _get_surrogate_modules(
     integrator_cls = REGISTRY["integrator"][integrator_name]
     separate_inputs = len(integrator_cls.REQUIRED_ENCODERS) > 2
 
+    # Load GammaB mean_init stats once (if available). Written by
+    # prepare_per_bin_priors from raw counts (no DIALS). Used below to
+    # inject mean_init into gammaB qi/qbg surrogates that didn't set it.
+    init_stats_path = Path(data_dir) / "qi_qbg_mean_init.pt"
+    init_stats: dict | None = None
+    if init_stats_path.is_file():
+        try:
+            init_stats = torch.load(
+                init_stats_path, weights_only=False, map_location="cpu",
+            )
+        except Exception:
+            init_stats = None
+
     for key, surrogate_cfg in cfg["surrogates"].items():
         surrogate_cls = REGISTRY["surrogates"][surrogate_cfg["name"]]
         args = dict(surrogate_cfg["args"])
+
+        # GammaB: inject mean_init from the cached counts-derived stats
+        # if the user didn't set it explicitly in the YAML. Defaults use
+        # the median (robust to heavy-tail peaks) — user can override by
+        # setting mean_init explicitly.
+        if (
+            surrogate_cfg["name"] == "gammaB"
+            and "mean_init" not in args
+            and init_stats is not None
+            and key in ("qi", "qbg")
+        ):
+            stat_key = "qi_median" if key == "qi" else "qbg_median"
+            if stat_key in init_stats:
+                args["mean_init"] = float(init_stats[stat_key])
         if (
             surrogate_cfg["name"]
             in (
