@@ -151,12 +151,6 @@ def _get_surrogate_modules(
             in (
                 "fixed_basis_profile",
                 "learned_basis_profile",
-                "per_bin_profile",
-                "empirical_profile_surrogate",
-                # Legacy aliases
-                "logistic_normal_surrogate",
-                "per_bin_logistic_normal",
-                "linear_profile_surrogate",
             )
             and "basis_path" in args
         ):
@@ -499,11 +493,6 @@ def _collect_resolved_paths(cfg: dict) -> dict:
         if isinstance(bp, str) and surrogate_cfg.get("name") in (
             "fixed_basis_profile",
             "learned_basis_profile",
-            "per_bin_profile",
-            "empirical_profile_surrogate",
-            "logistic_normal_surrogate",
-            "per_bin_logistic_normal",
-            "linear_profile_surrogate",
         ):
             surr_paths[f"{key}.basis_path"] = _resolved_path_info(
                 _resolve_data_path(bp, data_dir, n_bins)

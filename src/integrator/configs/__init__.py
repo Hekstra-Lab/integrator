@@ -14,7 +14,6 @@ from .encoder import (
     EncoderConfig,
     Encoders,
     IntensityEncoderArgs,
-    MetadataEncoderArgs,
     ShoeboxEncoderArgs,
 )
 from .global_config import GlobalConfig
@@ -54,7 +53,6 @@ __all__ = [
     "EncoderConfig",
     "IntensityEncoderArgs",
     "IntegratorConfig",
-    "MetadataEncoderArgs",
     "ShoeboxEncoderArgs",
     "PriorConfig",
     "LossConfig",

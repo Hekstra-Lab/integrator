@@ -187,7 +187,6 @@ def main():
 
     from integrator.callbacks import (
         EpochMetricRecorder,
-        LogFano,
         LossTraceRecorder,
         Plotter,
         PlotterLD,
@@ -203,6 +202,7 @@ def main():
         prepare_per_bin_priors,
         save_run_artifacts,
     )
+    from integrator.utils.factory_utils import _collect_resolved_paths
 
     # parse args
     args = parse_args()
@@ -290,11 +290,7 @@ def main():
     # save prior artifacts (rescaled concentration, param counts, etc.)
     save_run_artifacts(integrator, cfg, logdir)
 
-    # Echo resolved file paths to the training log so they show up in stdout
-    # alongside the rest of the startup info. The full record (with sizes +
-    # existence checks) is written to run_artifacts.yaml.
-    from integrator.utils.factory_utils import _collect_resolved_paths
-
+    # Echo resolved file paths
     resolved = _collect_resolved_paths(cfg)
     logger.info(f"data_dir: {resolved.get('data_dir')}")
     logger.info(f"n_bins: {resolved.get('n_bins')}")
@@ -354,8 +350,6 @@ def main():
             f"Specified shoebox data dimension is incompatible: data_dim={data_dim}"
         )
 
-    fano_wb_logger = LogFano()
-
     loss_trace_recorder = LossTraceRecorder(
         out_dir=logdir / "loss_traces",
     )
@@ -375,12 +369,10 @@ def main():
     trainer = construct_trainer(
         cfg,
         callbacks=[
-            # fano_wb_logger,
             val_epoch_recorder,
             train_epoch_recorder,
             loss_trace_recorder,
             checkpoint_callback,
-            # plotter,
         ],
         logger=wb_logger,
     )

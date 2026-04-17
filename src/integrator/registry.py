@@ -5,21 +5,17 @@ from integrator.data_loaders import (
 )
 from integrator.model.distributions import (
     DirichletDistribution,
-    EmpiricalProfileSurrogate,
     FixedBasisProfileSurrogate,
     FoldedNormalDistribution,
-    GammaDistributionLogMean,
     GammaDistributionRepamA,
     GammaDistributionRepamB,
     GammaDistributionRepamC,
     GammaDistributionRepamD,
     LearnedBasisProfileSurrogate,
     LogNormalDistribution,
-    PerBinProfileSurrogate,
 )
 from integrator.model.encoders import (
     IntensityEncoder,
-    MetadataEncoder,
     MLPMetadataEncoder,
     ShoeboxEncoder,
 )
@@ -27,7 +23,6 @@ from integrator.model.integrators import (
     HierarchicalIntegratorA,
     HierarchicalIntegratorB,
     HierarchicalIntegratorC,
-    HierarchicalIntegratorCMeta,
     IntegratorModelA,
     IntegratorModelB,
     IntegratorModelC,
@@ -36,7 +31,6 @@ from integrator.model.loss import (
     Loss,
     PerBinLoss,
     WilsonLoss,
-    WilsonPerBinLoss,
 )
 
 REGISTRY = {
@@ -44,12 +38,10 @@ REGISTRY = {
         "shoebox_encoder": ShoeboxEncoder,
         "intensity_encoder": IntensityEncoder,
         "mlp_metadata_encoder": MLPMetadataEncoder,
-        "metadata_encoder": MetadataEncoder,
     },
     "loss": {
         "default": Loss,
         "per_bin": PerBinLoss,
-        "wilson_per_bin": WilsonPerBinLoss,
         "wilson": WilsonLoss,
     },
     "integrator": {
@@ -59,26 +51,17 @@ REGISTRY = {
         "hierarchicalA": HierarchicalIntegratorA,
         "hierarchicalB": HierarchicalIntegratorB,
         "hierarchicalC": HierarchicalIntegratorC,
-        "hierarchicalCMeta": HierarchicalIntegratorCMeta,
     },
     "surrogates": {
         "gammaA": GammaDistributionRepamA,
         "gammaB": GammaDistributionRepamB,
         "gammaC": GammaDistributionRepamC,
         "gammaD": GammaDistributionRepamD,
-        "gamma_logmean": GammaDistributionLogMean,
         "log_normal": LogNormalDistribution,
         "folded_normal": FoldedNormalDistribution,
         "dirichlet": DirichletDistribution,
         "learned_basis_profile": LearnedBasisProfileSurrogate,
         "fixed_basis_profile": FixedBasisProfileSurrogate,
-        "per_bin_profile": PerBinProfileSurrogate,
-
-        # Legacy aliases
-        "linear_profile_surrogate": LearnedBasisProfileSurrogate,
-        "logistic_normal_surrogate": FixedBasisProfileSurrogate,
-        "per_bin_logistic_normal": PerBinProfileSurrogate,
-        "empirical_profile_surrogate": EmpiricalProfileSurrogate,
     },
     "data_loader": {
         "default": ShoeboxDataModule,

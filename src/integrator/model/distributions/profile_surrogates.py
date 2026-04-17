@@ -136,7 +136,6 @@ class LearnedBasisProfileSurrogate(nn.Module):
         input_dim: int,
         latent_dim: int = 8,
         output_dim: int = 441,
-        sigma_prior: float = 3.0,
         init_std: float = 0.5,
         warmstart_basis_path: str | None = None,
         freeze_bias: bool = False,
@@ -195,61 +194,6 @@ class LearnedBasisProfileSurrogate(nn.Module):
 
         zp, mean_profile = _sample_and_decode(
             mu_h, std_h, self.decoder.weight, self.decoder.bias, mc_samples
-        )
-
-        return ProfileSurrogateOutput(
-            zp=zp,
-            mean_profile=mean_profile,
-            mu_h=mu_h,
-            std_h=std_h,
-        )
-
-
-class PerBinProfileSurrogate(nn.Module):
-    """Profile surrogate with fixed basis (Hermite or PCA).
-
-    Loads a `profile_basis_per_bin.pt` file containing:
-        - W (K, d): basis matrix (Hermite functions or PCA components)
-        - b (K,): bias (log of reference profile or mean of log-profiles)
-        - d (int): latent dimensionality
-
-    Args:
-        input_dim: Dimension of the encoder output.
-        basis_path: Path to profile_basis_per_bin.pt.
-    """
-
-    def __init__(
-        self,
-        input_dim: int,
-        basis_path: str,
-        init_std: float = 0.5,
-    ) -> None:
-        super().__init__()
-
-        basis = torch.load(basis_path, weights_only=False)
-
-        self.register_buffer("W", basis["W"])  # (K, d)
-        self.register_buffer("b", basis["b"])  # (K,)
-
-        self.d: int = int(basis["d"])
-
-        self.mu_head = nn.Linear(input_dim, self.d)
-        self.std_head = nn.Linear(input_dim, self.d)
-
-        nn.init.zeros_(self.std_head.weight)
-        nn.init.constant_(self.std_head.bias, _softplus_inverse(init_std))
-
-    def forward(
-        self,
-        x: Tensor,
-        mc_samples: int = 1,
-        group_labels: Tensor | None = None,
-    ) -> ProfileSurrogateOutput:
-        mu_h = self.mu_head(x)  # (B, d)
-        std_h = F.softplus(self.std_head(x))  # (B, d)
-
-        zp, mean_profile = _sample_and_decode(
-            mu_h, std_h, self.W, self.b, mc_samples
         )
 
         return ProfileSurrogateOutput(

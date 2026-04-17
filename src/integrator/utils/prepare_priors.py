@@ -114,7 +114,7 @@ def prepare_per_bin_priors(
         force: Regenerate even if files already exist.
     """
     loss_name = cfg.get("loss", {}).get("name", "")
-    if loss_name not in ("per_bin", "wilson_per_bin", "wilson"):
+    if loss_name not in ("per_bin", "wilson"):
         return
 
     data_dir = Path(cfg["data_loader"]["args"]["data_dir"])
@@ -451,39 +451,48 @@ def prepare_per_bin_priors(
             tau_source,
         )
 
-    # ── Profile basis with per-bin latent priors ──────────────────────
-    basis_filename = loss_args.get("profile_basis_per_bin")
-    if isinstance(basis_filename, str):
-        basis_path = _nbins_path(basis_filename, n_bins, data_dir)
-        dl_args = cfg.get("data_loader", {}).get("args", {})
-        D_dim = int(dl_args.get("D", dl_args.get("d", 1)))
-        H_dim = int(dl_args.get("H", dl_args.get("h", 21)))
-        W_dim = int(dl_args.get("W", dl_args.get("w", 21)))
+    # ── Profile basis generation ──────────────────────────────────────
+    # Two independent config sources can request a Hermite/PCA basis file:
+    #   1. loss.args.profile_basis_per_bin — loss consumes per-bin priors
+    #      (mu_per_group / std_per_group) from the file
+    #   2. surrogates.qp.args.warmstart_basis_path — learned_basis_profile
+    #      warm-starts its decoder from W and b in the file
+    # Collect all unique paths requested, regenerate any stale/missing.
+    dl_args = cfg.get("data_loader", {}).get("args", {})
+    D_dim = int(dl_args.get("D", dl_args.get("d", 1)))
+    H_dim = int(dl_args.get("H", dl_args.get("h", 21)))
+    W_dim = int(dl_args.get("W", dl_args.get("w", 21)))
 
-        basis_type = str(loss_args.get("profile_basis_type", "hermite"))
-        basis_d = int(loss_args.get("profile_basis_d", 14))
-        basis_max_order = int(loss_args.get("profile_basis_max_order", 4))
-        basis_sigma_ref = float(
-            loss_args.get("profile_basis_sigma_ref", 3.0)
-        )
-        basis_sigma_z = float(
-            loss_args.get("profile_basis_sigma_z", 1.0)
-        )
+    basis_type = str(loss_args.get("profile_basis_type", "hermite"))
+    basis_d = int(loss_args.get("profile_basis_d", 14))
+    basis_max_order = int(loss_args.get("profile_basis_max_order", 4))
+    basis_sigma_ref = float(loss_args.get("profile_basis_sigma_ref", 3.0))
+    basis_sigma_z = float(loss_args.get("profile_basis_sigma_z", 1.0))
 
-        prf_labels = metadata.get("profile_group_label", group_labels)
-        n_prf_bins = int(prf_labels.max().item()) + 1
+    prf_labels = metadata.get("profile_group_label", group_labels)
+    n_prf_bins = int(prf_labels.max().item()) + 1
 
-        expected_prov = {
-            "basis_type": basis_type,
-            "D": D_dim,
-            "H": H_dim,
-            "W": W_dim,
-            "max_order": basis_max_order,
-            "sigma_ref": basis_sigma_ref,
-            "sigma_z": basis_sigma_z,
-            "n_bins": n_prf_bins,
-        }
+    expected_prov = {
+        "basis_type": basis_type,
+        "D": D_dim,
+        "H": H_dim,
+        "W": W_dim,
+        "max_order": basis_max_order,
+        "sigma_ref": basis_sigma_ref,
+        "sigma_z": basis_sigma_z,
+        "n_bins": n_prf_bins,
+    }
 
+    basis_paths: set[Path] = set()
+    loss_basis = loss_args.get("profile_basis_per_bin")
+    if isinstance(loss_basis, str):
+        basis_paths.add(_nbins_path(loss_basis, n_bins, data_dir))
+    qp_cfg = cfg.get("surrogates", {}).get("qp", {})
+    warmstart = (qp_cfg.get("args", {}) or {}).get("warmstart_basis_path")
+    if isinstance(warmstart, str):
+        basis_paths.add(_nbins_path(warmstart, n_bins, data_dir))
+
+    for basis_path in basis_paths:
         need_regen = force or not basis_path.exists()
         if not need_regen:
             reason = _basis_provenance_mismatch_reason(basis_path, expected_prov)
@@ -494,31 +503,33 @@ def prepare_per_bin_priors(
                 )
                 need_regen = True
 
-        if need_regen:
-            basis_data = _fit_profile_basis_per_bin(
-                counts,
-                masks,
-                prf_labels,
-                n_prf_bins,
-                basis_type=basis_type,
-                D=D_dim,
-                H=H_dim,
-                W=W_dim,
-                d=basis_d,
-                max_order=basis_max_order,
-                sigma_ref=basis_sigma_ref,
-                sigma_z=basis_sigma_z,
-            )
-            torch.save(basis_data, basis_path)
-            logger.info(
-                "Saved %s (type=%s, d=%d, %d bins, sigma_ref=%.2f, sigma_z=%.2f)",
-                basis_path.name,
-                basis_type,
-                basis_data["d"],
-                n_prf_bins,
-                basis_sigma_ref,
-                basis_sigma_z,
-            )
+        if not need_regen:
+            continue
+
+        basis_data = _fit_profile_basis_per_bin(
+            counts,
+            masks,
+            prf_labels,
+            n_prf_bins,
+            basis_type=basis_type,
+            D=D_dim,
+            H=H_dim,
+            W=W_dim,
+            d=basis_d,
+            max_order=basis_max_order,
+            sigma_ref=basis_sigma_ref,
+            sigma_z=basis_sigma_z,
+        )
+        torch.save(basis_data, basis_path)
+        logger.info(
+            "Saved %s (type=%s, d=%d, %d bins, sigma_ref=%.2f, sigma_z=%.2f)",
+            basis_path.name,
+            basis_type,
+            basis_data["d"],
+            n_prf_bins,
+            basis_sigma_ref,
+            basis_sigma_z,
+        )
 
     # ── Empirical profile basis (per-bin empirical bias) ──────────────
     emp_basis_filename = loss_args.get("empirical_profile_basis_per_bin")

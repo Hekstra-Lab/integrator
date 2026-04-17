@@ -112,7 +112,7 @@ def make_config_priors(prior_cfg: dict) -> dict:
     2. **Wilson model**: provide `K`, `B`, and `s_squared` (or
        `mean_d`).  tau is derived as `(1/K) * exp(2*B*s^2)`.
        Both `tau_per_group.pt` and `s_squared_per_group.pt` are
-       saved so that `PerBinLoss` and `WilsonPerBinLoss` produce
+       saved so that `PerBinLoss` and `WilsonLoss` produce
        equivalent effective priors.
 
     Args:
