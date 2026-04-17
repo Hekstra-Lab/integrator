@@ -455,23 +455,46 @@ def prepare_per_bin_priors(
     basis_filename = loss_args.get("profile_basis_per_bin")
     if isinstance(basis_filename, str):
         basis_path = _nbins_path(basis_filename, n_bins, data_dir)
-        if force or not basis_path.exists():
-            dl_args = cfg.get("data_loader", {}).get("args", {})
-            D_dim = int(dl_args.get("D", dl_args.get("d", 1)))
-            H_dim = int(dl_args.get("H", dl_args.get("h", 21)))
-            W_dim = int(dl_args.get("W", dl_args.get("w", 21)))
+        dl_args = cfg.get("data_loader", {}).get("args", {})
+        D_dim = int(dl_args.get("D", dl_args.get("d", 1)))
+        H_dim = int(dl_args.get("H", dl_args.get("h", 21)))
+        W_dim = int(dl_args.get("W", dl_args.get("w", 21)))
 
-            basis_type = str(loss_args.get("profile_basis_type", "hermite"))
-            basis_d = int(loss_args.get("profile_basis_d", 14))
-            basis_max_order = int(loss_args.get("profile_basis_max_order", 4))
-            basis_sigma_ref = float(
-                loss_args.get("profile_basis_sigma_ref", 3.0)
-            )
+        basis_type = str(loss_args.get("profile_basis_type", "hermite"))
+        basis_d = int(loss_args.get("profile_basis_d", 14))
+        basis_max_order = int(loss_args.get("profile_basis_max_order", 4))
+        basis_sigma_ref = float(
+            loss_args.get("profile_basis_sigma_ref", 3.0)
+        )
+        basis_sigma_z = float(
+            loss_args.get("profile_basis_sigma_z", 1.0)
+        )
 
-            # Use profile_group_labels if 2D binning was done, else group_labels
-            prf_labels = metadata.get("profile_group_label", group_labels)
-            n_prf_bins = int(prf_labels.max().item()) + 1
+        prf_labels = metadata.get("profile_group_label", group_labels)
+        n_prf_bins = int(prf_labels.max().item()) + 1
 
+        expected_prov = {
+            "basis_type": basis_type,
+            "D": D_dim,
+            "H": H_dim,
+            "W": W_dim,
+            "max_order": basis_max_order,
+            "sigma_ref": basis_sigma_ref,
+            "sigma_z": basis_sigma_z,
+            "n_bins": n_prf_bins,
+        }
+
+        need_regen = force or not basis_path.exists()
+        if not need_regen:
+            reason = _basis_provenance_mismatch_reason(basis_path, expected_prov)
+            if reason is not None:
+                logger.warning(
+                    "Regenerating %s because provenance mismatch: %s",
+                    basis_path.name, reason,
+                )
+                need_regen = True
+
+        if need_regen:
             basis_data = _fit_profile_basis_per_bin(
                 counts,
                 masks,
@@ -484,14 +507,17 @@ def prepare_per_bin_priors(
                 d=basis_d,
                 max_order=basis_max_order,
                 sigma_ref=basis_sigma_ref,
+                sigma_z=basis_sigma_z,
             )
             torch.save(basis_data, basis_path)
             logger.info(
-                "Saved %s (type=%s, d=%d, %d bins)",
+                "Saved %s (type=%s, d=%d, %d bins, sigma_ref=%.2f, sigma_z=%.2f)",
                 basis_path.name,
                 basis_type,
                 basis_data["d"],
                 n_prf_bins,
+                basis_sigma_ref,
+                basis_sigma_z,
             )
 
     # ── Empirical profile basis (per-bin empirical bias) ──────────────
@@ -1651,6 +1677,40 @@ def _bg_subtract_signal(
     return signal.clamp(min=0)
 
 
+def _basis_provenance_mismatch_reason(
+    basis_path: Path, expected: dict
+) -> str | None:
+    """Load the basis file's provenance dict and diff against expected.
+
+    Returns None when the cached file's generation parameters match the
+    caller's expectations. Returns a human-readable description of the
+    first mismatch otherwise, so the caller can log WHY regeneration was
+    triggered. Also treats "no provenance key" as a mismatch — old-format
+    files get rewritten with the new metadata schema.
+    """
+    try:
+        cached = torch.load(basis_path, weights_only=False, map_location="cpu")
+    except Exception as err:
+        return f"failed to load cached file for validation: {err}"
+    if not isinstance(cached, dict):
+        return "cached file is not a dict"
+    prov = cached.get("provenance")
+    if prov is None:
+        return "cached file predates provenance schema; rewriting with metadata"
+    # Compare all expected keys; float fields use an epsilon to tolerate
+    # float32 round-trip differences.
+    for key, want in expected.items():
+        got = prov.get(key)
+        if got is None:
+            return f"missing provenance key {key!r}"
+        if isinstance(want, float):
+            if abs(float(got) - want) > 1e-6:
+                return f"{key}: cached={got}, config={want}"
+        elif got != want:
+            return f"{key}: cached={got!r}, config={want!r}"
+    return None
+
+
 def _fit_profile_basis_per_bin(
     counts: Tensor,
     masks: Tensor,
@@ -1663,6 +1723,7 @@ def _fit_profile_basis_per_bin(
     d: int = 14,
     max_order: int = 4,
     sigma_ref: float = 3.0,
+    sigma_z: float = 1.0,
 ) -> dict:
     """Build a fixed profile basis and compute per-bin latent priors.
 
@@ -1678,16 +1739,20 @@ def _fit_profile_basis_per_bin(
         d: Latent dimensionality (PCA only; Hermite uses max_order).
         max_order: Max Hermite polynomial order (Hermite only).
         sigma_ref: Reference Gaussian width in pixels (Hermite only).
+        sigma_z: Reference Gaussian width along z/frame axis (Hermite 3D).
 
     Returns:
-        Dict ready for torch.save as profile_basis_per_bin.pt.
+        Dict ready for torch.save as profile_basis_per_bin.pt. Includes
+        provenance keys (max_order, sigma_ref, sigma_z, D, H, W, basis_type,
+        n_bins) that downstream loaders validate against cfg before
+        re-using the cached file.
     """
     signal = _bg_subtract_signal(counts, masks, D, H, W)
 
     if basis_type == "hermite":
         if D > 1:
             W_basis, b, orders = _build_hermite_basis_3d(
-                D, H, W, max_order, sigma_ref
+                D, H, W, max_order, sigma_ref, sigma_z
             )
         else:
             W_basis, b, orders = _build_hermite_basis_2d(
@@ -1696,10 +1761,11 @@ def _fit_profile_basis_per_bin(
         d_actual = W_basis.shape[1]
         explained_var = None
         logger.info(
-            "Hermite basis: %dD, max_order=%d, sigma_ref=%.1f, d=%d",
+            "Hermite basis: %dD, max_order=%d, sigma_ref=%.2f, sigma_z=%.2f, d=%d",
             3 if D > 1 else 2,
             max_order,
             sigma_ref,
+            sigma_z,
             d_actual,
         )
     elif basis_type == "pca":
@@ -1754,6 +1820,20 @@ def _fit_profile_basis_per_bin(
         "std_per_group": std_per_group,
         "sigma_prior": sigma_prior,
         "basis_type": f"{basis_type}_per_bin",
+        # Provenance: parameters used to generate this file. Downstream
+        # loaders compare these to the YAML cfg to decide whether the
+        # cached file is still valid or needs to be regenerated.
+        "provenance": {
+            "basis_type": basis_type,
+            "D": int(D),
+            "H": int(H),
+            "W": int(W),
+            "max_order": int(max_order),
+            "sigma_ref": float(sigma_ref),
+            "sigma_z": float(sigma_z),
+            "n_bins": int(n_bins),
+            "d": int(d_actual),
+        },
     }
     if orders is not None:
         result["orders"] = orders
