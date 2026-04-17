@@ -14,6 +14,10 @@ class IntegratorCfg:
     decoder_weight_decay: float | None = None
     qp_smoothness_weight: float | None = None
     qp_orthogonality_weight: float | None = None
+    qp_sparsity_weight: float | None = None
+    lr_schedule: Literal["cosine_warmup"] | None = None
+    warmup_epochs: int = 5
+    lr_min: float = 1.0e-5
     mc_samples: int = 4
     renyi_scale: float = 0.0
     predict_keys: Literal["default"] | list[str] = "default"
@@ -47,10 +51,25 @@ class IntegratorCfg:
                 f"{self.decoder_weight_decay}"
             )
 
-        for name in ("qp_smoothness_weight", "qp_orthogonality_weight"):
+        for name in (
+            "qp_smoothness_weight",
+            "qp_orthogonality_weight",
+            "qp_sparsity_weight",
+        ):
             v = getattr(self, name)
             if v is not None and v < 0:
                 raise ValueError(f"{name} must be non-negative, got {v}")
+
+        if self.warmup_epochs < 0:
+            raise ValueError(
+                f"warmup_epochs must be non-negative, got {self.warmup_epochs}"
+            )
+        if self.lr_min < 0:
+            raise ValueError(f"lr_min must be non-negative, got {self.lr_min}")
+        if self.lr_min > self.lr:
+            raise ValueError(
+                f"lr_min ({self.lr_min}) must be <= lr ({self.lr})"
+            )
 
         if self.mc_samples < 1:
             raise ValueError(f"mc_samples must be >= 1, got {self.mc_samples}")

@@ -436,6 +436,109 @@ def construct_trainer(
     return pl.Trainer(**trainer_kwargs)
 
 
+def _resolved_path_info(path: str) -> dict:
+    """Return absolute path, existence, and size for a resolved file path."""
+    p = Path(path).resolve()
+    entry: dict = {"path": str(p)}
+    try:
+        st = p.stat()
+        entry["exists"] = True
+        entry["size_bytes"] = st.st_size
+    except (FileNotFoundError, PermissionError):
+        entry["exists"] = False
+    return entry
+
+
+def _collect_resolved_paths(cfg: dict) -> dict:
+    """Collect the absolute paths of every file the factory actually loads.
+
+    Mirrors the resolution logic in `_get_surrogate_modules` and
+    `_get_loss_module` so the saved report matches what training actually
+    read from disk, including any `_{n_bins}` suffixes and `data_dir`
+    joins that the YAML's relative paths hide.
+    """
+    report: dict = {"data_dir": _get_data_dir(cfg), "n_bins": _get_n_bins(cfg)}
+    data_dir = report["data_dir"]
+    n_bins = report["n_bins"]
+
+    # Data loader: shoebox_file_names joined against data_dir
+    dl_args = cfg.get("data_loader", {}).get("args", {})
+    shoebox_files = dl_args.get("shoebox_file_names", {})
+    dl_paths: dict = {}
+    if isinstance(shoebox_files, dict):
+        for k, fname in shoebox_files.items():
+            if k == "data_dir":
+                # `shoebox_file_names.data_dir` is a directory override,
+                # not a filename; skip.
+                continue
+            if isinstance(fname, str):
+                dl_paths[k] = _resolved_path_info(
+                    _resolve_data_path(fname, data_dir, None)
+                )
+    if dl_paths:
+        report["data_loader"] = dl_paths
+
+    # Surrogates: basis_path, resolved with n_bins suffix when applicable
+    surr_paths: dict = {}
+    for key, surrogate_cfg in cfg.get("surrogates", {}).items():
+        args = surrogate_cfg.get("args", {}) or {}
+        bp = args.get("basis_path")
+        if isinstance(bp, str) and surrogate_cfg.get("name") in (
+            "fixed_basis_profile",
+            "learned_basis_profile",
+            "per_bin_profile",
+            "empirical_profile_surrogate",
+            "logistic_normal_surrogate",
+            "per_bin_logistic_normal",
+            "linear_profile_surrogate",
+        ):
+            surr_paths[f"{key}.basis_path"] = _resolved_path_info(
+                _resolve_data_path(bp, data_dir, n_bins)
+            )
+    if surr_paths:
+        report["surrogates"] = surr_paths
+
+    # Loss buffers (bg_rate_per_group, tau_per_group, etc.)
+    loss_args = cfg.get("loss", {}).get("args", {}) or {}
+    loss_paths: dict = {}
+    global_conc = "pprf_quantile" in loss_args
+    for pt_key in (
+        "tau_per_group",
+        "bg_rate_per_group",
+        "concentration_per_group",
+        "s_squared_per_group",
+        "i_concentration_per_group",
+        "bg_concentration_per_group",
+        "profile_basis_per_bin",
+        "empirical_profile_basis_per_bin",
+    ):
+        v = loss_args.get(pt_key)
+        if isinstance(v, str):
+            skip_nbins = pt_key == "concentration_per_group" and global_conc
+            nbins = None if skip_nbins else n_bins
+            loss_paths[pt_key] = _resolved_path_info(
+                _resolve_data_path(v, data_dir, nbins)
+            )
+
+    # Dirichlet prior concentration file (resolved in _get_prior_cfgs)
+    for p_key in ("pprf_cfg", "pbg_cfg", "pi_cfg"):
+        p_dict = loss_args.get(p_key)
+        if not isinstance(p_dict, dict):
+            continue
+        if p_dict.get("name") != "dirichlet":
+            continue
+        params = p_dict.get("params") or {}
+        conc = params.get("concentration")
+        if isinstance(conc, str) and not os.path.isabs(conc) and not conc.startswith("~"):
+            loss_paths[f"{p_key}.concentration"] = _resolved_path_info(
+                os.path.join(data_dir, conc)
+            )
+    if loss_paths:
+        report["loss"] = loss_paths
+
+    return report
+
+
 def save_run_artifacts(
     integrator: BaseIntegrator,
     cfg: dict,
@@ -446,7 +549,8 @@ def save_run_artifacts(
     Saves:
         - prior_concentration.pt: the rescaled Dirichlet concentration vector
           used during training
-        - run_artifacts.yaml: prior configs, model param counts, loss settings
+        - run_artifacts.yaml: prior configs, model param counts, loss settings,
+          and every file the factory actually loaded (post path resolution)
     """
     artifacts_dir = Path(logdir) / "artifacts"
     artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -508,6 +612,12 @@ def save_run_artifacts(
             param_counts[name] = n
     param_counts["total"] = sum(p.numel() for p in integrator.parameters())
     artifacts["param_counts"] = param_counts
+
+    # Resolved absolute paths for every file the factory loaded, with
+    # existence + size. Lets you audit exactly which _{n_bins}-suffixed
+    # and data_dir-joined files were used, even if the YAML only names them
+    # relatively.
+    artifacts["resolved_paths"] = _collect_resolved_paths(cfg)
 
     # Write summary YAML
     with open(artifacts_dir / "run_artifacts.yaml", "w") as f:

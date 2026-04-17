@@ -285,6 +285,22 @@ def main():
     # save prior artifacts (rescaled concentration, param counts, etc.)
     save_run_artifacts(integrator, cfg, logdir)
 
+    # Echo resolved file paths to the training log so they show up in stdout
+    # alongside the rest of the startup info. The full record (with sizes +
+    # existence checks) is written to run_artifacts.yaml.
+    from integrator.utils.factory_utils import _collect_resolved_paths
+    resolved = _collect_resolved_paths(cfg)
+    logger.info(f"data_dir: {resolved.get('data_dir')}")
+    logger.info(f"n_bins: {resolved.get('n_bins')}")
+    for section in ("data_loader", "surrogates", "loss"):
+        entries = resolved.get(section, {})
+        if not entries:
+            continue
+        logger.info(f"Resolved {section} paths:")
+        for k, info in entries.items():
+            status = "" if info.get("exists") else "  [MISSING]"
+            logger.info(f"  {k} -> {info['path']}{status}")
+
     # Callbacks
     keys = [
         "refl_ids",

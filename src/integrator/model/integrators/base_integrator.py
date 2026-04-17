@@ -1,3 +1,4 @@
+import math
 from abc import abstractmethod
 from typing import Any, Literal
 
@@ -79,6 +80,10 @@ class BaseIntegrator(pl.LightningModule):
         self.decoder_weight_decay = cfg.decoder_weight_decay
         self.qp_smoothness_weight = cfg.qp_smoothness_weight
         self.qp_orthogonality_weight = cfg.qp_orthogonality_weight
+        self.qp_sparsity_weight = cfg.qp_sparsity_weight
+        self.lr_schedule = cfg.lr_schedule
+        self.warmup_epochs = cfg.warmup_epochs
+        self.lr_min = cfg.lr_min
         self.mc_samples = cfg.mc_samples
         self.renyi_scale = cfg.renyi_scale
         if cfg.data_dim == "2d":
@@ -220,6 +225,10 @@ class BaseIntegrator(pl.LightningModule):
           column, penalizing high-frequency structure in W.
         - Orthogonality: mean squared off-diagonal entry of the column-
           normalized Gram matrix, penalizing redundant / collinear columns.
+        - Sparsity: mean |W|, penalizing non-zero entries. Encourages
+          localization (most pixels near zero, only peak-region pixels
+          carry weight). Complements smoothness (smoothness asks adjacent
+          pixels to be similar; sparsity asks most pixels to be zero).
 
         Returns (total_penalty, components_dict). Zero and empty when
         disabled or when qp has no decoder.weight (e.g. fixed basis).
@@ -230,10 +239,13 @@ class BaseIntegrator(pl.LightningModule):
         W = getattr(decoder, "weight", None)
         smooth_w = self.qp_smoothness_weight
         ortho_w = self.qp_orthogonality_weight
+        sparse_w = self.qp_sparsity_weight
         if W is None or W.dim() != 2:
             return zero, {}
-        if (smooth_w is None or smooth_w == 0) and (
-            ortho_w is None or ortho_w == 0
+        if (
+            (smooth_w is None or smooth_w == 0)
+            and (ortho_w is None or ortho_w == 0)
+            and (sparse_w is None or sparse_w == 0)
         ):
             return zero, {}
 
@@ -270,6 +282,11 @@ class BaseIntegrator(pl.LightningModule):
             components["profile_orthogonality"] = ortho.detach()
             total = total + ortho_w * ortho
 
+        if sparse_w is not None and sparse_w > 0:
+            sparsity = W.abs().mean()
+            components["profile_sparsity"] = sparsity.detach()
+            total = total + sparse_w * sparsity
+
         return total, components
 
     def on_validation_epoch_end(self) -> None:
@@ -296,7 +313,7 @@ class BaseIntegrator(pl.LightningModule):
                 on_epoch=True,
             )
 
-    def configure_optimizers(self):
+    def _build_optimizer(self) -> torch.optim.Optimizer:
         if self.decoder_weight_decay is None:
             return torch.optim.Adam(
                 self.parameters(),
@@ -333,3 +350,55 @@ class BaseIntegrator(pl.LightningModule):
             ],
             lr=self.lr,
         )
+
+    def _cosine_warmup_lambda(self, max_epochs: int):
+        """Linear warmup for `warmup_epochs`, then cosine decay to lr_min.
+
+        Returns a multiplier in [lr_min/lr, 1.0] to be applied by LambdaLR.
+        """
+        warmup = self.warmup_epochs
+        lr_min_ratio = self.lr_min / max(self.lr, 1e-12)
+
+        def lr_lambda(epoch: int) -> float:
+            if warmup > 0 and epoch < warmup:
+                # Linear ramp 0 → 1 over the first `warmup` epochs. Start at
+                # 1/warmup on epoch 0 (not 0) so the optimizer takes a real
+                # step immediately; stepping at lr=0 is a no-op.
+                return float(epoch + 1) / float(warmup)
+            # Cosine decay from epoch == warmup (value 1) down to lr_min_ratio
+            # at epoch == max_epochs.
+            tail = max(max_epochs - warmup, 1)
+            progress = min((epoch - warmup) / tail, 1.0)
+            cos_term = 0.5 * (1.0 + math.cos(math.pi * progress))
+            return lr_min_ratio + (1.0 - lr_min_ratio) * cos_term
+
+        return lr_lambda
+
+    def configure_optimizers(self) -> Any:
+        optimizer = self._build_optimizer()
+        if self.lr_schedule is None:
+            return optimizer
+        if self.lr_schedule != "cosine_warmup":
+            raise ValueError(
+                f"Unknown lr_schedule {self.lr_schedule!r}. "
+                "Supported: 'cosine_warmup' or null."
+            )
+
+        max_epochs = self.trainer.max_epochs
+        if max_epochs is None or max_epochs <= 0:
+            raise RuntimeError(
+                "cosine_warmup requires trainer.max_epochs to be set; "
+                f"got {max_epochs}."
+            )
+        scheduler = torch.optim.lr_scheduler.LambdaLR(
+            optimizer,
+            lr_lambda=self._cosine_warmup_lambda(max_epochs),
+        )
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": "epoch",
+                "frequency": 1,
+            },
+        }
