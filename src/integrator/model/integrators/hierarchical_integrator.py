@@ -299,3 +299,145 @@ class HierarchicalIntegratorC(IntegratorModelC):
         }
 
     _step = _hierarchical_step
+
+
+# Metadata features used by HierarchicalIntegratorCMeta. Order is fixed;
+# changing it is a breaking change for any saved checkpoint of this class.
+# log-d is used instead of raw d so the feature is roughly [0, 4] rather
+# than [1, 80], making LayerNorm's job easier.
+_META_FEATURE_KEYS: tuple[str, ...] = (
+    "d",           # resolution — log-transformed below
+    "s1.0",        # scattered wavevector components (unit-vector scale)
+    "s1.1",
+    "s1.2",
+    "lp",          # Lorentz-polarization factor, [0, 1]
+    "partiality",  # fraction of reflection captured, [0, 1]
+    "zeta",        # reciprocal-space velocity through Ewald, [-1, 1]
+    "entering",    # 0/1: is reflection entering Ewald sphere
+)
+
+
+def _extract_meta_features(
+    metadata: dict, device: torch.device
+) -> Tensor:
+    """Extract the metadata feature tensor used by HierarchicalIntegratorCMeta.
+
+    Returns a (B, 8) tensor with d log-transformed, other features raw.
+    LayerNorm inside the metadata encoder handles the scale differences.
+    Raises KeyError with a clear message if any field is missing.
+    """
+    missing = [k for k in _META_FEATURE_KEYS if k not in metadata]
+    if missing:
+        raise KeyError(
+            f"HierarchicalIntegratorCMeta requires metadata keys "
+            f"{list(_META_FEATURE_KEYS)}; missing: {missing}"
+        )
+    columns = []
+    for k in _META_FEATURE_KEYS:
+        v = metadata[k].float().to(device)
+        if k == "d":
+            # d is resolution in Angstroms, physically > 0. Don't clamp —
+            # a hard floor would silently compress valid values and could
+            # mask a data bug. Let log(d <= 0) produce NaN loudly instead.
+            v = torch.log(v)
+        columns.append(v)
+    return torch.stack(columns, dim=-1)  # (B, 8)
+
+
+class HierarchicalIntegratorCMeta(BaseIntegrator):
+    """HierarchicalC + auxiliary metadata encoder.
+
+    Same 5 shoebox encoders as HierarchicalIntegratorC plus a dedicated
+    metadata encoder that processes per-reflection geometry features
+    (resolution, scattered wavevector, partiality, Lorentz-polarization,
+    zeta, entering). Its output is added to each of the four intensity
+    encoders' outputs — the profile encoder is left untouched (profile
+    shape is a local property of the pixels).
+
+    Why additive fusion: keeps surrogate `in_features` unchanged, so
+    existing qi/qbg configs are drop-in compatible. The metadata encoder
+    learns to embed the 8 raw features into the same feature space that
+    intensity features live in, and the surrogate's linear head handles
+    weighting.
+
+    Required encoders:
+      profile, k_i, r_i, k_bg, r_bg, metadata
+    """
+
+    REQUIRED_ENCODERS = {
+        "profile": configs.ShoeboxEncoderArgs,
+        "k_i": configs.IntensityEncoderArgs,
+        "r_i": configs.IntensityEncoderArgs,
+        "k_bg": configs.IntensityEncoderArgs,
+        "r_bg": configs.IntensityEncoderArgs,
+        "metadata": configs.MetadataEncoderArgs,
+    }
+
+    ARGS = IntegratorModelArgs
+
+    def _forward_impl(
+        self,
+        counts: Tensor,
+        shoebox: Tensor,
+        mask: Tensor,
+        metadata: dict,
+    ) -> dict[str, Any]:
+        counts = torch.clamp(counts, min=0)
+
+        b = shoebox.shape[0]
+        shoebox_reshaped = shoebox.reshape(b, 1, *self.shoebox_shape)
+
+        x_profile = self.encoders["profile"](shoebox_reshaped)
+        x_k_i = self.encoders["k_i"](shoebox_reshaped)
+        x_r_i = self.encoders["r_i"](shoebox_reshaped)
+        x_k_bg = self.encoders["k_bg"](shoebox_reshaped)
+        x_r_bg = self.encoders["r_bg"](shoebox_reshaped)
+
+        # Metadata branch: embed per-reflection geometry features, then fold
+        # additively into each intensity encoder's output.
+        meta_features = _extract_meta_features(metadata, shoebox.device)
+        x_meta = self.encoders["metadata"](meta_features)
+        x_k_i = x_k_i + x_meta
+        x_r_i = x_r_i + x_meta
+        x_k_bg = x_k_bg + x_meta
+        x_r_bg = x_r_bg + x_meta
+
+        qbg = self.surrogates["qbg"](x_k_bg, x_r_bg)
+        qi = self.surrogates["qi"](x_k_i, x_r_i)
+
+        prf_labels = metadata.get(
+            "profile_group_label", metadata.get("group_label")
+        )
+        prf_labels = prf_labels.long() if prf_labels is not None else None
+        qp = self.surrogates["qp"](
+            x_profile, mc_samples=self.mc_samples, group_labels=prf_labels
+        )
+
+        zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        zp = _sample_profile(qp, self.mc_samples)
+        zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+
+        rate = zI * zp + zbg
+
+        out = IntegratorBaseOutputs(
+            rates=rate,
+            counts=counts,
+            mask=mask,
+            qbg=qbg,
+            qp=qp,
+            qi=qi,
+            zp=zp,
+            zbg=zbg,
+            metadata=metadata,
+        )
+        out = _assemble_outputs(out)
+        _add_group_outputs(out, metadata, self.loss)
+
+        return {
+            "forward_out": out,
+            "qp": qp,
+            "qi": qi,
+            "qbg": qbg,
+        }
+
+    _step = _hierarchical_step

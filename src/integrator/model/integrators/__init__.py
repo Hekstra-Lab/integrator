@@ -3,6 +3,7 @@ from .hierarchical_integrator import (
     HierarchicalIntegratorA,
     HierarchicalIntegratorB,
     HierarchicalIntegratorC,
+    HierarchicalIntegratorCMeta,
 )
 from .integrator import IntegratorModelA, IntegratorModelB, IntegratorModelC
 
@@ -11,6 +12,7 @@ __all__ = [
     "HierarchicalIntegratorA",
     "HierarchicalIntegratorB",
     "HierarchicalIntegratorC",
+    "HierarchicalIntegratorCMeta",
     "IntegratorModelA",
     "IntegratorModelB",
     "IntegratorModelC",

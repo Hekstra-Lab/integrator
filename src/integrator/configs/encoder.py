@@ -62,9 +62,32 @@ class IntensityEncoderArgs:
 
 
 @dataclass
+class MetadataEncoderArgs:
+    encoder_in: int
+    encoder_out: int
+    hidden_dim: int = 128
+    depth: int = 3
+    dropout: float = 0.0
+
+    def __post_init__(self):
+        if self.encoder_in < 1:
+            raise ValueError(f"encoder_in must be >= 1, got {self.encoder_in}")
+        if self.encoder_out < 1:
+            raise ValueError(
+                f"encoder_out must be >= 1, got {self.encoder_out}"
+            )
+        if self.depth < 0:
+            raise ValueError(f"depth must be >= 0, got {self.depth}")
+        if not 0.0 <= self.dropout < 1.0:
+            raise ValueError(
+                f"dropout must be in [0, 1), got {self.dropout}"
+            )
+
+
+@dataclass
 class EncoderConfig:
     name: str
-    args: ShoeboxEncoderArgs | IntensityEncoderArgs
+    args: ShoeboxEncoderArgs | IntensityEncoderArgs | MetadataEncoderArgs
 
 
 @dataclass

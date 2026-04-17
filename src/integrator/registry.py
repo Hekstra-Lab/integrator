@@ -19,6 +19,7 @@ from integrator.model.distributions import (
 )
 from integrator.model.encoders import (
     IntensityEncoder,
+    MetadataEncoder,
     MLPMetadataEncoder,
     ShoeboxEncoder,
 )
@@ -26,6 +27,7 @@ from integrator.model.integrators import (
     HierarchicalIntegratorA,
     HierarchicalIntegratorB,
     HierarchicalIntegratorC,
+    HierarchicalIntegratorCMeta,
     IntegratorModelA,
     IntegratorModelB,
     IntegratorModelC,
@@ -42,6 +44,7 @@ REGISTRY = {
         "shoebox_encoder": ShoeboxEncoder,
         "intensity_encoder": IntensityEncoder,
         "mlp_metadata_encoder": MLPMetadataEncoder,
+        "metadata_encoder": MetadataEncoder,
     },
     "loss": {
         "default": Loss,
@@ -56,6 +59,7 @@ REGISTRY = {
         "hierarchicalA": HierarchicalIntegratorA,
         "hierarchicalB": HierarchicalIntegratorB,
         "hierarchicalC": HierarchicalIntegratorC,
+        "hierarchicalCMeta": HierarchicalIntegratorCMeta,
     },
     "surrogates": {
         "gammaA": GammaDistributionRepamA,
