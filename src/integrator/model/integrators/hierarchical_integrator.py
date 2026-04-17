@@ -69,6 +69,19 @@ def _hierarchical_step(self, batch, step: Literal["train", "val"]):
         },
     )
 
+    # Auxiliary regularizers on the learned profile decoder (no-op for
+    # fixed bases). ELBO logging above stays pure; penalty is added to
+    # the backpropagated loss only.
+    penalty, penalty_components = self._profile_basis_penalty()
+    for name, value in penalty_components.items():
+        self.log(
+            f"{step} {name}",
+            value,
+            on_step=False,
+            on_epoch=True,
+        )
+    total_loss = total_loss + penalty
+
     loss_components = {
         "loss": total_loss.detach(),
         "nll": loss_dict["neg_ll_mean"].detach(),

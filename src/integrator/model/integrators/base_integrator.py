@@ -77,6 +77,8 @@ class BaseIntegrator(pl.LightningModule):
         self.lr = cfg.lr
         self.weight_decay = cfg.weight_decay
         self.decoder_weight_decay = cfg.decoder_weight_decay
+        self.qp_smoothness_weight = cfg.qp_smoothness_weight
+        self.qp_orthogonality_weight = cfg.qp_orthogonality_weight
         self.mc_samples = cfg.mc_samples
         self.renyi_scale = cfg.renyi_scale
         if cfg.data_dim == "2d":
@@ -152,6 +154,19 @@ class BaseIntegrator(pl.LightningModule):
             },
         )
 
+        # Auxiliary regularizers on the learned profile decoder (no-op for
+        # fixed bases). ELBO logging above stays pure; penalty is added to
+        # the backpropagated loss only.
+        penalty, penalty_components = self._profile_basis_penalty()
+        for name, value in penalty_components.items():
+            self.log(
+                f"{step} {name}",
+                value,
+                on_step=False,
+                on_epoch=True,
+            )
+        total_loss = total_loss + penalty
+
         # Log hyperprior diagnostics if present (HierarchicalLoss)
         for key in (
             "kl_global",
@@ -197,6 +212,65 @@ class BaseIntegrator(pl.LightningModule):
             for k, v in outputs["forward_out"].items()
             if k in self.predict_keys
         }
+
+    def _profile_basis_penalty(self) -> tuple[Tensor, dict[str, Tensor]]:
+        """Regularization penalties on the learned qp decoder weight W.
+
+        - Smoothness: mean squared spatial gradient across (D, H, W) per
+          column, penalizing high-frequency structure in W.
+        - Orthogonality: mean squared off-diagonal entry of the column-
+          normalized Gram matrix, penalizing redundant / collinear columns.
+
+        Returns (total_penalty, components_dict). Zero and empty when
+        disabled or when qp has no decoder.weight (e.g. fixed basis).
+        """
+        zero = torch.zeros((), device=self.device)
+        qp = self.surrogates["qp"] if "qp" in self.surrogates else None
+        decoder = getattr(qp, "decoder", None)
+        W = getattr(decoder, "weight", None)
+        smooth_w = self.qp_smoothness_weight
+        ortho_w = self.qp_orthogonality_weight
+        if W is None or W.dim() != 2:
+            return zero, {}
+        if (smooth_w is None or smooth_w == 0) and (
+            ortho_w is None or ortho_w == 0
+        ):
+            return zero, {}
+
+        shape = self.shoebox_shape
+        D, H, W_spatial = shape if len(shape) == 3 else (1, *shape)
+        K, d = W.shape
+        if K != D * H * W_spatial:
+            return zero, {}
+
+        total = zero
+        components: dict[str, Tensor] = {}
+
+        if smooth_w is not None and smooth_w > 0:
+            vol = W.T.reshape(d, D, H, W_spatial)
+            gx = vol[..., 1:] - vol[..., :-1]
+            gy = vol[..., 1:, :] - vol[..., :-1, :]
+            sq_sum = (gx.pow(2)).sum() + (gy.pow(2)).sum()
+            n_terms = gx.numel() + gy.numel()
+            if D > 1:
+                gz = vol[..., 1:, :, :] - vol[..., :-1, :, :]
+                sq_sum = sq_sum + gz.pow(2).sum()
+                n_terms = n_terms + gz.numel()
+            smooth = sq_sum / max(n_terms, 1)
+            components["profile_smoothness"] = smooth.detach()
+            total = total + smooth_w * smooth
+
+        if ortho_w is not None and ortho_w > 0:
+            W_n = W / W.norm(dim=0, keepdim=True).clamp(min=1e-8)
+            gram = W_n.T @ W_n
+            # diag of gram is 1 (unit cols); penalty is purely off-diagonal
+            off_sq = (gram.pow(2)).sum() - float(d)
+            denom = max(d * (d - 1), 1)
+            ortho = off_sq / denom
+            components["profile_orthogonality"] = ortho.detach()
+            total = total + ortho_w * ortho
+
+        return total, components
 
     def on_validation_epoch_end(self) -> None:
         """Log val - train generalization gaps for each ELBO component.

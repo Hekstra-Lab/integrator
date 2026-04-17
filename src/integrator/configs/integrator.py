@@ -12,6 +12,8 @@ class IntegratorCfg:
     encoder_out: int = 64
     weight_decay: float = 0.0
     decoder_weight_decay: float | None = None
+    qp_smoothness_weight: float | None = None
+    qp_orthogonality_weight: float | None = None
     mc_samples: int = 4
     renyi_scale: float = 0.0
     predict_keys: Literal["default"] | list[str] = "default"
@@ -44,6 +46,11 @@ class IntegratorCfg:
                 "decoder_weight_decay must be non-negative, got "
                 f"{self.decoder_weight_decay}"
             )
+
+        for name in ("qp_smoothness_weight", "qp_orthogonality_weight"):
+            v = getattr(self, name)
+            if v is not None and v < 0:
+                raise ValueError(f"{name} must be non-negative, got {v}")
 
         if self.mc_samples < 1:
             raise ValueError(f"mc_samples must be >= 1, got {self.mc_samples}")
