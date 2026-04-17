@@ -485,18 +485,20 @@ def _collect_resolved_paths(cfg: dict) -> dict:
     if dl_paths:
         report["data_loader"] = dl_paths
 
-    # Surrogates: basis_path, resolved with n_bins suffix when applicable
+    # Surrogates: resolve any of the two basis-like path kwargs. Both get
+    # the n_bins suffix rewrite via _resolve_data_path.
     surr_paths: dict = {}
     for key, surrogate_cfg in cfg.get("surrogates", {}).items():
         args = surrogate_cfg.get("args", {}) or {}
-        bp = args.get("basis_path")
-        if isinstance(bp, str) and surrogate_cfg.get("name") in (
-            "fixed_basis_profile",
-            "learned_basis_profile",
-        ):
-            surr_paths[f"{key}.basis_path"] = _resolved_path_info(
-                _resolve_data_path(bp, data_dir, n_bins)
-            )
+        name = surrogate_cfg.get("name")
+        if name not in ("fixed_basis_profile", "learned_basis_profile"):
+            continue
+        for arg_key in ("basis_path", "warmstart_basis_path"):
+            v = args.get(arg_key)
+            if isinstance(v, str):
+                surr_paths[f"{key}.{arg_key}"] = _resolved_path_info(
+                    _resolve_data_path(v, data_dir, n_bins)
+                )
     if surr_paths:
         report["surrogates"] = surr_paths
 
