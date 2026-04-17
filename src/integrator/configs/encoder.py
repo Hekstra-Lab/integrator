@@ -18,6 +18,7 @@ class ShoeboxEncoderArgs:
     conv2_kernel_size: tuple[int, ...]
     conv2_padding: tuple[int, ...]
     norm2_num_groups: int
+    use_coord_channels: bool = False
 
     def __post_init__(self):
         if self.in_channels < 1:

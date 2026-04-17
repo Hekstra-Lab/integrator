@@ -74,9 +74,14 @@ class MetadataEncoder(nn.Module):
         layers when the metadata is 8-dim)
       - Default depth of 3 (was 10 — overkill for low-dim input)
       - Pre-norm residual blocks with GELU activations
-      - Input ``LayerNorm`` absorbs differences in feature scales so raw,
-        un-standardized inputs train stably
       - Standard biased ``nn.Linear`` (old version disabled biases)
+
+    Callers are expected to pass already-standardized inputs (roughly
+    zero mean, unit variance per feature). See
+    ``_extract_meta_features`` in ``hierarchical_integrator.py`` for the
+    canonical pre-normalization using fixed dataset-level statistics.
+    Adding an internal normalization layer on top is redundant and risks
+    fighting the pre-normalization; trust the pre-normalization instead.
     """
 
     def __init__(
@@ -88,7 +93,6 @@ class MetadataEncoder(nn.Module):
         dropout: float = 0.0,
     ):
         super().__init__()
-        self.input_norm = nn.LayerNorm(encoder_in)
         layers: list[nn.Module] = [nn.Linear(encoder_in, hidden_dim)]
         for _ in range(depth):
             layers.append(_ResidualMLPBlock(hidden_dim, dropout=dropout))
@@ -102,4 +106,4 @@ class MetadataEncoder(nn.Module):
         self.model = nn.Sequential(*layers)
 
     def forward(self, x: Tensor) -> Tensor:
-        return self.model(self.input_norm(x))
+        return self.model(x)

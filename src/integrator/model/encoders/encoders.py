@@ -17,11 +17,43 @@ OPERATIONS = {
 }
 
 
+def _make_coord_channels(
+    input_shape: tuple[int, ...], dim: int
+) -> Tensor:
+    """Build normalized spatial coordinate channels for a (D, H, W) volume.
+
+    Each channel is one spatial axis, normalized to [-1, 1] so it's
+    scale-free relative to the input counts. Returns shape (dim, *spatial).
+    The encoder concatenates these onto its input channel dim.
+    """
+    if dim == 2:
+        h, w = input_shape[-2:]
+        ys = torch.linspace(-1.0, 1.0, h)
+        xs = torch.linspace(-1.0, 1.0, w)
+        gy, gx = torch.meshgrid(ys, xs, indexing="ij")
+        return torch.stack([gy, gx], dim=0)  # (2, H, W)
+    # 3D
+    d, h, w = input_shape[-3:]
+    zs = torch.linspace(-1.0, 1.0, d) if d > 1 else torch.zeros(1)
+    ys = torch.linspace(-1.0, 1.0, h)
+    xs = torch.linspace(-1.0, 1.0, w)
+    gz, gy, gx = torch.meshgrid(zs, ys, xs, indexing="ij")
+    return torch.stack([gz, gy, gx], dim=0)  # (3, D, H, W)
+
+
 class ShoeboxEncoder(nn.Module):
     """CNN encoder producing a fixed-length embedding from a shoebox volume.
 
     This module applies two Conv3d + GroupNorm + relu blocks with an
     intermediate MaxPool3d, then flattens and projects to `encoder_out`.
+
+    Args:
+        use_coord_channels: If True, concatenate normalized (z, y, x)
+            coordinate channels to the input before the first conv. This
+            gives the encoder explicit spatial-position information that
+            pure convolutions can only approximate via boundary effects.
+            For Bragg shoeboxes (peaks centered by DIALS), absolute
+            position carries real information.
     """
 
     def __init__(
@@ -40,12 +72,26 @@ class ShoeboxEncoder(nn.Module):
         conv2_kernel_size: tuple[int, int, int] = (3, 3, 3),
         conv2_padding: tuple[int, int, int] = (0, 0, 0),
         norm2_num_groups: int = 4,
+        use_coord_channels: bool = False,
     ):
         super().__init__()
 
         self.encoder_out = encoder_out
+        self.use_coord_channels = use_coord_channels
+
+        # Precompute coord channels as a buffer so they move with the
+        # module (.to(device), .cuda(), etc.) without being parameters.
+        if use_coord_channels:
+            coords = _make_coord_channels(
+                input_shape, dim=3 if data_dim == "3d" else 2,
+            )
+            self.register_buffer("coord_channels", coords, persistent=False)
+            effective_in_channels = in_channels + coords.shape[0]
+        else:
+            effective_in_channels = in_channels
+
         self.conv1 = OPERATIONS[data_dim]["conv"](
-            in_channels=in_channels,
+            in_channels=effective_in_channels,
             out_channels=conv1_out_channels,
             kernel_size=conv1_kernel_size,
             padding=conv1_padding,
@@ -74,7 +120,7 @@ class ShoeboxEncoder(nn.Module):
         # Dynamically calculate flattened size
         self.flattened_size = self._infer_flattened_size(
             input_shape=input_shape,
-            in_channels=in_channels,
+            in_channels=effective_in_channels,
         )
         self.fc = torch.nn.Linear(
             in_features=self.flattened_size,
@@ -94,6 +140,12 @@ class ShoeboxEncoder(nn.Module):
             return x.numel()
 
     def forward(self, x):
+        if self.use_coord_channels:
+            # Broadcast the precomputed coord grid across the batch and
+            # concatenate on the channel dim.
+            coords: Tensor = self.coord_channels  # type: ignore[assignment]
+            coords = coords.unsqueeze(0).expand(x.shape[0], *([-1] * coords.ndim))
+            x = torch.cat([x, coords], dim=1)
         x = F.relu(self.norm1(self.conv1(x)))
         x = self.pool(x)
         x = F.relu(self.norm2(self.conv2(x)))

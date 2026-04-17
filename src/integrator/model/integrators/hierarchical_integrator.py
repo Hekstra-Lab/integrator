@@ -303,10 +303,18 @@ class HierarchicalIntegratorC(IntegratorModelC):
 
 # Metadata features used by HierarchicalIntegratorCMeta. Order is fixed;
 # changing it is a breaking change for any saved checkpoint of this class.
-# log-d is used instead of raw d so the feature is roughly [0, 4] rather
-# than [1, 80], making LayerNorm's job easier.
+#
+# Each feature is pre-normalized to ~zero mean, ~unit std using
+# dataset-level approximate statistics hard-coded below. Without pre-
+# normalization, an upstream LayerNorm across features with wildly
+# different scales (log_d ∈ [0, 4.4] vs s1.2 ∈ [-0.96, -0.53] vs
+# entering ∈ {0, 1}) can produce per-sample stds near 0 when features
+# happen to align, amplifying to NaN under the first full-LR optimizer
+# step. These constants are rough — they don't need to be exact because
+# BatchNorm1d inside the metadata encoder refines normalization online
+# using batch stats — but they keep the raw Linear input well-conditioned.
 _META_FEATURE_KEYS: tuple[str, ...] = (
-    "d",           # resolution — log-transformed below
+    "d",           # resolution — log-transformed and normalized below
     "s1.0",        # scattered wavevector components (unit-vector scale)
     "s1.1",
     "s1.2",
@@ -316,14 +324,32 @@ _META_FEATURE_KEYS: tuple[str, ...] = (
     "entering",    # 0/1: is reflection entering Ewald sphere
 )
 
+# (mean, std) per feature AFTER the log-transform for 'd'. These are
+# dataset-informed approximate values — see scripts/wedge_profile_analysis
+# output + metadata inspection in the integrator_data dir.
+_META_FEATURE_STATS: dict[str, tuple[float, float]] = {
+    "d":          (1.5,   0.7),   # log(d) roughly [0.1, 4.4], mean ~1.5
+    "s1.0":       (0.0,   0.3),   # ~symmetric around 0
+    "s1.1":       (0.0,   0.3),
+    "s1.2":       (-0.75, 0.1),   # always negative, tight range
+    "lp":         (0.5,   0.3),
+    "partiality": (0.5,   0.3),
+    "zeta":       (0.0,   0.5),
+    "entering":   (0.5,   0.5),   # binary
+}
+
 
 def _extract_meta_features(
     metadata: dict, device: torch.device
 ) -> Tensor:
-    """Extract the metadata feature tensor used by HierarchicalIntegratorCMeta.
+    """Extract and pre-normalize the metadata feature tensor.
 
-    Returns a (B, 8) tensor with d log-transformed, other features raw.
-    LayerNorm inside the metadata encoder handles the scale differences.
+    Returns a (B, 8) tensor with each feature z-scored using fixed
+    dataset-level statistics. This ensures the first Linear layer inside
+    the metadata encoder sees inputs that are roughly zero-mean,
+    unit-variance — preventing the NaN pathology from per-sample
+    normalization over heterogeneous features.
+
     Raises KeyError with a clear message if any field is missing.
     """
     missing = [k for k in _META_FEATURE_KEYS if k not in metadata]
@@ -336,10 +362,11 @@ def _extract_meta_features(
     for k in _META_FEATURE_KEYS:
         v = metadata[k].float().to(device)
         if k == "d":
-            # d is resolution in Angstroms, physically > 0. Don't clamp —
-            # a hard floor would silently compress valid values and could
-            # mask a data bug. Let log(d <= 0) produce NaN loudly instead.
+            # d is resolution in Angstroms, physically > 0. Let log(d <= 0)
+            # produce NaN loudly instead of silently clamping.
             v = torch.log(v)
+        mean, std = _META_FEATURE_STATS[k]
+        v = (v - mean) / std
         columns.append(v)
     return torch.stack(columns, dim=-1)  # (B, 8)
 
