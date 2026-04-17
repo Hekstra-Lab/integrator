@@ -37,6 +37,7 @@ def _log_loss(
     nll,
     total_loss,
     step: Literal["train", "val"],
+    kl_components: dict[str, Tensor] | None = None,
 ):
     self.log(
         f"{step} elbo",
@@ -48,6 +49,14 @@ def _log_loss(
     self.log(f"{step} kl", kl, on_step=False, on_epoch=True)
     self.log(f"{step} nll", nll, on_step=False, on_epoch=True)
     self.log("epoch", float(self.current_epoch), on_step=False, on_epoch=True)
+    if kl_components is not None:
+        for name, value in kl_components.items():
+            self.log(
+                f"{step} kl_{name}",
+                value,
+                on_step=False,
+                on_epoch=True,
+            )
 
 
 class BaseIntegrator(pl.LightningModule):
@@ -136,6 +145,11 @@ class BaseIntegrator(pl.LightningModule):
             nll=loss_dict["neg_ll_mean"],
             total_loss=total_loss,
             step=step,
+            kl_components={
+                k.removesuffix("_mean"): v
+                for k, v in loss_dict.items()
+                if k in ("kl_prf_mean", "kl_i_mean", "kl_bg_mean", "kl_hyper_mean")
+            },
         )
 
         # Log hyperprior diagnostics if present (HierarchicalLoss)
@@ -183,6 +197,30 @@ class BaseIntegrator(pl.LightningModule):
             for k, v in outputs["forward_out"].items()
             if k in self.predict_keys
         }
+
+    def on_validation_epoch_end(self) -> None:
+        """Log val - train generalization gaps for each ELBO component.
+
+        For every logged metric that exists as both 'train X' and 'val X',
+        emits 'gap X' = val - train. Runs at the end of validation, when
+        both train (accumulated over the current train epoch) and val
+        values are available in trainer.callback_metrics.
+        """
+        metrics = self.trainer.callback_metrics
+        for key in list(metrics.keys()):
+            if not key.startswith("val "):
+                continue
+            suffix = key[len("val "):]
+            train_key = f"train {suffix}"
+            if train_key not in metrics:
+                continue
+            gap = metrics[key] - metrics[train_key]
+            self.log(
+                f"gap {suffix}",
+                gap,
+                on_step=False,
+                on_epoch=True,
+            )
 
     def configure_optimizers(self):
         if self.decoder_weight_decay is None:
