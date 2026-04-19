@@ -20,6 +20,14 @@ class IntegratorCfg:
     # (e.g. DirichletDistribution) or in addition to the basis penalties.
     qp_profile_tv_weight: float | None = None
     qp_profile_entropy_weight: float | None = None
+    # Gaussian prior on the translation head's predicted shift. Penalty
+    # is `shift_prior_weight * sum((shift / shift_prior_sigma) ** 2)`,
+    # mean-reduced over the batch. Equivalent to MAP under a diagonal
+    # N(0, diag(σ²)) prior. shift_prior_sigma may be a scalar (isotropic)
+    # or a list matching the shift dimensionality (anisotropic per-axis).
+    # Only active when the surrogate has a shift head; otherwise ignored.
+    shift_prior_weight: float | None = None
+    shift_prior_sigma: float | list[float] = 0.5
     lr_schedule: Literal["cosine_warmup"] | None = None
     warmup_epochs: int = 5
     lr_min: float = 1.0e-5
@@ -62,10 +70,22 @@ class IntegratorCfg:
             "qp_sparsity_weight",
             "qp_profile_tv_weight",
             "qp_profile_entropy_weight",
+            "shift_prior_weight",
         ):
             v = getattr(self, name)
             if v is not None and v < 0:
                 raise ValueError(f"{name} must be non-negative, got {v}")
+
+        if isinstance(self.shift_prior_sigma, list):
+            if any(s <= 0 for s in self.shift_prior_sigma):
+                raise ValueError(
+                    f"shift_prior_sigma entries must be > 0, got "
+                    f"{self.shift_prior_sigma}"
+                )
+        elif self.shift_prior_sigma <= 0:
+            raise ValueError(
+                f"shift_prior_sigma must be > 0, got {self.shift_prior_sigma}"
+            )
 
         if self.warmup_epochs < 0:
             raise ValueError(

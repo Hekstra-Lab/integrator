@@ -81,6 +81,8 @@ class BaseIntegrator(pl.LightningModule):
         self.qp_smoothness_weight = cfg.qp_smoothness_weight
         self.qp_profile_tv_weight = cfg.qp_profile_tv_weight
         self.qp_profile_entropy_weight = cfg.qp_profile_entropy_weight
+        self.shift_prior_weight = cfg.shift_prior_weight
+        self.shift_prior_sigma = cfg.shift_prior_sigma
         self.qp_orthogonality_weight = cfg.qp_orthogonality_weight
         self.qp_sparsity_weight = cfg.qp_sparsity_weight
         self.lr_schedule = cfg.lr_schedule
@@ -302,58 +304,87 @@ class BaseIntegrator(pl.LightningModule):
     def _profile_shape_penalty(
         self, qp,
     ) -> tuple[Tensor, dict[str, Tensor]]:
-        """Regularization penalties computed directly from qp.mean.
+        """Regularization penalties computed directly from qp.
 
         Complements `_profile_basis_penalty` (which acts on basis decoder
-        weights). Used when the surrogate has no decoder.weight — e.g.
-        DirichletDistribution — or when you want to regularize the
-        predicted profile shape regardless of parameterization.
+        weights). Three penalties here, all optional:
 
         - Profile TV: mean squared spatial gradient across (D, H, W) of
-          the predicted profile. Penalizes per-pixel noise.
+          `qp.mean`. Penalizes per-pixel noise.
         - Profile entropy: `H(p) = -sum p log p` per reflection, averaged.
-          Penalty is `weight * H(p)` so larger weight drives profiles to
-          be more concentrated (low entropy = committed spot location).
+          Weight > 0 drives profiles to be more concentrated.
+        - Shift prior: Gaussian N(0, diag(σ²)) MAP penalty on the
+          translation head's predicted shift. Only active when
+          qp.shift is not None.
 
-        Returns (total_penalty, components). Zero when weights are unset
-        or qp.mean isn't available.
+        Returns (total_penalty, components). Zero when weights are unset.
         """
         zero = torch.zeros((), device=self.device)
         tv_w = self.qp_profile_tv_weight
         ent_w = self.qp_profile_entropy_weight
-        if (tv_w is None or tv_w == 0) and (ent_w is None or ent_w == 0):
-            return zero, {}
-        profile = getattr(qp, "mean", None)
-        if profile is None or profile.dim() != 2:
-            return zero, {}
+        shift_w = self.shift_prior_weight
 
         total = zero
         components: dict[str, Tensor] = {}
-        shape = self.shoebox_shape
-        D, H, W_sp = shape if len(shape) == 3 else (1, *shape)
-        B, K = profile.shape
-        if K != D * H * W_sp:
-            return zero, {}
 
-        if tv_w is not None and tv_w > 0:
-            vol = profile.reshape(B, D, H, W_sp)
-            gx = vol[..., 1:] - vol[..., :-1]
-            gy = vol[..., 1:, :] - vol[..., :-1, :]
-            sq = gx.pow(2).sum() + gy.pow(2).sum()
-            n = gx.numel() + gy.numel()
-            if D > 1:
-                gz = vol[..., 1:, :, :] - vol[..., :-1, :, :]
-                sq = sq + gz.pow(2).sum()
-                n = n + gz.numel()
-            tv = sq / max(n, 1)
-            components["profile_tv"] = tv.detach()
-            total = total + tv_w * tv
+        # TV + entropy on qp.mean
+        profile = getattr(qp, "mean", None)
+        if profile is not None and profile.dim() == 2:
+            shape = self.shoebox_shape
+            D, H, W_sp = shape if len(shape) == 3 else (1, *shape)
+            B, K = profile.shape
+            if K == D * H * W_sp:
+                if tv_w is not None and tv_w > 0:
+                    vol = profile.reshape(B, D, H, W_sp)
+                    gx = vol[..., 1:] - vol[..., :-1]
+                    gy = vol[..., 1:, :] - vol[..., :-1, :]
+                    sq = gx.pow(2).sum() + gy.pow(2).sum()
+                    n = gx.numel() + gy.numel()
+                    if D > 1:
+                        gz = vol[..., 1:, :, :] - vol[..., :-1, :, :]
+                        sq = sq + gz.pow(2).sum()
+                        n = n + gz.numel()
+                    tv = sq / max(n, 1)
+                    components["profile_tv"] = tv.detach()
+                    total = total + tv_w * tv
 
-        if ent_w is not None and ent_w > 0:
-            eps = 1e-12
-            entropy = -(profile * (profile + eps).log()).sum(dim=-1).mean()
-            components["profile_entropy"] = entropy.detach()
-            total = total + ent_w * entropy
+                if ent_w is not None and ent_w > 0:
+                    eps = 1e-12
+                    entropy = (
+                        -(profile * (profile + eps).log()).sum(dim=-1).mean()
+                    )
+                    components["profile_entropy"] = entropy.detach()
+                    total = total + ent_w * entropy
+
+        # Gaussian prior on translation-head shift (only if present).
+        shift = getattr(qp, "shift", None)
+        if (
+            shift is not None
+            and shift_w is not None
+            and shift_w > 0
+        ):
+            ndim = shift.shape[-1]
+            sigma = self.shift_prior_sigma
+            if isinstance(sigma, list):
+                if len(sigma) != ndim:
+                    raise ValueError(
+                        f"shift_prior_sigma has {len(sigma)} entries but "
+                        f"shift has {ndim} dims"
+                    )
+                sigma_t = torch.tensor(
+                    sigma, device=shift.device, dtype=shift.dtype
+                )
+            else:
+                sigma_t = torch.full(
+                    (ndim,), float(sigma),
+                    device=shift.device, dtype=shift.dtype,
+                )
+            # 0.5 * sum((shift / σ)^2), mean over batch — matches the
+            # log-prior of a diagonal Gaussian up to a constant.
+            penalty = 0.5 * (shift / sigma_t).pow(2).sum(dim=-1).mean()
+            components["shift_prior"] = penalty.detach()
+            components["shift_abs_mean"] = shift.abs().mean().detach()
+            total = total + shift_w * penalty
 
         return total, components
 

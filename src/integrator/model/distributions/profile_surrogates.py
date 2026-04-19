@@ -53,12 +53,18 @@ class ProfileSurrogateOutput:
         mean_profile: Profile at posterior mean h, shape (B, K).
         mu_h: Posterior mean of h, shape (B, d).
         std_h: Posterior std of h, shape (B, d).
+        shift: Optional per-reflection shift in normalized grid coords,
+            shape (B, ndim) where ndim = 2 or 3. Present when the
+            surrogate has a translation head; None otherwise. Consumers
+            (e.g. the integrator) can use this to apply a Gaussian prior
+            penalty on the shift magnitude.
     """
 
     zp: Tensor
     mean_profile: Tensor
     mu_h: Tensor
     std_h: Tensor
+    shift: Tensor | None = None
 
 
 # %%
@@ -336,4 +342,5 @@ class LearnedBasisProfileSurrogate(nn.Module):
             mean_profile=mean_profile,
             mu_h=mu_h,
             std_h=std_h,
+            shift=shift_norm,
         )
