@@ -160,6 +160,39 @@ def compute_profile_kl(
     return _kl(qp, p_prf, mc_samples, eps=eps) * pprf_weight
 
 
+def compute_shift_kl(
+    shift_mu: Tensor,
+    shift_sigma: Tensor,
+    sigma_prior: float | Tensor,
+    weight: float,
+) -> Tensor:
+    """Closed-form KL(q(shift) || p(shift)) for amortized translation.
+
+    q(shift|x) = N(shift_mu(x), diag(shift_sigma(x)²))
+    p(shift)   = N(0, diag(sigma_prior²))                 (global)
+
+    Diagonal-Gaussian KL, summed across axes, not reduced across batch.
+    Returns shape (B,).
+    """
+    sigma_p: Tensor
+    if isinstance(sigma_prior, Tensor):
+        sigma_p = sigma_prior.to(shift_mu.device).to(shift_mu.dtype)
+        if sigma_p.dim() == 1:
+            sigma_p = sigma_p.unsqueeze(0).expand_as(shift_mu)
+    else:
+        sigma_p = torch.full_like(shift_mu, float(sigma_prior))
+
+    var_q = shift_sigma.pow(2)
+    var_p = sigma_p.pow(2)
+    kl = 0.5 * (
+        var_q / var_p
+        + shift_mu.pow(2) / var_p
+        - 1.0
+        - torch.log(var_q / var_p)
+    ).sum(dim=-1)
+    return kl * weight
+
+
 def compute_bg_kl(
     qbg: Distribution,
     groups: Tensor,

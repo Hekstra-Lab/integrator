@@ -64,7 +64,15 @@ class ProfileSurrogateOutput:
     mean_profile: Tensor
     mu_h: Tensor
     std_h: Tensor
+    # Shift outputs. `shift` is the actual tensor applied to logits
+    # (post-sampling + tanh if variational, or deterministic if MAP).
+    # `shift_mu` and `shift_sigma` are only set when shift_variational=True;
+    # they parameterize the amortized posterior q(shift_raw|x) =
+    # N(shift_mu, shift_sigma²) whose KL vs N(0, σ_prior²) the loss
+    # incorporates into the ELBO.
     shift: Tensor | None = None
+    shift_mu: Tensor | None = None
+    shift_sigma: Tensor | None = None
 
 
 # %%
@@ -148,6 +156,8 @@ class LearnedBasisProfileSurrogate(nn.Module):
         shift_head: bool = False,
         sbox_shape: tuple[int, ...] | list[int] | None = None,
         max_shift_norm: float = 1.0,
+        shift_variational: bool = False,
+        shift_init_std: float = 0.1,
     ) -> None:
         super().__init__()
 
@@ -166,12 +176,22 @@ class LearnedBasisProfileSurrogate(nn.Module):
         if freeze_bias:
             self.decoder.bias.requires_grad_(False)
 
-        # Optional per-reflection translation head. Predicts a spatial
-        # shift applied to the basis logits before softmax, so the profile
-        # peak can lie at arbitrary pixel locations without modifying W
-        # or b. The shift is linear on logits, so this is equivalent to
-        # translating b AND every column of W by the same offset.
+        # Optional per-reflection translation head. The shift is applied
+        # to the basis logits before softmax — linear-in-logits, so this
+        # is equivalent to translating b AND every column of W by the
+        # same offset.
+        #
+        # Two modes:
+        #   shift_variational=False (default): deterministic MAP head.
+        #     shift = max_shift_norm * tanh(Linear(x)). Regularize via
+        #     `shift_prior_weight` in the integrator config (L2 penalty).
+        #   shift_variational=True: amortized posterior
+        #     q(shift_raw|x) = N(shift_mu(x), shift_sigma(x)^2).
+        #     Reparameterized sampling, tanh-bounded output, and the
+        #     KL(q || N(0, sigma_prior^2)) gets added to the ELBO by the
+        #     loss module (see wilson_loss.py's compute_shift_kl path).
         self.has_shift = shift_head
+        self.shift_variational = shift_variational
         if shift_head:
             if sbox_shape is None:
                 raise ValueError(
@@ -191,10 +211,27 @@ class LearnedBasisProfileSurrogate(nn.Module):
             ndim = len(sbox)
             self.shift_dim = ndim
             self.max_shift_norm = float(max_shift_norm)
-            self.shift_layer = nn.Linear(input_dim, ndim)
-            # Near-zero init: step 0 is identical to the no-shift model.
-            nn.init.zeros_(self.shift_layer.bias)
-            nn.init.normal_(self.shift_layer.weight, std=0.01)
+
+            if shift_variational:
+                # Mean and log-sigma heads for q(shift_raw|x).
+                self.shift_mu_layer = nn.Linear(input_dim, ndim)
+                self.shift_logsigma_layer = nn.Linear(input_dim, ndim)
+                # Init: mean at zero (identity at step 0), sigma starts
+                # narrow (shift_init_std) so the initial posterior commits
+                # and the KL vs a looser prior (σ_prior ≥ shift_init_std)
+                # is small. The logsigma head starts with zero weights
+                # and a fixed bias so σ is input-independent at init.
+                nn.init.zeros_(self.shift_mu_layer.bias)
+                nn.init.normal_(self.shift_mu_layer.weight, std=0.01)
+                nn.init.zeros_(self.shift_logsigma_layer.weight)
+                nn.init.constant_(
+                    self.shift_logsigma_layer.bias,
+                    math.log(float(shift_init_std)),
+                )
+            else:
+                self.shift_layer = nn.Linear(input_dim, ndim)
+                nn.init.zeros_(self.shift_layer.bias)
+                nn.init.normal_(self.shift_layer.weight, std=0.01)
 
     def _warmstart_from_basis(
         self, basis_path: str, output_dim: int
@@ -222,14 +259,32 @@ class LearnedBasisProfileSurrogate(nn.Module):
             self.decoder.weight.data[:, :d_copy].copy_(W[:, :d_copy])
             self.decoder.bias.data.copy_(b)
 
-    def _predict_shift_norm(self, x: Tensor) -> Tensor:
-        """Per-reflection shift in [-max_shift_norm, +max_shift_norm], same
-        sign convention as grid coords (i.e., normalized [-1, 1] units).
-
-        Returns tensor of shape (B, ndim) where ndim matches sbox_shape.
-        """
+    def _predict_shift_map(self, x: Tensor) -> Tensor:
+        """Deterministic shift in [-max_shift_norm, +max_shift_norm]."""
         raw = self.shift_layer(x)
         return self.max_shift_norm * torch.tanh(raw)
+
+    def _predict_shift_variational(
+        self, x: Tensor,
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """Variational shift: q(shift_raw|x) = N(mu(x), sigma(x)^2).
+
+        Returns (shift, shift_mu, shift_sigma):
+          shift:       sampled + tanh-bounded, used for grid_sample
+          shift_mu:    pre-tanh posterior mean (for KL)
+          shift_sigma: pre-tanh posterior std  (for KL)
+
+        KL is computed in the pre-tanh (unbounded) space — the prior
+        N(0, sigma_prior^2) is defined on the raw latent; tanh is just
+        a monotonic output squashing to prevent the sampling grid from
+        escaping the shoebox.
+        """
+        shift_mu = self.shift_mu_layer(x)
+        shift_sigma = F.softplus(self.shift_logsigma_layer(x)) + 1e-6
+        eps = torch.randn_like(shift_mu)
+        shift_raw = shift_mu + shift_sigma * eps
+        shift = self.max_shift_norm * torch.tanh(shift_raw)
+        return shift, shift_mu, shift_sigma
 
     def _shift_logits(self, logits: Tensor, shift_norm: Tensor) -> Tensor:
         """Translate logits spatially via affine_grid + grid_sample.
@@ -330,9 +385,14 @@ class LearnedBasisProfileSurrogate(nn.Module):
         logits_sample = h @ self.decoder.weight.T + self.decoder.bias   # (S, B, K)
         mean_logits = mu_h @ self.decoder.weight.T + self.decoder.bias  # (B, K)
 
-        shift_norm = self._predict_shift_norm(x)  # (B, ndim) in [-1, 1]
-        logits_sample = self._shift_logits(logits_sample, shift_norm)
-        mean_logits = self._shift_logits(mean_logits, shift_norm)
+        if self.shift_variational:
+            shift, shift_mu, shift_sigma = self._predict_shift_variational(x)
+        else:
+            shift = self._predict_shift_map(x)
+            shift_mu, shift_sigma = None, None
+
+        logits_sample = self._shift_logits(logits_sample, shift)
+        mean_logits = self._shift_logits(mean_logits, shift)
 
         zp = F.softmax(logits_sample, dim=-1)
         mean_profile = F.softmax(mean_logits, dim=-1)
@@ -342,5 +402,7 @@ class LearnedBasisProfileSurrogate(nn.Module):
             mean_profile=mean_profile,
             mu_h=mu_h,
             std_h=std_h,
-            shift=shift_norm,
+            shift=shift,
+            shift_mu=shift_mu,
+            shift_sigma=shift_sigma,
         )

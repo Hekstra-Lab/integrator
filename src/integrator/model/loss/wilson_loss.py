@@ -28,7 +28,11 @@ from torch.distributions import (
 )
 
 from integrator.model.distributions.profile_surrogates import ProfileSurrogateOutput
-from integrator.model.loss.kl_helpers import compute_bg_kl, compute_profile_kl
+from integrator.model.loss.kl_helpers import (
+    compute_bg_kl,
+    compute_profile_kl,
+    compute_shift_kl,
+)
 from integrator.model.loss.kl_helpers import _kl
 from integrator.model.loss.per_bin_loss import _load_buffer
 
@@ -108,6 +112,10 @@ class WilsonLoss(nn.Module):
         pprf_weight: float = 1.0,
         pbg_weight: float = 1.0,
         pi_weight: float = 1.0,
+        # Shift-KL (only active when qp is the variational translation
+        # surrogate, i.e. qp.shift_mu and qp.shift_sigma are populated).
+        shift_prior_sigma: float | list[float] = 0.5,
+        shift_kl_weight: float = 1.0,
         dataset_size: int = 1,
     ):
         super().__init__()
@@ -122,6 +130,14 @@ class WilsonLoss(nn.Module):
         self.pbg_weight = pbg_cfg.weight if pbg_cfg is not None else pbg_weight
         self.pi_weight = pi_cfg.weight if pi_cfg is not None else pi_weight
         self.n_wilson_samples = n_wilson_samples
+        self.shift_kl_weight = shift_kl_weight
+        if isinstance(shift_prior_sigma, list):
+            self.register_buffer(
+                "shift_prior_sigma",
+                torch.tensor(shift_prior_sigma, dtype=torch.float32),
+            )
+        else:
+            self.shift_prior_sigma = float(shift_prior_sigma)
 
         # pi_cfg.name == "gamma" -> learn per-bin alpha
         if (
@@ -420,6 +436,24 @@ class WilsonLoss(nn.Module):
         )
         kl = kl + kl_bg
 
+        # Shift KL (only for variational translation heads). Closed-form
+        # N-N KL with a fixed global prior N(0, σ_prior^2). Contributes
+        # to the ELBO alongside the other posterior KLs.
+        shift_mu = getattr(qp, "shift_mu", None)
+        shift_sigma = getattr(qp, "shift_sigma", None)
+        if (
+            shift_mu is not None
+            and shift_sigma is not None
+            and self.shift_kl_weight > 0
+        ):
+            kl_shift = compute_shift_kl(
+                shift_mu, shift_sigma,
+                self.shift_prior_sigma, self.shift_kl_weight,
+            )
+            kl = kl + kl_shift
+        else:
+            kl_shift = torch.zeros_like(kl)
+
         # Hyperprior KL (amortized over dataset)
         kl_hyper = self.kl_hyperparams() / self.dataset_size
 
@@ -438,5 +472,6 @@ class WilsonLoss(nn.Module):
             "kl_prf_mean": kl_prf.mean(),
             "kl_i_mean": kl_i.mean(),
             "kl_bg_mean": kl_bg.mean(),
+            "kl_shift_mean": kl_shift.mean(),
             "kl_hyper": kl_hyper,
         }

@@ -159,7 +159,10 @@ class BaseIntegrator(pl.LightningModule):
             kl_components={
                 k.removesuffix("_mean"): v
                 for k, v in loss_dict.items()
-                if k in ("kl_prf_mean", "kl_i_mean", "kl_bg_mean", "kl_hyper_mean")
+                if k in (
+                    "kl_prf_mean", "kl_i_mean", "kl_bg_mean",
+                    "kl_shift_mean", "kl_hyper_mean",
+                )
             },
         )
 
