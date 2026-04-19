@@ -182,7 +182,7 @@ def main():
 
     torch.set_float32_matmul_precision("high")
 
-    from pytorch_lightning.callbacks import ModelCheckpoint
+    from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
     from pytorch_lightning.loggers import WandbLogger
 
     from integrator.callbacks import (
@@ -220,10 +220,7 @@ def main():
     # load data
     logger.info("Starting Training")
 
-    # Auto-generate prior files if needed by the loss. Collect a structured
-    # summary of what was done (files created, regenerated with reason, or
-    # reused from cache) so we can echo it clearly and stash it in the
-    # run_metadata for post-hoc audit.
+    # Auto-generate prior files if needed by the loss
     prior_events: list[dict] = []
     prepare_per_bin_priors(cfg, events_out=prior_events)
     prepare_global_priors(cfg)
@@ -273,11 +270,7 @@ def main():
     # log hyperparameters
     wb_logger.log_hyperparams(cfg_json)
 
-    # Resolve every file the factory will load, with absolute paths,
-    # existence flags, and sizes. Populate into run_metadata so the run
-    # log records exactly which files fed this run (including n_bins-
-    # suffixed Hermite bases, bg_rate_per_group, etc.).
-    from integrator.utils.factory_utils import _collect_resolved_paths
+    # Resolve every file the factory will load, with absolute paths
     resolved_paths = _collect_resolved_paths(cfg)
 
     # Run metadata
@@ -375,26 +368,69 @@ def main():
         out_dir=logdir / "loss_traces",
     )
 
-    # to save checkpoints
+    # Early-stopping callback (optional).
+    early_stop_cb = None
+    es_cfg = cfg.get("early_stop")
+    if es_cfg:
+        early_stop_cb = EarlyStopping(
+            monitor=es_cfg["monitor"],
+            mode=es_cfg.get("mode", "min"),
+            patience=int(es_cfg.get("patience", 3)),
+            min_delta=float(es_cfg.get("min_delta", 0.0)),
+            strict=bool(es_cfg.get("strict", True)),
+            verbose=True,
+        )
+        logger.info(
+            "EarlyStopping: monitor=%s mode=%s patience=%d min_delta=%.4f",
+            es_cfg["monitor"],
+            es_cfg.get("mode", "min"),
+            int(es_cfg.get("patience", 3)),
+            float(es_cfg.get("min_delta", 0.0)),
+        )
+
+    # to save checkpoints. When early-stop is active, default to
+    # save_top_k=1 (pick the best according to the monitored metric)
+    ckpt_cfg = cfg.get("checkpoint", {}) or {}
+    default_top_k = 1 if early_stop_cb else -1
+    save_top_k = int(ckpt_cfg.get("save_top_k", default_top_k))
+    ckpt_monitor = ckpt_cfg.get(
+        "monitor",
+        es_cfg["monitor"] if es_cfg else None,
+    )
+    ckpt_mode = ckpt_cfg.get(
+        "mode",
+        es_cfg.get("mode", "min") if es_cfg else "min",
+    )
     ckpt_dir = logdir / "checkpoints"
     checkpoint_callback = ModelCheckpoint(
         dirpath=ckpt_dir,
         filename="{epoch:04d}",
         every_n_epochs=1,
-        save_top_k=-1,
+        save_top_k=save_top_k,
         save_last="link",
+        monitor=ckpt_monitor if save_top_k > 0 else None,
+        mode=ckpt_mode if save_top_k > 0 else "min",
     )
-    logger.info(f"Checkpoints saved to: {Path(ckpt_dir).as_posix()}")
+    logger.info(
+        "Checkpoints: dir=%s save_top_k=%d monitor=%s",
+        ckpt_dir.as_posix(),
+        save_top_k,
+        ckpt_monitor,
+    )
+
+    callbacks = [
+        val_epoch_recorder,
+        train_epoch_recorder,
+        loss_trace_recorder,
+        checkpoint_callback,
+    ]
+    if early_stop_cb is not None:
+        callbacks.append(early_stop_cb)
 
     # PyTorch-Lightning Trainer
     trainer = construct_trainer(
         cfg,
-        callbacks=[
-            val_epoch_recorder,
-            train_epoch_recorder,
-            loss_trace_recorder,
-            checkpoint_callback,
-        ],
+        callbacks=callbacks,
         logger=wb_logger,
     )
 

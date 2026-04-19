@@ -131,7 +131,17 @@ def compute_profile_kl(
             kl = compute_profile_kl_global(qp.mu_h, qp.std_h, sigma_prior)
         return kl * pprf_weight
 
-    # Dirichlet path
+    # Dirichlet path. Allow `pprf_weight=0` + no concentration file as an
+    # explicit "deterministic profile" mode: the surrogate outputs a
+    # Dirichlet but the loss treats its mean as a point estimate, with
+    # regularization delegated to explicit penalties (smoothness, entropy,
+    # etc.) added elsewhere in the training loop.
+    if pprf_weight == 0.0 and concentration_per_group is None:
+        batch_size = (
+            qp.mean.shape[0] if hasattr(qp, "mean") else prf_groups.shape[0]
+        )
+        return torch.zeros(batch_size, device=device)
+
     if concentration_per_group is None:
         raise RuntimeError(
             "concentration_per_group is required for Dirichlet profile surrogate"

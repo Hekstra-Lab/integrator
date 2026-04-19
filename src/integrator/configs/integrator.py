@@ -15,6 +15,11 @@ class IntegratorCfg:
     qp_smoothness_weight: float | None = None
     qp_orthogonality_weight: float | None = None
     qp_sparsity_weight: float | None = None
+    # Penalties that act on the profile tensor itself (softmax output of
+    # qp), not on the decoder weights. Used when qp has no basis decoder
+    # (e.g. DirichletDistribution) or in addition to the basis penalties.
+    qp_profile_tv_weight: float | None = None
+    qp_profile_entropy_weight: float | None = None
     lr_schedule: Literal["cosine_warmup"] | None = None
     warmup_epochs: int = 5
     lr_min: float = 1.0e-5
@@ -55,6 +60,8 @@ class IntegratorCfg:
             "qp_smoothness_weight",
             "qp_orthogonality_weight",
             "qp_sparsity_weight",
+            "qp_profile_tv_weight",
+            "qp_profile_entropy_weight",
         ):
             v = getattr(self, name)
             if v is not None and v < 0:
