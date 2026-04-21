@@ -164,7 +164,14 @@ def main():
         )
 
         ckpt_ = torch.load(ckpt.as_posix())
-        integrator = construct_integrator(config)
+        # skip_warmstart: the checkpoint's state_dict carries the trained
+        # decoder.weight, so reading the Hermite/PCA warmstart file here
+        # is redundant. Skipping avoids two bugs: (1) prediction failing
+        # when the warmstart file is missing or has moved, (2) a newer
+        # regenerated basis on disk silently getting copied in before
+        # the checkpoint overwrites it (harmless if load_state_dict
+        # succeeds, but masks shape-mismatch failures).
+        integrator = construct_integrator(config, skip_warmstart=True)
         integrator.load_state_dict(ckpt_["state_dict"])
 
         # Use gpu if available
@@ -189,6 +196,44 @@ def main():
             )
 
     logger.info("Prediction complete!")
+
+    # Aggregate per-epoch test-set predictions into a single parquet file.
+    # Scans every epoch_XXXX/*.parquet under predictions/, filters to test
+    # rows (is_test == 1.0), and extracts the epoch number from the source
+    # path. Streams through via scan_parquet/sink_parquet so memory stays
+    # low even with many epochs × many flushes.
+    try:
+        import polars as pl
+    except ImportError:
+        logger.warning(
+            "polars not installed — skipping test_preds_all.parquet"
+            " aggregation."
+        )
+    else:
+        parquet_glob = str(pred_dir / "*" / "*.parquet")
+        from glob import glob as _glob
+        if not _glob(parquet_glob):
+            logger.info(
+                "No parquet files under %s — skipping test-set aggregation"
+                " (use --save-preds-as parquet if you want it).",
+                pred_dir,
+            )
+        else:
+            out_path = pred_dir / "test_preds_all.parquet"
+            logger.info("Aggregating test predictions → %s", out_path)
+            (
+                pl.scan_parquet(parquet_glob, include_file_paths="src")
+                .filter(pl.col("is_test") == 1.0)
+                .with_columns(
+                    pl.col("src")
+                    .str.extract(r"epoch_(\d+)", 1)
+                    .cast(pl.Int32)
+                    .alias("epoch")
+                )
+                .drop("src")
+                .sink_parquet(out_path)
+            )
+            logger.info("Wrote %s", out_path)
 
 
 if __name__ == "__main__":

@@ -125,11 +125,18 @@ def _get_loss_args(
 
 def _get_surrogate_modules(
     cfg: dict,
+    skip_warmstart: bool = False,
 ) -> dict[str, nn.Module]:
     """Construct all surrogate distribution modules from config.
 
     Iterates over all keys in `cfg["surrogates"]` so that any combination
     of surrogates is supported.
+
+    When `skip_warmstart=True`, `warmstart_basis_path` is stripped from
+    qp args before instantiation — useful at prediction time when the
+    trained weights will be restored via `load_state_dict` anyway, so
+    warmstart from a basis file is redundant and a potential source of
+    bugs (missing/stale basis files, shape mismatches).
 
     For `fixed_basis_profile` (and similar), a relative `basis_path` is resolved
     against `data_loader.args.data_dir` so the YAML only needs the filename.
@@ -151,7 +158,9 @@ def _get_surrogate_modules(
     if init_stats_path.is_file():
         try:
             init_stats = torch.load(
-                init_stats_path, weights_only=False, map_location="cpu",
+                init_stats_path,
+                weights_only=False,
+                map_location="cpu",
             )
         except Exception:
             init_stats = None
@@ -186,13 +195,17 @@ def _get_surrogate_modules(
                 args["basis_path"] = _resolve_data_path(bp, data_dir, n_bins)
         # warmstart_basis_path for learned_basis_profile: same data_dir +
         # n_bins suffix handling as basis_path above.
-        if (
-            surrogate_cfg["name"] == "learned_basis_profile"
-            and isinstance(args.get("warmstart_basis_path"), str)
+        if surrogate_cfg["name"] == "learned_basis_profile" and isinstance(
+            args.get("warmstart_basis_path"), str
         ):
-            args["warmstart_basis_path"] = _resolve_data_path(
-                args["warmstart_basis_path"], data_dir, n_bins,
-            )
+            if skip_warmstart:
+                args.pop("warmstart_basis_path")
+            else:
+                args["warmstart_basis_path"] = _resolve_data_path(
+                    args["warmstart_basis_path"],
+                    data_dir,
+                    n_bins,
+                )
         # Auto-set separate_inputs for two-param surrogates (qi, qbg)
         if key in ("qi", "qbg") and "separate_inputs" not in args:
             args["separate_inputs"] = separate_inputs
@@ -396,7 +409,17 @@ def _validate_registry_names(cfg: dict) -> None:
 
 def construct_integrator(
     cfg: dict,
+    skip_warmstart: bool = False,
 ) -> BaseIntegrator:
+    """Build the integrator + its components from a YAML config.
+
+    `skip_warmstart=True` strips `warmstart_basis_path` from qp's args
+    so no basis file is read at construction time. Intended for the
+    predict CLI, where `load_state_dict` will restore trained weights
+    right after construction anyway and warmstarts are pure overhead
+    (and a failure mode if the basis file is missing or has been
+    regenerated since training).
+    """
     _validate_registry_names(cfg)
 
     # integrator class
@@ -405,7 +428,7 @@ def construct_integrator(
     # get integrator components
     integrator_args = configs.IntegratorCfg(**cfg["integrator"]["args"])
     encoders = _get_encoder_modules(cfg)
-    surrogates = _get_surrogate_modules(cfg)
+    surrogates = _get_surrogate_modules(cfg, skip_warmstart=skip_warmstart)
     loss = _get_loss_module(cfg)
 
     return integrator_cls(

@@ -27,22 +27,20 @@ from torch.distributions import (
     kl_divergence,
 )
 
-from integrator.model.distributions.profile_surrogates import ProfileSurrogateOutput
+from integrator.model.distributions.profile_surrogates import (
+    ProfileSurrogateOutput,
+)
 from integrator.model.loss.kl_helpers import (
+    _kl,
     compute_bg_kl,
     compute_profile_kl,
     compute_shift_kl,
 )
-from integrator.model.loss.kl_helpers import _kl
 from integrator.model.loss.per_bin_loss import _load_buffer
 
 
 class WilsonLoss(nn.Module):
     """ELBO loss with Wilson intensity prior using per-reflection s^2.
-
-    Instead of looking up a binned s_squared_per_group buffer, this class
-    computes s^2 = 1/(4d^2) per-reflection from metadata["d"] at forward time.
-    Each reflection gets its own prior rate tau_i = (1/G) * exp(2B * s_i^2).
 
     G and B are global hyperparameters inferred via variational inference.
     Background and profile priors remain per-bin empirical Bayes.
@@ -155,9 +153,7 @@ class WilsonLoss(nn.Module):
                 basis.get("sigma_prior", profile_sigma_prior)
             )
             if "mu_per_group" in basis:
-                self.register_buffer(
-                    "profile_mu_prior", basis["mu_per_group"]
-                )
+                self.register_buffer("profile_mu_prior", basis["mu_per_group"])
                 self.register_buffer(
                     "profile_std_prior", basis["std_per_group"]
                 )
@@ -281,7 +277,6 @@ class WilsonLoss(nn.Module):
         return Normal(self.q_log_B_loc, F.softplus(self.q_log_B_log_scale))
 
     # Hyperprior distributions
-
     def p_log_K(self) -> Normal:
         """Hyperprior p(log G)."""
         return Normal(self.hp_log_K_loc, self.hp_log_K_scale)
@@ -291,7 +286,6 @@ class WilsonLoss(nn.Module):
         return Normal(self.hp_log_B_loc, self.hp_log_B_scale)
 
     #  KL terms
-
     def kl_hyperparams(self) -> Tensor:
         """KL(q(log G) || p(log G)) + KL(q(log B) || p(log B)).
 
@@ -447,8 +441,10 @@ class WilsonLoss(nn.Module):
             and self.shift_kl_weight > 0
         ):
             kl_shift = compute_shift_kl(
-                shift_mu, shift_sigma,
-                self.shift_prior_sigma, self.shift_kl_weight,
+                shift_mu,
+                shift_sigma,
+                self.shift_prior_sigma,
+                self.shift_kl_weight,
             )
             kl = kl + kl_shift
         else:
