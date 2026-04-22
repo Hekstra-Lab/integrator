@@ -81,7 +81,7 @@ surrogates:
     name: learned_basis_profile
     args:
       input_dim: 64
-      latent_dim: 24
+      latent_dim: 8
       output_dim: 1323
       init_std: 0.5
   qbg:
@@ -101,7 +101,7 @@ loss:
   args:
     mc_samples: 100
     eps: 1.0e-06
-    n_bins: 1
+    n_bins: 25
     bg_rate_per_group: bg_rate_per_group.pt
     profile_sigma_prior: 3.0
     pi_weight: 1.0
