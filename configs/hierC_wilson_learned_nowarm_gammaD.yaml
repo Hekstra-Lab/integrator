@@ -90,12 +90,14 @@ surrogates:
       in_features: 64
       eps: 1.0e-06
       separate_inputs: true
+      mean_init: null
   qi:
     name: gammaD
     args:
       in_features: 64
       eps: 1.0e-06
       separate_inputs: true
+      mean_init: null
 loss:
   name: wilson
   args:
