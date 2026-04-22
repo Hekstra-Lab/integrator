@@ -28,9 +28,9 @@ from .priors import (
     DirichletParams,
     ExponentialParams,
     GammaParams,
+    GaussianProfilePriorParams,
     HalfCauchyParams,
     LogNormalParams,
-    GaussianProfilePriorParams,
     PriorConfig,
 )
 from .trainer import TrainerConfig

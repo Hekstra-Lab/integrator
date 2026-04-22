@@ -81,8 +81,6 @@ class BaseIntegrator(pl.LightningModule):
         self.qp_smoothness_weight = cfg.qp_smoothness_weight
         self.qp_profile_tv_weight = cfg.qp_profile_tv_weight
         self.qp_profile_entropy_weight = cfg.qp_profile_entropy_weight
-        self.shift_prior_weight = cfg.shift_prior_weight
-        self.shift_prior_sigma = cfg.shift_prior_sigma
         self.qp_orthogonality_weight = cfg.qp_orthogonality_weight
         self.qp_sparsity_weight = cfg.qp_sparsity_weight
         self.lr_schedule = cfg.lr_schedule
@@ -159,9 +157,12 @@ class BaseIntegrator(pl.LightningModule):
             kl_components={
                 k.removesuffix("_mean"): v
                 for k, v in loss_dict.items()
-                if k in (
-                    "kl_prf_mean", "kl_i_mean", "kl_bg_mean",
-                    "kl_shift_mean", "kl_hyper_mean",
+                if k
+                in (
+                    "kl_prf_mean",
+                    "kl_i_mean",
+                    "kl_bg_mean",
+                    "kl_hyper_mean",
                 )
             },
         )
@@ -305,27 +306,24 @@ class BaseIntegrator(pl.LightningModule):
         return total, components
 
     def _profile_shape_penalty(
-        self, qp,
+        self,
+        qp,
     ) -> tuple[Tensor, dict[str, Tensor]]:
         """Regularization penalties computed directly from qp.
 
         Complements `_profile_basis_penalty` (which acts on basis decoder
-        weights). Three penalties here, all optional:
+        weights). Two penalties here, both optional:
 
         - Profile TV: mean squared spatial gradient across (D, H, W) of
           `qp.mean`. Penalizes per-pixel noise.
         - Profile entropy: `H(p) = -sum p log p` per reflection, averaged.
           Weight > 0 drives profiles to be more concentrated.
-        - Shift prior: Gaussian N(0, diag(σ²)) MAP penalty on the
-          translation head's predicted shift. Only active when
-          qp.shift is not None.
 
         Returns (total_penalty, components). Zero when weights are unset.
         """
         zero = torch.zeros((), device=self.device)
         tv_w = self.qp_profile_tv_weight
         ent_w = self.qp_profile_entropy_weight
-        shift_w = self.shift_prior_weight
 
         total = zero
         components: dict[str, Tensor] = {}
@@ -359,36 +357,6 @@ class BaseIntegrator(pl.LightningModule):
                     components["profile_entropy"] = entropy.detach()
                     total = total + ent_w * entropy
 
-        # Gaussian prior on translation-head shift (only if present).
-        shift = getattr(qp, "shift", None)
-        if (
-            shift is not None
-            and shift_w is not None
-            and shift_w > 0
-        ):
-            ndim = shift.shape[-1]
-            sigma = self.shift_prior_sigma
-            if isinstance(sigma, list):
-                if len(sigma) != ndim:
-                    raise ValueError(
-                        f"shift_prior_sigma has {len(sigma)} entries but "
-                        f"shift has {ndim} dims"
-                    )
-                sigma_t = torch.tensor(
-                    sigma, device=shift.device, dtype=shift.dtype
-                )
-            else:
-                sigma_t = torch.full(
-                    (ndim,), float(sigma),
-                    device=shift.device, dtype=shift.dtype,
-                )
-            # 0.5 * sum((shift / σ)^2), mean over batch — matches the
-            # log-prior of a diagonal Gaussian up to a constant.
-            penalty = 0.5 * (shift / sigma_t).pow(2).sum(dim=-1).mean()
-            components["shift_prior"] = penalty.detach()
-            components["shift_abs_mean"] = shift.abs().mean().detach()
-            total = total + shift_w * penalty
-
         return total, components
 
     def on_validation_epoch_end(self) -> None:
@@ -403,7 +371,7 @@ class BaseIntegrator(pl.LightningModule):
         for key in list(metrics.keys()):
             if not key.startswith("val "):
                 continue
-            suffix = key[len("val "):]
+            suffix = key[len("val ") :]
             train_key = f"train {suffix}"
             if train_key not in metrics:
                 continue

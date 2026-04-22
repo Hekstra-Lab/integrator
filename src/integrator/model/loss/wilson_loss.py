@@ -1,18 +1,3 @@
-"""Wilson loss with per-reflection intensity prior.
-
-Wilson model: tau_i = (1/G) * exp(2B * s_i^2), where s_i^2 = 1/(4d_i^2)
-is computed per-reflection from metadata["d"].
-
-G and B are global hyperparameters inferred via variational inference.
-Background and profile priors remain per-bin empirical Bayes.
-
-Intensity prior: I_i ~ Gamma(alpha_k, alpha_k * tau_i)
-  alpha_k = 1 gives Exponential; learnable alpha_k when pi_cfg.name = "gamma".
-Background prior: bg_k ~ Gamma(alpha_bg, alpha_bg * lambda_k) (fixed, per-bin).
-Profile prior: Dirichlet (per-bin) or latent Normal (global).
-Hyperprior: KL(q(log G) || p(log G)) + KL(q(log B) || p(log B)), amortized over N.
-"""
-
 import math
 
 import torch
@@ -34,7 +19,6 @@ from integrator.model.loss.kl_helpers import (
     _kl,
     compute_bg_kl,
     compute_profile_kl,
-    compute_shift_kl,
 )
 from integrator.model.loss.per_bin_loss import _load_buffer
 
@@ -43,15 +27,12 @@ class WilsonLoss(nn.Module):
     """ELBO loss with Wilson intensity prior using per-reflection s^2.
 
     G and B are global hyperparameters inferred via variational inference.
-    Background and profile priors remain per-bin empirical Bayes.
+    Background  priors remain per-bin empirical Bayes.
 
     Args:
         mc_samples: Monte Carlo samples for KL estimation.
         eps: Numerical stability constant for Poisson rate.
         bg_rate_per_group: Exponential rates for background prior, one per group.
-        concentration_per_group: Path to .pt file with Dirichlet concentrations
-            (n_groups, n_pixels). Ignored when the surrogate returns a
-            ProfileSurrogateOutput (latent decoder).
         tau_per_group: Optional empirical per-bin rates, used only to
             auto-initialize q(log G) and q(log B) via linear regression.
             Not stored as a buffer.
@@ -77,15 +58,10 @@ class WilsonLoss(nn.Module):
         eps: float = 1e-6,
         # Empirical Bayes priors (per-bin)
         bg_rate_per_group: list[float] | str,
-        concentration_per_group: str | float | None = None,
-        pprf_n_pixels: int | None = None,
-        pprf_quantile: float | None = None,
-        pprf_conc_factor: float = 40.0,
         bg_concentration: float = 1.0,
-        # Profile prior from basis file
-        profile_basis_per_bin: str | None = None,
+        # Global Normal prior on the latent h (used by ProfileSurrogateOutput qp)
         profile_sigma_prior: float = 3.0,
-        # Wilson initialization (optional, not stored as buffers)
+        # Wilson initialization; optional
         tau_per_group: list[float] | str | None = None,
         s_squared_per_group: list[float] | str | None = None,
         init_from_tau: bool = True,
@@ -102,18 +78,14 @@ class WilsonLoss(nn.Module):
         init_alpha: float = 1.0,
         i_concentration_per_group: list[float] | str | None = None,
         bg_concentration_per_group: list[float] | str | None = None,
-        # Prior configs (from YAML pi_cfg / pbg_cfg / pprf_cfg)
+        # Prior configs from yaml
         pi_cfg=None,
         pbg_cfg=None,
         pprf_cfg=None,
-        # Scalar fallback weights
+        # KL weights
         pprf_weight: float = 1.0,
         pbg_weight: float = 1.0,
         pi_weight: float = 1.0,
-        # Shift-KL (only active when qp is the variational translation
-        # surrogate, i.e. qp.shift_mu and qp.shift_sigma are populated).
-        shift_prior_sigma: float | list[float] = 0.5,
-        shift_kl_weight: float = 1.0,
         dataset_size: int = 1,
     ):
         super().__init__()
@@ -128,16 +100,8 @@ class WilsonLoss(nn.Module):
         self.pbg_weight = pbg_cfg.weight if pbg_cfg is not None else pbg_weight
         self.pi_weight = pi_cfg.weight if pi_cfg is not None else pi_weight
         self.n_wilson_samples = n_wilson_samples
-        self.shift_kl_weight = shift_kl_weight
-        if isinstance(shift_prior_sigma, list):
-            self.register_buffer(
-                "shift_prior_sigma",
-                torch.tensor(shift_prior_sigma, dtype=torch.float32),
-            )
-        else:
-            self.shift_prior_sigma = float(shift_prior_sigma)
 
-        # pi_cfg.name == "gamma" -> learn per-bin alpha
+        # if pi_cfg.name == "gamma" -> learn per-bin alpha
         if (
             pi_cfg is not None
             and hasattr(pi_cfg, "name")
@@ -146,55 +110,12 @@ class WilsonLoss(nn.Module):
             learn_concentration = True
         self.learn_concentration = learn_concentration
 
-        # Profile prior params from basis file
-        if profile_basis_per_bin is not None:
-            basis = torch.load(profile_basis_per_bin, weights_only=False)
-            self.profile_sigma_prior = float(
-                basis.get("sigma_prior", profile_sigma_prior)
-            )
-            if "mu_per_group" in basis:
-                self.register_buffer("profile_mu_prior", basis["mu_per_group"])
-                self.register_buffer(
-                    "profile_std_prior", basis["std_per_group"]
-                )
-            else:
-                self.profile_mu_prior = None
-                self.profile_std_prior = None
-        else:
-            self.profile_mu_prior = None
-            self.profile_std_prior = None
-
-        # Fixed buffers (per-bin) — bg and profile only
+        # Fixed buffers (per-bin) — bg only
         self.bg_rate_per_group: Tensor
         self.register_buffer(
             "bg_rate_per_group", _load_buffer(bg_rate_per_group)
         )
         n_bins = int(self.bg_rate_per_group.shape[0])
-        if concentration_per_group is not None:
-            if isinstance(concentration_per_group, (int, float)):
-                if pprf_n_pixels is None:
-                    raise ValueError(
-                        "pprf_n_pixels is required when"
-                        " concentration_per_group is a scalar"
-                    )
-                conc = torch.full(
-                    (n_bins, pprf_n_pixels),
-                    float(concentration_per_group),
-                )
-            else:
-                conc = _load_buffer(concentration_per_group)
-                if pprf_quantile is not None:
-                    threshold = torch.quantile(conc.float(), pprf_quantile)
-                    conc[conc > threshold] *= pprf_conc_factor
-                    conc = conc / conc.max()
-                if conc.dim() == 1:
-                    conc = conc.unsqueeze(0).expand(n_bins, -1).contiguous()
-            self.register_buffer(
-                "concentration_per_group",
-                conc.clamp(min=1e-6),
-            )
-        else:
-            self.concentration_per_group = None
         if bg_concentration_per_group is not None:
             self.register_buffer(
                 "bg_concentration_per_group",
@@ -267,7 +188,6 @@ class WilsonLoss(nn.Module):
         return init_log_K, init_log_B
 
     #  Variational distributions
-
     def q_log_K(self) -> Normal:
         """Variational posterior q(log G)."""
         return Normal(self.q_log_K_loc, F.softplus(self.q_log_K_log_scale))
@@ -301,7 +221,6 @@ class WilsonLoss(nn.Module):
         return (1.0 / K) * torch.exp(2.0 * B * s_sq)
 
     #  Diagnostics
-
     def posterior_means(self) -> dict[str, float]:
         """Approximate posterior means of G and B for logging.
 
@@ -329,21 +248,6 @@ class WilsonLoss(nn.Module):
         var = (torch.exp(sigma**2) - 1) * torch.exp(2 * mu + sigma**2)
         return var.sqrt().item()
 
-    def extra_repr(self) -> str:
-        means = self.posterior_means()
-        s = (
-            f"E[K]={means['K_mean']:.4f} +/- {means['K_std']:.4f}, "
-            f"E[B]={means['B_mean']:.4f} +/- {means['B_std']:.4f}"
-        )
-        if self.learn_concentration:
-            s += (
-                f", alpha: mean={means['alpha_mean']:.3f} "
-                f"[{means['alpha_min']:.3f}, {means['alpha_max']:.3f}]"
-            )
-        return s
-
-    #  Forward
-
     def forward(
         self,
         rate: Tensor,
@@ -366,17 +270,14 @@ class WilsonLoss(nn.Module):
         kl_i = torch.zeros(batch_size, device=device)
         kl_bg = torch.zeros(batch_size, device=device)
 
-        # Profile KL
+        # Profile KL — global N(0, profile_sigma_prior²) prior on h.
         kl_prf = compute_profile_kl(
             qp,
             groups,
             self.profile_sigma_prior,
-            self.profile_mu_prior,
-            self.profile_std_prior,
-            self.concentration_per_group,
+            None,
+            None,
             self.pprf_weight,
-            self.mc_samples,
-            self.eps,
             device,
             metadata=kwargs.get("metadata"),
         )
@@ -387,12 +288,10 @@ class WilsonLoss(nn.Module):
         metadata = kwargs.get("metadata")
         if metadata is None or "d" not in metadata:
             raise ValueError(
-                "WilsonLoss requires metadata['d'] (per-reflection resolution) "
-                "to compute s^2. Ensure the integrator forwards metadata to "
-                "loss() and that the data loader populates 'd'."
+                "WilsonLoss requires metadata['d'] (per-reflection resolution) to compute s^2."
             )
         d = metadata["d"].to(device)
-        s_sq = 1.0 / (4.0 * d.clamp(min=self.eps).pow(2))  # (B,)
+        s_sq = 1.0 / (4.0 * d.pow(2))  # (B,)
 
         if self.learn_concentration:
             alpha_i = F.softplus(self.log_alpha_per_group[groups])  # (B,)
@@ -430,26 +329,6 @@ class WilsonLoss(nn.Module):
         )
         kl = kl + kl_bg
 
-        # Shift KL (only for variational translation heads). Closed-form
-        # N-N KL with a fixed global prior N(0, σ_prior^2). Contributes
-        # to the ELBO alongside the other posterior KLs.
-        shift_mu = getattr(qp, "shift_mu", None)
-        shift_sigma = getattr(qp, "shift_sigma", None)
-        if (
-            shift_mu is not None
-            and shift_sigma is not None
-            and self.shift_kl_weight > 0
-        ):
-            kl_shift = compute_shift_kl(
-                shift_mu,
-                shift_sigma,
-                self.shift_prior_sigma,
-                self.shift_kl_weight,
-            )
-            kl = kl + kl_shift
-        else:
-            kl_shift = torch.zeros_like(kl)
-
         # Hyperprior KL (amortized over dataset)
         kl_hyper = self.kl_hyperparams() / self.dataset_size
 
@@ -468,6 +347,5 @@ class WilsonLoss(nn.Module):
             "kl_prf_mean": kl_prf.mean(),
             "kl_i_mean": kl_i.mean(),
             "kl_bg_mean": kl_bg.mean(),
-            "kl_shift_mean": kl_shift.mean(),
             "kl_hyper": kl_hyper,
         }

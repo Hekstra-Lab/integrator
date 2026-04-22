@@ -27,16 +27,18 @@ from pathlib import Path
 
 import torch
 
-
 # ---------------------------------------------------------------------------
 # Profile evaluation
 # ---------------------------------------------------------------------------
+
 
 def evaluate_gaussian_profile(
     mus: torch.Tensor, covs: torch.Tensor, shape: tuple[int, int] = (21, 21)
 ) -> torch.Tensor:
     """Normalized 2D Gaussian on pixel grid per bin. Returns (n_bins, H, W)."""
-    y, x = torch.meshgrid(torch.arange(shape[0]), torch.arange(shape[1]), indexing="ij")
+    y, x = torch.meshgrid(
+        torch.arange(shape[0]), torch.arange(shape[1]), indexing="ij"
+    )
     grid = torch.stack([x.flatten(), y.flatten()], dim=1).float()
     prec = torch.linalg.inv(covs)
     diff = grid[None] - mus[:, None, :]
@@ -48,6 +50,7 @@ def evaluate_gaussian_profile(
 # ---------------------------------------------------------------------------
 # Simulation
 # ---------------------------------------------------------------------------
+
 
 def simulate(
     mean_intensities: torch.Tensor,
@@ -108,6 +111,7 @@ def simulate(
 # Save for integrator
 # ---------------------------------------------------------------------------
 
+
 def save_for_integrator(
     sim: dict[str, torch.Tensor],
     mean_intensities: torch.Tensor,
@@ -126,7 +130,9 @@ def save_for_integrator(
     counts_flat = sim["counts"].reshape(N_per_bin * n_bins, -1).float()
     n_total = counts_flat.shape[0]
 
-    group_label = torch.arange(n_bins).unsqueeze(0).expand(N_per_bin, -1).reshape(-1)
+    group_label = (
+        torch.arange(n_bins).unsqueeze(0).expand(N_per_bin, -1).reshape(-1)
+    )
     intensity = sim["I_true"].reshape(-1)
     background = bg_per_bin.unsqueeze(0).expand(N_per_bin, -1).reshape(-1)
 
@@ -154,7 +160,9 @@ def save_for_integrator(
 
     tau_per_group = 1.0 / mean_intensities
     bg_rate_per_group = 1.0 / bg_per_bin
-    concentration_per_group = (dir_kappa[:, None] * dir_mean_profile).clamp(min=1e-6)
+    concentration_per_group = (dir_kappa[:, None] * dir_mean_profile).clamp(
+        min=1e-6
+    )
 
     torch.save(counts_flat, save_dir / "counts.pt")
     torch.save(masks, save_dir / "masks.pt")
@@ -162,47 +170,64 @@ def save_for_integrator(
     torch.save(reference, save_dir / "reference.pt")
     torch.save(tau_per_group, save_dir / "tau_per_group.pt")
     torch.save(bg_rate_per_group, save_dir / "bg_rate_per_group.pt")
-    torch.save(concentration_per_group, save_dir / "concentration_per_group.pt")
+    torch.save(
+        concentration_per_group, save_dir / "concentration_per_group.pt"
+    )
 
     # Wilson prior: s² = 1/(4d²) per bin
     if mean_d is not None:
-        s_squared_per_group = 1.0 / (4.0 * mean_d ** 2)
+        s_squared_per_group = 1.0 / (4.0 * mean_d**2)
         torch.save(s_squared_per_group, save_dir / "s_squared_per_group.pt")
 
-    print(f"Saved {n_total} reflections ({N_per_bin} x {n_bins} bins) to {save_dir}")
+    print(
+        f"Saved {n_total} reflections ({N_per_bin} x {n_bins} bins) to {save_dir}"
+    )
 
 
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate per-bin simulated shoebox data from pre-fitted params"
     )
     parser.add_argument(
-        "--params", type=str, required=True,
+        "--params",
+        type=str,
+        required=True,
         help="Path to simulation_params.pt (from save_simulation_params())",
     )
     parser.add_argument(
-        "--save-dir", type=str, required=True,
+        "--save-dir",
+        type=str,
+        required=True,
         help="Output directory for .pt files",
     )
     parser.add_argument(
-        "--N", type=int, default=1000,
+        "--N",
+        type=int,
+        default=1000,
         help="Number of reflections per bin (default: 1000)",
     )
     parser.add_argument(
-        "--profile-model", type=str, default="dirichlet",
+        "--profile-model",
+        type=str,
+        default="dirichlet",
         choices=["gaussian", "dirichlet"],
         help="Profile model to use (default: dirichlet)",
     )
     parser.add_argument(
-        "--test-frac", type=float, default=0.05,
+        "--test-frac",
+        type=float,
+        default=0.05,
         help="Fraction of reflections to flag as test (default: 0.05)",
     )
     parser.add_argument(
-        "--seed", type=int, default=42,
+        "--seed",
+        type=int,
+        default=42,
         help="Random seed (default: 42)",
     )
     args = parser.parse_args()
@@ -214,7 +239,9 @@ def main():
     print(f"Loaded params: {params['n_bins']} bins")
 
     # Simulate
-    print(f"Simulating {args.N} reflections/bin with {args.profile_model} profiles...")
+    print(
+        f"Simulating {args.N} reflections/bin with {args.profile_model} profiles..."
+    )
     sim = simulate(
         mean_intensities=params["mean_intensities"],
         bg_per_bin=params["bg_per_bin"],

@@ -1,7 +1,5 @@
 import argparse
 
-from integrator.data_loaders.data_module import DEFAULT_DS_COLS
-
 DEFAULT_EXCLUDED_COLS = ["BATCH", "PARTIAL"]
 
 EXTRA_COLS = [

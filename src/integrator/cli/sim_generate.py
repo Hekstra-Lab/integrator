@@ -101,7 +101,6 @@ def main() -> None:
         bg_rate=priors["bg_rate"],
         save_dir=Path(args.output),
         s_squared=priors.get("s_squared"),
-        concentration=priors.get("concentration"),
         K_true=priors.get("K_true"),
         B_true=priors.get("B_true"),
         test_frac=cfg.get("test_frac", 0.05),

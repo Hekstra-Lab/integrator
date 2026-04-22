@@ -5,7 +5,9 @@ import torch
 from torch import Tensor, nn
 
 from integrator.configs.integrator import IntegratorCfg
-from integrator.model.distributions.profile_surrogates import ProfileSurrogateOutput
+from integrator.model.distributions.profile_surrogates import (
+    ProfileSurrogateOutput,
+)
 
 
 @dataclass
@@ -52,17 +54,6 @@ def _assemble_outputs(
     if is_profile_output:
         base["qp_mu_h"] = out.qp.mu_h
         base["qp_std_h"] = out.qp.std_h
-        # Translation-head outputs. All three are None when the
-        # surrogate has no shift head; `shift_mu`/`shift_sigma` are
-        # additionally None in deterministic (non-variational) mode.
-        # Emitted unconditionally so predict_keys can request them if
-        # set; downstream consumers should handle None gracefully.
-        if out.qp.shift is not None:
-            base["qp_shift"] = out.qp.shift
-        if out.qp.shift_mu is not None:
-            base["qp_shift_mu"] = out.qp.shift_mu
-        if out.qp.shift_sigma is not None:
-            base["qp_shift_sigma"] = out.qp.shift_sigma
 
     if out.metadata is None:
         return base

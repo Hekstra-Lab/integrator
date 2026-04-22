@@ -18,41 +18,6 @@ from .profiles import sample_profiles
 logger = logging.getLogger(__name__)
 
 
-def _fit_concentration_from_profiles(
-    profiles: Tensor,
-    group_label: Tensor,
-) -> Tensor:
-    """Fit Dirichlet concentration per bin from simulated profiles.
-
-    Uses method-of-moments: kappa = median((p(1-p)/var(p)) - 1),
-    then alpha_k = kappa * p_bar.
-
-    Returns: (n_bins, n_pixels)
-    """
-    n_bins = int(group_label.max().item()) + 1
-    n_pixels = profiles.shape[1]
-    concentration = torch.zeros(n_bins, n_pixels)
-
-    for b in range(n_bins):
-        sel = profiles[group_label == b]
-        if len(sel) < 2:
-            concentration[b] = 1e-6
-            continue
-        p_bar = sel.mean(dim=0)
-        var_p = sel.var(dim=0)
-        valid = p_bar > 1e-6
-        if valid.sum() > 0:
-            ratio = (p_bar[valid] * (1 - p_bar[valid])) / var_p[valid].clamp(
-                min=1e-12
-            ) - 1
-            kappa = ratio.median().clamp(min=1.0)
-        else:
-            kappa = torch.tensor(1.0)
-        concentration[b] = (kappa * p_bar).clamp(min=1e-6)
-
-    return concentration
-
-
 def simulate(
     n_per_bin: int,
     n_bins: int,
@@ -145,7 +110,6 @@ def save_dataset(
     save_dir: Path,
     *,
     s_squared: Tensor | None = None,
-    concentration: Tensor | None = None,
     K_true: float | None = None,
     B_true: float | None = None,
     test_frac: float = 0.05,
@@ -158,7 +122,6 @@ def save_dataset(
         bg_rate: Per-bin prior rate for background.
         save_dir: Output directory (created if needed).
         s_squared: Wilson parameter per bin. Saved if provided.
-        concentration: Dirichlet concentration per bin. Saved if provided.
         K_true: Ground truth Wilson K parameter. Saved to `ground_truth.pt`
             for diagnostics (hyperparameter recovery checks).
         B_true: Ground truth Wilson B parameter. Saved to `ground_truth.pt`
@@ -210,16 +173,6 @@ def save_dataset(
 
     if s_squared is not None:
         torch.save(s_squared, save_dir / "s_squared_per_group.pt")
-
-    if concentration is not None:
-        torch.save(concentration, save_dir / "concentration_per_group.pt")
-    else:
-        # Fit Dirichlet concentration from simulated profiles (method of moments)
-        concentration = _fit_concentration_from_profiles(
-            sim["profiles"], sim["group_label"]
-        )
-        torch.save(concentration, save_dir / "concentration_per_group.pt")
-        logger.info("Auto-generated concentration_per_group.pt from profiles")
 
     # Physical Gaussian profile basis (for physical_gaussian_surrogate)
     # Use profile_kwargs from simulation if available, otherwise defaults

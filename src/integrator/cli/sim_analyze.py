@@ -76,7 +76,9 @@ def _get_bins(edges: list) -> tuple[list[str], "pl.DataFrame"]:
     """Build bin labels and a base DataFrame for joining."""
     import polars as pl
 
-    bin_labels = [f"{a} - {b}" for a, b in zip(edges[:-1], edges[1:])]
+    bin_labels = [
+        f"{a} - {b}" for a, b in zip(edges[:-1], edges[1:], strict=False)
+    ]
     bin_labels.insert(0, f"<{edges[0]}")
     bin_labels.append(f">{edges[-1]}")
     reversed_labels = list(reversed(bin_labels))

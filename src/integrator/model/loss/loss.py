@@ -17,7 +17,9 @@ from torch.distributions import (
 
 from integrator.configs.config_utils import shallow_dict
 from integrator.configs.priors import DirichletParams, PriorConfig
-from integrator.model.distributions.profile_surrogates import ProfileSurrogateOutput
+from integrator.model.distributions.profile_surrogates import (
+    ProfileSurrogateOutput,
+)
 from integrator.model.loss.kl_helpers import _kl, compute_profile_kl_global
 
 PRIOR_MAP = {
@@ -190,9 +192,12 @@ class Loss(nn.Module):
         # Profile prior KL
         if isinstance(qp, ProfileSurrogateOutput):
             weight = self.pprf_cfg.weight if self.pprf_cfg is not None else 1.0
-            kl_prf = compute_profile_kl_global(
-                qp.mu_h, qp.std_h, self.profile_sigma_prior
-            ) * weight
+            kl_prf = (
+                compute_profile_kl_global(
+                    qp.mu_h, qp.std_h, self.profile_sigma_prior
+                )
+                * weight
+            )
             kl += kl_prf
         elif self.pprf_cfg is not None and self.pprf_params is not None:
             kl_prf = _prior_kl(

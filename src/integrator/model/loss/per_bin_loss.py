@@ -1,23 +1,16 @@
-"""Per-bin resolution loss with group-dependent priors.
-
-ELBO = E_q[log p(x | I, prf, bg)] - KL(prf) - KL(I) - KL(bg)
-
-Intensity/background prior type selected by pi_cfg.name / pbg_cfg.name:
-  "exponential": I_k ~ Gamma(1, tau_k)
-  "gamma":       I_k ~ Gamma(alpha_k, alpha_k * tau_k)
-
-Profile prior: Dirichlet (per-bin) or latent Normal (global).
-All prior parameters are fixed, loaded from data.
-"""
-
 import torch
 import torch.nn as nn
 from torch import Tensor
 from torch.distributions import Distribution, Gamma, Poisson
 
-from integrator.model.distributions.profile_surrogates import ProfileSurrogateOutput
-from integrator.model.loss.kl_helpers import compute_bg_kl, compute_profile_kl
-from integrator.model.loss.kl_helpers import _kl
+from integrator.model.distributions.profile_surrogates import (
+    ProfileSurrogateOutput,
+)
+from integrator.model.loss.kl_helpers import (
+    _kl,
+    compute_bg_kl,
+    compute_profile_kl,
+)
 
 
 def _load_buffer(value: list[float] | str) -> Tensor:
@@ -39,8 +32,6 @@ class PerBinLoss(nn.Module):
         eps: Numerical stability constant for Poisson rate.
         tau_per_group: Exponential rates for intensity prior, one per group.
         bg_rate_per_group: Exponential rates for background prior, one per group.
-        concentration_per_group: Path to .pt file with Dirichlet concentrations
-            (n_groups, n_pixels).
         pi_cfg: Intensity prior config. `pi_cfg.name` selects the distribution:
             "exponential" (default) or "gamma" (per-bin MLE alpha).
             `pi_cfg.weight` scales the intensity KL term.
@@ -66,10 +57,6 @@ class PerBinLoss(nn.Module):
         eps: float = 1e-6,
         tau_per_group: list[float] | str,
         bg_rate_per_group: list[float] | str,
-        concentration_per_group: str | float | None = None,
-        pprf_n_pixels: int | None = None,
-        pprf_quantile: float | None = None,
-        pprf_conc_factor: float = 40.0,
         i_concentration_per_group: list[float] | str | None = None,
         bg_concentration_per_group: list[float] | str | None = None,
         bg_concentration: float = 1.0,
@@ -84,16 +71,14 @@ class PerBinLoss(nn.Module):
         pprf_weight: float = 1.0,
         pbg_weight: float = 1.0,
         pi_weight: float = 1.0,
-        dataset_size: int = 1,
     ):
         super().__init__()
         self.mc_samples = mc_samples
         self.eps = eps
-        self.dataset_size = dataset_size
         self.bg_concentration = bg_concentration
         self.profile_sigma_prior = profile_sigma_prior
 
-        # Resolve weights: prefer *_cfg.weight, fall back to scalar
+        # Resolve weights
         self.pprf_weight = (
             pprf_cfg.weight if pprf_cfg is not None else pprf_weight
         )
@@ -107,9 +92,7 @@ class PerBinLoss(nn.Module):
                 basis.get("sigma_prior", profile_sigma_prior)
             )
             if "mu_per_group" in basis:
-                self.register_buffer(
-                    "profile_mu_prior", basis["mu_per_group"]
-                )
+                self.register_buffer("profile_mu_prior", basis["mu_per_group"])
                 self.register_buffer(
                     "profile_std_prior", basis["std_per_group"]
                 )
@@ -125,32 +108,6 @@ class PerBinLoss(nn.Module):
         self.register_buffer(
             "bg_rate_per_group", _load_buffer(bg_rate_per_group)
         )
-        if concentration_per_group is not None:
-            n_bins = int(self.tau_per_group.shape[0])
-            if isinstance(concentration_per_group, (int, float)):
-                if pprf_n_pixels is None:
-                    raise ValueError(
-                        "pprf_n_pixels is required when concentration_per_group"
-                        " is a scalar"
-                    )
-                conc = torch.full(
-                    (n_bins, pprf_n_pixels),
-                    float(concentration_per_group),
-                )
-            else:
-                conc = _load_buffer(concentration_per_group)
-                if pprf_quantile is not None:
-                    threshold = torch.quantile(conc.float(), pprf_quantile)
-                    conc[conc > threshold] *= pprf_conc_factor
-                    conc = conc / conc.max()
-                if conc.dim() == 1:
-                    conc = conc.unsqueeze(0).expand(n_bins, -1).contiguous()
-            self.register_buffer(
-                "concentration_per_group",
-                conc.clamp(min=1e-6),
-            )
-        else:
-            self.concentration_per_group = None
 
         #  Intensity concentration (Gamma MLE alpha per bin)
         if i_concentration_per_group is not None:
@@ -199,10 +156,7 @@ class PerBinLoss(nn.Module):
             self.profile_sigma_prior,
             self.profile_mu_prior,
             self.profile_std_prior,
-            self.concentration_per_group,
             self.pprf_weight,
-            self.mc_samples,
-            self.eps,
             device,
             metadata=kwargs.get("metadata"),
         )

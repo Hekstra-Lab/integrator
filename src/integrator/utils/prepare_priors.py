@@ -35,7 +35,11 @@ def _gammaB_wants_mean_init(cfg: dict, sur_key: str) -> bool:
 
 
 def _compute_qi_qbg_mean_init(
-    counts, masks, D: int, H: int, W: int,
+    counts,
+    masks,
+    D: int,
+    H: int,
+    W: int,
 ) -> dict:
     """Estimate sensible (qi, qbg) mean_init values directly from counts.
 
@@ -59,7 +63,9 @@ def _compute_qi_qbg_mean_init(
         frame_n = masks_3d.sum(dim=-1)
         min_idx = frame_sums.argmin(dim=-1)
         bg_tot = frame_sums.gather(1, min_idx.unsqueeze(-1)).squeeze(-1)
-        bg_n = frame_n.gather(1, min_idx.unsqueeze(-1)).squeeze(-1).clamp(min=1)
+        bg_n = (
+            frame_n.gather(1, min_idx.unsqueeze(-1)).squeeze(-1).clamp(min=1)
+        )
         bg_rate = bg_tot / bg_n
     else:
         frame = counts_clean.reshape(counts.shape[0], H, W)
@@ -214,21 +220,14 @@ def prepare_per_bin_priors(
     per_bin_keys = [
         "bg_concentration_per_group",
         "bg_rate_per_group",
-        "concentration_per_group",
         "i_concentration_per_group",
         "s_squared_per_group",
         "tau_per_group",
     ]
 
-    # When pprf_quantile is set, the user provides a global concentration
-    # file that should not get an n_bins suffix or be auto-generated.
-    global_conc = "pprf_quantile" in loss_args
-
     needed = {}
     for key in per_bin_keys:
         if key not in loss_args:
-            continue
-        if key == "concentration_per_group" and global_conc:
             continue
         filename = loss_args[key]
         if isinstance(filename, str):
@@ -271,30 +270,6 @@ def prepare_per_bin_priors(
             need_2d_rebinning = True
         elif rebinned:
             need_2d_rebinning = True
-        else:
-            # Verify concentration file shape matches profile_group_label
-            existing_pgl = torch.load(pgl_path, weights_only=True)
-            n_expected = int(existing_pgl.max().item()) + 1
-            conc_fn = loss_args.get("concentration_per_group")
-            if isinstance(conc_fn, str):
-                conc_path = _nbins_path(conc_fn, n_bins, data_dir)
-                if conc_path.exists():
-                    conc_on_disk = torch.load(conc_path, weights_only=True)
-                    if conc_on_disk.shape[0] != n_expected:
-                        logger.warning(
-                            "concentration_per_group has %d bins but "
-                            "profile_group_label expects %d; regenerating",
-                            conc_on_disk.shape[0],
-                            n_expected,
-                        )
-                        need_2d_rebinning = True
-
-        if need_2d_rebinning and "concentration_per_group" in loss_args:
-            fn = loss_args["concentration_per_group"]
-            if isinstance(fn, str):
-                needed["concentration_per_group"] = _nbins_path(
-                    fn, n_bins, data_dir
-                )
 
     # Check if profile_basis_per_bin needs generating. Two separate sources
     # can request a Hermite basis file: loss.args.profile_basis_per_bin
@@ -306,7 +281,9 @@ def prepare_per_bin_priors(
         basis_path = _nbins_path(basis_filename, n_bins, data_dir)
         if force or not basis_path.exists():
             need_basis = True
-    qp_args = (cfg.get("surrogates", {}).get("qp", {}) or {}).get("args", {}) or {}
+    qp_args = (cfg.get("surrogates", {}).get("qp", {}) or {}).get(
+        "args", {}
+    ) or {}
     warmstart_filename = qp_args.get("warmstart_basis_path")
     if isinstance(warmstart_filename, str):
         ws_path = _nbins_path(warmstart_filename, n_bins, data_dir)
@@ -440,47 +417,6 @@ def prepare_per_bin_priors(
             pgl_path, weights_only=True
         )
 
-    if "concentration_per_group" in needed:
-        dl_args = cfg.get("data_loader", {}).get("args", {})
-        D_dim = int(dl_args.get("D", dl_args.get("d", 1)))
-        H_dim = int(dl_args.get("H", dl_args.get("h", 21)))
-        W_dim = int(dl_args.get("W", dl_args.get("w", 21)))
-
-        if "profile_group_label" in metadata:
-            profile_group_labels = metadata["profile_group_label"]
-            n_profile_bins = int(profile_group_labels.max().item()) + 1
-            concentration = _fit_dirichlet_per_group(
-                counts,
-                masks,
-                profile_group_labels,
-                n_profile_bins,
-                D=D_dim,
-                H=H_dim,
-                W=W_dim,
-            )
-            binning_desc = f"2D profile bins ({n_profile_bins} bins)"
-        else:
-            concentration = _fit_dirichlet_per_group(
-                counts,
-                masks,
-                group_labels,
-                n_bins,
-                D=D_dim,
-                H=H_dim,
-                W=W_dim,
-            )
-            binning_desc = f"{n_bins} resolution bins"
-
-        torch.save(concentration, needed["concentration_per_group"])
-        logger.info(
-            "Saved concentration_per_group.pt (MOM bg-sub, %dD: %dx%dx%d, %s)",
-            2 if D_dim == 1 else 3,
-            D_dim,
-            H_dim,
-            W_dim,
-            binning_desc,
-        )
-
     if "s_squared_per_group" in needed:
         s_squared = _compute_s_squared_per_group(d, group_labels, n_bins)
         torch.save(s_squared, needed["s_squared_per_group"])
@@ -575,9 +511,15 @@ def prepare_per_bin_priors(
     if isinstance(loss_basis, str):
         basis_paths.add(_nbins_path(loss_basis, n_bins, data_dir))
     qp_cfg = cfg.get("surrogates", {}).get("qp", {})
-    warmstart = (qp_cfg.get("args", {}) or {}).get("warmstart_basis_path")
+    qp_args = qp_cfg.get("args", {}) or {}
+    warmstart = qp_args.get("warmstart_basis_path")
     if isinstance(warmstart, str):
         basis_paths.add(_nbins_path(warmstart, n_bins, data_dir))
+    # fixed_basis_profile reads the same format via `basis_path`
+    if qp_cfg.get("name") == "fixed_basis_profile":
+        fixed_path = qp_args.get("basis_path")
+        if isinstance(fixed_path, str):
+            basis_paths.add(_nbins_path(fixed_path, n_bins, data_dir))
 
     for basis_path in basis_paths:
         existed = basis_path.exists()
@@ -607,7 +549,9 @@ def prepare_per_bin_priors(
 
         if existed:
             logger.warning(
-                "Regenerating %s because %s", basis_path.name, reason,
+                "Regenerating %s because %s",
+                basis_path.name,
+                reason,
             )
             action = "regenerated"
         else:
@@ -699,7 +643,9 @@ def prepare_per_bin_priors(
     # explicitly set in the YAML), removing the "grow mu from 0.7 over
     # many epochs" early-training phase.
     if need_init:
-        init_stats = _compute_qi_qbg_mean_init(counts, masks, D_dim, H_dim, W_dim)
+        init_stats = _compute_qi_qbg_mean_init(
+            counts, masks, D_dim, H_dim, W_dim
+        )
         torch.save(init_stats, init_path)
         logger.info(
             "Saved qi_qbg_mean_init.pt "
@@ -1860,7 +1806,9 @@ def _basis_provenance_mismatch_reason(
         return "cached file is not a dict"
     prov = cached.get("provenance")
     if prov is None:
-        return "cached file predates provenance schema; rewriting with metadata"
+        return (
+            "cached file predates provenance schema; rewriting with metadata"
+        )
     # Compare all expected keys; float fields use an epsilon to tolerate
     # float32 round-trip differences.
     for key, want in expected.items():

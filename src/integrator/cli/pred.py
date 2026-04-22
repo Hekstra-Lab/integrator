@@ -212,6 +212,7 @@ def main():
     else:
         parquet_glob = str(pred_dir / "*" / "*.parquet")
         from glob import glob as _glob
+
         if not _glob(parquet_glob):
             logger.info(
                 "No parquet files under %s — skipping test-set aggregation"

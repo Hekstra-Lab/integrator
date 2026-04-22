@@ -160,7 +160,9 @@ class GammaDistributionRepamB(nn.Module):
             linear.bias.fill_(_softplus_inverse_shifted(target, self.eps))
 
     def _init_fc_biases(
-        self, mean_init: float | None, fano_init: float | None,
+        self,
+        mean_init: float | None,
+        fano_init: float | None,
     ) -> None:
         if self.fc.bias is None:
             return
@@ -168,7 +170,9 @@ class GammaDistributionRepamB(nn.Module):
             if mean_init is not None:
                 self.fc.bias[0] = self._mu_bias(mean_init)
             if fano_init is not None:
-                self.fc.bias[1] = _softplus_inverse_shifted(fano_init, self.eps)
+                self.fc.bias[1] = _softplus_inverse_shifted(
+                    fano_init, self.eps
+                )
 
     def forward(
         self,

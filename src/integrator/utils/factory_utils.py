@@ -81,10 +81,6 @@ def _get_integrator_cls(name: str) -> type[BaseIntegrator]:
     return REGISTRY["integrator"][name]
 
 
-def _get_encoder_cls(name: str) -> nn.Module:
-    return REGISTRY["encoders"][name]
-
-
 def _get_loss_cls(name: str) -> nn.Module:
     return REGISTRY["loss"][name]
 
@@ -131,12 +127,6 @@ def _get_surrogate_modules(
 
     Iterates over all keys in `cfg["surrogates"]` so that any combination
     of surrogates is supported.
-
-    When `skip_warmstart=True`, `warmstart_basis_path` is stripped from
-    qp args before instantiation — useful at prediction time when the
-    trained weights will be restored via `load_state_dict` anyway, so
-    warmstart from a basis file is redundant and a potential source of
-    bugs (missing/stale basis files, shape mismatches).
 
     For `fixed_basis_profile` (and similar), a relative `basis_path` is resolved
     against `data_loader.args.data_dir` so the YAML only needs the filename.
@@ -316,14 +306,6 @@ def _get_loss_module(
         if k not in standard_keys:
             kwargs[k] = v
 
-    # Auto-compute pprf_n_pixels for scalar concentration_per_group
-    conc_val = kwargs.get("concentration_per_group")
-    if isinstance(conc_val, (int, float)) and "pprf_n_pixels" not in kwargs:
-        d = cfg["integrator"]["args"].get("d", 3)
-        h = cfg["integrator"]["args"].get("h", 21)
-        w = cfg["integrator"]["args"].get("w", 21)
-        kwargs["pprf_n_pixels"] = d * h * w
-
     # Map empirical_profile_basis_per_bin -> profile_basis_per_bin
     if (
         "empirical_profile_basis_per_bin" in kwargs
@@ -339,13 +321,9 @@ def _get_loss_module(
     # Include n_bins in filename to prevent concurrent runs from clobbering files
     data_dir = _get_data_dir(cfg)
     n_bins = _get_n_bins(cfg)
-    # When pprf_quantile is set, the user provides a global concentration
-    # file that should not get an n_bins suffix.
-    global_conc = "pprf_quantile" in kwargs
     for pt_key in (
         "tau_per_group",
         "bg_rate_per_group",
-        "concentration_per_group",
         "s_squared_per_group",
         "i_concentration_per_group",
         "bg_concentration_per_group",
@@ -353,11 +331,8 @@ def _get_loss_module(
         "empirical_profile_basis_per_bin",
     ):
         if pt_key in kwargs and isinstance(kwargs[pt_key], str):
-            # Global concentration doesn't get n_bins suffix
-            skip_nbins = pt_key == "concentration_per_group" and global_conc
-            nbins = None if skip_nbins else n_bins
             kwargs[pt_key] = _resolve_data_path(
-                kwargs[pt_key], data_dir, nbins
+                kwargs[pt_key], data_dir, n_bins
             )
 
     return loss_cls(**kwargs)
@@ -494,7 +469,7 @@ def construct_trainer(
 
 
 def _resolved_path_info(path: str) -> dict:
-    """Return absolute path, existence, and size for a resolved file path."""
+    "Return absolute path, existence, and size for a resolved file path."
     p = Path(path).resolve()
     entry: dict = {"path": str(p)}
     try:
@@ -507,13 +482,7 @@ def _resolved_path_info(path: str) -> dict:
 
 
 def _collect_resolved_paths(cfg: dict) -> dict:
-    """Collect the absolute paths of every file the factory actually loads.
-
-    Mirrors the resolution logic in `_get_surrogate_modules` and
-    `_get_loss_module` so the saved report matches what training actually
-    read from disk, including any `_{n_bins}` suffixes and `data_dir`
-    joins that the YAML's relative paths hide.
-    """
+    "Collect the absolute paths of every file the factory loads."
     report: dict = {"data_dir": _get_data_dir(cfg), "n_bins": _get_n_bins(cfg)}
     data_dir = report["data_dir"]
     n_bins = report["n_bins"]
@@ -555,11 +524,9 @@ def _collect_resolved_paths(cfg: dict) -> dict:
     # Loss buffers (bg_rate_per_group, tau_per_group, etc.)
     loss_args = cfg.get("loss", {}).get("args", {}) or {}
     loss_paths: dict = {}
-    global_conc = "pprf_quantile" in loss_args
     for pt_key in (
         "tau_per_group",
         "bg_rate_per_group",
-        "concentration_per_group",
         "s_squared_per_group",
         "i_concentration_per_group",
         "bg_concentration_per_group",
@@ -568,10 +535,8 @@ def _collect_resolved_paths(cfg: dict) -> dict:
     ):
         v = loss_args.get(pt_key)
         if isinstance(v, str):
-            skip_nbins = pt_key == "concentration_per_group" and global_conc
-            nbins = None if skip_nbins else n_bins
             loss_paths[pt_key] = _resolved_path_info(
-                _resolve_data_path(v, data_dir, nbins)
+                _resolve_data_path(v, data_dir, n_bins)
             )
 
     # Dirichlet prior concentration file (resolved in _get_prior_cfgs)
@@ -671,10 +636,7 @@ def save_run_artifacts(
     param_counts["total"] = sum(p.numel() for p in integrator.parameters())
     artifacts["param_counts"] = param_counts
 
-    # Resolved absolute paths for every file the factory loaded, with
-    # existence + size. Lets you audit exactly which _{n_bins}-suffixed
-    # and data_dir-joined files were used, even if the YAML only names them
-    # relatively.
+    # Resolved absolute paths for every file the factory loaded,
     artifacts["resolved_paths"] = _collect_resolved_paths(cfg)
 
     # Write summary YAML

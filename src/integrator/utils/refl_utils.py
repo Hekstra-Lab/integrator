@@ -147,8 +147,6 @@ DEFAULT_REFL_COLS = list(SCALAR_DTYPES.keys()) + list(VECTOR_COLUMNS.keys())
 
 ALL_COLS = FLOAT_COLS + INT_COLS + BOOL_COLS
 
-from integrator.data_loaders.data_module import DEFAULT_DS_COLS  # noqa: E402
-
 
 def unstack_preds(
     preds: dict[str, list[np.ndarray]],

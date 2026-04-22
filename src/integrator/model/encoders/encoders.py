@@ -19,9 +19,7 @@ OPERATIONS = {
 }
 
 
-def _make_coord_channels(
-    input_shape: tuple[int, ...], dim: int
-) -> Tensor:
+def _make_coord_channels(input_shape: tuple[int, ...], dim: int) -> Tensor:
     """Build normalized spatial coordinate channels for a (D, H, W) volume.
 
     Each channel is one spatial axis, normalized to [-1, 1] so it's
@@ -104,7 +102,8 @@ class ShoeboxEncoder(nn.Module):
         # module (.to(device), .cuda(), etc.) without being parameters.
         if use_coord_channels:
             coords = _make_coord_channels(
-                input_shape, dim=3 if data_dim == "3d" else 2,
+                input_shape,
+                dim=3 if data_dim == "3d" else 2,
             )
             self.register_buffer("coord_channels", coords, persistent=False)
             effective_in_channels = in_channels + coords.shape[0]
@@ -165,7 +164,9 @@ class ShoeboxEncoder(nn.Module):
             # Broadcast the precomputed coord grid across the batch and
             # concatenate on the channel dim.
             coords: Tensor = self.coord_channels  # type: ignore[assignment]
-            coords = coords.unsqueeze(0).expand(x.shape[0], *([-1] * coords.ndim))
+            coords = coords.unsqueeze(0).expand(
+                x.shape[0], *([-1] * coords.ndim)
+            )
             x = torch.cat([x, coords], dim=1)
         x = F.relu(self.norm1(self.conv1(x)))
         x = self.dropout1(x)

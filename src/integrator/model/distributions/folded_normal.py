@@ -66,12 +66,11 @@ class FoldedNormal(TransformedDistribution):
 
 
 class FoldedNormalDistribution(nn.Module):
-    """FoldedNormal distribution surrogate.
+    """
+    FoldedNormal distribution surrogate.
 
     When `separate_inputs=False` (default), uses a single Linear(in, 2) and
-    splits, appropriate for single-encoder models.  When `True`, uses two
-    separate Linear(in, 1) layers so that `x` feeds loc and `x_` feeds
-    scale, appropriate for multi-encoder models.
+    splits.  When `True`, uses two separate Linear(in, 1).
     """
 
     def __init__(

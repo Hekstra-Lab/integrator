@@ -236,6 +236,7 @@ def main():
     # Explicit git capture — launch cwd may not be inside the repo, which
     # defeats wandb's auto-capture. Resolve repo root from __file__ instead.
     import subprocess
+
     _start = Path(__file__).resolve()
     _repo_root = next(
         (p for p in [_start, *_start.parents] if (p / ".git").exists()),
@@ -244,11 +245,17 @@ def main():
     if _repo_root is not None:
         try:
             _sha = subprocess.check_output(
-                ["git", "rev-parse", "HEAD"], cwd=_repo_root, text=True,
+                ["git", "rev-parse", "HEAD"],
+                cwd=_repo_root,
+                text=True,
             ).strip()
-            _dirty = bool(subprocess.check_output(
-                ["git", "status", "--porcelain"], cwd=_repo_root, text=True,
-            ).strip())
+            _dirty = bool(
+                subprocess.check_output(
+                    ["git", "status", "--porcelain"],
+                    cwd=_repo_root,
+                    text=True,
+                ).strip()
+            )
             wb_logger.experiment.config.update(
                 {"git_sha": _sha, "git_dirty": _dirty},
                 allow_val_change=True,
@@ -312,6 +319,7 @@ def main():
     # Echo resolved file paths to the training log (full record is in
     # run_artifacts.yaml).
     from integrator.utils.factory_utils import _collect_resolved_paths
+
     resolved = _collect_resolved_paths(cfg)
     logger.info(f"data_dir: {resolved.get('data_dir')}")
     logger.info(f"n_bins: {resolved.get('n_bins')}")

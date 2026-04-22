@@ -5,6 +5,7 @@ from pathlib import Path
 import torch
 
 logger = logging.getLogger(__name__)
+import pytorch_lightning as pl
 from torch.utils.data import (
     DataLoader,
     Dataset,
@@ -12,8 +13,6 @@ from torch.utils.data import (
     TensorDataset,
     random_split,
 )
-
-import pytorch_lightning as pl
 
 SIMULATED_COLS = [
     "shoebox_median",

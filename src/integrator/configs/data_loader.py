@@ -25,7 +25,9 @@ class DataFileNames:
         if self.standardized_counts is not None:
             p = self._resolve(self.standardized_counts)
             if not p.is_file():
-                raise FileNotFoundError(f"standardized_counts file not found: {p}")
+                raise FileNotFoundError(
+                    f"standardized_counts file not found: {p}"
+                )
 
     def _resolve(self, fname: str) -> Path:
         return Path(self.data_dir) / fname
