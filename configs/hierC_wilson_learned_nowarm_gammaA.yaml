@@ -89,11 +89,13 @@ surrogates:
     args:
       in_features: 64
       eps: 1.0e-06
+      separate_inputs: true
   qi:
     name: gammaA
     args:
       in_features: 64
       eps: 1.0e-06
+      separate_inputs: true
 loss:
   name: wilson
   args:
