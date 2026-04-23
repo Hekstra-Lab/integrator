@@ -1,6 +1,6 @@
 global_vars:
   encoder_out: 64
-  mc_samples: 100
+  mc_samples: 20
   data_dir: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data
   d: 3
   h: 21
@@ -24,7 +24,7 @@ integrator:
     qp_smoothness_weight: 0.0
     qp_orthogonality_weight: 0.0
     qp_sparsity_weight: 0.0
-    mc_samples: 100
+    mc_samples: 20
     renyi_scale: 0.0
     predict_keys:
     - refl_ids
