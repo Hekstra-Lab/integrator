@@ -16,7 +16,7 @@ integrator:
     encoder_out: 64
     weight_decay: 0.0
     decoder_weight_decay: 1.0e-3
-    qp_smoothness_weight: 0.0
+    qp_smoothness_weight: 0.01
     qp_orthogonality_weight: 0.0
     qp_sparsity_weight: 0.0
     mc_samples: 100
