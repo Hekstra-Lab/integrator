@@ -4,6 +4,7 @@ from integrator.data_loaders import (
     SimulatedShoeboxLoader,
 )
 from integrator.model.distributions import (
+    ConvProfileSurrogate,
     DirichletDistribution,
     FixedBasisProfileSurrogate,
     FoldedNormalDistribution,
@@ -64,6 +65,7 @@ REGISTRY = {
         "dirichlet": DirichletDistribution,
         "learned_basis_profile": LearnedBasisProfileSurrogate,
         "fixed_basis_profile": FixedBasisProfileSurrogate,
+        "conv_profile": ConvProfileSurrogate,
     },
     "data_loader": {
         "default": ShoeboxDataModule,

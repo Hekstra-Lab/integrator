@@ -1,3 +1,4 @@
+from .conv_profile import ConvProfileSurrogate
 from .dirichlet import DirichletDistribution
 from .folded_normal import FoldedNormalDistribution
 from .gamma import (
@@ -15,6 +16,7 @@ from .profile_surrogates import (
 )
 
 __all__ = [
+    "ConvProfileSurrogate",
     "DirichletDistribution",
     "LogNormalDistribution",
     "FoldedNormalDistribution",
