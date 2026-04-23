@@ -5,6 +5,7 @@ from .gamma import (
     GammaDistributionRepamB,
     GammaDistributionRepamC,
     GammaDistributionRepamD,
+    GammaDistributionRepamE,
 )
 from .log_normal import LogNormalDistribution
 from .profile_surrogates import (
@@ -21,6 +22,7 @@ __all__ = [
     "GammaDistributionRepamB",
     "GammaDistributionRepamC",
     "GammaDistributionRepamD",
+    "GammaDistributionRepamE",
     "FixedBasisProfileSurrogate",
     "LearnedBasisProfileSurrogate",
     "ProfileSurrogateOutput",

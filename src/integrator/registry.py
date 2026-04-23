@@ -11,6 +11,7 @@ from integrator.model.distributions import (
     GammaDistributionRepamB,
     GammaDistributionRepamC,
     GammaDistributionRepamD,
+    GammaDistributionRepamE,
     LearnedBasisProfileSurrogate,
     LogNormalDistribution,
 )
@@ -57,6 +58,7 @@ REGISTRY = {
         "gammaB": GammaDistributionRepamB,
         "gammaC": GammaDistributionRepamC,
         "gammaD": GammaDistributionRepamD,
+        "gammaE": GammaDistributionRepamE,
         "log_normal": LogNormalDistribution,
         "folded_normal": FoldedNormalDistribution,
         "dirichlet": DirichletDistribution,

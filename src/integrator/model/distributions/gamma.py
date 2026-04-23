@@ -284,3 +284,95 @@ class GammaDistributionRepamD(nn.Module):
         r = 1.0 / fano
 
         return Gamma(concentration=k.flatten(), rate=r.flatten())
+
+
+# %%
+class GammaDistributionRepamE(nn.Module):
+    """Squared Nakagami parameterization: Gamma(m, m / Omega).
+
+    If X ~ Nakagami(m, Omega) then Y = X^2 ~ Gamma(m, m/Omega), so the
+    variational posterior over intensities Y lives naturally in Nakagami^2
+    space. The two heads are decoupled:
+
+        m     — Nakagami shape (inverse squared coefficient of variation);
+                controls dispersion via std/mean = 1/sqrt(m).
+        Omega — second moment / spread; equals the Gamma mean E[Y] = Omega.
+
+    Under this mapping, k = m (direct shape) and r = m/Omega (derived rate).
+    Contrast with RepamB (mu, fano), where k = mu/fano couples the two heads
+    through a non-diagonal Jacobian; here the m head is a direct output and
+    Omega only enters the rate.
+
+    Both heads are bounded positive via softplus. `m_min` plays the role of
+    `k_min` to keep the concentration away from zero where
+    torch.distributions.Gamma.rsample becomes unstable. Pass ``mean_init``
+    to bias the Omega head toward a target mean at step 0.
+    """
+
+    def __init__(
+        self,
+        in_features: int = 64,
+        eps: float = 1e-6,
+        m_min: float = 0.1,
+        separate_inputs: bool = False,
+        mean_init: float | None = None,
+        m_init: float = 1.0,
+        **kwargs,
+    ):
+        super().__init__()
+        self.eps = eps
+        self.m_min = m_min
+        self.separate_inputs = separate_inputs
+
+        if separate_inputs:
+            self.linear_m = nn.Linear(in_features, 1)
+            self.linear_omega = nn.Linear(in_features, 1)
+            _init_k_bias(self.linear_m, k_init=m_init, k_min=m_min)
+            self._init_omega_head(self.linear_omega, mean_init)
+        else:
+            self.fc = nn.Linear(in_features, 2)
+            self._init_fc_biases(mean_init, m_init)
+
+    @staticmethod
+    def _omega_bias(target: float, shift: float) -> float:
+        return _softplus_inverse_shifted(target, shift)
+
+    def _init_omega_head(
+        self, linear: nn.Linear, target: float | None
+    ) -> None:
+        if target is None or linear.bias is None:
+            return
+        with torch.no_grad():
+            linear.bias.fill_(self._omega_bias(target, self.eps))
+
+    def _init_fc_biases(
+        self,
+        mean_init: float | None,
+        m_init: float,
+    ) -> None:
+        if self.fc.bias is None:
+            return
+        with torch.no_grad():
+            # First output unit feeds m (via softplus + m_min); second unit
+            # feeds Omega (via softplus + eps).
+            self.fc.bias[0] = math.log(math.expm1(max(m_init - self.m_min, 1e-6)))
+            if mean_init is not None:
+                self.fc.bias[1] = self._omega_bias(mean_init, self.eps)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        x_: torch.Tensor | None = None,
+    ):
+        if self.separate_inputs:
+            raw_m = self.linear_m(x)
+            raw_omega = self.linear_omega(x_ if x_ is not None else x)
+        else:
+            raw_m, raw_omega = self.fc(x).chunk(2, dim=-1)
+
+        m = _bound_k(raw_m, self.m_min)
+        omega = F.softplus(raw_omega) + self.eps
+
+        r = m / omega
+
+        return Gamma(concentration=m.flatten(), rate=r.flatten())

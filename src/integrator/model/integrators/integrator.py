@@ -176,11 +176,11 @@ class IntegratorModelC(BaseIntegrator):
         qi = self.surrogates["qi"](x_k_i, x_r_i)
         qp = self.surrogates["qp"](x_profile, mc_samples=self.mc_samples)
 
-        zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)  #
         zp = _sample_profile(qp, self.mc_samples)
         zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
-        rate = zI * zp + zbg
+        rate = zI * zp + zbg  # (B, S, Pixels)
 
         out = IntegratorBaseOutputs(
             rates=rate,
