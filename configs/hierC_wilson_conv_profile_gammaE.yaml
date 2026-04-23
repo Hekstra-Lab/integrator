@@ -94,7 +94,7 @@ surrogates:
       # ~4 GB per activation, ~20 GB total for the decoder pass —
       # safe alongside the 5-encoder hierC stack on 80GB. channels=8
       # is borderline; channels=16 OOMs.
-      channels: 4
+      channels: 8
       init_std: 0.5
   qbg:
     name: gammaE
@@ -129,7 +129,7 @@ data_loader:
   name: default
   args:
     data_dir: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data
-    batch_size: 2048
+    batch_size: 512
     val_split: 0.2
     test_split: 0.0
     num_workers: 8
@@ -148,12 +148,12 @@ data_loader:
     W: 21
     anscombe: true
 trainer:
-  max_epochs: 100
+  max_epochs: 50
   accelerator: gpu
   devices: 1
   logger: true
   precision: '32'
-  check_val_every_n_epoch: 5
+  check_val_every_n_epoch: 2
   log_every_n_steps: 1
   deterministic: false
   enable_checkpointing: true
