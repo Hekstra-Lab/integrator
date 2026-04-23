@@ -8,9 +8,22 @@ spatial-smoothness inductive bias that the basis decoder lacks.
 
     q(h | x) = N(mu_h(x), sigma_h(x)^2)
     prf      = softmax(ConvDecoder(h))
+
+The decoder pattern is:
+
+    project(h) -> low-res feature volume
+    upsample  -> full-resolution feature volume
+    refine    -> convolve at full resolution, collapse channels to 1
+
+Running the refine block at full resolution lets the decoder learn arbitrary
+spatial features in the output grid (as opposed to refining at the seed grid
+and upsampling the result). Peak activation memory scales linearly with
+``channels`` at full resolution; at HEWL scale (mc_samples=100, batch=2048,
+shoebox 3x21x21) the upsample output alone is ~1 GB per channel. A100/80GB
+fits ``channels`` up to about 4 after accounting for encoder activations;
+higher widths OOM.
 """
 
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
@@ -31,16 +44,20 @@ class ConvProfileSurrogate(nn.Module):
     Architecture:
         1. Encoder features x -> (mu_h, sigma_h) via two Linear heads.
         2. Sample h ~ N(mu_h, sigma_h^2).
-        3. project(h) -> low-resolution 3D feature volume (C, D_seed, H_seed, W_seed).
-        4. Trilinear upsample to shoebox shape (D, H, W).
-        5. 3x3x3 Conv3d stack refines to a single-channel logit volume.
+        3. project(h) -> low-resolution 3D feature volume
+           (C, D_seed, H_seed, W_seed).
+        4. Trilinear upsample to full shoebox shape (C, D, H, W).
+        5. 3x3x3 Conv3d stack refines at full resolution and collapses the
+           channel axis to 1.
         6. softmax over all D*H*W pixels gives the profile simplex.
 
     Args:
         input_dim: Dim of the encoder output (the x in q(h|x)).
         latent_dim: Dim of the latent h.
         sbox_shape: Output shoebox shape (D, H, W). For 2D, pass (1, H, W).
-        channels: Channel width of the conv stack.
+        channels: Channel width of the conv stack. Peak activation memory
+            scales linearly with this — at HEWL scale, keep it <=4 on
+            80GB GPUs.
         init_std: Initial posterior std for h.
     """
 
@@ -49,7 +66,7 @@ class ConvProfileSurrogate(nn.Module):
         input_dim: int,
         latent_dim: int = 8,
         sbox_shape: tuple[int, int, int] | list[int] = (3, 21, 21),
-        channels: int = 16,
+        channels: int = 4,
         init_std: float = 0.5,
     ) -> None:
         super().__init__()
@@ -63,6 +80,7 @@ class ConvProfileSurrogate(nn.Module):
         self.sbox_shape = sbox
         self.d = latent_dim
         self.output_dim = D * H * W
+        self.channels = channels
 
         # Variational heads on the latent h (same pattern as
         # LearnedBasisProfileSurrogate).
@@ -72,24 +90,22 @@ class ConvProfileSurrogate(nn.Module):
         nn.init.constant_(self.std_head.bias, _softplus_inverse(init_std))
 
         # Seed feature volume. Spatial dims start at ~1/3 of the shoebox so
-        # the upsample does the bulk of the spatial fill; depth stays full
-        # resolution (typically 3 frames).
+        # the upsample fills most of the grid; depth stays full resolution.
         seed_d = D
         seed_h = max(1, H // 3)
         seed_w = max(1, W // 3)
         self.seed_shape = (seed_d, seed_h, seed_w)
-        self.channels = channels
 
         seed_numel = channels * seed_d * seed_h * seed_w
         self.project = nn.Linear(latent_dim, seed_numel)
 
-        # Fixed trilinear upsample to full shoebox shape.
+        # Trilinear upsample to full shoebox shape.
         self.upsample = nn.Upsample(
             size=sbox, mode="trilinear", align_corners=False
         )
 
-        # Refinement conv stack. GroupNorm tolerates tiny batches (MC samples).
-        n_groups = min(channels, 4)
+        # Refinement at full resolution. GroupNorm tolerates tiny batches.
+        n_groups = min(channels, 4) if channels >= 4 else 1
         self.refine = nn.Sequential(
             nn.Conv3d(channels, channels, kernel_size=3, padding=1),
             nn.GroupNorm(n_groups, channels),
@@ -122,16 +138,16 @@ class ConvProfileSurrogate(nn.Module):
         mc_samples: int = 1,
         group_labels: Tensor | None = None,
     ) -> ProfileSurrogateOutput:
-        del group_labels  # not used; accepted for signature parity with other qp surrogates.
+        del group_labels  # accepted for signature parity with other qp surrogates.
 
-        mu_h = self.mu_head(x)  # (B, d)
-        std_h = F.softplus(self.std_head(x))  # (B, d)
+        mu_h = self.mu_head(x)                       # (B, d)
+        std_h = F.softplus(self.std_head(x))         # (B, d)
 
         q_h = Normal(mu_h, std_h)
-        h = q_h.rsample(torch.Size([mc_samples]))  # (S, B, d)
+        h = q_h.rsample((mc_samples,))               # (S, B, d)
 
-        logits_sample = self._decode(h)  # (S, B, K)
-        mean_logits = self._decode(mu_h)  # (B, K)
+        logits_sample = self._decode(h)              # (S, B, K)
+        mean_logits = self._decode(mu_h)             # (B, K)
 
         zp = F.softmax(logits_sample, dim=-1)
         mean_profile = F.softmax(mean_logits, dim=-1)

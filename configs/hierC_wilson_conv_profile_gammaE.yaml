@@ -88,7 +88,13 @@ surrogates:
       input_dim: 64
       latent_dim: 8
       sbox_shape: [3, 21, 21]
-      channels: 16
+      # Refine runs at full (3, 21, 21) resolution. Each intermediate
+      # conv activation is N * channels * 1323 * 4 bytes ≈ channels GB
+      # at HEWL scale (mc_samples=100, batch=2048). channels=4 gives
+      # ~4 GB per activation, ~20 GB total for the decoder pass —
+      # safe alongside the 5-encoder hierC stack on 80GB. channels=8
+      # is borderline; channels=16 OOMs.
+      channels: 4
       init_std: 0.5
   qbg:
     name: gammaE
