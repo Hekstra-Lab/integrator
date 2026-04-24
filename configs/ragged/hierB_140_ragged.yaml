@@ -1,0 +1,166 @@
+# Ragged-input HierarchicalIntegratorB on SBGrid dataset 140 (HSV-1 UL21).
+#
+# Mirrors configs/wilson_comparison/hierB_learned.yaml but consumes the
+# variable-size shoeboxes produced by `refltorch.mksbox-dials` instead of
+# fixed (D, H, W) extracts.
+#
+# Required input layout under `data_dir` (produced by mksbox-dials):
+#   chunks/chunk_*.npz           — ragged shoebox data + masks
+#   reflections.refl             — consolidated DIALS metadata (refl_ids)
+#   metadata.pt                  — per-reflection scalars incl. `d`
+#   stats.pt                     — raw counts (mean, var)
+#   anscombe_stats.pt            — Anscombe counts (mean, var)
+#   group_labels_10.pt           — quantile-binned resolution groups (n_bins=10)
+#
+# Notes:
+#  * `data_dim`/`d`/`h`/`w` in integrator.args are unused by the ragged
+#    forward (shoebox shape varies per reflection) but BaseIntegrator's
+#    __init__ still reads them; placeholder values are fine.
+#  * `bg_rate_per_group` is set to a constant list for a first run; replace
+#    with a `bg_rate_per_group.pt` from `prepare_priors.py` once you have one.
+
+global_vars:
+  encoder_out: 64
+  mc_samples: 100
+  data_dir: /n/hekstra_lab/people/aldama/integrator_data/140/pytorch_data_dials
+  n_bins: 10
+
+integrator:
+  name: hierarchicalB_ragged
+  args:
+    data_dim: 3d
+    # placeholder dims — ragged forward ignores these but BaseIntegrator reads them
+    d: 9
+    h: 33
+    w: 33
+    lr: 0.001
+    encoder_out: 64
+    weight_decay: 0.0
+    mc_samples: 100
+    renyi_scale: 0.0
+    predict_keys:
+    - refl_ids
+    - qi_mean
+    - qi_var
+    - qbg_mean
+    - qbg_var
+    - intensity.prf.value
+    - intensity.prf.variance
+    - background.mean
+    - d
+    - group_label
+    - qp_mean
+    - qp_mu_h
+    - qp_std_h
+
+encoders:
+- name: ragged_shoebox_encoder
+  args:
+    in_channels: 1
+    encoder_out: 64
+    conv1_out_channels: 64
+    conv1_kernel_size: [1, 3, 3]
+    conv1_padding: [0, 1, 1]
+    norm1_num_groups: 4
+    pool_kernel_size: [1, 2, 2]
+    pool_stride: [1, 2, 2]
+    conv2_out_channels: 128
+    conv2_kernel_size: [3, 3, 3]
+    conv2_padding: [1, 1, 1]    # NOTE: padding=1 (vs 0 in fixed encoder) so small
+    norm2_num_groups: 4         # shoeboxes (e.g. (2, 8, 9)) don't shrink to D=0.
+    dropout: 0.0
+- &id001
+  name: ragged_intensity_encoder
+  args:
+    in_channels: 1
+    encoder_out: 64
+    conv1_out_channels: 64
+    conv1_kernel_size: [3, 3, 3]
+    conv1_padding: [1, 1, 1]
+    norm1_num_groups: 4
+    pool_kernel_size: [1, 2, 2]
+    pool_stride: [1, 2, 2]
+    conv2_out_channels: 128
+    conv2_kernel_size: [3, 3, 3]
+    conv2_padding: [1, 1, 1]
+    norm2_num_groups: 4
+    conv3_out_channels: 256
+    conv3_kernel_size: [3, 3, 3]
+    conv3_padding: [1, 1, 1]
+    norm3_num_groups: 8
+- *id001
+
+surrogates:
+  qp:
+    name: ragged_learned_basis_profile
+    args:
+      input_dim: 64
+      d_basis: 29           # match the Hermite truncation used by fixed runs
+      basis_hidden: 64
+      fourier_freqs: 6
+      init_std: 0.5
+  qbg:
+    name: gammaB
+    args:
+      in_features: 64
+      eps: 1.0e-06
+  qi:
+    name: gammaB
+    args:
+      in_features: 64
+      eps: 1.0e-06
+
+loss:
+  name: wilson
+  args:
+    mc_samples: 100
+    eps: 1.0e-06
+    n_bins: 10
+    # Constant background rate per group as a stand-in for prepare_priors output.
+    # Replace with a path string like "bg_rate_per_group.pt" once you have one.
+    bg_rate_per_group: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    profile_sigma_prior: 3.0
+    pi_weight: 1.0
+    pbg_weight: 1.0
+    pprf_weight: 1.0
+
+data_loader:
+  name: ragged_data
+  args:
+    chunks_dir: /n/hekstra_lab/people/aldama/integrator_data/140/pytorch_data_dials/chunks
+    batch_size: 256
+    val_frac: 0.05
+    test_frac: 0.05
+    num_workers: 4
+    bucket_mult: 50
+    keys: ["mask"]
+    seed: 0
+    eager: true
+    anscombe: true
+    # All metadata/stats/group_labels paths auto-resolve from chunks_dir.parent.
+    # Override here only if your layout differs.
+    # metadata_path: null
+    # stats_path: null
+    # group_labels_path: null
+    extra_metadata_keys: []
+
+trainer:
+  max_epochs: 100
+  accelerator: gpu
+  devices: 1
+  logger: true
+  precision: '32'
+  check_val_every_n_epoch: 5
+  log_every_n_steps: 1
+  deterministic: false
+  enable_checkpointing: true
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+
+logger:
+  d: 9
+  h: 33
+  w: 33
+
+output:
+  refl_file: /n/hekstra_lab/people/aldama/integrator_data/140/pytorch_data_dials/reflections.refl
