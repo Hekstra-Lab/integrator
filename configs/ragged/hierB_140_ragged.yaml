@@ -127,7 +127,10 @@ loss:
 data_loader:
   name: ragged_data
   args:
-    chunks_dir: /n/hekstra_lab/people/aldama/integrator_data/140/pytorch_data_dials/chunks
+    data_dir: /n/hekstra_lab/people/aldama/integrator_data/140/pytorch_data_dials
+    # chunks_dir is auto-derived as `data_dir / chunks`. Override only if your
+    # layout differs.
+    # chunks_dir: null
     batch_size: 256
     val_frac: 0.05
     test_frac: 0.05
@@ -137,7 +140,7 @@ data_loader:
     seed: 0
     eager: true
     anscombe: true
-    # All metadata/stats/group_labels paths auto-resolve from chunks_dir.parent.
+    # metadata/stats/group_labels paths auto-resolve from data_dir.
     # Override here only if your layout differs.
     # metadata_path: null
     # stats_path: null

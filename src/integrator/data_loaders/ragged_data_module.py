@@ -360,7 +360,8 @@ class RaggedShoeboxDataModule:
 
     def __init__(
         self,
-        chunks_dir,
+        data_dir=None,
+        chunks_dir=None,
         batch_size: int = 64,
         val_frac: float = 0.05,
         test_frac: float = 0.05,
@@ -374,8 +375,24 @@ class RaggedShoeboxDataModule:
         stats_path=None,
         group_labels_path=None,
         extra_metadata_keys: tuple[str, ...] = (),
+        **_unused_kwargs,
     ):
-        self.chunks_dir = chunks_dir
+        # Resolve chunks_dir from data_dir if not given. data_dir mirrors the
+        # fixed-pipeline convention so prepare_priors and other utilities can
+        # find their inputs (group_labels.pt, stats, etc.) under one root.
+        if chunks_dir is None:
+            if data_dir is None:
+                raise ValueError(
+                    "RaggedShoeboxDataModule needs either `data_dir` or "
+                    "`chunks_dir`. data_dir is preferred — chunks/ is "
+                    "expected to live directly under it."
+                )
+            chunks_dir = Path(data_dir) / "chunks"
+        elif data_dir is None:
+            data_dir = Path(chunks_dir).parent
+
+        self.data_dir = Path(data_dir)
+        self.chunks_dir = Path(chunks_dir)
         self.batch_size = batch_size
         self.val_frac = val_frac
         self.test_frac = test_frac

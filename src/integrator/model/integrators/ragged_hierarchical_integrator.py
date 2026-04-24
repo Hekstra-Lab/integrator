@@ -255,3 +255,17 @@ class RaggedHierarchicalIntegratorB(BaseIntegrator):
     # Override the _step that the fixed-size integrators use — our forward
     # takes a dict, not a 4-tuple.
     _step = _ragged_hierarchical_step
+
+    def predict_step(self, batch, _batch_idx):  # type: ignore[override]
+        """Run the forward and return a subset of outputs keyed by predict_keys.
+
+        BaseIntegrator's predict_step assumes the batch is a 4-tuple; we
+        override it to consume the dict from `pad_collate_ragged` instead.
+        """
+        outputs = self(batch)
+        forward_out = outputs["forward_out"]
+        return {
+            k: v
+            for k, v in forward_out.items()
+            if k in self.predict_keys
+        }
