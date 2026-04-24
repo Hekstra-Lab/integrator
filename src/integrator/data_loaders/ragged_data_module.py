@@ -38,28 +38,80 @@ class RaggedShoeboxDataset(Dataset):
 
     Args:
         chunks_dir: directory of chunk_*.npz files (from refltorch.mksbox-dials).
-        keys: which per-voxel arrays to expose per item. "data" and "mask" are
-              the defaults; others in the chunk file (foreground/background/
-              overlapped) can be added if needed.
+        metadata_path: path to metadata.pt (dict of per-reflection scalars
+            including 'd'). If None, no metadata is attached to items.
+        stats_path: path to stats.pt ([mean, var] of raw counts) or
+            anscombe_stats.pt. If None, auto-resolves based on `anscombe`.
+        group_labels_path: path to group_labels_{N}.pt. If None, looks for any
+            group_labels_*.pt in the parent of chunks_dir. If not found, all
+            reflections get group_label=0.
+        anscombe: if True, standardize via the Anscombe transform; otherwise
+            plain z-score of raw counts. Either way, `counts` (raw) is also
+            returned for the Poisson NLL.
+        keys: which per-voxel arrays to expose per item. 'mask' is always
+            included as a training validity mask (Valid & ~Overlapped from
+            DIALS). Others (foreground/background/overlapped) can be added.
         eager: if True, load all chunk arrays into RAM at construction time.
-               Fastest __getitem__, uses more memory. If False, keep NpzFile
-               handles and slice on demand (slower but bounded RAM).
-        float_data: if True, cast data to float32 in __getitem__. If False,
-                    keep the native dtype (e.g. uint16) and cast later.
+        extra_metadata_keys: additional scalar columns from metadata.pt to
+            attach per reflection (e.g. 'intensity.prf.value' for debugging).
     """
 
     def __init__(
         self,
         chunks_dir,
+        metadata_path=None,
+        stats_path=None,
+        group_labels_path=None,
+        anscombe: bool = True,
         keys=DEFAULT_KEYS,
         eager: bool = True,
-        float_data: bool = True,
+        extra_metadata_keys: tuple[str, ...] = (),
     ):
         self.keys = tuple(dict.fromkeys(("data",) + tuple(keys)))  # dedupe, data first
         self.eager = eager
-        self.float_data = float_data
+        self.anscombe = anscombe
 
-        chunk_files = sorted(Path(chunks_dir).glob("chunk_*.npz"))
+        chunks_dir = Path(chunks_dir)
+        parent_dir = chunks_dir.parent
+
+        # ---------- per-reflection metadata (d, miller_index, etc.) ----------
+        if metadata_path is None:
+            candidate = parent_dir / "metadata.pt"
+            metadata_path = candidate if candidate.exists() else None
+        self.metadata: dict = (
+            torch.load(metadata_path, weights_only=True) if metadata_path else {}
+        )
+        self._extra_keys = tuple(extra_metadata_keys)
+
+        # ---------- standardization stats ----------
+        if stats_path is None:
+            default_name = "anscombe_stats.pt" if anscombe else "stats.pt"
+            candidate = parent_dir / default_name
+            stats_path = candidate if candidate.exists() else None
+        if stats_path is not None:
+            s = torch.load(stats_path, weights_only=True)
+            self._stat_mean = float(s[0])
+            self._stat_std = float(torch.sqrt(torch.clamp(s[1], min=1e-12)))
+        else:
+            # Not standardizing — encoder will see raw float counts.
+            self._stat_mean = 0.0
+            self._stat_std = 1.0
+            logger.warning(
+                "No stats file found; standardized_data will equal raw data. "
+                "Consider running mksbox-dials to produce stats.pt / anscombe_stats.pt."
+            )
+
+        # ---------- group_labels (resolution bins) ----------
+        if group_labels_path is None:
+            matches = sorted(parent_dir.glob("group_labels_*.pt"))
+            group_labels_path = matches[0] if matches else None
+        if group_labels_path is not None:
+            self.group_labels = torch.load(group_labels_path, weights_only=True).long()
+        else:
+            self.group_labels = None
+
+        # ---------- chunks ----------
+        chunk_files = sorted(chunks_dir.glob("chunk_*.npz"))
         if not chunk_files:
             raise FileNotFoundError(f"No chunk_*.npz in {chunks_dir}")
 
@@ -74,20 +126,16 @@ class RaggedShoeboxDataset(Dataset):
                     if r not in npz.files:
                         raise KeyError(f"{f}: missing '{r}'")
                 if eager:
-                    # Load everything we'll need into RAM
                     wanted = set(self.keys) | set(required)
                     arrays = {k: npz[k] for k in wanted if k in npz.files}
                 else:
-                    # Re-open lazily — npz must be held open for slicing
-                    arrays = np.load(f, allow_pickle=False)  # NpzFile
+                    arrays = np.load(f, allow_pickle=False)
 
             self._chunks.append(arrays)
 
-            shapes = arrays["shapes"] if eager else arrays["shapes"]
-            offsets = arrays["offsets"] if eager else arrays["offsets"]
+            shapes = arrays["shapes"]
             n = len(shapes)
             self._global_index.extend((ci, li) for li in range(n))
-            # Per-refl voxel count = shape product (equivalent to offsets diff)
             vols = (shapes[:, 0].astype(np.int64)
                     * shapes[:, 1].astype(np.int64)
                     * shapes[:, 2].astype(np.int64))
@@ -96,8 +144,8 @@ class RaggedShoeboxDataset(Dataset):
         self._volumes = np.concatenate(self._volumes)
 
         logger.info(
-            "RaggedShoeboxDataset: %d reflections across %d chunks (eager=%s)",
-            len(self._global_index), len(self._chunks), eager,
+            "RaggedShoeboxDataset: %d reflections across %d chunks (eager=%s, anscombe=%s)",
+            len(self._global_index), len(self._chunks), eager, anscombe,
         )
 
     def __len__(self):
@@ -116,46 +164,86 @@ class RaggedShoeboxDataset(Dataset):
         end = int(c["offsets"][li + 1])
         D, H, W = (int(x) for x in c["shapes"][li])
 
-        item = {}
-        data_np = c["data"][start:end].reshape(D, H, W)
-        if self.float_data:
-            data_np = data_np.astype(np.float32, copy=False)
-        item["data"] = torch.from_numpy(np.ascontiguousarray(data_np))
+        # ---------- raw counts (for Poisson NLL) ----------
+        raw_np = c["data"][start:end].reshape(D, H, W).astype(np.float32, copy=False)
+        raw = torch.from_numpy(np.ascontiguousarray(raw_np))
 
+        # ---------- mask and other per-voxel bool arrays ----------
+        item = {"counts": raw}
         for k in self.keys:
             if k == "data":
                 continue
             arr = c[k][start:end].reshape(D, H, W)
             item[k] = torch.from_numpy(np.ascontiguousarray(arr))
 
+        # ---------- standardized data (for encoder input) ----------
+        if self.anscombe:
+            pre = 2.0 * (raw.clamp(min=0) + 0.375).sqrt()
+        else:
+            pre = raw
+        std = (pre - self._stat_mean) / self._stat_std
+        # Zero out masked voxels in the standardized view so padded + dead
+        # pixels don't propagate spurious activations through conv biases.
+        if "mask" in item:
+            std = std * item["mask"].float()
+        item["standardized_data"] = std
+
+        # ---------- geometry ----------
         item["shape"] = (D, H, W)
         item["bbox"] = torch.from_numpy(np.ascontiguousarray(c["bboxes"][li]))
-        item["refl_id"] = int(c["refl_ids"][li])
+        refl_id = int(c["refl_ids"][li])
+        item["refl_id"] = refl_id
+
+        # ---------- per-reflection scalar metadata ----------
+        if "d" in self.metadata:
+            item["d"] = float(self.metadata["d"][refl_id])
+        for k in self._extra_keys:
+            if k in self.metadata:
+                item[k] = float(self.metadata[k][refl_id])
+        if self.group_labels is not None:
+            item["group_label"] = int(self.group_labels[refl_id])
+        else:
+            item["group_label"] = 0
+
         return item
+
+
+_SCALAR_METADATA_KEYS = ("d", "group_label")
+_NON_VOXEL_KEYS = {"shape", "bbox", "refl_id"} | set(_SCALAR_METADATA_KEYS)
 
 
 def pad_collate_ragged(batch, pad_values: Optional[dict] = None):
     """Pad variable-size shoeboxes to (Dmax, Hmax, Wmax) within the batch.
 
     Returns a dict with:
-        data:     (B, Dmax, Hmax, Wmax)     float or int, depending on dataset
-        mask:     (B, Dmax, Hmax, Wmax)     bool — original mask AND "is-real-pixel"
-        shapes:   (B, 3)                     int32 — original (D, H, W) per refl
-        bboxes:   (B, 6)                     int32 — DIALS bbox
-        refl_ids: (B,)                       int64
-        (plus any extra per-voxel keys from the dataset)
-
-    The returned `mask` is the intersection of the per-voxel mask (from DIALS)
-    and the "is this a real (not padded) voxel" mask. Use it directly in the
-    loss.
+        counts:             (B, Dmax, Hmax, Wmax)   float — raw pixel data (Poisson target)
+        standardized_data:  (B, Dmax, Hmax, Wmax)   float — anscombe+z-scored (encoder input)
+        mask:               (B, Dmax, Hmax, Wmax)   bool — DIALS mask ∧ real-region
+        shapes:             (B, 3)                   int32 — (D, H, W) per refl
+        bboxes:             (B, 6)                   int32 — DIALS bbox
+        refl_ids:           (B,)                     int64
+        metadata: {
+            'd':            (B,)                     float  — per-refl resolution
+            'group_label':  (B,)                     int64  — resolution bin index
+            ... (any extra_metadata_keys in the dataset)
+        }
     """
     pad_values = pad_values or {}
     B = len(batch)
     Ds, Hs, Ws = zip(*(b["shape"] for b in batch))
     Dmax, Hmax, Wmax = max(Ds), max(Hs), max(Ws)
 
-    per_voxel_keys = [k for k in batch[0].keys()
-                      if k not in ("shape", "bbox", "refl_id")]
+    # Detect per-voxel keys by filtering out geometry + scalar metadata +
+    # anything else the dataset attaches as a scalar.
+    per_voxel_keys = []
+    scalar_keys = []
+    for k, v in batch[0].items():
+        if k in _NON_VOXEL_KEYS:
+            continue
+        if torch.is_tensor(v) and v.ndim == 3:
+            per_voxel_keys.append(k)
+        else:
+            scalar_keys.append(k)
 
     out = {}
     for k in per_voxel_keys:
@@ -171,7 +259,8 @@ def pad_collate_ragged(batch, pad_values: Optional[dict] = None):
             padded[i, :D, :H, :W] = b[k]
         out[k] = padded
 
-    # Ensure `mask` exists and also marks padded voxels as invalid.
+    # Intersect the per-voxel mask with the real-region mask so padded voxels
+    # are always invalid.
     if "mask" in out:
         valid_region = torch.zeros(B, Dmax, Hmax, Wmax, dtype=torch.bool)
         for i, (D, H, W) in enumerate(zip(Ds, Hs, Ws)):
@@ -181,6 +270,27 @@ def pad_collate_ragged(batch, pad_values: Optional[dict] = None):
     out["shapes"] = torch.tensor([list(b["shape"]) for b in batch], dtype=torch.int32)
     out["bboxes"] = torch.stack([b["bbox"] for b in batch]).to(torch.int32)
     out["refl_ids"] = torch.tensor([b["refl_id"] for b in batch], dtype=torch.int64)
+
+    # ---------- scalar per-refl metadata dict ----------
+    metadata = {}
+    if "d" in batch[0]:
+        metadata["d"] = torch.tensor(
+            [b["d"] for b in batch], dtype=torch.float32
+        )
+    if "group_label" in batch[0]:
+        metadata["group_label"] = torch.tensor(
+            [b["group_label"] for b in batch], dtype=torch.int64
+        )
+    # Any extras surfaced by the dataset that aren't geometry/voxel/d/group_label
+    for k in scalar_keys:
+        if k in ("d", "group_label"):
+            continue
+        vals = [b[k] for b in batch]
+        if all(isinstance(v, (int, float)) for v in vals):
+            metadata[k] = torch.tensor(vals, dtype=torch.float32)
+    if metadata:
+        out["metadata"] = metadata
+
     return out
 
 
@@ -259,6 +369,11 @@ class RaggedShoeboxDataModule:
         keys=DEFAULT_KEYS,
         seed: int = 0,
         eager: bool = True,
+        anscombe: bool = True,
+        metadata_path=None,
+        stats_path=None,
+        group_labels_path=None,
+        extra_metadata_keys: tuple[str, ...] = (),
     ):
         self.chunks_dir = chunks_dir
         self.batch_size = batch_size
@@ -269,10 +384,22 @@ class RaggedShoeboxDataModule:
         self.keys = keys
         self.seed = seed
         self.eager = eager
+        self.anscombe = anscombe
+        self.metadata_path = metadata_path
+        self.stats_path = stats_path
+        self.group_labels_path = group_labels_path
+        self.extra_metadata_keys = extra_metadata_keys
 
     def setup(self, stage=None):
         self.dataset = RaggedShoeboxDataset(
-            self.chunks_dir, keys=self.keys, eager=self.eager
+            self.chunks_dir,
+            metadata_path=self.metadata_path,
+            stats_path=self.stats_path,
+            group_labels_path=self.group_labels_path,
+            anscombe=self.anscombe,
+            keys=self.keys,
+            eager=self.eager,
+            extra_metadata_keys=self.extra_metadata_keys,
         )
         n = len(self.dataset)
         rng = np.random.default_rng(self.seed)

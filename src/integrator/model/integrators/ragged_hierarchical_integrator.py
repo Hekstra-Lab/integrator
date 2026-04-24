@@ -124,6 +124,12 @@ class RaggedHierarchicalIntegratorB(BaseIntegrator):
 
     ARGS = IntegratorModelArgs
 
+    # NOTE: we intentionally override `forward` with a different signature
+    # (a single batch dict) than BaseIntegrator's 4-tuple. This is required
+    # for the ragged collate output; the type-checker will flag it.
+    def forward(self, batch: dict) -> dict[str, Any]:  # type: ignore[override]
+        return self._forward_impl(batch)
+
     def _get_metadata(self, batch: dict) -> dict:
         """Extract metadata dict. The ragged collate doesn't nest it under
         'metadata', so either the data module has attached it already or we
@@ -152,25 +158,31 @@ class RaggedHierarchicalIntegratorB(BaseIntegrator):
         """Run the ragged forward.
 
         batch fields used:
-          data:     (B, Dmax, Hmax, Wmax) float
-          mask:     (B, Dmax, Hmax, Wmax) bool
-          shapes:   (B, 3) int
-          refl_ids: (B,) int  (not used internally; pass through)
+          counts:            (B, Dmax, Hmax, Wmax) float — raw pixel data for Poisson NLL
+          standardized_data: (B, Dmax, Hmax, Wmax) float — anscombe+z-scored for encoders
+          mask:              (B, Dmax, Hmax, Wmax) bool  — DIALS mask ∧ real-region
+          shapes:            (B, 3) int                   — per-reflection (D, H, W)
+          refl_ids:          (B,) int                     — passed through
+          metadata:          dict                         — must contain d, group_label
         """
-        data_3d = batch["data"].float()
+        raw_3d = batch["counts"].float()
+        # Fallback: if the batch predates the standardization update, reuse raw
+        # counts as the encoder input so the pipeline still runs (encoder will
+        # see unnormalized values — acceptable for smoke tests, not training).
+        enc_in_3d = batch.get("standardized_data", raw_3d).float()
         mask_3d = batch["mask"]
         shapes = batch["shapes"]
 
-        B, Dmax, Hmax, Wmax = data_3d.shape
+        B, Dmax, Hmax, Wmax = raw_3d.shape
         K = Dmax * Hmax * Wmax
 
         # Clamp raw counts to non-negative (Poisson target can be 0 at padded
         # voxels; the mask zeros their contribution downstream).
-        counts_flat = data_3d.clamp(min=0).reshape(B, K)
+        counts_flat = raw_3d.clamp(min=0).reshape(B, K)
         mask_flat = mask_3d.reshape(B, K)
 
-        # Add a channel dim for convs
-        x = data_3d.unsqueeze(1)  # (B, 1, Dmax, Hmax, Wmax)
+        # Add a channel dim for convs. Encoders see the STANDARDIZED input.
+        x = enc_in_3d.unsqueeze(1)  # (B, 1, Dmax, Hmax, Wmax)
 
         # Three encoders; each returns (B, encoder_out)
         x_profile = self.encoders["profile"](x, mask_3d)
