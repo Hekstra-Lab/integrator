@@ -1,18 +1,22 @@
 """Ragged-compatible LogisticNormal profile surrogate.
 
 Mirror of `LogisticNormalSurrogate` in `distributions/logistic_normal.py` but
-with the fixed (441, d_basis) Hermite W replaced by a learned coord→basis MLP.
+with the fixed (V, d_basis) Hermite W replaced by a learned coord→basis MLP.
+
+Returns the same `ProfileSurrogateOutput` dataclass used by the fixed-size
+surrogates, so it plugs straight into `WilsonLoss.compute_profile_kl`. The
+only ragged-specific wrinkle: output tensors are flat along the voxel axis
+(K = Dmax * Hmax * Wmax in the batch's padded shape); the integrator's
+existing `rate = zI * zp + zbg` broadcast works unchanged.
 
 Key ideas:
   - Each voxel in a shoebox has a normalized coord (z, y, x) in [-1, 1]^3.
   - A shared small MLP maps (fourier-encoded coord) -> d_basis vector.
   - Profile logits = W_i @ h_i   where W_i is evaluated on this reflection's grid.
-  - Masked softmax over voxels gives a profile summing to 1 on real voxels.
-  - q(h | x) = Normal(mu(x), diag(sigma^2(x))); closed-form Gaussian KL to
-    a Normal(0, sigma_prior^2) prior.
-
-The output `RaggedProfilePosterior` exposes the same attributes the existing
-loss code reads (`concentration = None`, `mean`, `rsample`, `kl_to_prior`).
+  - Masked softmax over voxels: padded voxels get logits = -inf, softmaxed to 0,
+    so `zp` sums to 1 over valid voxels and contributes nothing at padded ones.
+  - q(h | x) = Normal(mu_h, diag(std_h^2)); std_h is parameterized via softplus
+    to match `FixedBasisProfileSurrogate`'s convention for `compute_profile_kl`.
 """
 
 import math
@@ -21,6 +25,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+
+from integrator.model.distributions.profile_surrogates import (
+    ProfileSurrogateOutput,
+)
 
 
 def _fourier_encode(coords: Tensor, n_freqs: int) -> Tensor:
@@ -35,6 +43,11 @@ def _fourier_encode(coords: Tensor, n_freqs: int) -> Tensor:
     phase = coords.unsqueeze(-1) * freqs
     pe = torch.cat([torch.sin(phase), torch.cos(phase)], dim=-1)  # (..., 3, 2*n_freqs)
     return pe.flatten(-2, -1)  # (..., 6 * n_freqs)
+
+
+def _softplus_inverse(y: float) -> float:
+    """log(exp(y) - 1); used to initialize a softplus head to produce y."""
+    return float(math.log(math.exp(y) - 1.0))
 
 
 def _build_normalized_coords(shapes: Tensor, pad_shape: tuple[int, int, int]) -> Tensor:
@@ -69,62 +82,6 @@ def _build_normalized_coords(shapes: Tensor, pad_shape: tuple[int, int, int]) ->
     return coords
 
 
-class RaggedProfilePosterior:
-    """Output of `RaggedLogisticNormalSurrogate`. Holds per-reflection profile
-    samples plus the moments needed for closed-form Gaussian KL.
-
-    Attributes:
-        profile:       (mc, B, Dmax, Hmax, Wmax) profile samples (each summing to 1 over valid voxels)
-        profile_mean:  (B, Dmax, Hmax, Wmax) profile at posterior mean mu
-        mu:            (B, d_basis) posterior mean of h
-        logvar:        (B, d_basis) posterior log-variance of h
-        mask:          (B, Dmax, Hmax, Wmax) bool — real & valid voxels
-        concentration: None  (Dirichlet-compat shim for existing loss code)
-    """
-
-    __slots__ = ("profile", "profile_mean", "mu", "logvar", "mask", "concentration")
-
-    def __init__(self, profile, profile_mean, mu, logvar, mask):
-        self.profile = profile
-        self.profile_mean = profile_mean
-        self.mu = mu
-        self.logvar = logvar
-        self.mask = mask
-        self.concentration = None  # keeps the Dirichlet isinstance check paths happy
-
-    @property
-    def mean(self) -> Tensor:
-        """Profile at posterior mean. Shape (B, Dmax, Hmax, Wmax)."""
-        return self.profile_mean
-
-    def rsample(self, sample_shape):
-        """Compat shim — profiles are already sampled in the forward pass.
-
-        We ignore `sample_shape` and return the pre-computed samples. The
-        caller should pass `mc_samples` to the surrogate's forward instead.
-        """
-        return self.profile
-
-    def kl_to_prior(self, sigma_prior: Tensor) -> Tensor:
-        """KL( N(mu, diag(exp(logvar))) || N(0, diag(sigma_prior^2)) ) per reflection.
-
-        sigma_prior: (d_basis,) or scalar.
-        Returns: (B,) tensor of per-reflection KL.
-        """
-        if sigma_prior.ndim == 0:
-            sigma_prior = sigma_prior.expand_as(self.mu[0])
-        var = self.logvar.exp()
-        var_p = sigma_prior.pow(2).clamp(min=1e-8)
-        # Gaussian KL, diagonal
-        kl = 0.5 * (
-            (var + self.mu.pow(2)) / var_p
-            - 1.0
-            + var_p.log()
-            - self.logvar
-        )
-        return kl.sum(dim=-1)
-
-
 class RaggedLogisticNormalSurrogate(nn.Module):
     """q(profile | shoebox) with learned coord→basis MLP.
 
@@ -135,8 +92,8 @@ class RaggedLogisticNormalSurrogate(nn.Module):
         basis_hidden:  hidden width of the coord→basis MLP.
         fourier_freqs: number of log-spaced Fourier frequencies. Each freq
                        contributes 6 channels (sin+cos for each of z, y, x).
-        logvar_clamp:  (min, max) for the posterior logvar, matches existing
-                       LogisticNormal behavior to prevent variance collapse.
+        init_std:      initial posterior std for h; the softplus head's bias
+                       is set so that F.softplus(bias) == init_std.
     """
 
     def __init__(
@@ -145,18 +102,20 @@ class RaggedLogisticNormalSurrogate(nn.Module):
         d_basis: int = 29,
         basis_hidden: int = 64,
         fourier_freqs: int = 6,
-        logvar_clamp: tuple[float, float] = (-10.0, 4.0),
+        init_std: float = 0.5,
     ):
         super().__init__()
         self.d_basis = d_basis
         self.fourier_freqs = fourier_freqs
-        self.logvar_clamp = logvar_clamp
 
         pos_dim = 6 * fourier_freqs  # sin + cos over 3 axes
 
-        # Encoder feature -> posterior mu, logvar for h
-        self.head_mu = nn.Linear(input_dim, d_basis)
-        self.head_logvar = nn.Linear(input_dim, d_basis)
+        # Encoder feature -> posterior mu_h and std_h for latent h
+        # std_h parameterized via softplus (matches FixedBasisProfileSurrogate)
+        self.mu_head = nn.Linear(input_dim, d_basis)
+        self.std_head = nn.Linear(input_dim, d_basis)
+        nn.init.zeros_(self.std_head.weight)
+        nn.init.constant_(self.std_head.bias, _softplus_inverse(init_std))
 
         # Shared coord -> basis MLP
         self.basis_mlp = nn.Sequential(
@@ -169,34 +128,33 @@ class RaggedLogisticNormalSurrogate(nn.Module):
         # Scalar bias on logits
         self.log_bias = nn.Parameter(torch.zeros(1))
 
-    def _eval_basis(self, coords: Tensor) -> Tensor:
-        """coords: (B, Dmax, Hmax, Wmax, 3) in [-1, 1]
-        Returns: (B, Dmax, Hmax, Wmax, d_basis)
+    def _eval_basis_flat(self, coords_flat: Tensor) -> Tensor:
+        """coords_flat: (B, K, 3) in [-1, 1]
+        Returns: W flat (B, K, d_basis) — per-voxel basis row.
         """
-        pe = _fourier_encode(coords, self.fourier_freqs)
+        pe = _fourier_encode(coords_flat, self.fourier_freqs)
         return self.basis_mlp(pe)
 
-    def _profile_from_h(self, W: Tensor, h: Tensor, mask: Tensor) -> Tensor:
+    def _profile_from_h(
+        self, W_flat: Tensor, h: Tensor, mask_flat: Tensor
+    ) -> Tensor:
         """
-        W:    (..., B, Dmax, Hmax, Wmax, d_basis)
-        h:    (..., B, d_basis)
-        mask: (B, Dmax, Hmax, Wmax)
-        returns: (..., B, Dmax, Hmax, Wmax), softmaxed over the spatial axes
-                 with padded voxels set to zero.
+        W_flat:     (B, K, d_basis)                 — per-voxel basis
+        h:          (..., B, d_basis)               — latent sample(s)
+        mask_flat:  (B, K)  bool                    — valid voxels
+        returns:    (..., B, K) softmaxed over K, zero at padded voxels.
         """
-        # Logits = einsum over d_basis
-        # h has shape (..., B, d) — broadcast spatially
-        h_b = h[..., None, None, None, :]  # (..., B, 1, 1, 1, d)
-        logits = (W * h_b).sum(dim=-1) + self.log_bias  # (..., B, Dmax, Hmax, Wmax)
+        # Logits = W @ h  (einsum over d_basis)
+        # h broadcast through the sample dims; W_flat has one sample dim prepended
+        while W_flat.ndim < h.ndim + 1:
+            W_flat = W_flat.unsqueeze(0)
+        logits = (W_flat * h.unsqueeze(-2)).sum(dim=-1) + self.log_bias
 
-        # Masked softmax: set padded voxels to -inf, softmax across spatial
-        m = mask
+        m = mask_flat
         while m.ndim < logits.ndim:
             m = m.unsqueeze(0)
         logits = logits.masked_fill(~m, float("-inf"))
-        flat = logits.flatten(start_dim=-3)  # (..., B, V)
-        prof_flat = torch.softmax(flat, dim=-1)
-        return prof_flat.view_as(logits)
+        return torch.softmax(logits, dim=-1)
 
     def forward(
         self,
@@ -205,45 +163,48 @@ class RaggedLogisticNormalSurrogate(nn.Module):
         mask: Tensor,
         mc_samples: int = 1,
         group_labels: Tensor | None = None,
-    ) -> RaggedProfilePosterior:
+    ) -> ProfileSurrogateOutput:
         """
         features: (B, input_dim) — encoder output
         shapes:   (B, 3) int — per-reflection (D, H, W)
         mask:     (B, Dmax, Hmax, Wmax) bool
         mc_samples: number of Monte Carlo samples of h to draw
 
-        Returns a RaggedProfilePosterior with profile shape (mc, B, Dmax, Hmax, Wmax).
+        Returns `ProfileSurrogateOutput` with flat voxel shapes:
+          zp:           (mc, B, K)       K = Dmax*Hmax*Wmax
+          mean_profile: (B, K)
+          mu_h:         (B, d_basis)
+          std_h:        (B, d_basis)     softplus-parameterized
         """
         del group_labels  # unused here; kept for interface parity
 
-        B = features.shape[0]
         _, Dmax, Hmax, Wmax = mask.shape
+        K = Dmax * Hmax * Wmax
 
-        # Posterior parameters
-        mu = self.head_mu(features)                                  # (B, d_basis)
-        logvar = self.head_logvar(features).clamp(*self.logvar_clamp)
+        # Posterior parameters — softplus std matches existing surrogates
+        mu_h = self.mu_head(features)                           # (B, d_basis)
+        std_h = F.softplus(self.std_head(features))             # (B, d_basis)
 
-        # Normalized coord grid + per-voxel basis
-        coords = _build_normalized_coords(shapes, (Dmax, Hmax, Wmax))
-        coords = coords.to(features.device, dtype=features.dtype)
-        W = self._eval_basis(coords)  # (B, Dmax, Hmax, Wmax, d_basis)
+        # Normalized coord grid → flat (B, K, 3) → per-voxel basis (B, K, d_basis)
+        coords_3d = _build_normalized_coords(shapes, (Dmax, Hmax, Wmax))
+        coords_3d = coords_3d.to(features.device, dtype=features.dtype)
+        coords_flat = coords_3d.reshape(coords_3d.shape[0], K, 3)
+        W_flat = self._eval_basis_flat(coords_flat)             # (B, K, d_basis)
 
-        # Sample h ~ N(mu, diag(exp(logvar))) via reparameterization
-        std = (0.5 * logvar).exp()
-        eps = torch.randn(mc_samples, *mu.shape, device=mu.device, dtype=mu.dtype)
-        h_samples = mu.unsqueeze(0) + std.unsqueeze(0) * eps           # (mc, B, d_basis)
+        mask_flat = mask.reshape(mask.shape[0], K)              # (B, K)
 
-        # Broadcast W over mc samples and compute profiles
-        W_exp = W.unsqueeze(0).expand(mc_samples, *W.shape)
-        profile = self._profile_from_h(W_exp, h_samples, mask)          # (mc, B, Dmax, Hmax, Wmax)
+        # Sample h ~ N(mu_h, std_h^2) via reparameterization
+        eps = torch.randn(
+            mc_samples, *mu_h.shape, device=mu_h.device, dtype=mu_h.dtype
+        )
+        h_samples = mu_h.unsqueeze(0) + std_h.unsqueeze(0) * eps  # (mc, B, d_basis)
 
-        # Profile at posterior mean (no sampling)
-        profile_mean = self._profile_from_h(W, mu, mask)               # (B, Dmax, Hmax, Wmax)
+        zp = self._profile_from_h(W_flat, h_samples, mask_flat)   # (mc, B, K)
+        mean_profile = self._profile_from_h(W_flat, mu_h, mask_flat)  # (B, K)
 
-        return RaggedProfilePosterior(
-            profile=profile,
-            profile_mean=profile_mean,
-            mu=mu,
-            logvar=logvar,
-            mask=mask,
+        return ProfileSurrogateOutput(
+            zp=zp,
+            mean_profile=mean_profile,
+            mu_h=mu_h,
+            std_h=std_h,
         )
