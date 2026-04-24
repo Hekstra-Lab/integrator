@@ -14,6 +14,7 @@ from .profile_surrogates import (
     LearnedBasisProfileSurrogate,
     ProfileSurrogateOutput,
 )
+from .ragged_logistic_normal import RaggedLogisticNormalSurrogate
 
 __all__ = [
     "ConvProfileSurrogate",
@@ -28,4 +29,5 @@ __all__ = [
     "FixedBasisProfileSurrogate",
     "LearnedBasisProfileSurrogate",
     "ProfileSurrogateOutput",
+    "RaggedLogisticNormalSurrogate",
 ]
