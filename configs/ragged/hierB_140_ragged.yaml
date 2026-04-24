@@ -104,11 +104,19 @@ surrogates:
     args:
       in_features: 64
       eps: 1.0e-06
+      # Explicit so prepare_per_bin_priors doesn't try to compute it from
+      # the fixed-pipeline counts.pt. Rough background mean per pixel; the
+      # encoder learns the per-reflection value from this seed.
+      mean_init: 1.0
   qi:
     name: gammaB
     args:
       in_features: 64
       eps: 1.0e-06
+      # Explicit seed for total intensity per reflection. Rough order of
+      # magnitude is fine; encoder converges from any reasonable starting
+      # value. For very different datasets, bump or drop accordingly.
+      mean_init: 100.0
 
 loss:
   name: wilson
