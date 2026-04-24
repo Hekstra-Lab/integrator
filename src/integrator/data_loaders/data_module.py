@@ -2,6 +2,7 @@ import logging
 import os
 from pathlib import Path
 
+import numpy as np
 import torch
 
 logger = logging.getLogger(__name__)
@@ -13,6 +14,25 @@ from torch.utils.data import (
     TensorDataset,
     random_split,
 )
+
+
+def _load_shoebox_array(path, weights_only=True):
+    """Load counts/masks from either new .npy (refltorch mksbox >= memmap era)
+    or legacy .pt (torch.save). If a sibling .npy exists next to the requested
+    .pt path, prefer it. Returns torch.Tensor either way.
+
+    For very large .npy datasets that don't fit in RAM, swap the materialization
+    line below for a lazy Dataset that slices the memmap in __getitem__.
+    """
+    p = Path(path)
+    npy = p.with_suffix(".npy")
+    if npy.exists():
+        arr = np.load(npy, mmap_mode="r")
+        return torch.from_numpy(np.asarray(arr))
+    try:
+        return torch.load(p, weights_only=weights_only)
+    except TypeError:
+        return torch.load(p)
 
 SIMULATED_COLS = [
     "shoebox_median",
@@ -216,10 +236,10 @@ class ShoeboxDataModule2D(pl.LightningDataModule):
         self.anscombe = anscombe
 
     def setup(self, stage=None):
-        counts = torch.load(
+        counts = _load_shoebox_array(
             os.path.join(self.data_dir, self.shoebox_file_names["counts"]),
         )
-        masks = torch.load(
+        masks = _load_shoebox_array(
             os.path.join(self.data_dir, self.shoebox_file_names["masks"]),
         )
         stats = torch.load(
@@ -417,10 +437,10 @@ class ShoeboxDataModule(pl.LightningDataModule):
         self.anscombe = anscombe
 
     def setup(self, stage=None):
-        counts = torch.load(
+        counts = _load_shoebox_array(
             os.path.join(self.data_dir, self.shoebox_file_names["counts"])
         ).squeeze(-1)
-        masks = torch.load(
+        masks = _load_shoebox_array(
             os.path.join(self.data_dir, self.shoebox_file_names["masks"])
         ).squeeze(-1)
         stats = torch.load(
@@ -642,11 +662,11 @@ class SimulatedShoeboxLoader(pl.LightningDataModule):
         self.anscombe = anscombe
 
     def setup(self, stage=None):
-        counts = torch.load(
+        counts = _load_shoebox_array(
             os.path.join(self.data_dir, self.shoebox_file_names["counts"]),
             weights_only=False,
         ).squeeze(-1)
-        masks = torch.load(
+        masks = _load_shoebox_array(
             os.path.join(self.data_dir, self.shoebox_file_names["masks"]),
             weights_only=False,
         ).squeeze(-1)
