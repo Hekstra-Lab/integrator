@@ -326,8 +326,11 @@ def main():
 
     logger.info(f"Saved run_metadata: {m_fname}")
 
-    # assign validation/train labels to each shoebox
-    assign_labels(dataset=data_loader, save_dir=logdir.as_posix())
+    # assign validation/train labels to each shoebox.
+    # Skipped for ragged data: assign_labels expects the fixed-pipeline
+    # 4-tuple batch shape and the ragged data loader emits a dict.
+    if cfg.get("data_loader", {}).get("name") != "ragged_data":
+        assign_labels(dataset=data_loader, save_dir=logdir.as_posix())
 
     # create integrator
     integrator = construct_integrator(cfg)
