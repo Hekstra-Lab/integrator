@@ -416,8 +416,16 @@ def construct_integrator(
 
 def construct_data_loader(cfg):
     dl_cls = _get_dataloader_cls(cfg["data_loader"]["name"])
-    dl_args = configs.DataLoaderArgs(**cfg["data_loader"]["args"])
+    args = cfg["data_loader"]["args"]
 
+    # Ragged path: the ragged data module has a different kwarg surface
+    # (chunks_dir, val_frac, bucket_mult, ...) that doesn't fit the
+    # fixed-pipeline DataLoaderArgs dataclass. Pass through directly.
+    if cfg["data_loader"]["name"] == "ragged_data":
+        return dl_cls(**args)
+
+    # Fixed-pipeline path — keep existing behavior.
+    dl_args = configs.DataLoaderArgs(**args)
     data_dir = Path(dl_args.data_dir)
 
     return dl_cls(

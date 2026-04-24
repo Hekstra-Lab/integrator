@@ -808,6 +808,12 @@ def inject_binning_labels(data_loader, cfg: dict) -> None:
     If the files don't exist (e.g. old data without per-bin priors),
     this is a no-op and existing labels in metadata.pt are used.
     """
+    # The ragged data module exposes group_label per-reflection via the
+    # batch dict already, sourced from group_labels_*.pt at dataset init —
+    # there is no `full_dataset.reference` to mutate here. Skip cleanly.
+    if cfg.get("data_loader", {}).get("name") == "ragged_data":
+        return
+
     loss_args = cfg.get("loss", {}).get("args", {})
     n_bins = int(loss_args.get("n_bins", 20))
     data_dir = Path(cfg["data_loader"]["args"]["data_dir"])

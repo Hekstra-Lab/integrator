@@ -117,9 +117,9 @@ class RaggedHierarchicalIntegratorB(BaseIntegrator):
     """
 
     REQUIRED_ENCODERS = {
-        "profile": configs.ShoeboxEncoderArgs,
-        "k": configs.IntensityEncoderArgs,
-        "r": configs.IntensityEncoderArgs,
+        "profile": configs.RaggedShoeboxEncoderArgs,
+        "k": configs.RaggedIntensityEncoderArgs,
+        "r": configs.RaggedIntensityEncoderArgs,
     }
 
     ARGS = IntegratorModelArgs
@@ -131,17 +131,23 @@ class RaggedHierarchicalIntegratorB(BaseIntegrator):
         return self._forward_impl(batch)
 
     def _get_metadata(self, batch: dict) -> dict:
-        """Extract metadata dict. The ragged collate doesn't nest it under
-        'metadata', so either the data module has attached it already or we
-        look up per-refl values via refl_ids. Override or populate from your
-        data module setup."""
+        """Extract metadata dict. The ragged collate puts the per-reflection
+        scalars under `batch["metadata"]` and the refl_ids at the top level;
+        downstream code expects refl_ids inside metadata, so merge them here."""
+        # Pull the inner metadata dict if present
         if "metadata" in batch:
-            return batch["metadata"]
-        # Accept either a nested dict or top-level keys for flexibility.
-        meta = {}
-        for key in ("group_label", "d", "profile_group_label"):
-            if key in batch:
-                meta[key] = batch[key]
+            meta = dict(batch["metadata"])
+        else:
+            meta = {}
+            for key in ("group_label", "d", "profile_group_label"):
+                if key in batch:
+                    meta[key] = batch[key]
+
+        # refl_ids live at the top level of the batch — promote into metadata
+        # so `_assemble_outputs` exposes them in the predict_step output.
+        if "refl_ids" in batch and "refl_ids" not in meta:
+            meta["refl_ids"] = batch["refl_ids"]
+
         missing = [k for k in ("group_label", "d") if k not in meta]
         if missing:
             raise KeyError(

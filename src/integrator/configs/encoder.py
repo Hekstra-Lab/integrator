@@ -64,6 +64,70 @@ class IntensityEncoderArgs:
 
 
 @dataclass
+class RaggedShoeboxEncoderArgs:
+    """Args for RaggedShoeboxEncoder. No data_dim/input_shape — it's
+    shape-agnostic. conv2_padding defaults to (1, 1, 1) so small shoeboxes
+    don't shrink to D=0."""
+
+    in_channels: int
+    encoder_out: int
+    conv1_out_channels: int
+    conv1_kernel_size: tuple[int, ...]
+    conv1_padding: tuple[int, ...]
+    norm1_num_groups: int
+    pool_kernel_size: tuple[int, ...]
+    pool_stride: tuple[int, ...]
+    conv2_out_channels: int
+    conv2_kernel_size: tuple[int, ...]
+    conv2_padding: tuple[int, ...]
+    norm2_num_groups: int
+    dropout: float = 0.0
+
+    def __post_init__(self):
+        if self.in_channels < 1:
+            raise ValueError(
+                f"in_channels must be >= 1, got {self.in_channels}"
+            )
+        if self.encoder_out < 1:
+            raise ValueError(
+                f"encoder_out must be >= 1, got {self.encoder_out}"
+            )
+
+
+@dataclass
+class RaggedIntensityEncoderArgs:
+    """Args for RaggedIntensityEncoder. Same as IntensityEncoderArgs minus
+    data_dim (always 3d) and with conv padding tuned for variable sizes."""
+
+    in_channels: int
+    encoder_out: int
+    conv1_out_channels: int
+    conv1_kernel_size: tuple[int, ...]
+    conv1_padding: tuple[int, ...]
+    norm1_num_groups: int
+    pool_kernel_size: tuple[int, ...]
+    pool_stride: tuple[int, ...]
+    conv2_out_channels: int
+    conv2_kernel_size: tuple[int, ...]
+    conv2_padding: tuple[int, ...]
+    norm2_num_groups: int
+    conv3_out_channels: int
+    conv3_kernel_size: tuple[int, ...]
+    conv3_padding: tuple[int, ...]
+    norm3_num_groups: int
+
+    def __post_init__(self):
+        if self.in_channels < 1:
+            raise ValueError(
+                f"in_channels must be >= 1, got {self.in_channels}"
+            )
+        if self.encoder_out < 1:
+            raise ValueError(
+                f"encoder_out must be >= 1, got {self.encoder_out}"
+            )
+
+
+@dataclass
 class EncoderConfig:
     name: str
     args: ShoeboxEncoderArgs | IntensityEncoderArgs

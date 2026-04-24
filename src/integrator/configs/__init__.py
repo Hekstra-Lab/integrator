@@ -14,6 +14,8 @@ from .encoder import (
     EncoderConfig,
     Encoders,
     IntensityEncoderArgs,
+    RaggedIntensityEncoderArgs,
+    RaggedShoeboxEncoderArgs,
     ShoeboxEncoderArgs,
 )
 from .global_config import GlobalConfig
