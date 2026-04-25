@@ -148,8 +148,8 @@ data_loader:
       reference: metadata.pt
       standardized_counts: null
     D: 9
-    H: 33
-    W: 33
+    H: 31
+    W: 31
     anscombe: true
 
 trainer:
