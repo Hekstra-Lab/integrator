@@ -140,15 +140,31 @@ class RaggedLogisticNormalSurrogate(nn.Module):
     ) -> Tensor:
         """
         W_flat:     (B, K, d_basis)                 — per-voxel basis
-        h:          (..., B, d_basis)               — latent sample(s)
+        h:          (..., B, d_basis)               — latent sample(s); the
+                    leading dims (e.g. mc samples) are arbitrary.
         mask_flat:  (B, K)  bool                    — valid voxels
         returns:    (..., B, K) softmaxed over K, zero at padded voxels.
+
+        Implementation note: we explicitly avoid broadcasting W to
+        (..., B, K, d_basis) — that intermediate is huge for large mc and K
+        (mc=100 × B=256 × K=4000 × d=29 ~ 12 GB in float32, plus its grad).
+        Instead we do a batched matmul through einsum, which goes straight
+        to the (..., B, K) output without materializing the 4-D tensor.
         """
-        # Logits = W @ h  (einsum over d_basis)
-        # h broadcast through the sample dims; W_flat has one sample dim prepended
-        while W_flat.ndim < h.ndim + 1:
-            W_flat = W_flat.unsqueeze(0)
-        logits = (W_flat * h.unsqueeze(-2)).sum(dim=-1) + self.log_bias
+        if h.ndim == 2:
+            # Single-sample case: (B, d_basis)
+            # W_flat: (B, K, d_basis) -> logits: (B, K)
+            logits = torch.einsum("bkd,bd->bk", W_flat, h)
+        else:
+            # Sampled case: leading dims (S1, S2, ...) before (B, d_basis).
+            # Flatten leading dims to a single sample axis for einsum.
+            sample_shape = h.shape[:-2]
+            B, d = h.shape[-2:]
+            h_flat = h.reshape(-1, B, d)                                  # (S, B, d)
+            logits_flat = torch.einsum("bkd,sbd->sbk", W_flat, h_flat)    # (S, B, K)
+            logits = logits_flat.reshape(*sample_shape, B, W_flat.shape[1])
+
+        logits = logits + self.log_bias
 
         m = mask_flat
         while m.ndim < logits.ndim:
