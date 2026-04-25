@@ -124,6 +124,12 @@ surrogates:
       # got it there overshot into the unstable Gamma-grad region and
       # NaN'd qbg around step 436.
       mu_parameterization: log
+      # Required so the (k_bg, r_bg) encoder outputs feed mu and fano
+      # via independent linear heads. Without this, gammaB defaults to
+      # a shared fc(2) on x_k_bg only and the r_bg encoder receives no
+      # gradient — the hierC architecture collapses into something
+      # closer to hierB.
+      separate_inputs: true
   qi:
     name: gammaB
     args:
@@ -131,6 +137,7 @@ surrogates:
       eps: 1.0e-06
       mean_init: null
       mu_parameterization: log
+      separate_inputs: true
 
 loss:
   name: wilson
@@ -148,9 +155,7 @@ data_loader:
   name: default
   args:
     data_dir: /n/hekstra_lab/people/aldama/integrator_data/140/pytorch_data
-    batch_size: 256   # was 2048 in hewl_9b7c; dataset 140 shoeboxes are
-                      # 6.5x bigger (8649 voxels vs 1323), encoder activations
-                      # blow up GPU memory at 2048. Drop ~8x to fit.
+    batch_size: 256
     val_split: 0.2
     test_split: 0.0
     num_workers: 8
@@ -159,9 +164,6 @@ data_loader:
     cutoff: null
     shoebox_file_names:
       data_dir: /n/hekstra_lab/people/aldama/integrator_data/140/pytorch_data
-      # .npy here — the data_module's _load_shoebox_array auto-detects
-      # the suffix. Switch to masks_overlap.npy if you want the overlap-
-      # corrected mask (recommended after running refltorch.add-overlap).
       counts: counts.npy
       masks: masks_overlap.npy
       stats: anscombe_stats.pt
