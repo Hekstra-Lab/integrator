@@ -842,18 +842,33 @@ def _resolve_reference_path(data_dir: Path, cfg: dict) -> Path:
     return ref_path
 
 
+def _load_shoebox_array(path: Path) -> Tensor:
+    """Load counts/masks from either .pt (legacy torch.save) or .npy
+    (newer mksbox memmap output). Returns a torch.Tensor either way."""
+    p = Path(path)
+    if p.suffix == ".npy" or (not p.exists() and p.with_suffix(".npy").exists()):
+        # Prefer .npy if explicitly named or if a sibling .npy exists
+        npy_path = p if p.suffix == ".npy" else p.with_suffix(".npy")
+        import numpy as np
+        return torch.from_numpy(np.asarray(np.load(npy_path)))
+    return torch.load(p, weights_only=True)
+
+
 def _load_raw_data(
     data_dir: Path,
     cfg: dict,
 ) -> tuple[Tensor, Tensor, dict]:
-    """Load counts, masks, metadata from data_dir using config paths."""
+    """Load counts, masks, metadata from data_dir using config paths.
+
+    Supports both .pt (legacy) and .npy (newer mksbox memmap) for the
+    counts/masks arrays. Metadata stays .pt since it's a small dict."""
     sfn = cfg["data_loader"]["args"].get("shoebox_file_names", {})
 
     counts_name = sfn.get("counts", "counts.pt")
     masks_name = sfn.get("masks", "masks.pt")
 
-    counts = torch.load(data_dir / counts_name, weights_only=True)
-    masks = torch.load(data_dir / masks_name, weights_only=True)
+    counts = _load_shoebox_array(data_dir / counts_name)
+    masks = _load_shoebox_array(data_dir / masks_name)
 
     ref_path = _resolve_reference_path(data_dir, cfg)
     metadata = torch.load(ref_path, weights_only=False)
