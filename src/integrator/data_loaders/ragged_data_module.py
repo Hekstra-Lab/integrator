@@ -66,10 +66,12 @@ class RaggedShoeboxDataset(Dataset):
         keys=DEFAULT_KEYS,
         eager: bool = True,
         extra_metadata_keys: tuple[str, ...] = (),
+        min_valid_pixels: int = 10,
     ):
         self.keys = tuple(dict.fromkeys(("data",) + tuple(keys)))  # dedupe, data first
         self.eager = eager
         self.anscombe = anscombe
+        self.min_valid_pixels = int(min_valid_pixels)
 
         chunks_dir = Path(chunks_dir)
         parent_dir = chunks_dir.parent
@@ -134,18 +136,48 @@ class RaggedShoeboxDataset(Dataset):
             self._chunks.append(arrays)
 
             shapes = arrays["shapes"]
+            offsets = arrays["offsets"]
             n = len(shapes)
-            self._global_index.extend((ci, li) for li in range(n))
+
+            # ----- valid-pixel filter (mirrors fixed-pipeline) -----
+            # Drop reflections whose final training mask has < min_valid_pixels
+            # True voxels. This removes fully-overlapped reflections + things
+            # the encoder/loss can't usefully fit.
+            if "mask" in arrays:
+                m_flat = arrays["mask"]  # (total_voxels,) bool
+                # per-reflection valid count via offsets
+                # numpy add.reduceat on bool->int gives sums between offsets
+                valid_per_refl = np.add.reduceat(
+                    m_flat.astype(np.int64), offsets[:-1]
+                )
+            else:
+                # No mask available — keep everything
+                valid_per_refl = np.full(n, self.min_valid_pixels, dtype=np.int64)
+
+            keep_mask = valid_per_refl >= self.min_valid_pixels
+            n_drop = int((~keep_mask).sum())
+            if n_drop > 0:
+                logger.info(
+                    "  chunk %d: dropping %d / %d reflections with < %d valid pixels",
+                    ci, n_drop, n, self.min_valid_pixels,
+                )
+
+            for li in range(n):
+                if keep_mask[li]:
+                    self._global_index.append((ci, li))
+
             vols = (shapes[:, 0].astype(np.int64)
                     * shapes[:, 1].astype(np.int64)
                     * shapes[:, 2].astype(np.int64))
-            self._volumes.append(vols)
+            self._volumes.append(vols[keep_mask])
 
         self._volumes = np.concatenate(self._volumes)
 
         logger.info(
-            "RaggedShoeboxDataset: %d reflections across %d chunks (eager=%s, anscombe=%s)",
+            "RaggedShoeboxDataset: %d reflections kept across %d chunks "
+            "(eager=%s, anscombe=%s, min_valid_pixels=%d)",
             len(self._global_index), len(self._chunks), eager, anscombe,
+            self.min_valid_pixels,
         )
 
     def __len__(self):
@@ -375,6 +407,7 @@ class RaggedShoeboxDataModule:
         stats_path=None,
         group_labels_path=None,
         extra_metadata_keys: tuple[str, ...] = (),
+        min_valid_pixels: int = 10,
         **_unused_kwargs,
     ):
         # Resolve chunks_dir from data_dir if not given. data_dir mirrors the
@@ -406,6 +439,7 @@ class RaggedShoeboxDataModule:
         self.stats_path = stats_path
         self.group_labels_path = group_labels_path
         self.extra_metadata_keys = extra_metadata_keys
+        self.min_valid_pixels = min_valid_pixels
 
     def setup(self, stage=None):
         self.dataset = RaggedShoeboxDataset(
@@ -417,6 +451,7 @@ class RaggedShoeboxDataModule:
             keys=self.keys,
             eager=self.eager,
             extra_metadata_keys=self.extra_metadata_keys,
+            min_valid_pixels=self.min_valid_pixels,
         )
         n = len(self.dataset)
         rng = np.random.default_rng(self.seed)
