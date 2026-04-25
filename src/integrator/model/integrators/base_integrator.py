@@ -85,6 +85,7 @@ class BaseIntegrator(pl.LightningModule):
         self.qp_sparsity_weight = cfg.qp_sparsity_weight
         self.lr_schedule = cfg.lr_schedule
         self.warmup_epochs = cfg.warmup_epochs
+        self.warmup_steps = cfg.warmup_steps
         self.lr_min = cfg.lr_min
         self.mc_samples = cfg.mc_samples
         self.renyi_scale = cfg.renyi_scale
@@ -444,31 +445,71 @@ class BaseIntegrator(pl.LightningModule):
 
         return lr_lambda
 
+    def _step_linear_warmup_lambda(self):
+        """Linear ramp 0 → 1 over the first `warmup_steps` optimizer steps,
+        then stays at 1. No decay tail. Step-level (not epoch-level) so it
+        can absorb the early-step gradient spike that NaN's gammaB on
+        bright-tail data, where Adam's running moment estimates need ~100
+        steps to stabilize before the lr=1e-3 step magnitude is safe.
+        """
+        warmup = max(int(self.warmup_steps), 0)
+
+        def lr_lambda(step: int) -> float:
+            if warmup == 0:
+                return 1.0
+            if step >= warmup:
+                return 1.0
+            # Start at 1/warmup on step 0 (not 0) so the optimizer takes a
+            # nonzero step immediately.
+            return float(step + 1) / float(warmup)
+
+        return lr_lambda
+
     def configure_optimizers(self) -> Any:
         optimizer = self._build_optimizer()
         if self.lr_schedule is None:
             return optimizer
-        if self.lr_schedule != "cosine_warmup":
-            raise ValueError(
-                f"Unknown lr_schedule {self.lr_schedule!r}. "
-                "Supported: 'cosine_warmup' or null."
-            )
 
-        max_epochs = self.trainer.max_epochs
-        if max_epochs is None or max_epochs <= 0:
-            raise RuntimeError(
-                "cosine_warmup requires trainer.max_epochs to be set; "
-                f"got {max_epochs}."
+        if self.lr_schedule == "cosine_warmup":
+            max_epochs = self.trainer.max_epochs
+            if max_epochs is None or max_epochs <= 0:
+                raise RuntimeError(
+                    "cosine_warmup requires trainer.max_epochs to be set; "
+                    f"got {max_epochs}."
+                )
+            scheduler = torch.optim.lr_scheduler.LambdaLR(
+                optimizer,
+                lr_lambda=self._cosine_warmup_lambda(max_epochs),
             )
-        scheduler = torch.optim.lr_scheduler.LambdaLR(
-            optimizer,
-            lr_lambda=self._cosine_warmup_lambda(max_epochs),
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "interval": "epoch",
+                    "frequency": 1,
+                },
+            }
+
+        if self.lr_schedule == "step_linear_warmup":
+            if self.warmup_steps <= 0:
+                raise ValueError(
+                    "step_linear_warmup requires warmup_steps > 0; "
+                    f"got {self.warmup_steps}."
+                )
+            scheduler = torch.optim.lr_scheduler.LambdaLR(
+                optimizer,
+                lr_lambda=self._step_linear_warmup_lambda(),
+            )
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "interval": "step",
+                    "frequency": 1,
+                },
+            }
+
+        raise ValueError(
+            f"Unknown lr_schedule {self.lr_schedule!r}. "
+            "Supported: 'cosine_warmup', 'step_linear_warmup', or null."
         )
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": scheduler,
-                "interval": "epoch",
-                "frequency": 1,
-            },
-        }

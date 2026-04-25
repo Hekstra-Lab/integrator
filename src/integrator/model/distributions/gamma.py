@@ -156,6 +156,21 @@ class GammaDistributionRepamB(nn.Module):
             self.fc = nn.Linear(in_features, 2)
             self._init_fc_biases(mean_init, fano_init)
 
+        # When `mean_init` is provided, also zero the linear-head weights so
+        # initial (mu, fano) is uniform across reflections instead of varying
+        # with the random-weight × encoder-feature product. The init
+        # diagnostic showed qi_linear_mu_grad_max varies ~1000× across seeds
+        # under the current random-Kaiming setup — that variance is the
+        # weight × feature product, not the bias. Opting in via mean_init
+        # keeps existing `mean_init: null` runs bitwise unchanged.
+        if mean_init is not None:
+            with torch.no_grad():
+                if separate_inputs:
+                    self.linear_mu.weight.zero_()
+                    self.linear_fano.weight.zero_()
+                else:
+                    self.fc.weight.zero_()
+
     def _mu_bias(self, target: float) -> float:
         """Bias value so the mu head evaluates to `target` at init."""
         if self.mu_parameterization == "log":

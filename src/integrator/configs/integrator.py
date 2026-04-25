@@ -20,8 +20,17 @@ class IntegratorCfg:
     # (e.g. DirichletDistribution) or in addition to the basis penalties.
     qp_profile_tv_weight: float | None = None
     qp_profile_entropy_weight: float | None = None
-    lr_schedule: Literal["cosine_warmup"] | None = None
+    lr_schedule: Literal["cosine_warmup", "step_linear_warmup"] | None = None
     warmup_epochs: int = 5
+    # Step-level linear warmup: lr ramps 0 → self.lr over the first
+    # `warmup_steps` optimizer steps, then stays at self.lr. Unlike
+    # cosine_warmup (which is epoch-level and includes a decay tail),
+    # this targets the "first ~100 step gradient spike" failure mode
+    # that surfaced on bright-tail data — many random seeds produce
+    # initial qi/qbg head gradients of 1e4–1e5 magnitude, and Adam's
+    # running moment estimates need ~100 steps to stabilize. Use with
+    # lr_schedule: "step_linear_warmup".
+    warmup_steps: int = 0
     lr_min: float = 1.0e-5
     mc_samples: int = 4
     renyi_scale: float = 0.0

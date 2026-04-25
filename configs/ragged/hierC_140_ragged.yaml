@@ -16,6 +16,14 @@ integrator:
     weight_decay: 0.0
     mc_samples: 100
     renyi_scale: 0.0
+    # Step-level linear warmup. The init diagnostic showed initial
+    # qi/qbg head gradients of 1e4–1e5 magnitude (varies ~1000× across
+    # seeds). Adam's running moment estimates need ~few hundred steps
+    # to stabilize, during which lr=1e-3 step magnitude can push raw
+    # weights into the unstable region. Ramping lr 0 → 1e-3 over the
+    # first 500 steps absorbs that gradient spike.
+    lr_schedule: step_linear_warmup
+    warmup_steps: 500
     predict_keys:
     - refl_ids
     - qi_mean
@@ -83,7 +91,15 @@ surrogates:
     args:
       in_features: 64
       eps: 1.0e-06
-      mean_init: null
+      # mean_init triggers head zero-init: linear_mu.weight and
+      # linear_fano.weight are zeroed in addition to setting their
+      # biases. Effect: every reflection in the batch starts at
+      # mu = mean_init, fano = fano_init, eliminating the
+      # ~1000× seed-to-seed grad-max spread the diagnostic surfaced.
+      # 30 ≈ median bg across resolution bins (1/τ from
+      # bg_rate_per_group_30.pt is in the 13–220 range).
+      mean_init: 30.0
+      fano_init: 1.0
       separate_inputs: true
       # Soft floor on k = mu/fano so the rsample backward stays NaN-safe
       # when fano drifts large. r is recomputed as k/mu so the predicted
@@ -96,7 +112,14 @@ surrogates:
     args:
       in_features: 64
       eps: 1.0e-06
-      mean_init: null
+      # 100 is well below the auto-injected qi_median=5777 that broke
+      # things on this dataset (the resulting Wilson KL gradient was
+      # huge); above 1.0 we'd start at, with mean_init: null, which is
+      # also bad in the other direction (NLL gradient huge because
+      # rate ≈ 1 vs counts ≈ 1000s). 100 is a compromise between the
+      # NLL and KL pull at step 0.
+      mean_init: 100.0
+      fano_init: 1.0
       mu_parameterization: log
       separate_inputs: true
       floor_k_min: 0.1
