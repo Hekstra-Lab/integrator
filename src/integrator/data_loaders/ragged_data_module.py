@@ -153,6 +153,13 @@ class RaggedShoeboxDataset(Dataset):
         if group_labels_path is None:
             matches = sorted(parent_dir.glob("group_labels_*.pt"))
             group_labels_path = matches[0] if matches else None
+        else:
+            # Resolve a bare filename relative to parent_dir, matching how
+            # metadata_path/stats_path are resolved above. Lets the YAML say
+            # `group_labels_path: group_labels_30.pt` and Just Work.
+            gp = Path(group_labels_path)
+            if not gp.is_absolute():
+                group_labels_path = parent_dir / gp
         if group_labels_path is not None:
             self.group_labels = torch.load(group_labels_path, weights_only=True).long()
         else:

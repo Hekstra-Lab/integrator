@@ -1,18 +1,3 @@
-"""Variable-size shoebox encoders for ragged batches.
-
-Mirrors `ShoeboxEncoder` and `IntensityEncoder` from `encoders.py`, but:
-  - Inputs are padded-to-batch-max 5D tensors with an explicit mask.
-  - The `flatten + Linear` head is replaced with masked global average pool
-    followed by a projection, since flattened size varies per batch.
-  - conv2 uses padding=1 (vs the fixed encoder's padding=0) so that any
-    shoebox >=(3, 3, 3) can flow through without producing zero-sized
-    spatial dims. On dataset 140 the smallest reflection is (2, 8, 9), so
-    conv2 with a (3,3,3) kernel and no padding would yield D=0.
-
-Nothing here imports from `encoders.py`; the two encoder families can be used
-side by side without interfering.
-"""
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -26,7 +11,9 @@ def _downsample_mask_pool3d(
     is considered valid if ANY of its input cells was valid. Matches the
     receptive field of an unmasked MaxPool3d with the same kernel/stride."""
     m = mask.to(torch.float32).unsqueeze(1)  # (B, 1, D, H, W)
-    m = F.max_pool3d(m, kernel_size=kernel_size, stride=stride, ceil_mode=ceil_mode)
+    m = F.max_pool3d(
+        m, kernel_size=kernel_size, stride=stride, ceil_mode=ceil_mode
+    )
     return m.squeeze(1).bool()  # (B, d, h, w)
 
 
@@ -68,7 +55,11 @@ class RaggedShoeboxEncoder(nn.Module):
         pool_stride=(1, 2, 2),
         conv2_out_channels: int = 32,
         conv2_kernel_size=(3, 3, 3),
-        conv2_padding=(1, 1, 1),  # changed from (0,0,0) for variable-size safety
+        conv2_padding=(
+            1,
+            1,
+            1,
+        ),  # changed from (0,0,0) for variable-size safety
         norm2_num_groups: int = 4,
         dropout: float = 0.0,
     ):
@@ -113,8 +104,7 @@ class RaggedShoeboxEncoder(nn.Module):
         mask: (B, D, H, W)         — bool, True at real+valid voxels
         """
         # Zero padded voxels before conv so they don't inject non-zero
-        # activations through the bias/weight path. (Conv bias alone would
-        # already break this if we didn't.)
+        # activations through the bias/weight path
         x = x * mask.unsqueeze(1).to(x.dtype)
 
         x = F.relu(self.norm1(self.conv1(x)))
@@ -123,7 +113,10 @@ class RaggedShoeboxEncoder(nn.Module):
         # Pool features AND the mask so they stay aligned downstream
         x = self.pool(x)
         mask = _downsample_mask_pool3d(
-            mask, kernel_size=self.pool_kernel_size, stride=self.pool_stride, ceil_mode=True
+            mask,
+            kernel_size=self.pool_kernel_size,
+            stride=self.pool_stride,
+            ceil_mode=True,
         )
 
         x = F.relu(self.norm2(self.conv2(x)))
@@ -207,7 +200,10 @@ class RaggedIntensityEncoder(nn.Module):
         x = F.relu(self.norm1(self.conv1(x)))
         x = self.pool(x)
         mask = _downsample_mask_pool3d(
-            mask, kernel_size=self.pool_kernel_size, stride=self.pool_stride, ceil_mode=True
+            mask,
+            kernel_size=self.pool_kernel_size,
+            stride=self.pool_stride,
+            ceil_mode=True,
         )
 
         x = F.relu(self.norm2(self.conv2(x)))

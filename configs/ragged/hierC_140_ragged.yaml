@@ -2,16 +2,15 @@ global_vars:
   encoder_out: 64
   mc_samples: 100
   data_dir: /n/hekstra_lab/people/aldama/integrator_data/140/pytorch_data_dials
-  n_bins: 10
+  n_bins: 30
 
 integrator:
   name: hierarchicalC_ragged
   args:
     data_dim: 3d
-    # placeholder dims — ragged forward ignores these but BaseIntegrator reads them
     d: 9
-    h: 33
-    w: 33
+    h: 31
+    w: 31
     lr: 0.001
     encoder_out: 64
     weight_decay: 0.0
@@ -76,7 +75,7 @@ surrogates:
     name: ragged_learned_basis_profile
     args:
       input_dim: 64
-      d_basis: 29           # match the Hermite truncation used by fixed runs
+      d_basis: 8
       basis_hidden: 64
       # fourier_freqs: 0 (default) — raw 3-D coords feed the MLP. The fixed
       # pipeline's LearnedBasisProfileSurrogate is just Linear(d, K); turning
@@ -104,10 +103,14 @@ loss:
   args:
     mc_samples: 100
     eps: 1.0e-06
-    n_bins: 10
-    # Constant background rate per group as a stand-in for prepare_priors output.
-    # Replace with a path string like "bg_rate_per_group.pt" once you have one.
-    bg_rate_per_group: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    n_bins: 30
+    # prepare_per_bin_priors auto-generates bg_rate_per_group_30.pt from
+    # metadata['background.mean'] (now lazy-loads counts/masks so the ragged
+    # layout works the same as the fixed pipeline). Same n_bins as the fixed
+    # config so binning is identical. Real per-bin τ ranges 0.005 → 0.075;
+    # the 1.0 placeholder used previously was 20–200× off and triggered the
+    # qbg KL gradient blowup at step 16.
+    bg_rate_per_group: bg_rate_per_group.pt
     profile_sigma_prior: 3.0
     pi_weight: 1.0
     pbg_weight: 1.0
@@ -132,13 +135,11 @@ data_loader:
     anscombe: true   # legacy flag; ignored when transform != "anscombe"
     max_count: 131072.0
     protect_foreground: true
-    # Drop reflections with fewer than this many valid pixels.
     min_valid_pixels: 10
-    # metadata/stats/group_labels paths auto-resolve from data_dir.
-    # Override here only if your layout differs.
-    # metadata_path: null
-    # stats_path: null
-    # group_labels_path: null
+    # Pin to the 30-bin file so the alphabetically-first stale group_labels_10.pt
+    # doesn't get picked up by the glob. prepare_per_bin_priors generates this
+    # from metadata['d'] using the same quantile-binning as the fixed pipeline.
+    group_labels_path: group_labels_30.pt
     extra_metadata_keys: []
 
 trainer:

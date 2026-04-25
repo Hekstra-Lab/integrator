@@ -322,8 +322,24 @@ def prepare_per_bin_priors(
         ", ".join(needed.keys()),
     )
 
-    # Load raw data (reuse metadata if already loaded for consistency check)
-    counts, masks, metadata = _load_raw_data(data_dir, cfg)
+    # Load metadata always (cheap); counts/masks lazily — the ragged data
+    # layout doesn't have flat counts.npy/masks.npy. Prior types that derive
+    # purely from per-reflection metadata (bg_rate_per_group with
+    # tau_source='dials', s_squared_per_group, tau_per_group from
+    # intensity.prf.value) work without ever loading counts/masks.
+    metadata = torch.load(_resolve_reference_path(data_dir, cfg), weights_only=False)
+    counts, masks = _try_load_counts_masks(data_dir, cfg)
+
+    def _require_counts(prior_name: str) -> tuple[Tensor, Tensor]:
+        if counts is None or masks is None:
+            raise FileNotFoundError(
+                f"Computing '{prior_name}' requires per-pixel counts/masks, "
+                f"but neither counts.npy nor counts.pt was found in "
+                f"{data_dir}. This is the ragged data layout (chunks/*.npz). "
+                f"Either remove '{prior_name}' from the loss config, or "
+                f"provide a precomputed file."
+            )
+        return counts, masks
 
     d = metadata["d"]
     N = len(d)
@@ -426,7 +442,8 @@ def prepare_per_bin_priors(
         tau_source = loss_args.get("tau_source", "dials")
 
         if tau_source == "crude":
-            crude_I = _crude_intensity_from_cfg(counts, masks, cfg)
+            c, m = _require_counts("tau_per_group (crude)")
+            crude_I = _crude_intensity_from_cfg(c, m, cfg)
             tau = _compute_tau_per_group(
                 crude_I, group_labels, n_bins, min_intensity
             )
@@ -453,7 +470,8 @@ def prepare_per_bin_priors(
                     "No intensity column found and tau_source='dials'; "
                     "falling back to crude bg-subtraction"
                 )
-                crude_I = _crude_intensity_from_cfg(counts, masks, cfg)
+                c, m = _require_counts("tau_per_group (crude fallback)")
+                crude_I = _crude_intensity_from_cfg(c, m, cfg)
                 tau = _compute_tau_per_group(
                     crude_I, group_labels, n_bins, min_intensity
                 )
@@ -557,9 +575,10 @@ def prepare_per_bin_priors(
         else:
             action = "created"
 
+        c, m = _require_counts(f"profile basis {basis_path.name}")
         basis_data = _fit_profile_basis_per_bin(
-            counts,
-            masks,
+            c,
+            m,
             prf_labels,
             n_prf_bins,
             basis_type=basis_type,
@@ -615,9 +634,10 @@ def prepare_per_bin_priors(
             prf_labels = metadata.get("profile_group_label", group_labels)
             n_prf_bins = int(prf_labels.max().item()) + 1
 
+            c, m = _require_counts("empirical_profile_basis_per_bin")
             emp_basis_data = _fit_empirical_profile_basis(
-                counts,
-                masks,
+                c,
+                m,
                 prf_labels,
                 n_prf_bins,
                 D=D_dim,
@@ -643,31 +663,38 @@ def prepare_per_bin_priors(
     # explicitly set in the YAML), removing the "grow mu from 0.7 over
     # many epochs" early-training phase.
     if need_init:
-        init_stats = _compute_qi_qbg_mean_init(
-            counts, masks, D_dim, H_dim, W_dim
-        )
-        torch.save(init_stats, init_path)
-        logger.info(
-            "Saved qi_qbg_mean_init.pt "
-            "(qi_median=%.2f, qi_mean=%.2f, qbg_median=%.3f, qbg_mean=%.3f)",
-            init_stats["qi_median"],
-            init_stats["qi_mean"],
-            init_stats["qbg_median"],
-            init_stats["qbg_mean"],
-        )
-        if events_out is not None:
-            events_out.append(
-                {
-                    "file": "qi_qbg_mean_init.pt",
-                    "action": "created",
-                    "path": str(init_path),
-                    "reason": "GammaB qi/qbg without explicit mean_init",
-                    "qi_median": init_stats["qi_median"],
-                    "qi_mean": init_stats["qi_mean"],
-                    "qbg_median": init_stats["qbg_median"],
-                    "qbg_mean": init_stats["qbg_mean"],
-                }
+        if counts is None or masks is None:
+            logger.info(
+                "qi_qbg_mean_init.pt requires counts/masks; ragged data "
+                "layout has none. Skipping — set explicit mean_init values "
+                "in the YAML (or `mean_init: null` to opt out)."
             )
+        else:
+            init_stats = _compute_qi_qbg_mean_init(
+                counts, masks, D_dim, H_dim, W_dim
+            )
+            torch.save(init_stats, init_path)
+            logger.info(
+                "Saved qi_qbg_mean_init.pt "
+                "(qi_median=%.2f, qi_mean=%.2f, qbg_median=%.3f, qbg_mean=%.3f)",
+                init_stats["qi_median"],
+                init_stats["qi_mean"],
+                init_stats["qbg_median"],
+                init_stats["qbg_mean"],
+            )
+            if events_out is not None:
+                events_out.append(
+                    {
+                        "file": "qi_qbg_mean_init.pt",
+                        "action": "created",
+                        "path": str(init_path),
+                        "reason": "GammaB qi/qbg without explicit mean_init",
+                        "qi_median": init_stats["qi_median"],
+                        "qi_mean": init_stats["qi_mean"],
+                        "qbg_median": init_stats["qbg_median"],
+                        "qbg_mean": init_stats["qbg_mean"],
+                    }
+                )
 
 
 def _fit_empirical_profile_basis(
@@ -874,6 +901,51 @@ def _load_raw_data(
     metadata = torch.load(ref_path, weights_only=False)
 
     return counts, masks, metadata
+
+
+def _try_load_counts_masks(
+    data_dir: Path,
+    cfg: dict,
+) -> tuple[Tensor | None, Tensor | None]:
+    """Best-effort counts/masks load — returns (None, None) if files don't exist.
+
+    The fixed pipeline writes flat (N, V) arrays to data_dir/counts.npy and
+    masks.npy. The ragged pipeline (data_loader.name == "ragged_data") splits
+    its data across data_dir/chunks/chunk_*.npz instead, so neither file
+    exists. Prior-generation paths that genuinely need per-pixel counts must
+    null-check the result and raise a clearer error than FileNotFoundError.
+
+    Per-reflection summaries already in metadata.pt (e.g. background.mean,
+    intensity.prf.value, d) cover most prior types — bg_rate_per_group,
+    s_squared_per_group, tau_per_group with tau_source='dials' — without
+    touching this function.
+    """
+    sfn = cfg["data_loader"]["args"].get("shoebox_file_names", {})
+    counts_name = sfn.get("counts", "counts.pt")
+    masks_name = sfn.get("masks", "masks.pt")
+    counts_path = data_dir / counts_name
+    masks_path = data_dir / masks_name
+    # Match _load_shoebox_array's resolution: a sibling .npy is acceptable.
+    def _exists(p: Path) -> bool:
+        if p.exists():
+            return True
+        if p.suffix != ".npy" and p.with_suffix(".npy").exists():
+            return True
+        return False
+
+    if not _exists(counts_path) or not _exists(masks_path):
+        logger.info(
+            "Counts/masks not found at %s / %s — skipping count-dependent "
+            "prior computations. (This is expected for the ragged data layout.)",
+            counts_path,
+            masks_path,
+        )
+        return None, None
+
+    return (
+        _load_shoebox_array(counts_path),
+        _load_shoebox_array(masks_path),
+    )
 
 
 def _bin_by_resolution(
@@ -1370,13 +1442,24 @@ def _fit_dirichlet_per_group(
 
 def _get_intensity_for_prior(
     tau_source: str,
-    counts: Tensor,
-    masks: Tensor,
+    counts: Tensor | None,
+    masks: Tensor | None,
     metadata: dict,
     cfg: dict,
 ) -> Tensor:
-    """Return intensity tensor for prior fitting, respecting tau_source config."""
+    """Return intensity tensor for prior fitting, respecting tau_source config.
+
+    counts/masks may be None when the dataset is in the ragged layout (no
+    flat counts.npy). The DIALS path doesn't need them; the crude path does
+    and will raise a clear error.
+    """
     if tau_source == "crude":
+        if counts is None or masks is None:
+            raise FileNotFoundError(
+                "tau_source='crude' requires counts/masks but the dataset "
+                "is in the ragged layout (no flat counts.npy). Switch to "
+                "tau_source='dials' to use metadata['intensity.prf.value']."
+            )
         return _crude_intensity_from_cfg(counts, masks, cfg)
 
     intensity = metadata.get(
@@ -1385,6 +1468,14 @@ def _get_intensity_for_prior(
     )
     if intensity is not None:
         return intensity
+
+    if counts is None or masks is None:
+        raise FileNotFoundError(
+            "No intensity column in metadata.pt and counts/masks are not "
+            "available (ragged layout). Either drop the prior that depends "
+            "on intensity, or rerun mksbox so metadata.pt includes "
+            "intensity.prf.value."
+        )
 
     logger.warning(
         "No intensity column found and tau_source='dials'; "
@@ -1395,19 +1486,36 @@ def _get_intensity_for_prior(
 
 def _get_background_for_prior(
     tau_source: str,
-    counts: Tensor,
-    masks: Tensor,
+    counts: Tensor | None,
+    masks: Tensor | None,
     metadata: dict,
     cfg: dict,
 ) -> Tensor:
-    """Return per-reflection background estimate, respecting tau_source config."""
+    """Return per-reflection background estimate, respecting tau_source config.
+
+    counts/masks may be None for the ragged data layout. The default
+    tau_source='dials' path uses metadata['background.mean'] and works fine
+    without them; tau_source='crude' raises a clear error if they're missing.
+    """
     if tau_source == "crude":
+        if counts is None or masks is None:
+            raise FileNotFoundError(
+                "tau_source='crude' requires counts/masks but the dataset "
+                "is in the ragged layout (no flat counts.npy). Switch to "
+                "tau_source='dials' to use metadata['background.mean']."
+            )
         return _crude_background_from_cfg(counts, masks, cfg)
 
     bg_mean = metadata.get("background.mean")
     if bg_mean is not None:
         return bg_mean
 
+    if counts is None or masks is None:
+        raise FileNotFoundError(
+            "No background.mean column in metadata.pt and counts/masks "
+            "are not available (ragged layout). Rerun mksbox-dials so "
+            "metadata.pt includes background.mean."
+        )
     logger.warning(
         "No background.mean column found and tau_source='dials'; "
         "falling back to crude bg estimation"
