@@ -1,6 +1,6 @@
 global_vars:
   encoder_out: 64
-  mc_samples: 100
+  mc_samples: 32
   data_dir: /n/hekstra_lab/people/aldama/integrator_data/140/pytorch_data_dials
   n_bins: 30
 
@@ -123,7 +123,7 @@ data_loader:
     # chunks_dir is auto-derived as `data_dir / chunks`. Override only if your
     # layout differs.
     # chunks_dir: null
-    batch_size: 256
+    batch_size: 128
     val_frac: 0.05
     test_frac: 0.05
     num_workers: 4
@@ -132,7 +132,7 @@ data_loader:
     seed: 0
     eager: true
     transform: anscombe
-    anscombe: true   # legacy flag; ignored when transform != "anscombe"
+    anscombe: true   
     max_count: 131072.0
     protect_foreground: true
     min_valid_pixels: 10
