@@ -109,6 +109,17 @@ class GammaDistributionRepamB(nn.Module):
         rather than mu, so weights stay O(1) even when target
         intensities span 0 to ~3e5. Recommended when mean_init is
         large (thousands+).
+
+    ``floor_k_min`` (default ``None``) opts into a soft lower bound on
+    the derived concentration ``k = mu/fano``, applied via
+    ``k = softplus(k_raw - floor_k_min) + floor_k_min``. ``r`` is then
+    recomputed as ``k/mu`` so the predicted Gamma mean stays exactly mu
+    on every reflection — the property that makes (mu, fano) match the
+    Laplace approximation. This is the failure boundary fix: when
+    ``k_raw > floor_k_min`` the floor is inactive and gammaB is
+    bitwise-identical; when ``k_raw`` drifts toward zero (where
+    ``_standard_gamma_grad`` NaN's), it saturates at floor_k_min and
+    only the variance is implicitly bounded.
     """
 
     def __init__(
@@ -120,12 +131,16 @@ class GammaDistributionRepamB(nn.Module):
         mean_init: float | None = None,
         fano_init: float = 1.0,
         mu_parameterization: str = "softplus",
+        floor_k_min: float | None = None,
         **kwargs,
     ):
         super().__init__()
         self.eps = eps
         self.k_min = k_min
         self.separate_inputs = separate_inputs
+        self.floor_k_min = (
+            float(floor_k_min) if floor_k_min is not None else None
+        )
         if mu_parameterization not in ("softplus", "log"):
             raise ValueError(
                 f"mu_parameterization must be 'softplus' or 'log', got {mu_parameterization!r}"
@@ -193,6 +208,16 @@ class GammaDistributionRepamB(nn.Module):
 
         r = 1.0 / fano
         k = mu * r
+
+        if self.floor_k_min is not None:
+            # Smooth lower bound on k. softplus passes through unchanged
+            # when k ≫ floor_k_min and saturates near floor_k_min when k
+            # is small. Recomputing r = k_safe / mu keeps the predicted
+            # mean = k/r = mu intact on every reflection — the property
+            # that makes gammaB match the Laplace approximation. Only
+            # the variance is implicitly bounded in the unstable corner.
+            k = F.softplus(k - self.floor_k_min) + self.floor_k_min
+            r = k / mu
 
         return Gamma(concentration=k.flatten(), rate=r.flatten())
 
