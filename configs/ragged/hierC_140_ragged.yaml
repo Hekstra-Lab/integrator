@@ -1,25 +1,3 @@
-# Ragged-input HierarchicalIntegratorC on SBGrid dataset 140 (HSV-1 UL21).
-#
-# Mirrors configs/wilson_comparison/hierC_*.yaml: five fully-decoupled
-# encoders (profile + k_i, r_i for qi + k_bg, r_bg for qbg) instead of
-# Model B's shared (k, r). hierC > hierB on dataset 9b7c per project
-# memory — decoupling gives qi and qbg independent feature paths.
-#
-# Required input layout under `data_dir` (produced by mksbox-dials):
-#   chunks/chunk_*.npz           — ragged shoebox data + masks
-#   reflections.refl             — consolidated DIALS metadata (refl_ids)
-#   metadata.pt                  — per-reflection scalars incl. `d`
-#   stats.pt                     — raw counts (mean, var)
-#   anscombe_stats.pt            — Anscombe counts (mean, var)
-#   group_labels_10.pt           — quantile-binned resolution groups (n_bins=10)
-#
-# Notes:
-#  * `data_dim`/`d`/`h`/`w` in integrator.args are unused by the ragged
-#    forward (shoebox shape varies per reflection) but BaseIntegrator's
-#    __init__ still reads them; placeholder values are fine.
-#  * `bg_rate_per_group` is set to a constant list for a first run; replace
-#    with a `bg_rate_per_group.pt` from `prepare_priors.py` once you have one.
-
 global_vars:
   encoder_out: 64
   mc_samples: 100
@@ -70,8 +48,6 @@ encoders:
     conv2_padding: [1, 1, 1]    # NOTE: padding=1 (vs 0 in fixed encoder) so small
     norm2_num_groups: 4         # shoeboxes (e.g. (2, 8, 9)) don't shrink to D=0.
     dropout: 0.0
-# Four intensity-style encoders for hierC: k_i, r_i, k_bg, r_bg.
-# All share identical config — anchor the first and reuse via YAML aliases.
 - &id001
   name: ragged_intensity_encoder
   args:
@@ -109,17 +85,17 @@ surrogates:
     args:
       in_features: 64
       eps: 1.0e-06
-      # See hierB_140_ragged.yaml for the rationale. tldr: a positive
-      # mean_init drives mu toward the data scale at step 0, which on
-      # bright datasets like 140 produces a huge Wilson KL gradient and
-      # NaN's a few hundred steps in. null skips bias init entirely.
       mean_init: null
+      mu_parameterization: log
+      separate_inputs: true
   qi:
     name: gammaB
     args:
       in_features: 64
       eps: 1.0e-06
       mean_init: null
+      mu_parameterization: log
+      separate_inputs: true
 
 loss:
   name: wilson
