@@ -117,12 +117,20 @@ surrogates:
       # doesn't regenerate it) but skips the bias initialization,
       # leaving mu ≈ softplus(0) ≈ 0.7 at step 0.
       mean_init: null
+      # Log parameterization: mu = exp(raw_mu) instead of softplus.
+      # Keeps the linear head's weights O(1) while mu spans 0 → 1e5+
+      # required by dataset 140's intensity scale. With softplus, raw_mu
+      # had to grow to ~5777 to match the mean — the Adam updates that
+      # got it there overshot into the unstable Gamma-grad region and
+      # NaN'd qbg around step 436.
+      mu_parameterization: log
   qi:
     name: gammaB
     args:
       in_features: 64
       eps: 1.0e-06
       mean_init: null
+      mu_parameterization: log
 
 loss:
   name: wilson
