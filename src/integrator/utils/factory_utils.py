@@ -442,6 +442,7 @@ def construct_data_loader(cfg):
         H=dl_args.H,
         W=dl_args.W,
         anscombe=dl_args.anscombe,
+        transform=dl_args.transform,
     )
 
 

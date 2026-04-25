@@ -415,6 +415,7 @@ class ShoeboxDataModule(pl.LightningDataModule):
         D: int = 3,
         get_dxyz: bool = False,
         anscombe: bool = False,
+        transform: str | None = None,
     ):
         super().__init__()
         self.data_dir = data_dir
@@ -435,6 +436,22 @@ class ShoeboxDataModule(pl.LightningDataModule):
         self.standardized_counts = shoebox_file_names["standardized_counts"]
         self.get_dxyz = get_dxyz
         self.anscombe = anscombe
+        # Resolve encoder-input transform. Explicit `transform` wins; absent
+        # that we honor the legacy `anscombe` flag for backward compat.
+        # log1p deliberately skips global z-scoring — matches scvi-tools'
+        # `log_variational=True` recipe (encoder GroupNorm handles
+        # per-batch normalization). On heavy-tailed counts the global std
+        # would otherwise be dominated by the bright Bragg peaks and
+        # squash bulk voxels near zero.
+        if transform is None:
+            self.transform = "anscombe" if anscombe else "none"
+        elif transform not in ("anscombe", "log1p", "none"):
+            raise ValueError(
+                f"transform must be 'anscombe', 'log1p', or 'none'; "
+                f"got {transform!r}"
+            )
+        else:
+            self.transform = transform
 
     def setup(self, stage=None):
         counts = _load_shoebox_array(
@@ -483,11 +500,15 @@ class ShoeboxDataModule(pl.LightningDataModule):
 
         # Standardize counts
         if counts.dim() == 2:
-            if self.anscombe:
+            if self.transform == "anscombe":
                 anscombe_transformed = 2 * (counts.clamp(min=0) + 0.375).sqrt()
                 standardized_counts = (
                     (anscombe_transformed - stats[0]) / stats[1].sqrt()
                 ) * masks
+            elif self.transform == "log1p":
+                # No standardization — encoder GroupNorm handles per-batch
+                # normalization (scvi-tools `log_variational=True` recipe).
+                standardized_counts = torch.log1p(counts.clamp(min=0)) * masks
             else:
                 standardized_counts = ((counts * masks) - stats[0]) / stats[
                     1

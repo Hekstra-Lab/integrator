@@ -118,12 +118,6 @@ data_loader:
     keys: ["mask"]
     seed: 0
     eager: true
-    # log1p, no standardization — matches scvi-tools' `log_variational=True`
-    # recipe (the literature standard for skewed-count VAEs spanning 0 → 10⁵+
-    # counts). Encoder GroupNorm handles per-batch normalization. Anscombe
-    # + global z-score was the original approach, but the bright-tail
-    # influence on the global std collapsed bulk voxels near zero on this
-    # ragged dataset and contributed to the qbg NaN around step 70.
     transform: log1p
     anscombe: true   # legacy flag; ignored when transform != "anscombe"
     max_count: 131072.0

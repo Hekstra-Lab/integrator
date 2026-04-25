@@ -48,6 +48,11 @@ class DataLoaderArgs:
     H: int
     W: int
     anscombe: bool
+    # "anscombe" (legacy default — anscombe + global z-score), "log1p"
+    # (raw log1p straight to the encoder; matches scvi-tools' literature
+    # recipe for skewed-count VAEs), or "none" (mean-subtract+std-divide
+    # of raw counts). When omitted, we honor the legacy `anscombe` flag.
+    transform: str | None = None
 
     def __post_init__(self):
         if self.batch_size < 0:
