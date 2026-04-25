@@ -130,7 +130,9 @@ data_loader:
   name: default
   args:
     data_dir: /n/hekstra_lab/people/aldama/integrator_data/140/pytorch_data
-    batch_size: 2048
+    batch_size: 256   # was 2048 in hewl_9b7c; dataset 140 shoeboxes are
+                      # 6.5x bigger (8649 voxels vs 1323), encoder activations
+                      # blow up GPU memory at 2048. Drop ~8x to fit.
     val_split: 0.2
     test_split: 0.0
     num_workers: 8
