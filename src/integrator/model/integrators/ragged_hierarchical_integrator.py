@@ -210,14 +210,10 @@ class RaggedHierarchicalIntegratorB(BaseIntegrator):
         )
 
         # Samples — same shapes as fixed-size path, just K may vary per batch.
+        # Layout matches HierarchicalIntegratorB._forward_impl exactly.
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)  # (B, mc, 1)
         zp = _sample_profile(qp, self.mc_samples)                           # (B, mc, K)
         zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)   # (B, mc, 1)
-
-        # Ensure padded voxels don't contribute signal through `zp`. The
-        # profile softmax already sets them to 0, but we belt-and-suspender
-        # here in case a custom surrogate doesn't.
-        zp = zp * mask_flat.unsqueeze(1).to(zp.dtype)
 
         rate = zI * zp + zbg                                                 # (B, mc, K)
 

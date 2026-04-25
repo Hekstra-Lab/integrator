@@ -147,7 +147,29 @@ data_loader:
     keys: ["mask"]
     seed: 0
     eager: true
-    anscombe: true
+    # Encoder input transform. "log1p" compresses the dynamic range of
+    # bright pixels (raw=131k -> ~11.8) so the encoder + GroupNorm don't
+    # blow up on real-data outliers. "anscombe" matches the fixed-pipeline
+    # default but stretches the tail (raw=131k -> ~724). Pick log1p
+    # whenever your dataset has photon counts above ~10k.
+    transform: log1p
+    anscombe: true   # legacy flag; ignored when transform != "anscombe"
+    # Clip pixels above max_count in `counts` so the Poisson NLL gradient
+    # stays bounded even if log1p compresses them in the encoder. With
+    # protect_foreground=True (default), only above-threshold pixels that
+    # are OUTSIDE DIALS' Foreground bit get masked — genuine bright Bragg
+    # peaks (in-foreground) stay valid and visible to the model.
+    #
+    # Threshold chosen from full_pixel_scan.py on dataset 140:
+    #   - 287 stable off-foreground artifacts (hot/ice/saturated pixels)
+    #     all live in raw=[131k, 262k]; threshold 131k catches every one.
+    #   - Only 155 in-foreground pixels above 131k get clipped — genuine
+    #     bright Bragg peaks but a vanishing fraction of the 1.4B valid
+    #     voxels (0.00001%); peak intensity bounded for NLL stability.
+    max_count: 131072.0
+    protect_foreground: true
+    # Drop reflections with fewer than this many valid pixels.
+    min_valid_pixels: 10
     # metadata/stats/group_labels paths auto-resolve from data_dir.
     # Override here only if your layout differs.
     # metadata_path: null
