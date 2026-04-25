@@ -38,10 +38,14 @@ def _fourier_encode(coords: Tensor, n_freqs: int) -> Tensor:
     and fine (profile curvature) structure.
     """
     # Frequencies: pi, 2*pi, 4*pi, ... up to 2^(n_freqs-1) * pi
-    freqs = (2.0 ** torch.arange(n_freqs, device=coords.device, dtype=coords.dtype)) * math.pi
+    freqs = (
+        2.0 ** torch.arange(n_freqs, device=coords.device, dtype=coords.dtype)
+    ) * math.pi
     # (..., 3, n_freqs)
     phase = coords.unsqueeze(-1) * freqs
-    pe = torch.cat([torch.sin(phase), torch.cos(phase)], dim=-1)  # (..., 3, 2*n_freqs)
+    pe = torch.cat(
+        [torch.sin(phase), torch.cos(phase)], dim=-1
+    )  # (..., 3, 2*n_freqs)
     return pe.flatten(-2, -1)  # (..., 6 * n_freqs)
 
 
@@ -50,7 +54,9 @@ def _softplus_inverse(y: float) -> float:
     return float(math.log(math.exp(y) - 1.0))
 
 
-def _build_normalized_coords(shapes: Tensor, pad_shape: tuple[int, int, int]) -> Tensor:
+def _build_normalized_coords(
+    shapes: Tensor, pad_shape: tuple[int, int, int]
+) -> Tensor:
     """Build per-shoebox normalized coord grids, padded to batch max.
 
     shapes:    (B, 3) int — per-reflection (D, H, W)
@@ -71,9 +77,21 @@ def _build_normalized_coords(shapes: Tensor, pad_shape: tuple[int, int, int]) ->
         if D < 1 or H < 1 or W < 1:
             continue
         # linspace gives exact endpoints, degenerating to single 0 if dim==1
-        zs = torch.linspace(-1.0, 1.0, D, device=device) if D > 1 else torch.zeros(1, device=device)
-        ys = torch.linspace(-1.0, 1.0, H, device=device) if H > 1 else torch.zeros(1, device=device)
-        xs = torch.linspace(-1.0, 1.0, W, device=device) if W > 1 else torch.zeros(1, device=device)
+        zs = (
+            torch.linspace(-1.0, 1.0, D, device=device)
+            if D > 1
+            else torch.zeros(1, device=device)
+        )
+        ys = (
+            torch.linspace(-1.0, 1.0, H, device=device)
+            if H > 1
+            else torch.zeros(1, device=device)
+        )
+        xs = (
+            torch.linspace(-1.0, 1.0, W, device=device)
+            if W > 1
+            else torch.zeros(1, device=device)
+        )
         gz, gy, gx = torch.meshgrid(zs, ys, xs, indexing="ij")
         coords[i, :D, :H, :W, 0] = gz
         coords[i, :D, :H, :W, 1] = gy
@@ -92,6 +110,9 @@ class RaggedLogisticNormalSurrogate(nn.Module):
         basis_hidden:  hidden width of the coord→basis MLP.
         fourier_freqs: number of log-spaced Fourier frequencies. Each freq
                        contributes 6 channels (sin+cos for each of z, y, x).
+                       Default 0 (raw 3-D coords feed the MLP directly) — match
+                       the fixed pipeline's plainer linear decoder while we
+                       debug NaN'ing. Set to 6 to re-enable.
         init_std:      initial posterior std for h; the softplus head's bias
                        is set so that F.softplus(bias) == init_std.
     """
@@ -101,14 +122,14 @@ class RaggedLogisticNormalSurrogate(nn.Module):
         input_dim: int,
         d_basis: int = 29,
         basis_hidden: int = 64,
-        fourier_freqs: int = 6,
+        fourier_freqs: int = 0,
         init_std: float = 0.5,
     ):
         super().__init__()
         self.d_basis = d_basis
         self.fourier_freqs = fourier_freqs
 
-        pos_dim = 6 * fourier_freqs  # sin + cos over 3 axes
+        pos_dim = 6 * fourier_freqs if fourier_freqs > 0 else 3
 
         # Encoder feature -> posterior mu_h and std_h for latent h
         # std_h parameterized via softplus (matches FixedBasisProfileSurrogate)
@@ -132,8 +153,11 @@ class RaggedLogisticNormalSurrogate(nn.Module):
         """coords_flat: (B, K, 3) in [-1, 1]
         Returns: W flat (B, K, d_basis) — per-voxel basis row.
         """
-        pe = _fourier_encode(coords_flat, self.fourier_freqs)
-        return self.basis_mlp(pe)
+        if self.fourier_freqs > 0:
+            inputs = _fourier_encode(coords_flat, self.fourier_freqs)
+        else:
+            inputs = coords_flat
+        return self.basis_mlp(inputs)
 
     def _profile_from_h(
         self, W_flat: Tensor, h: Tensor, mask_flat: Tensor
@@ -160,8 +184,10 @@ class RaggedLogisticNormalSurrogate(nn.Module):
             # Flatten leading dims to a single sample axis for einsum.
             sample_shape = h.shape[:-2]
             B, d = h.shape[-2:]
-            h_flat = h.reshape(-1, B, d)                                  # (S, B, d)
-            logits_flat = torch.einsum("bkd,sbd->sbk", W_flat, h_flat)    # (S, B, K)
+            h_flat = h.reshape(-1, B, d)  # (S, B, d)
+            logits_flat = torch.einsum(
+                "bkd,sbd->sbk", W_flat, h_flat
+            )  # (S, B, K)
             logits = logits_flat.reshape(*sample_shape, B, W_flat.shape[1])
 
         logits = logits + self.log_bias
@@ -198,24 +224,26 @@ class RaggedLogisticNormalSurrogate(nn.Module):
         K = Dmax * Hmax * Wmax
 
         # Posterior parameters — softplus std matches existing surrogates
-        mu_h = self.mu_head(features)                           # (B, d_basis)
-        std_h = F.softplus(self.std_head(features))             # (B, d_basis)
+        mu_h = self.mu_head(features)  # (B, d_basis)
+        std_h = F.softplus(self.std_head(features))  # (B, d_basis)
 
         # Normalized coord grid → flat (B, K, 3) → per-voxel basis (B, K, d_basis)
         coords_3d = _build_normalized_coords(shapes, (Dmax, Hmax, Wmax))
         coords_3d = coords_3d.to(features.device, dtype=features.dtype)
         coords_flat = coords_3d.reshape(coords_3d.shape[0], K, 3)
-        W_flat = self._eval_basis_flat(coords_flat)             # (B, K, d_basis)
+        W_flat = self._eval_basis_flat(coords_flat)  # (B, K, d_basis)
 
-        mask_flat = mask.reshape(mask.shape[0], K)              # (B, K)
+        mask_flat = mask.reshape(mask.shape[0], K)  # (B, K)
 
         # Sample h ~ N(mu_h, std_h^2) via reparameterization
         eps = torch.randn(
             mc_samples, *mu_h.shape, device=mu_h.device, dtype=mu_h.dtype
         )
-        h_samples = mu_h.unsqueeze(0) + std_h.unsqueeze(0) * eps  # (mc, B, d_basis)
+        h_samples = (
+            mu_h.unsqueeze(0) + std_h.unsqueeze(0) * eps
+        )  # (mc, B, d_basis)
 
-        zp = self._profile_from_h(W_flat, h_samples, mask_flat)   # (mc, B, K)
+        zp = self._profile_from_h(W_flat, h_samples, mask_flat)  # (mc, B, K)
         mean_profile = self._profile_from_h(W_flat, mu_h, mask_flat)  # (B, K)
 
         return ProfileSurrogateOutput(
