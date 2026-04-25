@@ -85,6 +85,12 @@ surrogates:
       eps: 1.0e-06
       mean_init: null
       separate_inputs: true
+      # Soft floor on k = mu/fano so the rsample backward stays NaN-safe
+      # when fano drifts large. r is recomputed as k/mu so the predicted
+      # mean stays exactly mu (preserves the (mu, fano) → Laplace fit
+      # in the well-behaved region; only the variance is implicitly
+      # bounded in the unstable corner).
+      floor_k_min: 0.1
   qi:
     name: gammaB
     args:
@@ -93,6 +99,7 @@ surrogates:
       mean_init: null
       mu_parameterization: log
       separate_inputs: true
+      floor_k_min: 0.1
 
 loss:
   name: wilson
