@@ -271,3 +271,121 @@ class RaggedHierarchicalIntegratorB(BaseIntegrator):
             for k, v in forward_out.items()
             if k in self.predict_keys
         }
+
+
+class RaggedHierarchicalIntegratorC(BaseIntegrator):
+    """Ragged-input Model C — fully decoupled encoders for qi vs qbg Gamma.
+
+    Mirrors HierarchicalIntegratorC: instead of sharing two encoders (k, r)
+    between qi and qbg as in Model B, Model C uses *five* encoders so each
+    Gamma surrogate sees its own dedicated features:
+      - profile : drives qp (LogisticNormal profile)
+      - k_i, r_i : drive qi   (intensity Gamma) — concentration / rate heads
+      - k_bg, r_bg : drive qbg (background Gamma)
+
+    Empirically this decouples qi and qbg learning and outperforms B on
+    several datasets (per project memory, hierC > hierB on dataset 9b7c).
+
+    Like B's ragged variant, consumes the dict produced by
+    `pad_collate_ragged` and requires `metadata["group_label"]` and
+    `metadata["d"]` for the Wilson loss.
+    """
+
+    REQUIRED_ENCODERS = {
+        "profile": configs.RaggedShoeboxEncoderArgs,
+        "k_i":     configs.RaggedIntensityEncoderArgs,
+        "r_i":     configs.RaggedIntensityEncoderArgs,
+        "k_bg":    configs.RaggedIntensityEncoderArgs,
+        "r_bg":    configs.RaggedIntensityEncoderArgs,
+    }
+
+    ARGS = IntegratorModelArgs
+
+    def forward(self, batch: dict) -> dict[str, Any]:  # type: ignore[override]
+        return self._forward_impl(batch)
+
+    # Reuse B's metadata extraction — same batch shape, same fields needed
+    _get_metadata = RaggedHierarchicalIntegratorB._get_metadata
+
+    def _forward_impl(self, batch: dict) -> dict[str, Any]:
+        raw_3d = batch["counts"].float()
+        enc_in_3d = batch.get("standardized_data", raw_3d).float()
+        mask_3d = batch["mask"]
+        shapes = batch["shapes"]
+
+        B, Dmax, Hmax, Wmax = raw_3d.shape
+        K = Dmax * Hmax * Wmax
+
+        counts_flat = raw_3d.clamp(min=0).reshape(B, K)
+        mask_flat = mask_3d.reshape(B, K)
+
+        x = enc_in_3d.unsqueeze(1)  # (B, 1, Dmax, Hmax, Wmax)
+
+        # Five encoders, fully decoupled qi vs qbg
+        x_profile = self.encoders["profile"](x, mask_3d)
+        x_k_i     = self.encoders["k_i"](x, mask_3d)
+        x_r_i     = self.encoders["r_i"](x, mask_3d)
+        x_k_bg    = self.encoders["k_bg"](x, mask_3d)
+        x_r_bg    = self.encoders["r_bg"](x, mask_3d)
+
+        qbg = self.surrogates["qbg"](x_k_bg, x_r_bg)
+        qi = self.surrogates["qi"](x_k_i, x_r_i)
+
+        qp = self.surrogates["qp"](
+            x_profile,
+            shapes=shapes,
+            mask=mask_3d,
+            mc_samples=self.mc_samples,
+        )
+
+        zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        zp = _sample_profile(qp, self.mc_samples)
+        zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+
+        rate = zI * zp + zbg
+
+        metadata = self._get_metadata(batch)
+
+        out = IntegratorBaseOutputs(
+            rates=rate,
+            counts=counts_flat,
+            mask=mask_flat,
+            qbg=qbg,
+            qp=qp,
+            qi=qi,
+            zp=zp,
+            zbg=zbg,
+            metadata=metadata,
+        )
+        out = _assemble_outputs(out)
+
+        group_labels = metadata["group_label"].long()
+        out["group_label"] = group_labels
+        if hasattr(self.loss, "tau_per_group"):
+            out["tau_per_refl"] = self.loss.tau_per_group[group_labels]
+        if hasattr(self.loss, "log_alpha_per_group"):
+            import torch.nn.functional as F
+            out["alpha_per_refl"] = F.softplus(
+                self.loss.log_alpha_per_group[group_labels]
+            )
+        elif getattr(self.loss, "i_concentration_per_group", None) is not None:
+            out["alpha_per_refl"] = self.loss.i_concentration_per_group[group_labels]
+
+        return {
+            "forward_out": out,
+            "qp": qp,
+            "qi": qi,
+            "qbg": qbg,
+            "metadata": metadata,
+        }
+
+    _step = _ragged_hierarchical_step
+
+    def predict_step(self, batch, _batch_idx):  # type: ignore[override]
+        outputs = self(batch)
+        forward_out = outputs["forward_out"]
+        return {
+            k: v
+            for k, v in forward_out.items()
+            if k in self.predict_keys
+        }

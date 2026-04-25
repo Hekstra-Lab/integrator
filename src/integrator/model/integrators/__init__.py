@@ -5,7 +5,10 @@ from .hierarchical_integrator import (
     HierarchicalIntegratorC,
 )
 from .integrator import IntegratorModelA, IntegratorModelB, IntegratorModelC
-from .ragged_hierarchical_integrator import RaggedHierarchicalIntegratorB
+from .ragged_hierarchical_integrator import (
+    RaggedHierarchicalIntegratorB,
+    RaggedHierarchicalIntegratorC,
+)
 
 __all__ = [
     "BaseIntegrator",
@@ -16,4 +19,5 @@ __all__ = [
     "IntegratorModelB",
     "IntegratorModelC",
     "RaggedHierarchicalIntegratorB",
+    "RaggedHierarchicalIntegratorC",
 ]

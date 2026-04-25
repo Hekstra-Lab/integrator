@@ -33,6 +33,7 @@ from integrator.model.integrators import (
     IntegratorModelB,
     IntegratorModelC,
     RaggedHierarchicalIntegratorB,
+    RaggedHierarchicalIntegratorC,
 )
 from integrator.model.loss import (
     Loss,
@@ -61,8 +62,9 @@ REGISTRY = {
         "hierarchicalA": HierarchicalIntegratorA,
         "hierarchicalB": HierarchicalIntegratorB,
         "hierarchicalC": HierarchicalIntegratorC,
-        # Ragged-input variant of HierarchicalIntegratorB:
+        # Ragged-input variants:
         "hierarchicalB_ragged": RaggedHierarchicalIntegratorB,
+        "hierarchicalC_ragged": RaggedHierarchicalIntegratorC,
     },
     "surrogates": {
         "gammaA": GammaDistributionRepamA,
