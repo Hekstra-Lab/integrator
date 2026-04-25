@@ -127,13 +127,24 @@ class RaggedShoeboxDataset(Dataset):
         # Resolve the saved stats file path corresponding to the chosen
         # transform. If absent, we'll compute streaming stats from chunks
         # below once they're loaded.
+        #
+        # log1p is intentionally OFF this path: scvi-tools'
+        # `log_variational=True` recipe (the literature standard for
+        # skewed-count VAEs spanning 0 → 10⁵+ counts) feeds raw `log1p(x)`
+        # straight to the encoder and lets GroupNorm/LayerNorm handle the
+        # per-batch normalization. Z-scoring against a global (mean, std)
+        # of the heavy-tailed log1p distribution dominates the std with
+        # the bright Bragg-peak tail; bulk voxels get squashed near zero
+        # and the encoder learns from a near-degenerate input. Empirically
+        # this was a contributor to the qbg NaN around step 70 on dataset
+        # 140 — the fixed pipeline doesn't have this issue because every
+        # shoebox has the same shape, so the global std is well-defined.
         self._stat_mean = 0.0
         self._stat_std = 1.0
         self._stats_resolved_path = None
-        if stats_path is None:
+        if stats_path is None and transform != "log1p":
             default_names = {
                 "anscombe": "anscombe_stats.pt",
-                "log1p":    "log1p_stats.pt",
                 "none":     "stats.pt",
             }
             # Honor the legacy `anscombe=False` shorthand for "none"
@@ -249,7 +260,12 @@ class RaggedShoeboxDataset(Dataset):
         # If we didn't find a stats file matching the chosen transform,
         # compute streaming (mean, var) over valid voxels on the fly, then
         # cache them to disk so subsequent runs skip this work.
-        if self._stats_resolved_path is None and self.transform != "none":
+        # Skip for log1p — the literature recipe is to feed raw log1p(x)
+        # into the encoder without standardization (see comment above).
+        if (
+            self._stats_resolved_path is None
+            and self.transform not in ("none", "log1p")
+        ):
             cache_name = f"{self.transform}_stats.pt"
             cache_path = parent_dir / cache_name
             mean, var = self._compute_streaming_stats(self.transform)
