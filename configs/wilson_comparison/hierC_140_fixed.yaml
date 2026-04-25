@@ -108,11 +108,21 @@ surrogates:
     args:
       in_features: 64
       eps: 1.0e-06
+      # Opt out of factory's auto-injection of mean_init from
+      # qi_qbg_mean_init.pt. With qi_median=5777 on dataset 140, the
+      # auto-bias makes mu start ~5000 — Wilson prior KL gradient is
+      # huge against that, drives raw_mu/raw_fano into NaN within a
+      # few hundred steps. `mean_init: null` keeps the key present
+      # (so `_gammaB_wants_mean_init` returns False and prepare_priors
+      # doesn't regenerate it) but skips the bias initialization,
+      # leaving mu ≈ softplus(0) ≈ 0.7 at step 0.
+      mean_init: null
   qi:
     name: gammaB
     args:
       in_features: 64
       eps: 1.0e-06
+      mean_init: null
 
 loss:
   name: wilson

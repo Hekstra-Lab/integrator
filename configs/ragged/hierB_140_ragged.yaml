@@ -104,19 +104,21 @@ surrogates:
     args:
       in_features: 64
       eps: 1.0e-06
-      # Explicit so prepare_per_bin_priors doesn't try to compute it from
-      # the fixed-pipeline counts.pt. Rough background mean per pixel; the
-      # encoder learns the per-reflection value from this seed.
-      mean_init: 1.0
+      # Use null instead of a positive number so:
+      #   1. `_gammaB_wants_mean_init` sees the key as present and returns
+      #      False, so prepare_per_bin_priors doesn't try to compute it.
+      #   2. GammaB's __init__ skips bias initialization when target is None.
+      # Result: mu starts at ~softplus(0)+eps ≈ 0.7 — small and safe. A
+      # large positive mean_init drives mu toward the data's intensity
+      # scale at step 0, which on bright datasets like 140 produces an
+      # enormous Wilson KL gradient and NaN's after a few hundred steps.
+      mean_init: null
   qi:
     name: gammaB
     args:
       in_features: 64
       eps: 1.0e-06
-      # Explicit seed for total intensity per reflection. Rough order of
-      # magnitude is fine; encoder converges from any reasonable starting
-      # value. For very different datasets, bump or drop accordingly.
-      mean_init: 100.0
+      mean_init: null
 
 loss:
   name: wilson

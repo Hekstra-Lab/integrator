@@ -27,8 +27,12 @@ def _load_shoebox_array(path, weights_only=True):
     p = Path(path)
     npy = p.with_suffix(".npy")
     if npy.exists():
-        arr = np.load(npy, mmap_mode="r")
-        return torch.from_numpy(np.asarray(arr))
+        # Load eagerly into a writable RAM array. Using mmap_mode="r" then
+        # np.asarray() forces a copy anyway *and* makes from_numpy emit a
+        # spurious "non-writable" warning. Direct np.load is faster and
+        # cleaner. For datasets that don't fit in RAM, swap this for a
+        # lazy Dataset that slices the memmap in __getitem__.
+        return torch.from_numpy(np.load(npy))
     try:
         return torch.load(p, weights_only=weights_only)
     except TypeError:
