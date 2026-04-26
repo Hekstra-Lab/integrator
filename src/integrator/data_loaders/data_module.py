@@ -27,7 +27,10 @@ def _load_shoebox_array(path, weights_only=True):
     p = Path(path)
     npy = p.with_suffix(".npy")
     if npy.exists():
-        return torch.from_numpy(np.load(npy))
+        arr = np.load(npy)
+        if arr.dtype == np.uint16:
+            arr = arr.astype(np.int32)
+        return torch.from_numpy(arr)
     try:
         return torch.load(p, weights_only=weights_only)
     except TypeError:
