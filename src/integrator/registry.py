@@ -63,7 +63,6 @@ REGISTRY = {
         "hierarchicalA": HierarchicalIntegratorA,
         "hierarchicalB": HierarchicalIntegratorB,
         "hierarchicalC": HierarchicalIntegratorC,
-        # Ragged-input variants:
         "hierarchicalB_ragged": RaggedHierarchicalIntegratorB,
         "hierarchicalC_ragged": RaggedHierarchicalIntegratorC,
     },
