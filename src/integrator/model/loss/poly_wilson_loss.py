@@ -124,14 +124,21 @@ class PolyWilsonLoss(WilsonLoss):
     def _wavelength_to_bin(self, wavelength: Tensor) -> Tensor:
         """Bucketize per-refl wavelengths into [0, n_lambda_bins).
 
-        Out-of-range values are clamped (with a one-shot warning).
+        Bin convention: `[edges[i], edges[i+1])` for i < n_bins - 1, and
+        `[edges[-2], edges[-1]]` for the final bin (rightmost edge inclusive).
+        Values strictly outside `[edges[0], edges[-1]]` are clamped to the
+        nearest bin and a one-shot warning is printed.
         """
         edges = self.wavelength_bin_edges
-        # bucketize returns idx s.t. edges[idx-1] <= x < edges[idx]; subtract 1
-        # to get 0-indexed bin in [0, n_bins].
-        idx = torch.bucketize(wavelength, edges, right=False) - 1
+        # right=True gives left-closed right-open semantics:
+        #   bucketize(x) returns i s.t. edges[i-1] <= x < edges[i]
+        # so bin = idx - 1, and bin == n_lambda_bins means x >= edges[-1].
+        idx = torch.bucketize(wavelength, edges, right=True) - 1
+        # OOB is strictly outside [edges[0], edges[-1]] — having λ == edges[-1]
+        # is fine (we want it in the last bin, not flagged).
         if not self._oob_warned:
-            n_oob = int(((idx < 0) | (idx >= self.n_lambda_bins)).sum())
+            oob = (wavelength < edges[0]) | (wavelength > edges[-1])
+            n_oob = int(oob.sum())
             if n_oob > 0:
                 print(
                     f"[PolyWilsonLoss] {n_oob} reflection(s) have wavelength "
