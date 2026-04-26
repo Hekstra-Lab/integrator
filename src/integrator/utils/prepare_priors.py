@@ -188,7 +188,7 @@ def prepare_per_bin_priors(
             a summary and record what happened in run_metadata.yaml.
     """
     loss_name = cfg.get("loss", {}).get("name", "")
-    if loss_name not in ("per_bin", "wilson"):
+    if loss_name not in ("per_bin", "wilson", "poly_wilson"):
         return
 
     data_dir = Path(cfg["data_loader"]["args"]["data_dir"])
@@ -197,6 +197,35 @@ def prepare_per_bin_priors(
     # Read n_bins from config, fall back to 20
     if n_bins <= 0:
         n_bins = int(loss_args.get("n_bins", 20))
+
+    # Polychromatic-only: auto-inject wavelength_bin_edges path and generate
+    # quantile-based edges from metadata['wavelength'] if the file is missing.
+    if loss_name == "poly_wilson":
+        n_lambda_bins = int(loss_args.get("n_lambda_bins", 8))
+        if "wavelength_bin_edges" not in loss_args:
+            loss_args["wavelength_bin_edges"] = (
+                f"wavelength_bin_edges_{n_lambda_bins}.pt"
+            )
+        wbe = loss_args["wavelength_bin_edges"]
+        # Only generate when it's a path (str). Explicit list overrides.
+        if isinstance(wbe, str):
+            wbe_path = data_dir / wbe
+            if force or not wbe_path.exists():
+                ref_path = _resolve_reference_path(data_dir, cfg)
+                edges = _compute_wavelength_bin_edges(ref_path, n_lambda_bins)
+                torch.save(edges, wbe_path)
+                if events_out is not None:
+                    events_out.append(
+                        {
+                            "key": "wavelength_bin_edges",
+                            "path": str(wbe_path),
+                            "action": "regenerated" if wbe_path.exists() else "created",
+                            "reason": (
+                                f"quantile edges from metadata['wavelength'] "
+                                f"with n_lambda_bins={n_lambda_bins}"
+                            ),
+                        }
+                    )
 
     # Auto-inject concentration file paths when pi_cfg/pbg_cfg request gamma
     pi_cfg = loss_args.get("pi_cfg")
@@ -1296,6 +1325,38 @@ def _compute_crude_intensity(
     )
 
     return crude_I
+
+
+def _compute_wavelength_bin_edges(
+    metadata_path: Path,
+    n_lambda_bins: int,
+) -> Tensor:
+    """Quantile-based wavelength bin edges from metadata['wavelength'].
+
+    Returns a 1-D tensor of length `n_lambda_bins + 1` such that consecutive
+    edges define a half-open bin `[edges[i], edges[i+1])` (rightmost
+    inclusive). Equal-quantile spacing → roughly equal counts per bin → the
+    per-bin G_k posteriors get balanced gradient signal.
+    """
+    metadata = torch.load(metadata_path, weights_only=True)
+    if "wavelength" not in metadata:
+        raise KeyError(
+            f"metadata.pt at {metadata_path} has no 'wavelength' column; "
+            "this CLI step requires output from refltorch.mksbox-laue."
+        )
+    wavelength = metadata["wavelength"].float()
+    if wavelength.numel() == 0:
+        raise ValueError("metadata['wavelength'] is empty")
+    qs = torch.linspace(0.0, 1.0, n_lambda_bins + 1)
+    edges = torch.quantile(wavelength, qs)
+    # Guard: degenerate spectra (all-equal λ) would collapse all edges to one
+    # value and break bucketize. Spread by a tiny epsilon if so.
+    if edges[-1] <= edges[0]:
+        raise ValueError(
+            f"wavelength range is degenerate: [{float(edges[0]):.6f}, "
+            f"{float(edges[-1]):.6f}]; cannot form {n_lambda_bins} bins"
+        )
+    return edges
 
 
 def _compute_tau_per_group(
