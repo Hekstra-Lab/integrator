@@ -421,7 +421,7 @@ def construct_data_loader(cfg):
     # Ragged path: the ragged data module has a different kwarg surface
     # (chunks_dir, val_frac, bucket_mult, ...) that doesn't fit the
     # fixed-pipeline DataLoaderArgs dataclass. Pass through directly.
-    if cfg["data_loader"]["name"] == "ragged_data":
+    if cfg["data_loader"]["name"] in ("ragged_data", "poly_data"):
         return dl_cls(**args)
 
     # Fixed-pipeline path — keep existing behavior.

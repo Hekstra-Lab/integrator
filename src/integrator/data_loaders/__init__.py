@@ -3,6 +3,7 @@ from .data_module import (
     ShoeboxDataModule2D,
     SimulatedShoeboxLoader,
 )
+from .poly_data_module import PolyShoeboxDataModule
 from .ragged_data_module import (
     RaggedShoeboxDataModule,
     RaggedShoeboxDataset,

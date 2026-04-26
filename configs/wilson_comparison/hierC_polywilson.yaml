@@ -117,7 +117,7 @@ loss:
     pprf_weight: 1.0
 
 data_loader:
-  name: default
+  name: poly_data
   args:
     data_dir: *data_dir
     batch_size: 256

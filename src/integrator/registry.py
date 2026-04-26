@@ -1,4 +1,5 @@
 from integrator.data_loaders import (
+    PolyShoeboxDataModule,
     RaggedShoeboxDataModule,
     ShoeboxDataModule,
     ShoeboxDataModule2D,
@@ -85,5 +86,6 @@ REGISTRY = {
         "shoebox_data_module_2d": ShoeboxDataModule2D,
         "simulated_data": SimulatedShoeboxLoader,
         "ragged_data": RaggedShoeboxDataModule,
+        "poly_data": PolyShoeboxDataModule,
     },
 }
