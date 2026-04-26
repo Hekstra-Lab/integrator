@@ -1587,10 +1587,36 @@ def _get_background_for_prior(
 def _crude_background_from_cfg(
     counts: Tensor, masks: Tensor, cfg: dict
 ) -> Tensor:
-    """Read shoebox dimensions from config and compute crude background."""
+    """Read shoebox dimensions from config and compute crude background.
+
+    Tolerates both the uppercase (D/H/W) and lowercase (d/h/w) conventions,
+    since data_loader.args is uppercase but global_vars is lowercase.
+    Falls back to (3, 21, 21) only if neither casing is present, and
+    cross-checks the inferred geometry against counts.shape[1].
+    """
     dl_args = cfg.get("data_loader", {}).get("args", {})
-    n_frames = int(dl_args.get("d", 3))
-    n_pixels = int(dl_args.get("h", 21)) * int(dl_args.get("w", 21))
+
+    def _get_upper_or_lower(key_upper: str, key_lower: str, default: int) -> int:
+        if key_upper in dl_args:
+            return int(dl_args[key_upper])
+        if key_lower in dl_args:
+            return int(dl_args[key_lower])
+        return default
+
+    n_frames = _get_upper_or_lower("D", "d", 3)
+    h = _get_upper_or_lower("H", "h", 21)
+    w = _get_upper_or_lower("W", "w", 21)
+    n_pixels = h * w
+
+    expected = n_frames * n_pixels
+    actual = int(counts.shape[1])
+    if expected != actual:
+        raise ValueError(
+            f"shoebox geometry mismatch: config says D*H*W = {n_frames}*{h}*{w} "
+            f"= {expected}, but counts has shape (N, {actual}). Update "
+            "data_loader.args.{D,H,W} (uppercase) to match the dimensions used "
+            "in refltorch.mksbox-laue."
+        )
     return _compute_crude_background(counts, masks, n_frames, n_pixels)
 
 

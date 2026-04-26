@@ -1,18 +1,3 @@
-# Polychromatic Wilson loss + HierC integrator (HEWL Laue, 1118 dataset).
-#
-# Stage 1: per-row independent shoeboxes — each (hkl, λ) row of the
-# laue-dials integrated.refl produces its own shoebox. Harmonic rows that
-# share geometry will have duplicate pixel data; the model treats them as
-# semi-independent observations regularized by their own (λ, d)-derived
-# Wilson priors. Careless re-deconvolves downstream.
-#
-# Edit:
-#   - global_vars.data_dir         to your refltorch.mksbox-laue out dir
-#   - loss.args.wavelength_bin_edges  to span your beam spectrum
-#   - global_vars.{d, h, w}        if you extracted with different shoebox dims
-#
-# d=1 is the laue stills shoebox depth from refltorch.mksbox-laue.
-
 global_vars:
   encoder_out: 64
   mc_samples: 100
