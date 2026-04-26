@@ -40,7 +40,44 @@ def _softplus_inverse_shifted(target: float, shift: float) -> float:
 
 # %%
 class GammaDistributionRepamA(nn.Module):
-    """Gamma(k, r): k via softplus+k_min, r via softplus."""
+    """Gamma(k, r) directly parameterized — both heads independent.
+
+    Two activation modes via ``parameterization``:
+      * ``"softplus"`` (default — backward-compatible):
+            k = softplus(raw_k) + k_min
+            r = softplus(raw_r) + eps
+        For large raw_k, softplus is ≈ linear, so k stays comparable in
+        magnitude to raw_k. With Kaiming-init weights × normalized encoder
+        features, the head can only realistically reach k of order 10²–10³.
+        Consequence on bright crystallography data: the noise-to-signal
+        ratio σ/μ = 1/√k floors at ~1/√(10⁴) = 1e-2 — *worse* than
+        Poisson at high intensity (CRLB says σ/μ should be 1/√I, e.g.
+        3e-3 at I=10⁵). The Laplace approximation isn't satisfied.
+
+      * ``"log"`` (recommended for high-dynamic-range Poisson data):
+            k = exp(raw_k) + k_min
+            r = exp(raw_r) + eps
+        raw_k spans log k, so the linear head produces k spanning many
+        decades while weights stay O(1). Matches gammaB's mu-side
+        exponential range while keeping gammaA's structural advantage —
+        k is parameterized directly with a hard floor at k_min, so the
+        ``mu/fano → 0`` rsample-NaN failure path that breaks gammaB on
+        bright-tail data is structurally absent.
+
+    Bias initialization:
+      * ``k_init``: target k at step 0. Bias is set so the chosen
+        activation evaluates to k_init. Default 1.0 reproduces the legacy
+        gammaA init.
+      * ``r_init``: target r at step 0. ``None`` (default) leaves r's
+        bias at PyTorch's Kaiming-uniform default (legacy behavior).
+
+    ``zero_head_weights=True`` zeroes ``linear_k.weight`` (and
+    ``linear_r.weight``, or ``fc.weight``) at construction so initial
+    (k, r) is identical across reflections at step 0 — eliminates the
+    seed-dependent per-reflection variance that random Kaiming weights
+    × encoder features inject. Recommended on bright-tail data; default
+    False for backward compat.
+    """
 
     def __init__(
         self,
@@ -48,23 +85,84 @@ class GammaDistributionRepamA(nn.Module):
         eps: float = 1e-6,
         k_min: float = 0.1,
         separate_inputs: bool = False,
+        parameterization: str = "softplus",
+        k_init: float = 1.0,
+        r_init: float | None = None,
+        zero_head_weights: bool = False,
         **kwargs,
     ):
         super().__init__()
         self.eps = eps
         self.k_min = k_min
         self.separate_inputs = separate_inputs
+        if parameterization not in ("softplus", "log"):
+            raise ValueError(
+                f"parameterization must be 'softplus' or 'log'; "
+                f"got {parameterization!r}"
+            )
+        self.parameterization = parameterization
 
         if separate_inputs:
             self.linear_k = nn.Linear(in_features, 1)
             self.linear_r = nn.Linear(in_features, 1)
-            _init_k_bias(self.linear_k, k_min=k_min)
+            self._init_k_head_bias(self.linear_k, k_init)
+            self._init_r_head_bias(self.linear_r, r_init)
         else:
             self.fc = nn.Linear(in_features, 2)
-            # Initialize the k-bias (first output unit)
-            if self.fc.bias is not None:
-                with torch.no_grad():
-                    self.fc.bias[0] = math.log(math.expm1(1.0 - k_min))
+            self._init_fc_biases(k_init, r_init)
+
+        if zero_head_weights:
+            with torch.no_grad():
+                if separate_inputs:
+                    self.linear_k.weight.zero_()
+                    self.linear_r.weight.zero_()
+                else:
+                    self.fc.weight.zero_()
+
+    def _k_bias(self, target: float) -> float:
+        """Bias value so the k head evaluates to `target` at init."""
+        delta = max(target - self.k_min, 1e-12)
+        if self.parameterization == "log":
+            return math.log(delta)
+        # softplus path: solve softplus(b) = target - k_min, falling back
+        # to the linear approximation for large delta to avoid expm1
+        # overflow.
+        if delta > 30.0:
+            return float(delta)
+        return math.log(math.expm1(delta))
+
+    def _r_bias(self, target: float) -> float:
+        """Bias value so the r head evaluates to `target` at init."""
+        delta = max(target - self.eps, 1e-12)
+        if self.parameterization == "log":
+            return math.log(delta)
+        if delta > 30.0:
+            return float(delta)
+        return math.log(math.expm1(delta))
+
+    def _init_k_head_bias(self, linear: nn.Linear, target: float) -> None:
+        if linear.bias is None:
+            return
+        with torch.no_grad():
+            linear.bias.fill_(self._k_bias(target))
+
+    def _init_r_head_bias(
+        self, linear: nn.Linear, target: float | None
+    ) -> None:
+        if target is None or linear.bias is None:
+            return
+        with torch.no_grad():
+            linear.bias.fill_(self._r_bias(target))
+
+    def _init_fc_biases(
+        self, k_init: float, r_init: float | None
+    ) -> None:
+        if self.fc.bias is None:
+            return
+        with torch.no_grad():
+            self.fc.bias[0] = self._k_bias(k_init)
+            if r_init is not None:
+                self.fc.bias[1] = self._r_bias(r_init)
 
     def forward(
         self,
@@ -77,8 +175,12 @@ class GammaDistributionRepamA(nn.Module):
         else:
             raw_k, raw_r = self.fc(x).chunk(2, dim=-1)
 
-        k = _bound_k(raw_k, self.k_min)
-        r = F.softplus(raw_r) + self.eps
+        if self.parameterization == "log":
+            k = torch.exp(raw_k) + self.k_min
+            r = torch.exp(raw_r) + self.eps
+        else:
+            k = F.softplus(raw_k) + self.k_min
+            r = F.softplus(raw_r) + self.eps
 
         return Gamma(concentration=k.flatten(), rate=r.flatten())
 
