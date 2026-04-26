@@ -1,0 +1,167 @@
+global_vars:
+  encoder_out: &encoder_out 64
+  dir_out: &dir_out 64
+  mc_samples: &mc_samples 100
+  data_dir: &data "/n/hekstra_lab/people/aldama/integrator_data/simulated_data"
+  d: &d 1
+  h: &h 21
+  w: &w 21
+integrator:
+  name: modelb
+  args:
+    data_dim: "2d"
+    d: *d
+    h: *h
+    w: *w
+    lr: 0.001
+    encoder_out: *encoder_out
+    weight_decay: 0.0
+    mc_samples: *mc_samples
+    renyi_scale: 0.0
+    predict_keys:
+      - refl_ids
+      - is_test
+      - qi_mean
+      - qi_var
+      - qi_pred_var
+      - qi_params
+      - qp_mean
+      - qbg_mean
+      - qbg_var
+      - qbg_params
+      - concentration
+      - intensity
+      - background
+encoders:
+  - name: shoebox_encoder
+    args:
+      data_dim: 2d
+      input_shape: [*h, *w]
+      in_channels: 1
+      encoder_out: *encoder_out
+      conv1_out_channels: 16
+      conv1_kernel_size: [3, 3]
+      conv1_padding: [1, 1]
+      norm1_num_groups: 4
+      pool_kernel_size: [2, 2]
+      pool_stride: [2, 2]
+      conv2_out_channels: 32
+      conv2_kernel_size: [3, 3]
+      conv2_padding: [0, 0]
+      norm2_num_groups: 4
+  - name: intensity_encoder
+    args:
+      data_dim: 2d
+      in_channels: 1
+      encoder_out: *encoder_out
+      conv1_out_channels: 16
+      conv1_kernel_size: [3, 3]
+      conv1_padding: [1, 1]
+      norm1_num_groups: 4
+      pool_kernel_size: [2, 2]
+      pool_stride: [2, 2]
+      conv2_out_channels: 32
+      conv2_kernel_size: [3, 3]
+      conv2_padding: [0, 0]
+      norm2_num_groups: 4
+      conv3_out_channels: 64
+      conv3_kernel_size: [3, 3]
+      conv3_padding: [1, 1]
+      norm3_num_groups: 8
+  - name: intensity_encoder
+    args:
+      data_dim: 2d
+      in_channels: 1
+      encoder_out: *encoder_out
+      conv1_out_channels: 16
+      conv1_kernel_size: [3, 3]
+      conv1_padding: [1, 1]
+      norm1_num_groups: 4
+      pool_kernel_size: [2, 2]
+      pool_stride: [2, 2]
+      conv2_out_channels: 32
+      conv2_kernel_size: [3, 3]
+      conv2_padding: [0, 0]
+      norm2_num_groups: 4
+      conv3_out_channels: 64
+      conv3_kernel_size: [3, 3]
+      conv3_padding: [1, 1]
+      norm3_num_groups: 8
+surrogates:
+  qp:
+    name: dirichlet
+    args:
+      in_features: *encoder_out #in_features: *dir_out
+      sbox_shape: [*d, *h, *w]
+      eps: 1.0e-06
+  qbg:
+    name: gammaB
+    args:
+      in_features: *encoder_out
+      eps: 1.0e-06
+  qi:
+    name: gammaB
+    args:
+      in_features: *encoder_out
+      eps: 1.0e-06
+loss:
+  name: default
+  args:
+    mc_samples: *mc_samples
+    eps: 1.0e-06
+    pprf_cfg:
+      name: dirichlet
+      params:
+          #concentration: 5.0
+        concentration: 'concentration.pt'
+        shape: [*d, *h, *w]
+      weight: 0.005
+    pbg_cfg:
+      name: exponential
+      params:
+        rate: 1.0
+      weight: 0.5
+    pi_cfg:
+      name: exponential
+      params:
+        rate: 0.001
+      weight: 0.5
+
+data_loader:
+  name: simulated_data
+  args:
+    data_dir: *data
+    batch_size: 1000
+    val_split: 0.2
+    test_split: 0.0
+    num_workers: 0 # 0 for local
+    include_test: false
+    subset_size: null
+    cutoff: null
+    shoebox_file_names:
+      data_dir: *data
+      counts: counts.pt
+      masks: masks.pt
+      stats: stats_anscombe.pt
+      reference: reference.pt
+      standardized_counts: null
+    D: *d
+    H: *h
+    W: *w
+    anscombe: true
+trainer:
+  max_epochs: 1000
+  accelerator: gpu
+  devices: 1
+  logger: true
+  precision: '32'
+  check_val_every_n_epoch: 10
+  log_every_n_steps: 1
+  deterministic: false
+  enable_checkpointing: true
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+logger:
+  d: *d
+  h: *h
+  w: *w

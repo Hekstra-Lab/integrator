@@ -1,0 +1,157 @@
+global_vars:
+  encoder_out: &encoder_out 64
+  mc_samples: &mc_samples 100
+  data_dir: &data "/Users/luis/integrator/tests/data/3d/hewl_9b7c/"
+integrator:
+  name: modelb
+  args:
+    lr: 0.001
+    mc_samples: *mc_samples
+    renyi_scale: 0.0
+    data_dim: "3d"
+    encoder_out: *encoder_out
+    d: &d 3
+    h: &h 21
+    w: &w 21
+    weight_decay: 0.0
+    predict_keys: default
+encoders:
+  - encoder1:
+      name: shoebox_encoder
+      args:
+        data_dim: 3d
+        in_channels: 1
+        input_shape: [*d, *h, *w]
+        encoder_out: *encoder_out
+        conv1_out_channels: 64
+        conv1_kernel_size: [1, 3, 3]
+        conv1_padding: [0, 1, 1]
+        norm1_num_groups: 4
+        pool_kernel_size: [1, 2, 2]
+        pool_stride: [1, 2, 2]
+        conv2_out_channels: 128
+        conv2_kernel_size: [3, 3, 3]
+        conv2_padding: [0, 0, 0]
+        norm2_num_groups: 4
+  - encoder2:
+      name: intensity_encoder
+      args:
+        data_dim: 3d
+        in_channels: 1
+        encoder_out: *encoder_out
+        conv1_out_channels: 64
+        conv1_kernel_size: [3, 3, 3]
+        conv1_padding: [1, 1, 1]
+        norm1_num_groups: 4
+        pool_kernel_size: [1, 2, 2]
+        pool_stride: [1, 2, 2]
+        conv2_out_channels: 128
+        conv2_kernel_size: [3, 3, 3]
+        conv2_padding: [0, 0, 0]
+        norm2_num_groups: 4
+        conv3_out_channels: 256
+        conv3_kernel_size: [3, 3, 3]
+        conv3_padding: [1, 1, 1]
+        norm3_num_groups: 8
+  - encoder3:
+      name: intensity_encoder
+      args:
+        data_dim: 3d
+        in_channels: 1
+        encoder_out: *encoder_out
+        conv1_out_channels: 64
+        conv1_kernel_size: [3, 3, 3]
+        conv1_padding: [1, 1, 1]
+        norm1_num_groups: 4
+        pool_kernel_size: [1, 2, 2]
+        pool_stride: [1, 2, 2]
+        conv2_out_channels: 128
+        conv2_kernel_size: [3, 3, 3]
+        conv2_padding: [0, 0, 0]
+        norm2_num_groups: 4
+        conv3_out_channels: 256
+        conv3_kernel_size: [3, 3, 3]
+        conv3_padding: [1, 1, 1]
+        norm3_num_groups: 8
+surrogates:
+  qp:
+    name: dirichlet
+    args:
+      in_features: *encoder_out
+      out_features: [*d, *h, *w]
+      constraint: softplus
+  qbg:
+    name: gammaA
+    args:
+      in_features: *encoder_out
+      estimand: background
+  qi:
+    name: gammaA
+    args:
+      in_features: *encoder_out
+      estimand: intensity
+loss:
+  name: loss
+  args:
+    mc_smpls: 100
+    eps: 0.000001
+  priors:
+    intensity:
+      name: gamma
+      params:
+        concentration: 1.0
+        rate: 0.5
+      weight: 0.01
+    background:
+      name: gamma
+      params:
+        concentration: 1.0
+        rate: 0.5
+      weight: 0.5
+    profile:
+      name: 'dirichlet'
+      params:
+        concentration: '/Users/luis/integrator/tests/data/3d/hewl_9b7c/concentration_3d.pt'
+      weight: 0.5
+data_loader:
+  name: default
+  args:
+    data_dir: *data
+    batch_size: 10
+    val_split: 0.3
+    test_split: 0.0
+    num_workers: 0
+    include_test: false
+    subset_size: 100
+    cutoff: 2000
+    shoebox_file_names:
+      counts: "counts_3d_subset.pt"
+      masks: "masks_3d_subset.pt"
+      stats: "stats_3d.pt"
+      reference: "reference_3d_subset.pt"
+      standardized_counts: null
+    D: 3
+    H: 21
+    W: 21
+    anscombe: true
+trainer:
+  args:
+    epochs: 5
+    accelerator: cpu
+    devices: 1
+    logger: true
+    precision: "32"
+    check_val_every_n_epoch: 2
+    log_every_n_steps: 1
+    deterministic: false
+    callbacks:
+      pred_writer:
+        output_dir: null
+        write_interval: epoch
+    enable_checkpointing: true
+logger:
+  d: 3
+  h: 21
+  w: 21
+output:
+  refl_file: "/Users/luis/integratorv3/integrator/data/hewl_816/reflections_.refl"

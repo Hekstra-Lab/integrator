@@ -1,0 +1,5 @@
+priors:
+  K: 7500.0
+  B: 20.0
+n_per_bin: 10000
+n_frames: 1

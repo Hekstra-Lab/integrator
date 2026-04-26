@@ -105,7 +105,6 @@ data_loader:
     include_test: false
     subset_size: 100
     cutoff: 2000
-    use_metadata: true
     shoebox_file_names:
       counts: "counts_3d_subset.pt"
       masks: "masks_3d_subset.pt"

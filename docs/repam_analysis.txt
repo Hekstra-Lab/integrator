@@ -1,0 +1,267 @@
+Gamma Reparameterization Analysis
+================================================================================
+
+
+Overview
+--------
+We use a Gamma posterior q(I) = Gamma(k, r) for Bragg reflection intensities
+in our variational integrator.  The inference network predicts two raw
+(unconstrained) parameters per reflection, which are mapped to the Gamma's
+concentration k and rate r through one of four reparameterizations (A-D).
+All four produce the same distributional family but differ in how raw network
+outputs map to (k, r), and this mapping has significant consequences for
+gradient flow, posterior calibration, and training stability.
+
+
+The Four Reparameterizations
+-----------------------------
+sp(x) = log(1 + eˣ) is the softplus function.  k_min = 0.1, eps = 1e-6.
+
+  Repam A  (raw_k, raw_r)
+    k = sp(raw_k) + k_min          k depends on: raw_k only
+    r = sp(raw_r) + eps             r depends on: raw_r only
+
+  Repam B  (raw_mu, raw_F)
+    mu = sp(raw_mu) + eps           k depends on: both
+    F  = sp(raw_F) + eps            r depends on: raw_F only
+    r  = 1/F
+    k  = mu * r
+
+  Repam C  (raw_mu, raw_phi)
+    mu  = sp(raw_mu) + eps          k depends on: raw_phi only
+    phi = sp(raw_phi) + eps         r depends on: both
+    k   = 1/phi
+    r   = 1/(phi * mu)
+
+  Repam D  (raw_k, raw_F)
+    k = sp(raw_k) + k_min          k depends on: raw_k only
+    F = sp(raw_F) + eps             r depends on: raw_F only
+    r = 1/F
+
+
+IRG Reliability Analysis
+-------------------------
+The foundational constraint on all four reparameterizations was established
+by analysis of the Implicit Reparameterization Gradient (IRG, Figurnov et al.
+2018) used by both PyTorch and TensorFlow Probability to differentiate
+through Gamma samples.
+
+The IRG for the concentration parameter alpha is:
+
+    dx/dalpha = -(dF(x;alpha)/dalpha) / f(x;alpha)
+
+where F and f are the Gamma CDF and PDF evaluated at the sample x.  For the
+rate parameter beta, the gradient is the exact scale relation dx/dbeta = -x/beta.
+
+Key findings:
+
+  1. Concentration gradient breakdown at small alpha.  For alpha < ~0.01 in
+     float32, the IRG breaks down in BOTH PyTorch and TFP.  The Gamma sample x
+     itself underflows toward zero (the Marsaglia-Tsang sampler draws x ~ alpha
+     for small alpha, and float32 cannot represent values below ~1.2e-38).
+     Once x underflows, both the numerator dF/dalpha and denominator f(x;alpha)
+     collapse, producing silently zero or garbage gradients.
+
+  2. Rate gradient is more robust.  The rate gradient -x/beta fails only when
+     x itself underflows, which happens at a more extreme regime.  TFP's
+     log_rate branch computes -x directly (avoiding a two-step chain rule
+     through (-x/beta)*beta), giving additional stability near the underflow
+     boundary.
+
+  3. The log_rate branch does NOT fix concentration gradients.  Switching to
+     TFP's log_rate parameterization changes only the rate-side gradient path.
+     The concentration gradient formula is identical in both branches.  If the
+     network can produce small alpha, the concentration gradient is lost
+     regardless.
+
+Practical consequence:  The inference network must be designed so that k > 0.1
+in float32.  This is enforced in our implementation via k_min = 0.1
+(softplus + offset for A/D; clamp for B/C).  With this floor, all four
+reparameterizations produce reliable gradients with 0% NaN and 0% zero-gradient
+occurrences across all tested operating points.
+
+
+Why Different Reparameterizations Produce Different Results
+------------------------------------------------------------
+Given that all four map to the same Gamma family and all have reliable
+gradients (with k_min = 0.1), the differences in training behavior arise
+from the Jacobian structure of the mapping (raw_1, raw_2) -> (k, r).  This
+Jacobian determines how ELBO gradients propagate back to the network's
+parameters.
+
+
+Jacobian Structure
+~~~~~~~~~~~~~~~~~~
+sigma'(x) = sigmoid(x) is the softplus derivative.
+
+  Repam A (diagonal):
+
+      | dk/d(raw_k)   dk/d(raw_r) |     | sigma'(raw_k)      0           |
+      |                            |  =  |                                |
+      | dr/d(raw_k)   dr/d(raw_r) |     |     0           sigma'(raw_r)  |
+
+
+  Repam D (diagonal):
+
+      | dk/d(raw_k)   dk/d(raw_F) |     | sigma'(raw_k)         0              |
+      |                            |  =  |                                      |
+      | dr/d(raw_k)   dr/d(raw_F) |     |     0           -sigma'(raw_F) / F^2  |
+
+
+  Repam B (coupled -- k depends on both raw params):
+
+      | dk/d(raw_mu)  dk/d(raw_F) |     | sigma'(raw_mu)*r   -mu*sigma'(raw_F)/F^2  |
+      |                            |  =  |                                            |
+      | dr/d(raw_mu)  dr/d(raw_F) |     |       0              -sigma'(raw_F)/F^2    |
+
+
+  Repam C (coupled -- r depends on both raw params):
+
+      | dk/d(raw_mu)    dk/d(raw_phi)  |     |         0             -sigma'(raw_phi)/phi^2      |
+      |                                |  =  |                                                   |
+      | dr/d(raw_mu)    dr/d(raw_phi)  |     | -sigma'(raw_mu)/(phi*mu^2)   -sigma'(raw_phi)/(phi^2*mu) |
+
+A/D have diagonal Jacobians: each raw parameter controls exactly one
+distributional parameter.  B/C have off-diagonal entries: a single raw
+parameter affects both k and r, creating coupling.
+
+
+Consequence 1: Jacobian Conditioning
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The condition number kappa = sigma_max / sigma_min of the Jacobian determines
+how uniformly different parameter directions are learned.
+
+    Repam     kappa (k=1)     kappa (k=100)     kappa (k=500)     Scaling
+    -----     -----------     -------------     -------------     -------
+      A           1.2               2.0               2.0          O(1)
+      B           2.4             3,468            86,646          O(k)
+      C           3.2               3.7               3.7          O(1)
+      D           1.8               1.0               1.0          O(1)
+
+B's condition number grows linearly with k.  At k = 500, one direction in
+parameter space learns 86,000x faster than the other.  This creates severe
+optimization difficulties for strong reflections.
+
+
+Consequence 2: Gradient Competition
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+When the Jacobian is coupled, the ELBO gradient through a single raw
+parameter receives contributions from both dL/dk and dL/dr.  If these
+contributions have opposite signs, they partially cancel -- the optimizer
+receives a weak net signal despite strong individual gradients.
+
+Measured Pearson correlation between grad_raw1(L) and grad_raw2(L)
+(at y = 1000, k = 1, N = 1000 samples):
+
+    Repam     Correlation     Interpretation
+    -----     -----------     --------------
+      A          -0.68        Moderate (from shared sample, not parameterization)
+      B          -1.00        Perfect competition (from coupling)
+      C          -0.70        Moderate
+      D          +0.71        Cooperative (both params pushed same direction)
+
+B's perfect anti-correlation means the two gradient components nearly cancel
+for every sample.  D's positive correlation means both parameters receive
+reinforcing gradient signals -- the optimizer makes consistent progress on
+every step.
+
+
+Consequence 3: Convergence on a Realistic ELBO
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Optimizing q(I_i) = Gamma(k_i, r_i) for three reflections with observed
+counts y = [5, 50, 500], prior Gamma(1, 0.001), Adam with lr = 0.01,
+64 MC samples per gradient estimate.
+
+All four reparameterizations eventually converge to the correct posterior
+means, but at very different speeds:
+
+    Repam     Steps to correct means     Final loss (15K)     Means at 5K steps
+    -----     ----------------------     ----------------     -----------------
+      A            ~650                      -2739            5.8, 51.6, 496.5
+      D           ~7,000                     -2732            6.0, 51.6, 401.2
+      B          ~50,000+ (extrap.)          -2348 (at 15K)   6.0, 22.6,  25.3
+      C          ~50,000+ (extrap.)          -1745 (at 5K)    6.0, 24.0,  27.1
+
+A converges fastest: all three means are correct within 650 steps.  D
+converges to the correct means but requires ~10x more steps, reaching the
+y = 500 target by step 7,000.  B and C are not stuck but converge extremely
+slowly -- at 15K steps, B's mean for y = 500 has only reached 102.  The
+coupled Jacobian slows mean learning for large intensities because adjusting
+the mean-controlling parameter simultaneously perturbs k, triggering a
+competing gradient that partially cancels progress.
+
+A notable pathology of B/C during slow convergence: while the mean is still
+far from the target, k grows to very large values (B: k ~ 550 at mean = 102
+for the y = 500 reflection).  The optimizer concentrates the posterior tightly
+around the wrong mean before eventually shifting it to the correct value.
+
+
+Consequence 4: Posterior Calibration (Noise-to-Signal Ratio)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+For a Gamma(k, r) posterior, the noise-to-signal ratio is:
+
+    std / mean = 1 / sqrt(k)
+
+Comparing the learned posteriors against theoretical bounds (Poisson limit,
+Cramer-Rao lower bound, Laplace approximation) reveals a calibration
+difference:
+
+Without k_max:  Repams A and D produce posteriors that are overconcentrated
+at high intensity -- the scatter falls below the theoretical curves, meaning
+k is too large.  Repams B and C track the theoretical curves correctly.
+
+With k_max = 500:  All repams show an artificial floor at
+std/mean >= 1/sqrt(500) ~ 0.045, making posteriors underconcentrated for
+strong reflections (I > ~1000) where the correct k exceeds 500.
+
+Why B/C are naturally calibrated:  The braking mechanism is gradient
+competition through coupling, not a vanishing Jacobian.  In repam B,
+raw_fano controls both k and r.  When the optimizer tries to increase k
+(by decreasing the Fano factor), it receives a competing gradient from
+dL/dr that resists the change.  The NLL constrains the mean mu tightly to
+the data, leaving the Fano factor as the only degree of freedom for k.
+But adjusting the Fano factor triggers the competing r-gradient, which acts
+as a data-driven restoring force.  This competition prevents k from
+overshooting.
+
+In repam D, raw_k receives ONLY dL/dk.  There is no competing signal.  The
+NLL prefers narrow posteriors (large k reduces variance), and the KL penalty
+grows only as O(log k), which is too weak to counterbalance.  So k
+overshoots.
+
+The fundamental tension:  The coupling that produces correct calibration in
+B/C is the same coupling that causes their optimization pathologies
+(condition number blowup, gradient competition, slow convergence).  D's
+independence gives clean optimization but removes the natural brake on k.
+
+
+Consequence 5: k_max Is Not a Solution
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Setting k_max (via sigmoid bounding) prevents k from exceeding a fixed
+ceiling, addressing both the numerical NaN at k ~ 950 and the
+overconcentration.  But the correct k for strong reflections (I ~ 10^4) is
+k ~ 1/0.03^2 ~ 1100, which exceeds any practical k_max.  The result is an
+artificial plateau in the noise-to-signal plot where the posterior cannot
+reach the correct concentration.
+
+
+Summary
+--------
+
+    Property               A              B                C              D
+    --------               -              -                -              -
+    Jacobian               Diagonal       Coupled (k row)  Coupled (r row)  Diagonal
+    Condition number       O(1)           O(k)             O(1)           O(1)
+    Gradient correlation   -0.68          -1.00            -0.70          +0.71
+    Convergence speed      Fastest        Very slow        Very slow      Moderate
+                           (~650 steps)   (~50K+ steps)    (~50K+ steps)  (~7K steps)
+    Calibration (no k_max) Overconc.      Correct          Correct        Overconc.
+    Clamp dead zones       0%             46%              22%            0%
+
+No single reparameterization achieves all desirable properties simultaneously.
+A/D have clean optimization but overconcentrate.  B/C are naturally calibrated
+but have pathological gradient geometry.  Resolving this tension requires
+either (a) a numerical fix that allows large k without NaN (e.g. CLT-based
+rsample for k >> 1) combined with a statistically appropriate prior that
+provides adequate pushback, or (b) a new parameterization that introduces
+data-adaptive braking without full Jacobian coupling.
