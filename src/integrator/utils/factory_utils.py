@@ -294,6 +294,7 @@ def _get_loss_module(
         "pbg_cfg",
         "pi_cfg",
         "n_bins",
+        "n_lambda_bins",
         "profile_binning",
         "profile_basis_type",
         "profile_basis_d",
