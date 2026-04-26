@@ -69,11 +69,17 @@ class PolyWilsonLoss(WilsonLoss):
         s_squared_per_group=None,
         **kwargs,
     ):
+        import inspect
+
+        parent_params = set(
+            inspect.signature(WilsonLoss.__init__).parameters
+        ) - {"self"}
+        parent_kwargs = {k: v for k, v in kwargs.items() if k in parent_params}
         super().__init__(
             init_from_tau=init_from_tau,
             tau_per_group=tau_per_group,
             s_squared_per_group=s_squared_per_group,
-            **kwargs,
+            **parent_kwargs,
         )
 
         edges = _load_buffer(wavelength_bin_edges).to(torch.float32)

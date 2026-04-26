@@ -283,28 +283,11 @@ def _get_loss_module(
     )
     kwargs = shallow_dict(loss_args)
 
-    # Forward extra keys from loss.args for custom loss classes
-    # Keys consumed by the prior-prep pipeline or globally, not by
-    # individual loss classes. Filter them out before forwarding
-    # loss.args kwargs to the loss constructor.
-    standard_keys = {
-        "mc_samples",
-        "eps",
-        "pprf_cfg",
-        "pbg_cfg",
-        "pi_cfg",
-        "n_bins",
-        "n_lambda_bins",
-        "profile_binning",
-        "profile_basis_type",
-        "profile_basis_d",
-        "profile_basis_max_order",
-        "profile_basis_sigma_ref",
-        "profile_basis_sigma_z",
-        "profile_smooth_sigma",
-    }
+    # Forward extra keys from loss.args that the loss class actually accepts.
+    # Instead of maintaining a deny-list of pipeline-only keys, introspect
+    # the constructor signature: only pass kwargs the class declares.
     for k, v in cfg["loss"]["args"].items():
-        if k not in standard_keys:
+        if k not in kwargs:
             kwargs[k] = v
 
     # Map empirical_profile_basis_per_bin -> profile_basis_per_bin
@@ -335,6 +318,26 @@ def _get_loss_module(
             kwargs[pt_key] = _resolve_data_path(
                 kwargs[pt_key], data_dir, n_bins
             )
+    # wavelength_bin_edges is keyed by n_lambda_bins (not resolution n_bins),
+    # and prepare_priors already bakes the suffix into the filename.
+    # Resolve against data_dir only, no n_bins suffix.
+    if "wavelength_bin_edges" in kwargs and isinstance(
+        kwargs["wavelength_bin_edges"], str
+    ):
+        kwargs["wavelength_bin_edges"] = _resolve_data_path(
+            kwargs["wavelength_bin_edges"], data_dir, None
+        )
+
+    # Filter kwargs to only what the loss constructor accepts.
+    import inspect
+    sig = inspect.signature(loss_cls.__init__)
+    params = sig.parameters
+    has_var_keyword = any(
+        p.kind == p.VAR_KEYWORD for p in params.values()
+    )
+    if not has_var_keyword:
+        valid_keys = set(params.keys()) - {"self"}
+        kwargs = {k: v for k, v in kwargs.items() if k in valid_keys}
 
     return loss_cls(**kwargs)
 
