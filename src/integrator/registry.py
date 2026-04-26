@@ -47,7 +47,6 @@ REGISTRY = {
         "shoebox_encoder": ShoeboxEncoder,
         "intensity_encoder": IntensityEncoder,
         "mlp_metadata_encoder": MLPMetadataEncoder,
-        # Ragged (variable-shoebox-size) versions:
         "ragged_shoebox_encoder": RaggedShoeboxEncoder,
         "ragged_intensity_encoder": RaggedIntensityEncoder,
     },
@@ -80,14 +79,12 @@ REGISTRY = {
         "learned_basis_profile": LearnedBasisProfileSurrogate,
         "fixed_basis_profile": FixedBasisProfileSurrogate,
         "conv_profile": ConvProfileSurrogate,
-        # Ragged profile surrogate with on-the-fly learned basis:
         "ragged_learned_basis_profile": RaggedLogisticNormalSurrogate,
     },
     "data_loader": {
         "default": ShoeboxDataModule,
         "shoebox_data_module_2d": ShoeboxDataModule2D,
         "simulated_data": SimulatedShoeboxLoader,
-        # Ragged data module that consumes mksbox-dials chunks:
         "ragged_data": RaggedShoeboxDataModule,
     },
 }
