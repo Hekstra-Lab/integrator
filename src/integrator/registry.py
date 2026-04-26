@@ -38,6 +38,7 @@ from integrator.model.integrators import (
 from integrator.model.loss import (
     Loss,
     PerBinLoss,
+    PolyWilsonLoss,
     WilsonLoss,
 )
 
@@ -54,6 +55,7 @@ REGISTRY = {
         "default": Loss,
         "per_bin": PerBinLoss,
         "wilson": WilsonLoss,
+        "poly_wilson": PolyWilsonLoss,
     },
     "integrator": {
         "modela": IntegratorModelA,
