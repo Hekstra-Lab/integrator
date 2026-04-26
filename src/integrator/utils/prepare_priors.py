@@ -1574,12 +1574,13 @@ def _get_background_for_prior(
     if counts is None or masks is None:
         raise FileNotFoundError(
             "No background.mean column in metadata.pt and counts/masks "
-            "are not available (ragged layout). Rerun mksbox-dials so "
+            "are not available (ragged layout). Rerun mksbox so "
             "metadata.pt includes background.mean."
         )
     logger.warning(
         "No background.mean column found and tau_source='dials'; "
-        "falling back to crude bg estimation"
+        "falling back to crude bg estimation (border-ring for D=1, "
+        "quietest-frame for D>1)"
     )
     return _crude_background_from_cfg(counts, masks, cfg)
 
@@ -1617,52 +1618,64 @@ def _crude_background_from_cfg(
             "data_loader.args.{D,H,W} (uppercase) to match the dimensions used "
             "in refltorch.mksbox-laue."
         )
-    return _compute_crude_background(counts, masks, n_frames, n_pixels)
+    return _compute_crude_background(counts, masks, n_frames, h, w)
 
 
 def _compute_crude_background(
     counts: Tensor,
     masks: Tensor,
     n_frames: int,
-    n_pixels_per_frame: int,
+    H: int,
+    W: int,
 ) -> Tensor:
-    """Estimate per-pixel background rate from the quietest frame.
+    """Estimate per-pixel background rate.
 
-    For each shoebox, the frame with the lowest total (masked) counts is
-    treated as pure background.  Returns the mean counts per pixel in that
-    frame, analogous to DIALS `background.mean`.
+    For multi-frame shoeboxes (D > 1): the frame with the lowest total
+    (masked) counts is treated as pure background (the "quietest frame").
+
+    For single-frame shoeboxes (D == 1): uses the mean of the outer
+    2-pixel border ring, which is away from the Bragg peak.
 
     Args:
-        counts: Raw shoebox counts, shape `(N, n_frames * n_pixels_per_frame)`.
+        counts: Raw shoebox counts, shape ``(N, D * H * W)``.
         masks: Valid-pixel masks, same shape as *counts*.
-        n_frames: Number of frames per shoebox (typically 3).
-        n_pixels_per_frame: Pixels per frame (e.g. 21*21 = 441).
+        n_frames: Number of frames per shoebox (D; typically 3; 1 for stills).
+        H: Shoebox height in pixels.
+        W: Shoebox width in pixels.
 
     Returns:
-        Per-pixel background rate per reflection, shape `(N,)`.
+        Per-pixel background rate per reflection, shape ``(N,)``.
     """
     N = counts.shape[0]
+    n_pixels_per_frame = H * W
 
     counts_clean = counts.float().clamp(min=0)
     masks_f = masks.float()
 
-    counts_3d = (counts_clean * masks_f).reshape(
-        N, n_frames, n_pixels_per_frame
-    )
-    masks_3d = masks_f.reshape(N, n_frames, n_pixels_per_frame)
+    if n_frames > 1:
+        counts_3d = (counts_clean * masks_f).reshape(
+            N, n_frames, n_pixels_per_frame
+        )
+        masks_3d = masks_f.reshape(N, n_frames, n_pixels_per_frame)
 
-    frame_counts = counts_3d.sum(dim=-1)  # (N, n_frames)
-    frame_n_pixels = masks_3d.sum(dim=-1)  # (N, n_frames)
+        frame_counts = counts_3d.sum(dim=-1)  # (N, n_frames)
+        frame_n_pixels = masks_3d.sum(dim=-1)  # (N, n_frames)
 
-    min_frame_idx = frame_counts.argmin(dim=-1)  # (N,)
-    bg_frame_counts = frame_counts.gather(
-        1, min_frame_idx.unsqueeze(-1)
-    ).squeeze(-1)
-    bg_frame_n_pixels = frame_n_pixels.gather(
-        1, min_frame_idx.unsqueeze(-1)
-    ).squeeze(-1)
+        min_frame_idx = frame_counts.argmin(dim=-1)  # (N,)
+        bg_frame_counts = frame_counts.gather(
+            1, min_frame_idx.unsqueeze(-1)
+        ).squeeze(-1)
+        bg_frame_n_pixels = frame_n_pixels.gather(
+            1, min_frame_idx.unsqueeze(-1)
+        ).squeeze(-1)
 
-    bg_per_pixel = bg_frame_counts / bg_frame_n_pixels.clamp(min=1)
+        bg_per_pixel = bg_frame_counts / bg_frame_n_pixels.clamp(min=1)
+    else:
+        frame_2d = (counts_clean * masks_f).reshape(N, H, W)
+        border_mask = torch.ones(H, W, dtype=torch.bool)
+        border_mask[2:-2, 2:-2] = False
+        border_vals = frame_2d[:, border_mask]  # (N, n_border)
+        bg_per_pixel = border_vals.mean(dim=-1)  # (N,)
 
     logger.info(
         "Crude background: min=%.2f, median=%.2f, max=%.2f",
