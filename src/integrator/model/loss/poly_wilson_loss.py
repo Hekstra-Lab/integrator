@@ -1,17 +1,4 @@
-"""Polychromatic Wilson loss with per-wavelength-bin G_k.
-
-Same structure as WilsonLoss but the global scale G is replaced by a
-per-wavelength-bin vector G_k. Each refl is bucketed by metadata["wavelength"]
-into one of n_lambda_bins bins, and tau_h is computed as
-
-    tau_h = (1 / G_{k(h)}) * exp(2 B s_h^2)
-
-where s_h^2 = 1 / (4 d_h^2) (Bragg-collapsed; wavelength cancels). The
-single global B and the per-bin G_k all live in the same Normal-Normal
-hyperprior structure, so the loss reduces to WilsonLoss when n_lambda_bins=1.
-"""
-
-from typing import Sequence
+from collections.abc import Sequence
 
 import torch
 import torch.nn as nn
@@ -89,7 +76,9 @@ class PolyWilsonLoss(WilsonLoss):
                 f"shape={tuple(edges.shape)}"
             )
         if not torch.all(edges[1:] > edges[:-1]):
-            raise ValueError("wavelength_bin_edges must be strictly increasing")
+            raise ValueError(
+                "wavelength_bin_edges must be strictly increasing"
+            )
 
         n_bins = int(edges.numel() - 1)
         self.wavelength_bin_edges: Tensor
@@ -196,7 +185,7 @@ class PolyWilsonLoss(WilsonLoss):
         kl_i = torch.zeros(batch_size, device=device)
         kl_bg = torch.zeros(batch_size, device=device)
 
-        # Profile KL — same as parent
+        # Profile KL
         kl_prf = compute_profile_kl(
             qp,
             groups,
@@ -209,9 +198,14 @@ class PolyWilsonLoss(WilsonLoss):
         )
         kl = kl + kl_prf
 
-        # Wilson intensity KL — per-refl tau using per-bin G_{k(λ)} and global B.
+        # Wilson intensity KL
+        # per refl tau using per-bin G_{k(λ)} and global B.
         metadata = kwargs.get("metadata")
-        if metadata is None or "d" not in metadata or "wavelength" not in metadata:
+        if (
+            metadata is None
+            or "d" not in metadata
+            or "wavelength" not in metadata
+        ):
             raise ValueError(
                 "PolyWilsonLoss requires metadata['d'] and metadata['wavelength']."
             )
@@ -227,7 +221,7 @@ class PolyWilsonLoss(WilsonLoss):
 
         for _ in range(self.n_wilson_samples):
             log_K_bins = self.q_log_K().rsample()  # (n_lambda_bins,)
-            log_B = self.q_log_B().rsample()       # scalar
+            log_B = self.q_log_B().rsample()  # scalar
             K_per_refl = torch.exp(log_K_bins)[lam_bin]  # (B,)
             B = torch.exp(log_B)
             tau = (1.0 / K_per_refl) * torch.exp(2.0 * B * s_sq)
@@ -243,7 +237,7 @@ class PolyWilsonLoss(WilsonLoss):
         kl_i = kl_i * self.pi_weight
         kl = kl + kl_i
 
-        # Background KL — same as parent
+        # Background KL
         kl_bg = compute_bg_kl(
             qbg,
             groups,
