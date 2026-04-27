@@ -1,0 +1,132 @@
+integrator:
+  name: hierarchical
+  args:
+    data_dim: 3d
+    d: &d 3
+    h: &h 21
+    w: &w 21
+    lr: 0.001
+    encoder_out: &encoder_out 32
+    weight_decay: 0.0
+    decoder_weight_decay: 1.0e-3
+    qp_smoothness_weight: 1.0e-3
+    qp_orthogonality_weight: 1.0e-2
+    lr_schedule: cosine_warmup
+    warmup_epochs: 5
+    lr_min: 1.0e-5
+    mc_samples: &mc_samples 24
+    predict_keys:
+      [refl_ids, is_test, qi_mean, qi_var, qbg_mean, qbg_var,
+       intensity.prf.value, intensity.prf.variance, background.mean,
+       d, group_label, qp_mean, qp_mu_h, qp_std_h]
+
+encoders:
+- name: shoebox_encoder
+  args:
+    data_dim: 3d
+    input_shape: [*d, *h, *w]
+    encoder_out: *encoder_out
+    conv1_out_channels: 16
+    conv2_out_channels: 32
+- &intensity_enc
+  name: intensity_encoder
+  args:
+    data_dim: 3d
+    encoder_out: *encoder_out
+    conv1_out_channels: 16
+    conv2_out_channels: 32
+    conv3_out_channels: 64
+- *intensity_enc
+- *intensity_enc
+- *intensity_enc
+
+surrogates:
+  qp:
+    name: learned_basis_profile
+    args:
+      input_dim: *encoder_out
+      latent_dim: 29
+      output_dim: 1323
+      init_std: 0.5
+      warmstart_basis_path: hermite_profile_basis.pt
+  qbg:
+    name: gammaA
+    args:
+      in_features: *encoder_out
+      eps: 1.0e-06
+      k_min: 0.01
+      positive_constraint: log
+      k_init: 1.0
+      r_init: 1.0
+  qi:
+    name: gammaA
+    args:
+      in_features: *encoder_out
+      eps: 1.0e-06
+      k_min: 0.01
+      positive_constraint: log
+      k_init: 100.0
+      r_init: 1.0
+
+loss:
+  name: wilson
+  args:
+    mc_samples: *mc_samples
+    eps: 1.0e-06
+    n_bins: 25
+    bg_rate_per_group: bg_rate_per_group.pt
+    profile_sigma_prior: 1.0
+    profile_basis_type: hermite
+    profile_basis_max_order: 4
+    profile_basis_sigma_ref: 1.0
+    profile_basis_sigma_z: 0.4
+    pi_weight: 1.0
+    pbg_weight: 1.0
+    pprf_weight: 1.0
+
+data_loader:
+  name: default
+  args:
+    data_dir: &data_dir /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data
+    batch_size: 2048
+    val_split: 0.2
+    test_split: 0.0
+    num_workers: 8
+    include_test: true
+    subset_size: null
+    cutoff: null
+    shoebox_file_names:
+      data_dir: *data_dir
+      counts: counts.pt
+      masks: masks.pt
+      stats: anscombe_stats.pt
+      reference: metadata.pt
+      standardized_counts: null
+    D: *d
+    H: *h
+    W: *w
+    anscombe: true
+
+trainer:
+  max_epochs: 100
+  accelerator: gpu
+  devices: 1
+  logger: true
+  precision: '32'
+  check_val_every_n_epoch: 5
+  log_every_n_steps: 1
+  deterministic: false
+  enable_checkpointing: true
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+
+logger:
+  d: *d
+  h: *h
+  w: *w
+
+output:
+  refl_file: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data/reflections_.refl
+  dials_merge_html: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/merged_reference.html
+  phenix_refine_log: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/refine_001.log
+  anomalous_peaks: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/reference_peaks.csv
