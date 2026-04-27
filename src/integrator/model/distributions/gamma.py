@@ -84,7 +84,7 @@ class GammaDistributionRepamA(nn.Module):
         in_features: int = 64,
         eps: float = 1e-6,
         k_min: float = 0.1,
-        paraeterization: str = "softplus",
+        parameterization: str = "softplus",
         k_init: float = 1.0,
         r_init: float | None = None,
         zero_head_weights: bool = False,
