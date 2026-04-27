@@ -9,6 +9,7 @@ import logging
 import re
 
 from integrator.cli.utils.io import write_refl_from_preds
+from integrator.cli.utils.mtz_writer import write_mtz_from_preds
 from integrator.cli.utils.logger import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -52,13 +53,6 @@ def parse_args():
         default=0,
         help="Increase verbosity (-v = INFO, -vv = DEBUG)",
     )
-
-    # TODO: Add mtz writer
-    # parser.add_argument(
-    #     "--write-as-mtz",
-    #     action="store_true",
-    #     help="Write predictions as a .mtz file",
-    # )
 
     return parser.parse_args()
 
@@ -186,6 +180,21 @@ def main():
                 epoch=epoch,
                 config=config,
                 filetype=args.save_preds_as,
+            )
+
+        if args.write_mtz:
+            from integrator.cli.utils.io import get_pred_files
+
+            logger.info("Writing .mtz output for epoch %d", epoch)
+            pred_data = get_pred_files(
+                ckpt_dir=ckpt_dir, filetype=args.save_preds_as
+            )
+            data_dir = Path(config["data_loader"]["args"]["data_dir"])
+            write_mtz_from_preds(
+                pred_data=pred_data,
+                metadata_path=data_dir / "metadata.pt",
+                crystal_yaml_path=data_dir / "crystal.yaml",
+                out_path=ckpt_dir / args.write_mtz,
             )
 
     logger.info("Prediction complete!")

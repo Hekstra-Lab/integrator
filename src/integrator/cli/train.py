@@ -459,45 +459,5 @@ def main():
     logger.info("Traning complete!")
 
 
-def write_mtz_files():
-    pred_dir.glob("**/preds.pt")
-    pattern = re.compile(r"epoch_\d")
-    for p in pred_dir.iterdir():
-        if re.search(pattern, p.as_posix()):
-            groups = re.findall(pattern, p.as_posix())
-            epoch = groups[0]
-            pred_file = list(p.glob("preds.pt"))[0].as_posix()
-            mtz_path = Path(p.as_posix() + "/preds.mtz").as_posix()
-
-            mtz_writer(pred_path=pred_file, file_name=mtz_path)
-            ds = rs.read_mtz(mtz_path)
-
-            # remove refls with SIGI==0.0
-            n_filtered = 0
-
-            #
-            mask = ds["SIGI"] == 0.0
-            n_filtered = mask.sum()
-            ds = ds[~mask]
-
-            # Include all centrics in friedel plus
-            plus = ds.hkl_to_asu()["M/ISYM"].to_numpy() % 2 == 1
-            centrics = ds.label_centrics().CENTRIC.to_numpy()
-            plus |= centrics
-            ds[plus].write_mtz(
-                Path(p.as_posix() + "/friedel_plus.mtz").as_posix()
-            )
-            ds[~plus].write_mtz(
-                Path(p.as_posix() + "/friedel_minus.mtz").as_posix()
-            )
-
-            # report for file
-            log_path = p.as_posix() + "/filter_log.txt"
-
-            with open(log_path, "w") as f:
-                f.write(f"file: {p.as_posix()}\n")
-                f.write(f"refls with sigi0: {n_filtered}\n")
-
-
 if __name__ == "__main__":
     main()
