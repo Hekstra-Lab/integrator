@@ -101,7 +101,7 @@ data_loader:
     anscombe: true
 
 trainer:
-  max_epochs: 100
+  max_epochs: 10
   accelerator: gpu
   devices: 1
   logger: true
