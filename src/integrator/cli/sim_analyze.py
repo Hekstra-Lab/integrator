@@ -70,8 +70,6 @@ def parse_args():
 
 
 # Helpers
-
-
 def _get_bins(edges: list) -> tuple[list[str], "pl.DataFrame"]:
     """Build bin labels and a base DataFrame for joining."""
     import polars as pl

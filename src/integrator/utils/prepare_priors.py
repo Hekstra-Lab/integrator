@@ -219,7 +219,9 @@ def prepare_per_bin_priors(
                         {
                             "key": "wavelength_bin_edges",
                             "path": str(wbe_path),
-                            "action": "regenerated" if wbe_path.exists() else "created",
+                            "action": "regenerated"
+                            if wbe_path.exists()
+                            else "created",
                             "reason": (
                                 f"quantile edges from metadata['wavelength'] "
                                 f"with n_lambda_bins={n_lambda_bins}"
@@ -356,7 +358,9 @@ def prepare_per_bin_priors(
     # purely from per-reflection metadata (bg_rate_per_group with
     # tau_source='dials', s_squared_per_group, tau_per_group from
     # intensity.prf.value) work without ever loading counts/masks.
-    metadata = torch.load(_resolve_reference_path(data_dir, cfg), weights_only=False)
+    metadata = torch.load(
+        _resolve_reference_path(data_dir, cfg), weights_only=False
+    )
     counts, masks = _try_load_counts_masks(data_dir, cfg)
 
     def _require_counts(prior_name: str) -> tuple[Tensor, Tensor]:
@@ -902,10 +906,13 @@ def _load_shoebox_array(path: Path) -> Tensor:
     """Load counts/masks from either .pt (legacy torch.save) or .npy
     (newer mksbox memmap output). Returns a torch.Tensor either way."""
     p = Path(path)
-    if p.suffix == ".npy" or (not p.exists() and p.with_suffix(".npy").exists()):
+    if p.suffix == ".npy" or (
+        not p.exists() and p.with_suffix(".npy").exists()
+    ):
         # Prefer .npy if explicitly named or if a sibling .npy exists
         npy_path = p if p.suffix == ".npy" else p.with_suffix(".npy")
         import numpy as np
+
         return torch.from_numpy(np.asarray(np.load(npy_path)))
     return torch.load(p, weights_only=True)
 
@@ -954,6 +961,7 @@ def _try_load_counts_masks(
     masks_name = sfn.get("masks", "masks.pt")
     counts_path = data_dir / counts_name
     masks_path = data_dir / masks_name
+
     # Match _load_shoebox_array's resolution: a sibling .npy is acceptable.
     def _exists(p: Path) -> bool:
         if p.exists():
@@ -1597,7 +1605,9 @@ def _crude_background_from_cfg(
     """
     dl_args = cfg.get("data_loader", {}).get("args", {})
 
-    def _get_upper_or_lower(key_upper: str, key_lower: str, default: int) -> int:
+    def _get_upper_or_lower(
+        key_upper: str, key_lower: str, default: int
+    ) -> int:
         if key_upper in dl_args:
             return int(dl_args[key_upper])
         if key_lower in dl_args:

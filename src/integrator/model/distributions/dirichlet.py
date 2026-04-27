@@ -1,32 +1,25 @@
 from math import prod
 
-import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.distributions import Dirichlet
 
+from .utils import get_positive_constraint
 
-class DirichletDistribution(torch.nn.Module):
+
+class DirichletDistribution(nn.Module):
     def __init__(
         self,
         in_features: int = 64,
         sbox_shape: tuple[int, ...] = (3, 21, 21),
         eps: float = 1e-6,
+        positive_constraint: str = "softplus",
     ):
         super().__init__()
         self.n_pixels = prod(sbox_shape)
-        if in_features is not None:
-            self.alpha_layer = nn.Linear(in_features, self.n_pixels)
+        self.alpha_layer = nn.Linear(in_features, self.n_pixels)
         self.eps = eps
+        self._constrain = get_positive_constraint(positive_constraint)
 
-    def forward(
-        self,
-        x,
-        mc_samples=None,
-        group_labels=None,
-    ):
-        x = self.alpha_layer(x)
-
-        x = F.softplus(x) + self.eps
-        q = Dirichlet(x)
-        return q
+    def forward(self, x, mc_samples=None, group_labels=None):
+        alpha = self._constrain(self.alpha_layer(x)) + self.eps
+        return Dirichlet(alpha)

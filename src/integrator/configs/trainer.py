@@ -11,8 +11,8 @@ class TrainerConfig:
     precision: Literal["16", "32"]
     check_val_every_n_epoch: int
     log_every_n_steps: int
-    deterministic: bool
     enable_checkpointing: bool
+    deterministic: bool = False
     gradient_clip_val: float | None = None
     gradient_clip_algorithm: Literal["norm", "value"] | None = None
 

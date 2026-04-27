@@ -39,6 +39,90 @@ TUPLE_FIELDS = {
     "sbox_shape",
 }
 
+# User-supplied YAML args override these.
+# Only data_dim is required.
+_ENCODER_PRESETS: dict[tuple[str, str], dict] = {
+    ("shoebox_encoder", "3d"): dict(
+        in_channels=1,
+        encoder_out=64,
+        input_shape=(3, 21, 21),
+        conv1_out_channels=64,
+        conv1_kernel_size=(1, 3, 3),
+        conv1_padding=(0, 1, 1),
+        norm1_num_groups=4,
+        pool_kernel_size=(1, 2, 2),
+        pool_stride=(1, 2, 2),
+        conv2_out_channels=128,
+        conv2_kernel_size=(3, 3, 3),
+        conv2_padding=(0, 0, 0),
+        norm2_num_groups=4,
+    ),
+    ("shoebox_encoder", "2d"): dict(
+        in_channels=1,
+        encoder_out=64,
+        input_shape=(21, 21),
+        conv1_out_channels=64,
+        conv1_kernel_size=(3, 3),
+        conv1_padding=(1, 1),
+        norm1_num_groups=4,
+        pool_kernel_size=(2, 2),
+        pool_stride=(2, 2),
+        conv2_out_channels=128,
+        conv2_kernel_size=(3, 3),
+        conv2_padding=(0, 0),
+        norm2_num_groups=4,
+    ),
+    ("intensity_encoder", "3d"): dict(
+        in_channels=1,
+        encoder_out=64,
+        conv1_out_channels=64,
+        conv1_kernel_size=(3, 3, 3),
+        conv1_padding=(1, 1, 1),
+        norm1_num_groups=4,
+        pool_kernel_size=(1, 2, 2),
+        pool_stride=(1, 2, 2),
+        conv2_out_channels=128,
+        conv2_kernel_size=(3, 3, 3),
+        conv2_padding=(0, 0, 0),
+        norm2_num_groups=4,
+        conv3_out_channels=256,
+        conv3_kernel_size=(3, 3, 3),
+        conv3_padding=(1, 1, 1),
+        norm3_num_groups=8,
+    ),
+    ("intensity_encoder", "2d"): dict(
+        in_channels=1,
+        encoder_out=64,
+        conv1_out_channels=64,
+        conv1_kernel_size=(3, 3),
+        conv1_padding=(1, 1),
+        norm1_num_groups=4,
+        pool_kernel_size=(2, 2),
+        pool_stride=(2, 2),
+        conv2_out_channels=128,
+        conv2_kernel_size=(3, 3),
+        conv2_padding=(0, 0),
+        norm2_num_groups=4,
+        conv3_out_channels=256,
+        conv3_kernel_size=(3, 3),
+        conv3_padding=(1, 1),
+        norm3_num_groups=8,
+    ),
+}
+
+
+def _apply_encoder_preset(name: str, args: dict) -> dict:
+    """Merge encoder preset defaults under user-supplied args."""
+    data_dim = args.get("data_dim")
+    if data_dim is None:
+        return args
+    key = (name, data_dim)
+    preset = _ENCODER_PRESETS.get(key)
+    if preset is None:
+        return args
+    merged = {**preset, **args}
+    return merged
+
 
 def _resolve_data_path(
     path: str, data_dir: str, n_bins: int | None = None
@@ -129,8 +213,7 @@ def _get_surrogate_modules(
     n_bins = _get_n_bins(cfg)
 
     # Load GammaB mean_init stats once (if available). Written by
-    # prepare_per_bin_priors from raw counts (no DIALS). Used below to
-    # inject mean_init into gammaB qi/qbg surrogates that didn't set it.
+    # prepare_per_bin_priors from raw counts (no DIALS).
     init_stats_path = Path(data_dir) / "qi_qbg_mean_init.pt"
     init_stats: dict | None = None
     if init_stats_path.is_file():
@@ -244,7 +327,9 @@ def _get_encoder_modules(
         required_encoders.items(), cfg_["encoders"], strict=False
     ):
         name, args = items
-        encoder_args = args(**encoder_cfg["args"])
+        raw_args = encoder_cfg.get("args") or {}
+        merged = _apply_encoder_preset(encoder_cfg["name"], raw_args)
+        encoder_args = args(**merged)
         encoders[name] = REGISTRY["encoders"][encoder_cfg["name"]](
             **asdict(encoder_args)
         )

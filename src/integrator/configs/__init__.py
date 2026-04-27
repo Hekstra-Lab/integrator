@@ -17,7 +17,6 @@ from .encoder import (
     RaggedShoeboxEncoderArgs,
     ShoeboxEncoderArgs,
 )
-from .global_config import GlobalConfig
 from .integrator import IntegratorCfg, IntegratorConfig
 from .logger import LoggerConfig
 from .loss import (
@@ -50,7 +49,6 @@ __all__ = [
     "DataLoaderConfig",
     "DataLoaderArgs",
     "IntegratorCfg",
-    "Encoders",
     "EncoderConfig",
     "IntensityEncoderArgs",
     "IntegratorConfig",
@@ -58,7 +56,6 @@ __all__ = [
     "PriorConfig",
     "LossConfig",
     "OutputConfig",
-    "GlobalConfig",
     "LoggerConfig",
     "TrainerConfig",
     "SurrogateArgs",

@@ -2,7 +2,6 @@
 # Example use
 integrator.pred -v \
         --run-dir \
-        --data-dim \
 """
 
 import argparse
@@ -23,18 +22,17 @@ def parse_args():
         "--run-dir",
         type=str,
         required=False,
-        help="Path to dir containing pred.yaml file",
-    )
-    parser.add_argument(
-        "--data-dim",
-        type=str,
-        default="3d",
-        help="String denoting shoebox dimensions; e.g. 2d or 3d",
+        help="Path to dir containing config.yaml file",
     )
     parser.add_argument(
         "--write-refl",
         action="store_true",
         help="Write predictions as a .refl file",
+    )
+    parser.add_argument(
+        "--write-mtz",
+        type=str,
+        help="Write predictions as an .mtz file; for polychromatic data only",
     )
     parser.add_argument(
         "--batch-size",
@@ -163,14 +161,8 @@ def main():
             logger=None,
         )
 
+        # load checkpoints weights
         ckpt_ = torch.load(ckpt.as_posix())
-        # skip_warmstart: the checkpoint's state_dict carries the trained
-        # decoder.weight, so reading the Hermite/PCA warmstart file here
-        # is redundant. Skipping avoids two bugs: (1) prediction failing
-        # when the warmstart file is missing or has moved, (2) a newer
-        # regenerated basis on disk silently getting copied in before
-        # the checkpoint overwrites it (harmless if load_state_dict
-        # succeeds, but masks shape-mismatch failures).
         integrator = construct_integrator(config, skip_warmstart=True)
         integrator.load_state_dict(ckpt_["state_dict"])
 
@@ -178,6 +170,7 @@ def main():
         if torch.cuda.is_available():
             integrator.to(torch.device("cuda"))
 
+        # predict over checkpoints
         integrator.eval()
         trainer.predict(
             integrator,
@@ -197,11 +190,6 @@ def main():
 
     logger.info("Prediction complete!")
 
-    # Aggregate per-epoch test-set predictions into a single parquet file.
-    # Scans every epoch_XXXX/*.parquet under predictions/, filters to test
-    # rows (is_test == 1.0), and extracts the epoch number from the source
-    # path. Streams through via scan_parquet/sink_parquet so memory stays
-    # low even with many epochs × many flushes.
     try:
         import polars as pl
     except ImportError:
@@ -239,94 +227,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    #
-    # import argparse
-    # import re
-    # from pathlib import Path
-    #
-    # import torch
-    # import yaml
-    #
-    # from integrator.callbacks import PredWriter
-    # from integrator.utils import (
-    #     construct_data_loader,
-    #     construct_integrator,
-    #     construct_trainer,
-    #     load_config,
-    # )
-    #
-    # # Path to run-dir
-    # run_dir = Path("/Users/luis/integrator/temp_run_dir/")
-    #
-    # # Reading in pred.yaml
-    # meta = yaml.safe_load((run_dir / "run_metadata.yaml").read_text())
-    # config = load_config(meta["config"])
-    # wandb_info = meta["wandb"]
-    # slurm_info = meta["slurm"]
-    #
-    # # writing prediction directories
-    # log_dir = Path(wandb_info["log_dir"])
-    # wandb_dir = log_dir.parent
-    # pred_dir = wandb_dir / "predictions"
-    # pred_dir.mkdir(exist_ok=True)
-    #
-    # # list of .ckpt files
-    # checkpoints = sorted(log_dir.glob("**/epoch*.ckpt"))
-    #
-    # # load data
-    # data_loader = construct_data_loader(config)
-    # data_loader.setup()
-    #
-    # refl_file = config["output"]["refl_file"]
-    #
-    # epoch_re = re.compile(r"epoch=(\d+)")
-    # for ckpt in checkpoints:
-    #     # Finding checkpoint epoch
-    #     m = epoch_re.search(ckpt.name)
-    #     if not m:
-    #         raise ValueError(f"Could not parse epoch from {ckpt.name}")
-    #     epoch = int(m.group(1))
-    #
-    #     # Writing epoch prediction dir
-    #     ckpt_dir = pred_dir / f"epoch_{epoch:04d}"
-    #     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    #
-    #     # Construct callbacks
-    #     callbacks = []
-    #     pred_writer = PredWriter(
-    #         output_dir=ckpt_dir,
-    #         write_interval="epoch",
-    #     )
-    #     callbacks.append(pred_writer)
-    #
-    #     # Construct trainer
-    #     trainer = construct_trainer(
-    #         config,
-    #         callbacks=callbacks,
-    #         logger=None,
-    #     )
-    #
-    #     ckpt_ = torch.load(ckpt.as_posix())
-    #     integrator = construct_integrator(config)
-    #     integrator.load_state_dict(ckpt_["state_dict"])
-    #
-    #     # Use gpu if available
-    #     if torch.cuda.is_available():
-    #         integrator.to(torch.device("cuda"))
-    #
-    #     integrator.eval()
-    #
-    #     data = trainer.predict(
-    #         integrator,
-    #         return_predictions=True,
-    #         dataloaders=data_loader.predict_dataloader(),
-    #     )
-    #
-    #     write_refl_from_preds(
-    #         ckpt_dir=ckpt_dir,
-    #         refl_file=refl_file,
-    #         epoch=epoch,
-    #     )
-    #
-    #     # %%
-    #     list(ckpt_dir.glob("preds*"))

@@ -252,7 +252,6 @@ class PolyWilsonLoss(WilsonLoss):
         kl_hyper = self.kl_hyperparams() / self.dataset_size
 
         # Poisson NLL
-        # ll = Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
         ll = Poisson(rate).log_prob(counts.unsqueeze(1))
         ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
         neg_ll = (-ll_mean).sum(1)

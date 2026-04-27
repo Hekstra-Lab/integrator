@@ -2,8 +2,9 @@ from math import pi, sqrt
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch import Tensor
+
+from .utils import get_positive_constraint
 from torch.distributions import (
     Normal,
     TransformedDistribution,
@@ -74,18 +75,16 @@ class FoldedNormalDistribution(nn.Module):
         self,
         in_features: int = 64,
         eps: float = 0.1,
+        positive_constraint: str = "softplus",
         **kwargs,
     ):
         super().__init__()
         self.eps = eps
+        self._constrain = get_positive_constraint(positive_constraint)
         self.linear_loc = nn.Linear(in_features, 1)
         self.linear_scale = nn.Linear(in_features, 1)
 
-    def forward(self, x: Tensor, x_: Tensor | None = None) -> FoldedNormal:
-        raw_loc = self.linear_loc(x)
-        raw_scale = self.linear_scale(x_ if x_ is not None else x)
-
-        loc = (F.softplus(raw_loc) + self.eps).squeeze()
-        scale = (F.softplus(raw_scale) + self.eps).squeeze()
-
+    def forward(self, x: Tensor, x_: Tensor) -> FoldedNormal:
+        loc = (self._constrain(self.linear_loc(x)) + self.eps).squeeze()
+        scale = (self._constrain(self.linear_scale(x_)) + self.eps).squeeze()
         return FoldedNormal(loc, scale)

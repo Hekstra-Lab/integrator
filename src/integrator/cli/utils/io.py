@@ -187,7 +187,7 @@ def write_refl_from_preds(
 
     # Getting identifiers
     identifiers_path = (
-        Path(config["global_vars"]["data_dir"]) / "identifiers.yaml"
+        Path(config["data_loader"]["args"]["data_dir"]) / "identifiers.yaml"
     )
 
     if not identifiers_path.exists():

@@ -7,6 +7,8 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
+from integrator.configs import IntegratorCfg
+
 DEFAULT_PREDICT_KEYS = [
     "refl_ids",
     "is_test",
@@ -66,7 +68,7 @@ class BaseIntegrator(pl.LightningModule):
 
     def __init__(
         self,
-        cfg,
+        cfg: IntegratorCfg,
         loss: nn.Module,
         encoders: dict[str, nn.Module],
         surrogates: dict[str, nn.Module],
@@ -79,10 +81,7 @@ class BaseIntegrator(pl.LightningModule):
         self.weight_decay = cfg.weight_decay
         self.decoder_weight_decay = cfg.decoder_weight_decay
         self.qp_smoothness_weight = cfg.qp_smoothness_weight
-        self.qp_profile_tv_weight = cfg.qp_profile_tv_weight
-        self.qp_profile_entropy_weight = cfg.qp_profile_entropy_weight
         self.qp_orthogonality_weight = cfg.qp_orthogonality_weight
-        self.qp_sparsity_weight = cfg.qp_sparsity_weight
         self.lr_schedule = cfg.lr_schedule
         self.warmup_epochs = cfg.warmup_epochs
         self.warmup_steps = cfg.warmup_steps
@@ -167,9 +166,7 @@ class BaseIntegrator(pl.LightningModule):
             },
         )
 
-        # Auxiliary regularizers on the learned profile decoder (no-op for
-        # fixed bases). ELBO logging above stays pure; penalty is added to
-        # the backpropagated loss only.
+        # penalties on profile basis
         penalty, penalty_components = self._profile_basis_penalty()
         for name, value in penalty_components.items():
             self.log(
@@ -179,14 +176,6 @@ class BaseIntegrator(pl.LightningModule):
                 on_epoch=True,
             )
         total_loss = total_loss + penalty
-
-        # Penalties on the profile tensor itself. Used with Dirichlet or
-        # other non-basis surrogates where the basis-weight penalties
-        # don't apply. No-op when weights are zero/None.
-        shape_pen, shape_comps = self._profile_shape_penalty(outputs["qp"])
-        for name, value in shape_comps.items():
-            self.log(f"{step} {name}", value, on_step=False, on_epoch=True)
-        total_loss = total_loss + shape_pen
 
         # Log hyperprior diagnostics if present (HierarchicalLoss)
         for key in (
@@ -241,11 +230,6 @@ class BaseIntegrator(pl.LightningModule):
           column, penalizing high-frequency structure in W.
         - Orthogonality: mean squared off-diagonal entry of the column-
           normalized Gram matrix, penalizing redundant / collinear columns.
-        - Sparsity: mean |W|, penalizing non-zero entries. Encourages
-          localization (most pixels near zero, only peak-region pixels
-          carry weight). Complements smoothness (smoothness asks adjacent
-          pixels to be similar; sparsity asks most pixels to be zero).
-
         Returns (total_penalty, components_dict). Zero and empty when
         disabled or when qp has no decoder.weight (e.g. fixed basis).
         """
@@ -255,13 +239,10 @@ class BaseIntegrator(pl.LightningModule):
         W = getattr(decoder, "weight", None)
         smooth_w = self.qp_smoothness_weight
         ortho_w = self.qp_orthogonality_weight
-        sparse_w = self.qp_sparsity_weight
         if W is None or W.dim() != 2:
             return zero, {}
-        if (
-            (smooth_w is None or smooth_w == 0)
-            and (ortho_w is None or ortho_w == 0)
-            and (sparse_w is None or sparse_w == 0)
+        if (smooth_w is None or smooth_w == 0) and (
+            ortho_w is None or ortho_w == 0
         ):
             return zero, {}
 
@@ -296,65 +277,6 @@ class BaseIntegrator(pl.LightningModule):
             ortho = off_sq / denom
             components["profile_orthogonality"] = ortho.detach()
             total = total + ortho_w * ortho
-
-        if sparse_w is not None and sparse_w > 0:
-            sparsity = W.abs().mean()
-            components["profile_sparsity"] = sparsity.detach()
-            total = total + sparse_w * sparsity
-
-        return total, components
-
-    def _profile_shape_penalty(
-        self,
-        qp,
-    ) -> tuple[Tensor, dict[str, Tensor]]:
-        """Regularization penalties computed directly from qp.
-
-        Complements `_profile_basis_penalty` (which acts on basis decoder
-        weights). Two penalties here, both optional:
-
-        - Profile TV: mean squared spatial gradient across (D, H, W) of
-          `qp.mean`. Penalizes per-pixel noise.
-        - Profile entropy: `H(p) = -sum p log p` per reflection, averaged.
-          Weight > 0 drives profiles to be more concentrated.
-
-        Returns (total_penalty, components). Zero when weights are unset.
-        """
-        zero = torch.zeros((), device=self.device)
-        tv_w = self.qp_profile_tv_weight
-        ent_w = self.qp_profile_entropy_weight
-
-        total = zero
-        components: dict[str, Tensor] = {}
-
-        # TV + entropy on qp.mean
-        profile = getattr(qp, "mean", None)
-        if profile is not None and profile.dim() == 2:
-            shape = self.shoebox_shape
-            D, H, W_sp = shape if len(shape) == 3 else (1, *shape)
-            B, K = profile.shape
-            if K == D * H * W_sp:
-                if tv_w is not None and tv_w > 0:
-                    vol = profile.reshape(B, D, H, W_sp)
-                    gx = vol[..., 1:] - vol[..., :-1]
-                    gy = vol[..., 1:, :] - vol[..., :-1, :]
-                    sq = gx.pow(2).sum() + gy.pow(2).sum()
-                    n = gx.numel() + gy.numel()
-                    if D > 1:
-                        gz = vol[..., 1:, :, :] - vol[..., :-1, :, :]
-                        sq = sq + gz.pow(2).sum()
-                        n = n + gz.numel()
-                    tv = sq / max(n, 1)
-                    components["profile_tv"] = tv.detach()
-                    total = total + tv_w * tv
-
-                if ent_w is not None and ent_w > 0:
-                    eps = 1e-12
-                    entropy = (
-                        -(profile * (profile + eps).log()).sum(dim=-1).mean()
-                    )
-                    components["profile_entropy"] = entropy.detach()
-                    total = total + ent_w * entropy
 
         return total, components
 

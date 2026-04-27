@@ -17,6 +17,7 @@ POLY_DS_COLS = [
     "is_test",
     "d",
     "wavelength",
+    "image_num",
     "group_label",
     "H",
     "K",
