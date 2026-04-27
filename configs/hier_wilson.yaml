@@ -133,14 +133,14 @@ surrogates:
     args:
       in_features: 64
       eps: 1.0e-06
-      k_min: 0.1
-      parameterization: log
+      k_min: 0.01
+      parameterization: softplus
   qi:
     name: gammaA
     args:
       in_features: 64
       eps: 1.0e-06
-      k_min: 0.1
+      k_min: 0.01
       parameterization: log
 loss:
   name: wilson
@@ -157,7 +157,7 @@ data_loader:
   name: default
   args:
     data_dir: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data
-    batch_size: 2048
+    batch_size: 1024
     val_split: 0.2
     test_split: 0.0
     num_workers: 8
@@ -176,12 +176,12 @@ data_loader:
     W: 21
     anscombe: true
 trainer:
-  max_epochs: 100
+  max_epochs: 40
   accelerator: gpu
   devices: 1
   logger: true
   precision: '32'
-  check_val_every_n_epoch: 5
+  check_val_every_n_epoch: 2
   log_every_n_steps: 1
   deterministic: false
   enable_checkpointing: true
