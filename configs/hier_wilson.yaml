@@ -195,5 +195,4 @@ logger:
   h: 21
   w: 21
 output:
-  refl_file:
-/n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data/reflections_.refl
+  refl_file: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data/reflections_.refl
