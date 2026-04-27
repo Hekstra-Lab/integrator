@@ -9,8 +9,8 @@ import logging
 import re
 
 from integrator.cli.utils.io import write_refl_from_preds
-from integrator.cli.utils.mtz_writer import write_mtz_from_preds
 from integrator.cli.utils.logger import setup_logging
+from integrator.cli.utils.mtz_writer import write_mtz_from_preds
 
 logger = logging.getLogger(__name__)
 

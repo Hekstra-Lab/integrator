@@ -64,7 +64,7 @@ surrogates:
       output_dim: 625
       init_std: 0.5
       warmstart_basis_path: hermite_profile_basis.pt
-      freeze_bias: true
+      freeze_bias: false
   qbg:
     name: gammaA
     args:
@@ -100,7 +100,7 @@ data_loader:
   name: poly_data
   args:
     data_dir: &data_dir /n/hekstra_lab/people/aldama/integrator_data/hewl_1118/pytorch_data
-    batch_size: 256
+    batch_size: 512
     val_split: 0.2
     test_split: 0.0
     num_workers: 8
@@ -120,9 +120,9 @@ data_loader:
     anscombe: true
 
 trainer:
-  max_epochs: 100
+  max_epochs: 10
   accelerator: gpu
-  devices: 1
+  devices: 2
   logger: true
   precision: '32'
   check_val_every_n_epoch: 5
@@ -137,5 +137,3 @@ logger:
   h: *h
   w: *w
 
-output:
-  refl_file: /n/hekstra_lab/people/aldama/integrator_data/hewl_1118/pytorch_data/reflections_.refl
