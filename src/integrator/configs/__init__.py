@@ -12,7 +12,6 @@ from .distributions import (
 )
 from .encoder import (
     EncoderConfig,
-    Encoders,
     IntensityEncoderArgs,
     RaggedIntensityEncoderArgs,
     RaggedShoeboxEncoderArgs,

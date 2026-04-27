@@ -18,7 +18,6 @@ class ShoeboxEncoderArgs:
     conv2_kernel_size: tuple[int, ...]
     conv2_padding: tuple[int, ...]
     norm2_num_groups: int
-    use_coord_channels: bool = False
     dropout: float = 0.0
 
     def __post_init__(self):
@@ -131,8 +130,3 @@ class RaggedIntensityEncoderArgs:
 class EncoderConfig:
     name: str
     args: ShoeboxEncoderArgs | IntensityEncoderArgs
-
-
-@dataclass
-class Encoders:
-    encoders: list[EncoderConfig]

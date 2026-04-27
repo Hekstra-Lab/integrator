@@ -188,8 +188,6 @@ def main():
     from integrator.callbacks import (
         EpochMetricRecorder,
         LossTraceRecorder,
-        Plotter,
-        PlotterLD,
         assign_labels,
     )
     from integrator.utils import (
@@ -380,22 +378,6 @@ def main():
         keys=keys,
         split="val",
     )
-
-    data_dim = cfg["integrator"]["args"]["data_dim"]
-    if data_dim == "3d":
-        plotter = Plotter(n_profiles=10)
-    elif data_dim == "2d":
-        plotter = PlotterLD(
-            n_profiles=10,
-            plot_every_n_epochs=1,
-            d=cfg["integrator"]["args"]["d"],
-            h=cfg["integrator"]["args"]["h"],
-            w=cfg["integrator"]["args"]["w"],
-        )
-    else:
-        raise ValueError(
-            f"Specified shoebox data dimension is incompatible: data_dim={data_dim}"
-        )
 
     loss_trace_recorder = LossTraceRecorder(
         out_dir=logdir / "loss_traces",

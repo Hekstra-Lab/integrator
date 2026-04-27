@@ -17,10 +17,10 @@ from integrator.model.distributions.profile_surrogates import (
 )
 from integrator.model.loss.kl_helpers import (
     _kl,
+    _load_buffer,
     compute_bg_kl,
     compute_profile_kl,
 )
-from integrator.model.loss.per_bin_loss import _load_buffer
 
 
 class WilsonLoss(nn.Module):
@@ -333,7 +333,8 @@ class WilsonLoss(nn.Module):
         kl_hyper = self.kl_hyperparams() / self.dataset_size
 
         # Poisson NLL
-        ll = Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
+        # ll = Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
+        ll = Poisson(rate).log_prob(counts.unsqueeze(1))
         ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
         neg_ll = (-ll_mean).sum(1)
 

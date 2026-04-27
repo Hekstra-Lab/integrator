@@ -1,8 +1,19 @@
-"""Shared KL-divergence helpers for loss classes."""
+"""Shared KL-divergence helpers and utilities for loss classes."""
 
 import torch
 from torch import Tensor
 from torch.distributions import Distribution, Gamma
+
+
+def _load_buffer(value: list[float] | str) -> Tensor:
+    """Load a tensor from a list of floats or a .pt file path."""
+    if isinstance(value, str):
+        loaded = torch.load(value, weights_only=True)
+        if isinstance(loaded, dict):
+            return next(iter(loaded.values())).float()
+        return loaded.float()
+    return torch.tensor(value, dtype=torch.float32)
+
 
 from integrator.model.distributions.profile_surrogates import (
     ProfileSurrogateOutput,
@@ -20,8 +31,6 @@ def _kl(
         return torch.distributions.kl.kl_divergence(q, p)
     except NotImplementedError:
         samples = q.rsample(torch.Size([mc_samples]))
-        if eps > 0:
-            samples = samples.clamp(min=eps)
         log_q = q.log_prob(samples)
         log_p = p.log_prob(samples)
         return (log_q - log_p).mean(dim=0)

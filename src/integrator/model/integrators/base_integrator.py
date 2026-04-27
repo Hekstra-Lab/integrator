@@ -88,7 +88,6 @@ class BaseIntegrator(pl.LightningModule):
         self.warmup_steps = cfg.warmup_steps
         self.lr_min = cfg.lr_min
         self.mc_samples = cfg.mc_samples
-        self.renyi_scale = cfg.renyi_scale
         if cfg.data_dim == "2d":
             self.shoebox_shape = (cfg.h, cfg.w)
         else:
@@ -290,9 +289,8 @@ class BaseIntegrator(pl.LightningModule):
             total = total + smooth_w * smooth
 
         if ortho_w is not None and ortho_w > 0:
-            W_n = W / W.norm(dim=0, keepdim=True).clamp(min=1e-8)
+            W_n = W / (W.norm(dim=0, keepdim=True) + 1e-8)
             gram = W_n.T @ W_n
-            # diag of gram is 1 (unit cols); penalty is purely off-diagonal
             off_sq = (gram.pow(2)).sum() - float(d)
             denom = max(d * (d - 1), 1)
             ortho = off_sq / denom
@@ -361,13 +359,7 @@ class BaseIntegrator(pl.LightningModule):
         return total, components
 
     def on_validation_epoch_end(self) -> None:
-        """Log val - train generalization gaps for each ELBO component.
-
-        For every logged metric that exists as both 'train X' and 'val X',
-        emits 'gap X' = val - train. Runs at the end of validation, when
-        both train (accumulated over the current train epoch) and val
-        values are available in trainer.callback_metrics.
-        """
+        """Log val - train generalization gaps for each ELBO component."""
         metrics = self.trainer.callback_metrics
         for key in list(metrics.keys()):
             if not key.startswith("val "):
@@ -446,12 +438,7 @@ class BaseIntegrator(pl.LightningModule):
         return lr_lambda
 
     def _step_linear_warmup_lambda(self):
-        """Linear ramp 0 → 1 over the first `warmup_steps` optimizer steps,
-        then stays at 1. No decay tail. Step-level (not epoch-level) so it
-        can absorb the early-step gradient spike that NaN's gammaB on
-        bright-tail data, where Adam's running moment estimates need ~100
-        steps to stabilize before the lr=1e-3 step magnitude is safe.
-        """
+        """Linear ramp 0 -> 1 over the first `warmup_steps` optimizer steps."""
         warmup = max(int(self.warmup_steps), 0)
 
         def lr_lambda(step: int) -> float:

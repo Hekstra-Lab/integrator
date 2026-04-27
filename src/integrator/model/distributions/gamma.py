@@ -50,7 +50,7 @@ class GammaDistributionRepamA(nn.Module):
         magnitude to raw_k. With Kaiming-init weights × normalized encoder
         features, the head can only realistically reach k of order 10²–10³.
         Consequence on bright crystallography data: the noise-to-signal
-        ratio σ/μ = 1/√k floors at ~1/√(10⁴) = 1e-2 — *worse* than
+        ratio std/mu = 1/sqrt(k) floors at ~1/√(10⁴) = 1e-2 — *worse* than
         Poisson at high intensity (CRLB says σ/μ should be 1/√I, e.g.
         3e-3 at I=10⁵). The Laplace approximation isn't satisfied.
 
@@ -84,8 +84,7 @@ class GammaDistributionRepamA(nn.Module):
         in_features: int = 64,
         eps: float = 1e-6,
         k_min: float = 0.1,
-        separate_inputs: bool = False,
-        parameterization: str = "softplus",
+        paraeterization: str = "softplus",
         k_init: float = 1.0,
         r_init: float | None = None,
         zero_head_weights: bool = False,
@@ -94,7 +93,6 @@ class GammaDistributionRepamA(nn.Module):
         super().__init__()
         self.eps = eps
         self.k_min = k_min
-        self.separate_inputs = separate_inputs
         if parameterization not in ("softplus", "log"):
             raise ValueError(
                 f"parameterization must be 'softplus' or 'log'; "
@@ -102,22 +100,15 @@ class GammaDistributionRepamA(nn.Module):
             )
         self.parameterization = parameterization
 
-        if separate_inputs:
-            self.linear_k = nn.Linear(in_features, 1)
-            self.linear_r = nn.Linear(in_features, 1)
-            self._init_k_head_bias(self.linear_k, k_init)
-            self._init_r_head_bias(self.linear_r, r_init)
-        else:
-            self.fc = nn.Linear(in_features, 2)
-            self._init_fc_biases(k_init, r_init)
+        self.linear_k = nn.Linear(in_features, 1)
+        self.linear_r = nn.Linear(in_features, 1)
+        self._init_k_head_bias(self.linear_k, k_init)
+        self._init_r_head_bias(self.linear_r, r_init)
 
         if zero_head_weights:
             with torch.no_grad():
-                if separate_inputs:
-                    self.linear_k.weight.zero_()
-                    self.linear_r.weight.zero_()
-                else:
-                    self.fc.weight.zero_()
+                self.linear_k.weight.zero_()
+                self.linear_r.weight.zero_()
 
     def _k_bias(self, target: float) -> float:
         """Bias value so the k head evaluates to `target` at init."""
@@ -154,26 +145,9 @@ class GammaDistributionRepamA(nn.Module):
         with torch.no_grad():
             linear.bias.fill_(self._r_bias(target))
 
-    def _init_fc_biases(
-        self, k_init: float, r_init: float | None
-    ) -> None:
-        if self.fc.bias is None:
-            return
-        with torch.no_grad():
-            self.fc.bias[0] = self._k_bias(k_init)
-            if r_init is not None:
-                self.fc.bias[1] = self._r_bias(r_init)
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        x_: torch.Tensor | None = None,
-    ):
-        if self.separate_inputs:
-            raw_k = self.linear_k(x)
-            raw_r = self.linear_r(x_ if x_ is not None else x)
-        else:
-            raw_k, raw_r = self.fc(x).chunk(2, dim=-1)
+    def forward(self, x: torch.Tensor, x_: torch.Tensor | None = None):
+        raw_k = self.linear_k(x)
+        raw_r = self.linear_r(x_ if x_ is not None else x)
 
         if self.parameterization == "log":
             k = torch.exp(raw_k) + self.k_min
@@ -187,49 +161,13 @@ class GammaDistributionRepamA(nn.Module):
 
 # %%
 class GammaDistributionRepamB(nn.Module):
-    """Gamma via (mu, fano): k = mu/fano, r = 1/fano.
-
-    (mu, fano) is the natural statistical parameterization — mu is the
-    Gamma mean, fano = var/mean is the Fano factor. Converges slower
-    than RepamA's direct (k, r) because ``k = mu/fano`` couples the two
-    heads through a non-diagonal Jacobian, but settles into more
-    physically meaningful solutions.
-
-    To accelerate convergence, pass ``mean_init`` (approximate expected
-    mean of the data the surrogate will model) and optionally
-    ``fano_init`` (default 1.0 = Poisson-like). These initialize the
-    linear layer biases so ``softplus(raw_mu) ≈ mean_init`` and
-    ``softplus(raw_fano) ≈ fano_init`` at step 0. Without these, the
-    mu head starts at ~0.7 and has to grow many orders of magnitude
-    before matching the data scale.
-
-    ``mu_parameterization`` controls the output activation for mu only —
-    fano stays in softplus space, so the (mu, fano) statistical
-    decomposition is preserved in both modes:
-      * ``"softplus"`` (default): ``mu = softplus(raw_mu) + eps``.
-      * ``"log"``: ``mu = exp(raw_mu)``. The linear head spans log mu
-        rather than mu, so weights stay O(1) even when target
-        intensities span 0 to ~3e5. Recommended when mean_init is
-        large (thousands+).
-
-    ``floor_k_min`` (default ``None``) opts into a soft lower bound on
-    the derived concentration ``k = mu/fano``, applied via
-    ``k = softplus(k_raw - floor_k_min) + floor_k_min``. ``r`` is then
-    recomputed as ``k/mu`` so the predicted Gamma mean stays exactly mu
-    on every reflection — the property that makes (mu, fano) match the
-    Laplace approximation. This is the failure boundary fix: when
-    ``k_raw > floor_k_min`` the floor is inactive and gammaB is
-    bitwise-identical; when ``k_raw`` drifts toward zero (where
-    ``_standard_gamma_grad`` NaN's), it saturates at floor_k_min and
-    only the variance is implicitly bounded.
-    """
+    """Gamma via (mu, fano): k = mu/fano, r = 1/fano."""
 
     def __init__(
         self,
         in_features: int = 64,
         eps: float = 1e-6,
         k_min: float = 0.1,
-        separate_inputs: bool = False,
         mean_init: float | None = None,
         fano_init: float = 1.0,
         mu_parameterization: str = "softplus",
@@ -239,7 +177,6 @@ class GammaDistributionRepamB(nn.Module):
         super().__init__()
         self.eps = eps
         self.k_min = k_min
-        self.separate_inputs = separate_inputs
         self.floor_k_min = (
             float(floor_k_min) if floor_k_min is not None else None
         )
@@ -249,29 +186,15 @@ class GammaDistributionRepamB(nn.Module):
             )
         self.mu_parameterization = mu_parameterization
 
-        if separate_inputs:
-            self.linear_mu = nn.Linear(in_features, 1)
-            self.linear_fano = nn.Linear(in_features, 1)
-            self._init_mu_head(self.linear_mu, mean_init)
-            self._init_fano_head(self.linear_fano, fano_init)
-        else:
-            self.fc = nn.Linear(in_features, 2)
-            self._init_fc_biases(mean_init, fano_init)
+        self.linear_mu = nn.Linear(in_features, 1)
+        self.linear_fano = nn.Linear(in_features, 1)
+        self._init_mu_head(self.linear_mu, mean_init)
+        self._init_fano_head(self.linear_fano, fano_init)
 
-        # When `mean_init` is provided, also zero the linear-head weights so
-        # initial (mu, fano) is uniform across reflections instead of varying
-        # with the random-weight × encoder-feature product. The init
-        # diagnostic showed qi_linear_mu_grad_max varies ~1000× across seeds
-        # under the current random-Kaiming setup — that variance is the
-        # weight × feature product, not the bias. Opting in via mean_init
-        # keeps existing `mean_init: null` runs bitwise unchanged.
         if mean_init is not None:
             with torch.no_grad():
-                if separate_inputs:
-                    self.linear_mu.weight.zero_()
-                    self.linear_fano.weight.zero_()
-                else:
-                    self.fc.weight.zero_()
+                self.linear_mu.weight.zero_()
+                self.linear_fano.weight.zero_()
 
     def _mu_bias(self, target: float) -> float:
         """Bias value so the mu head evaluates to `target` at init."""
@@ -291,31 +214,9 @@ class GammaDistributionRepamB(nn.Module):
         with torch.no_grad():
             linear.bias.fill_(_softplus_inverse_shifted(target, self.eps))
 
-    def _init_fc_biases(
-        self,
-        mean_init: float | None,
-        fano_init: float | None,
-    ) -> None:
-        if self.fc.bias is None:
-            return
-        with torch.no_grad():
-            if mean_init is not None:
-                self.fc.bias[0] = self._mu_bias(mean_init)
-            if fano_init is not None:
-                self.fc.bias[1] = _softplus_inverse_shifted(
-                    fano_init, self.eps
-                )
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        x_: torch.Tensor | None = None,
-    ):
-        if self.separate_inputs:
-            raw_mu = self.linear_mu(x)
-            raw_fano = self.linear_fano(x_ if x_ is not None else x)
-        else:
-            raw_mu, raw_fano = self.fc(x).chunk(2, dim=-1)
+    def forward(self, x: torch.Tensor, x_: torch.Tensor | None = None):
+        raw_mu = self.linear_mu(x)
+        raw_fano = self.linear_fano(x_ if x_ is not None else x)
 
         if self.mu_parameterization == "log":
             mu = torch.exp(raw_mu)
@@ -327,12 +228,6 @@ class GammaDistributionRepamB(nn.Module):
         k = mu * r
 
         if self.floor_k_min is not None:
-            # Smooth lower bound on k. softplus passes through unchanged
-            # when k ≫ floor_k_min and saturates near floor_k_min when k
-            # is small. Recomputing r = k_safe / mu keeps the predicted
-            # mean = k/r = mu intact on every reflection — the property
-            # that makes gammaB match the Laplace approximation. Only
-            # the variance is implicitly bounded in the unstable corner.
             k = F.softplus(k - self.floor_k_min) + self.floor_k_min
             r = k / mu
 
@@ -340,123 +235,14 @@ class GammaDistributionRepamB(nn.Module):
 
 
 # %%
-class GammaDistributionRepamC(nn.Module):
-    """Gamma via (mu, phi): k = 1/phi, r = 1/(phi*mu)."""
-
-    def __init__(
-        self,
-        in_features: int = 64,
-        eps: float = 1e-6,
-        k_min: float = 0.1,
-        separate_inputs: bool = False,
-        **kwargs,
-    ):
-        super().__init__()
-        self.eps = eps
-        self.k_min = k_min
-        self.separate_inputs = separate_inputs
-
-        if separate_inputs:
-            self.linear_mu = nn.Linear(in_features, 1)
-            self.linear_phi = nn.Linear(in_features, 1)
-        else:
-            self.fc = nn.Linear(in_features, 2)
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        x_: torch.Tensor | None = None,
-    ):
-        if self.separate_inputs:
-            raw_mu = self.linear_mu(x)
-            raw_phi = self.linear_phi(x_ if x_ is not None else x)
-        else:
-            raw_mu, raw_phi = self.fc(x).chunk(2, dim=-1)
-
-        mu = F.softplus(raw_mu) + self.eps
-        phi = F.softplus(raw_phi) + self.eps
-
-        k = 1.0 / phi
-        r = 1.0 / (phi * mu)
-
-        return Gamma(concentration=k.flatten(), rate=r.flatten())
-
-
-# %%
-class GammaDistributionRepamD(nn.Module):
-    """Gamma(k, fano): k via softplus+k_min, r = 1/fano."""
-
-    def __init__(
-        self,
-        in_features: int = 64,
-        eps: float = 1e-6,
-        k_min: float = 0.1,
-        separate_inputs: bool = False,
-        **kwargs,
-    ):
-        super().__init__()
-        self.eps = eps
-        self.k_min = k_min
-        self.separate_inputs = separate_inputs
-
-        if separate_inputs:
-            self.linear_k = nn.Linear(in_features, 1)
-            self.linear_fano = nn.Linear(in_features, 1)
-            _init_k_bias(self.linear_k, k_min=k_min)
-        else:
-            self.fc = nn.Linear(in_features, 2)
-            if self.fc.bias is not None:
-                with torch.no_grad():
-                    self.fc.bias[0] = math.log(math.expm1(1.0 - k_min))
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        x_: torch.Tensor | None = None,
-    ):
-        if self.separate_inputs:
-            raw_k = self.linear_k(x)
-            raw_fano = self.linear_fano(x_ if x_ is not None else x)
-        else:
-            raw_k, raw_fano = self.fc(x).chunk(2, dim=-1)
-
-        k = _bound_k(raw_k, self.k_min)
-        fano = F.softplus(raw_fano) + self.eps
-
-        r = 1.0 / fano
-
-        return Gamma(concentration=k.flatten(), rate=r.flatten())
-
-
-# %%
 class GammaDistributionRepamE(nn.Module):
-    """Squared Nakagami parameterization: Gamma(m, m / Omega).
-
-    If X ~ Nakagami(m, Omega) then Y = X^2 ~ Gamma(m, m/Omega), so the
-    variational posterior over intensities Y lives naturally in Nakagami^2
-    space. The two heads are decoupled:
-
-        m     — Nakagami shape (inverse squared coefficient of variation);
-                controls dispersion via std/mean = 1/sqrt(m).
-        Omega — second moment / spread; equals the Gamma mean E[Y] = Omega.
-
-    Under this mapping, k = m (direct shape) and r = m/Omega (derived rate).
-    Contrast with RepamB (mu, fano), where k = mu/fano couples the two heads
-    through a non-diagonal Jacobian; here the m head is a direct output and
-    Omega only enters the rate.
-
-    Both heads are bounded positive via softplus. `m_min` plays the role of
-    `k_min` to keep the concentration away from zero where
-    torch.distributions.Gamma.rsample becomes unstable. Pass ``mean_init``
-    to bias the Omega head toward a target mean at step 0.
-    """
+    """Squared Nakagami parameterization: Gamma(m, m / Omega)."""
 
     def __init__(
         self,
         in_features: int = 64,
         eps: float = 1e-6,
         m_min: float = 0.1,
-        separate_inputs: bool = False,
         mean_init: float | None = None,
         m_init: float = 1.0,
         **kwargs,
@@ -464,16 +250,11 @@ class GammaDistributionRepamE(nn.Module):
         super().__init__()
         self.eps = eps
         self.m_min = m_min
-        self.separate_inputs = separate_inputs
 
-        if separate_inputs:
-            self.linear_m = nn.Linear(in_features, 1)
-            self.linear_omega = nn.Linear(in_features, 1)
-            _init_k_bias(self.linear_m, k_init=m_init, k_min=m_min)
-            self._init_omega_head(self.linear_omega, mean_init)
-        else:
-            self.fc = nn.Linear(in_features, 2)
-            self._init_fc_biases(mean_init, m_init)
+        self.linear_m = nn.Linear(in_features, 1)
+        self.linear_omega = nn.Linear(in_features, 1)
+        _init_k_bias(self.linear_m, k_init=m_init, k_min=m_min)
+        self._init_omega_head(self.linear_omega, mean_init)
 
     @staticmethod
     def _omega_bias(target: float, shift: float) -> float:
@@ -487,30 +268,9 @@ class GammaDistributionRepamE(nn.Module):
         with torch.no_grad():
             linear.bias.fill_(self._omega_bias(target, self.eps))
 
-    def _init_fc_biases(
-        self,
-        mean_init: float | None,
-        m_init: float,
-    ) -> None:
-        if self.fc.bias is None:
-            return
-        with torch.no_grad():
-            # First output unit feeds m (via softplus + m_min); second unit
-            # feeds Omega (via softplus + eps).
-            self.fc.bias[0] = math.log(math.expm1(max(m_init - self.m_min, 1e-6)))
-            if mean_init is not None:
-                self.fc.bias[1] = self._omega_bias(mean_init, self.eps)
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        x_: torch.Tensor | None = None,
-    ):
-        if self.separate_inputs:
-            raw_m = self.linear_m(x)
-            raw_omega = self.linear_omega(x_ if x_ is not None else x)
-        else:
-            raw_m, raw_omega = self.fc(x).chunk(2, dim=-1)
+    def forward(self, x: torch.Tensor, x_: torch.Tensor | None = None):
+        raw_m = self.linear_m(x)
+        raw_omega = self.linear_omega(x_ if x_ is not None else x)
 
         m = _bound_k(raw_m, self.m_min)
         omega = F.softplus(raw_omega) + self.eps

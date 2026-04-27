@@ -6,14 +6,11 @@ from integrator.data_loaders import (
     SimulatedShoeboxLoader,
 )
 from integrator.model.distributions import (
-    ConvProfileSurrogate,
     DirichletDistribution,
     FixedBasisProfileSurrogate,
     FoldedNormalDistribution,
     GammaDistributionRepamA,
     GammaDistributionRepamB,
-    GammaDistributionRepamC,
-    GammaDistributionRepamD,
     GammaDistributionRepamE,
     LearnedBasisProfileSurrogate,
     LogNormalDistribution,
@@ -21,24 +18,17 @@ from integrator.model.distributions import (
 )
 from integrator.model.encoders import (
     IntensityEncoder,
-    MLPMetadataEncoder,
     RaggedIntensityEncoder,
     RaggedShoeboxEncoder,
     ShoeboxEncoder,
 )
 from integrator.model.integrators import (
-    HierarchicalIntegratorA,
-    HierarchicalIntegratorB,
-    HierarchicalIntegratorC,
-    IntegratorModelA,
-    IntegratorModelB,
-    IntegratorModelC,
-    RaggedHierarchicalIntegratorB,
-    RaggedHierarchicalIntegratorC,
+    HierarchicalIntegrator,
+    Integrator,
+    RaggedHierarchicalIntegrator,
 )
 from integrator.model.loss import (
     Loss,
-    PerBinLoss,
     PolyWilsonLoss,
     WilsonLoss,
 )
@@ -47,38 +37,28 @@ REGISTRY = {
     "encoders": {
         "shoebox_encoder": ShoeboxEncoder,
         "intensity_encoder": IntensityEncoder,
-        "mlp_metadata_encoder": MLPMetadataEncoder,
         "ragged_shoebox_encoder": RaggedShoeboxEncoder,
         "ragged_intensity_encoder": RaggedIntensityEncoder,
     },
     "loss": {
         "default": Loss,
-        "per_bin": PerBinLoss,
         "wilson": WilsonLoss,
         "poly_wilson": PolyWilsonLoss,
     },
     "integrator": {
-        "modela": IntegratorModelA,
-        "modelb": IntegratorModelB,
-        "modelc": IntegratorModelC,
-        "hierarchicalA": HierarchicalIntegratorA,
-        "hierarchicalB": HierarchicalIntegratorB,
-        "hierarchicalC": HierarchicalIntegratorC,
-        "hierarchicalB_ragged": RaggedHierarchicalIntegratorB,
-        "hierarchicalC_ragged": RaggedHierarchicalIntegratorC,
+        "integrator": Integrator,
+        "hierarchical": HierarchicalIntegrator,
+        "hierarchical_ragged": RaggedHierarchicalIntegrator,
     },
     "surrogates": {
         "gammaA": GammaDistributionRepamA,
         "gammaB": GammaDistributionRepamB,
-        "gammaC": GammaDistributionRepamC,
-        "gammaD": GammaDistributionRepamD,
         "gammaE": GammaDistributionRepamE,
         "log_normal": LogNormalDistribution,
         "folded_normal": FoldedNormalDistribution,
         "dirichlet": DirichletDistribution,
         "learned_basis_profile": LearnedBasisProfileSurrogate,
         "fixed_basis_profile": FixedBasisProfileSurrogate,
-        "conv_profile": ConvProfileSurrogate,
         "ragged_learned_basis_profile": RaggedLogisticNormalSurrogate,
     },
     "data_loader": {

@@ -106,7 +106,7 @@ def construct_yaml_configuration(
     )
 
     integrator_cfg = IntegratorConfig(
-        name="modelb",
+        name="integrator",
         args=integrator_args,
     )
     # Defining encoder modules

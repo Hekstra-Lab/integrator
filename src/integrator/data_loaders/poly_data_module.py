@@ -37,14 +37,7 @@ POLY_DS_COLS = [
 
 
 class PolyShoeboxDataModule(pl.LightningDataModule):
-    """DataModule for polychromatic (Laue) stills shoeboxes.
-
-    Mirrors the interface of ShoeboxDataModule so the YAML args block
-    is interchangeable, but:
-    - Skips _remove_flagged_variance (laue data has no intensity.prf.variance)
-    - Uses POLY_DS_COLS (includes wavelength, omits mono-only columns)
-    - Defaults to D=1 (stills)
-    """
+    """DataModule for polychromatic (Laue) stills shoeboxes."""
 
     def __init__(
         self,

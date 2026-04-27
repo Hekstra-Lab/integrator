@@ -37,7 +37,7 @@ class RaggedShoeboxEncoder(nn.Module):
     then a *masked* global avg pool and a linear projection to `encoder_out`.
 
     Differences from `ShoeboxEncoder`:
-      - Drops `input_shape`, `use_coord_channels`, `_infer_flattened_size`.
+      - Drops `input_shape`, `_infer_flattened_size`.
       - conv2 defaults to padding=(1,1,1) so the network handles small
         shoeboxes without shrinking to zero.
       - `forward(x, mask)` — mask is propagated through the pool.

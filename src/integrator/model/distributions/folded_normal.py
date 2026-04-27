@@ -68,38 +68,22 @@ class FoldedNormal(TransformedDistribution):
 class FoldedNormalDistribution(nn.Module):
     """
     FoldedNormal distribution surrogate.
-
-    When `separate_inputs=False` (default), uses a single Linear(in, 2) and
-    splits.  When `True`, uses two separate Linear(in, 1).
     """
 
     def __init__(
         self,
         in_features: int = 64,
         eps: float = 0.1,
-        separate_inputs: bool = False,
         **kwargs,
     ):
         super().__init__()
         self.eps = eps
-        self.separate_inputs = separate_inputs
+        self.linear_loc = nn.Linear(in_features, 1)
+        self.linear_scale = nn.Linear(in_features, 1)
 
-        if separate_inputs:
-            self.linear_loc = nn.Linear(in_features, 1)
-            self.linear_scale = nn.Linear(in_features, 1)
-        else:
-            self.fc = nn.Linear(in_features, 2)
-
-    def forward(
-        self,
-        x: Tensor,
-        x_: Tensor | None = None,
-    ) -> FoldedNormal:
-        if self.separate_inputs:
-            raw_loc = self.linear_loc(x)
-            raw_scale = self.linear_scale(x_ if x_ is not None else x)
-        else:
-            raw_loc, raw_scale = self.fc(x).chunk(2, dim=-1)
+    def forward(self, x: Tensor, x_: Tensor | None = None) -> FoldedNormal:
+        raw_loc = self.linear_loc(x)
+        raw_scale = self.linear_scale(x_ if x_ is not None else x)
 
         loc = (F.softplus(raw_loc) + self.eps).squeeze()
         scale = (F.softplus(raw_scale) + self.eps).squeeze()

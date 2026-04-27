@@ -188,7 +188,7 @@ def prepare_per_bin_priors(
             a summary and record what happened in run_metadata.yaml.
     """
     loss_name = cfg.get("loss", {}).get("name", "")
-    if loss_name not in ("per_bin", "wilson", "poly_wilson"):
+    if loss_name not in ("wilson", "poly_wilson"):
         return
 
     data_dir = Path(cfg["data_loader"]["args"]["data_dir"])

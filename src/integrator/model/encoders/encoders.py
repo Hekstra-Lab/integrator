@@ -19,28 +19,6 @@ OPERATIONS = {
 }
 
 
-def _make_coord_channels(input_shape: tuple[int, ...], dim: int) -> Tensor:
-    """Build normalized spatial coordinate channels for a (D, H, W) volume.
-
-    Each channel is one spatial axis, normalized to [-1, 1] so it's
-    scale-free relative to the input counts. Returns shape (dim, *spatial).
-    The encoder concatenates these onto its input channel dim.
-    """
-    if dim == 2:
-        h, w = input_shape[-2:]
-        ys = torch.linspace(-1.0, 1.0, h)
-        xs = torch.linspace(-1.0, 1.0, w)
-        gy, gx = torch.meshgrid(ys, xs, indexing="ij")
-        return torch.stack([gy, gx], dim=0)  # (2, H, W)
-    # 3D
-    d, h, w = input_shape[-3:]
-    zs = torch.linspace(-1.0, 1.0, d) if d > 1 else torch.zeros(1)
-    ys = torch.linspace(-1.0, 1.0, h)
-    xs = torch.linspace(-1.0, 1.0, w)
-    gz, gy, gx = torch.meshgrid(zs, ys, xs, indexing="ij")
-    return torch.stack([gz, gy, gx], dim=0)  # (3, D, H, W)
-
-
 class ShoeboxEncoder(nn.Module):
     """CNN encoder producing a fixed-length embedding from a shoebox volume.
 
@@ -100,15 +78,7 @@ class ShoeboxEncoder(nn.Module):
 
         # Precompute coord channels as a buffer so they move with the
         # module (.to(device), .cuda(), etc.) without being parameters.
-        if use_coord_channels:
-            coords = _make_coord_channels(
-                input_shape,
-                dim=3 if data_dim == "3d" else 2,
-            )
-            self.register_buffer("coord_channels", coords, persistent=False)
-            effective_in_channels = in_channels + coords.shape[0]
-        else:
-            effective_in_channels = in_channels
+        effective_in_channels = in_channels
 
         self.conv1 = OPERATIONS[data_dim]["conv"](
             in_channels=effective_in_channels,

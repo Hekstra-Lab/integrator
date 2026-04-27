@@ -1,6 +1,5 @@
 from math import prod
 
-import numpy as np
 import torch
 import torch.nn as nn
 from torch import Tensor
@@ -30,45 +29,6 @@ PRIOR_MAP = {
     "exponential": Exponential,
     "dirichlet": Dirichlet,
 }
-
-
-def create_center_focused_dirichlet_prior(
-    shape: tuple[int, ...] = (3, 21, 21),
-    base_alpha: float = 0.1,  # outer region
-    center_alpha: float = 100.0,  # high alpha at the center
-    decay_factor: float = 1.0,
-    peak_percentage: float = 0.1,
-) -> Tensor:
-    channels, height, width = shape
-    alpha_3d = np.ones(shape) * base_alpha
-
-    # center indices
-    center_c = channels // 2
-    center_h = height // 2
-    center_w = width // 2
-
-    # loop over voxels
-    for c in range(channels):
-        for h in range(height):
-            for w in range(width):
-                # Normalized distance from center
-                dist_c = abs(c - center_c) / (channels / 2)
-                dist_h = abs(h - center_h) / (height / 2)
-                dist_w = abs(w - center_w) / (width / 2)
-                distance = np.sqrt(
-                    dist_c**2 + dist_h**2 + dist_w**2
-                ) / np.sqrt(3)
-
-                if distance < peak_percentage * 5:
-                    alpha_value = (
-                        center_alpha
-                        - (center_alpha - base_alpha)
-                        * (distance / (peak_percentage * 5)) ** decay_factor
-                    )
-                    alpha_3d[c, h, w] = alpha_value
-
-    alpha_vector = torch.tensor(alpha_3d.flatten(), dtype=torch.float32)
-    return alpha_vector
 
 
 def _get_dirichlet_prior(
@@ -245,12 +205,12 @@ class Loss(nn.Module):
             kl += kl_bg
 
         # Calculating log likelihood (B, S, Pixels)
-        ll = Poisson(rate + self.eps).log_prob(counts.unsqueeze(1)) 
+        ll = Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
         # (B, S, Pixels)
         ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
         # (B, Pixels)
         neg_ll = (-ll_mean).sum(1)
-        #neg_ll = (-ll_mean).mean(1)
+        # neg_ll = (-ll_mean).mean(1)
         # (B)
 
         # Total loss

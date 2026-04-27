@@ -17,10 +17,10 @@ from integrator.model.distributions.profile_surrogates import (
 )
 from integrator.model.loss.kl_helpers import (
     _kl,
+    _load_buffer,
     compute_bg_kl,
     compute_profile_kl,
 )
-from integrator.model.loss.per_bin_loss import _load_buffer
 from integrator.model.loss.wilson_loss import WilsonLoss
 
 
@@ -130,7 +130,6 @@ class PolyWilsonLoss(WilsonLoss):
         # so bin = idx - 1, and bin == n_lambda_bins means x >= edges[-1].
         idx = torch.bucketize(wavelength, edges, right=True) - 1
         # OOB is strictly outside [edges[0], edges[-1]] — having λ == edges[-1]
-        # is fine (we want it in the last bin, not flagged).
         if not self._oob_warned:
             oob = (wavelength < edges[0]) | (wavelength > edges[-1])
             n_oob = int(oob.sum())
@@ -199,7 +198,6 @@ class PolyWilsonLoss(WilsonLoss):
         kl = kl + kl_prf
 
         # Wilson intensity KL
-        # per refl tau using per-bin G_{k(λ)} and global B.
         metadata = kwargs.get("metadata")
         if (
             metadata is None
@@ -254,7 +252,8 @@ class PolyWilsonLoss(WilsonLoss):
         kl_hyper = self.kl_hyperparams() / self.dataset_size
 
         # Poisson NLL
-        ll = Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
+        # ll = Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
+        ll = Poisson(rate).log_prob(counts.unsqueeze(1))
         ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
         neg_ll = (-ll_mean).sum(1)
 

@@ -664,6 +664,7 @@ class SimulatedShoeboxLoader(pl.LightningDataModule):
         D: int = 3,
         get_dxyz: bool = False,
         anscombe: bool = False,
+        transform: str | None = None,
     ):
         super().__init__()
         self.data_dir = data_dir

@@ -123,22 +123,10 @@ def _get_surrogate_modules(
     cfg: dict,
     skip_warmstart: bool = False,
 ) -> dict[str, nn.Module]:
-    """Construct all surrogate distribution modules from config.
-
-    Iterates over all keys in `cfg["surrogates"]` so that any combination
-    of surrogates is supported.
-
-    For `fixed_basis_profile` (and similar), a relative `basis_path` is resolved
-    against `data_loader.args.data_dir` so the YAML only needs the filename.
-    """
+    """Construct all surrogate distribution modules from config."""
     surrogates = {}
     data_dir = _get_data_dir(cfg)
     n_bins = _get_n_bins(cfg)
-
-    # Models with >2 encoders have separate k/r heads for qi/qbg
-    integrator_name = _require(cfg, "integrator", "name")
-    integrator_cls = REGISTRY["integrator"][integrator_name]
-    separate_inputs = len(integrator_cls.REQUIRED_ENCODERS) > 2
 
     # Load GammaB mean_init stats once (if available). Written by
     # prepare_per_bin_priors from raw counts (no DIALS). Used below to
@@ -159,10 +147,7 @@ def _get_surrogate_modules(
         surrogate_cls = REGISTRY["surrogates"][surrogate_cfg["name"]]
         args = dict(surrogate_cfg["args"])
 
-        # GammaB: inject mean_init from the cached counts-derived stats
-        # if the user didn't set it explicitly in the YAML. Defaults use
-        # the median (robust to heavy-tail peaks) — user can override by
-        # setting mean_init explicitly.
+        # GammaB: inject mean_init
         if (
             surrogate_cfg["name"] == "gammaB"
             and "mean_init" not in args
@@ -196,9 +181,6 @@ def _get_surrogate_modules(
                     data_dir,
                     n_bins,
                 )
-        # Auto-set separate_inputs for two-param surrogates (qi, qbg)
-        if key in ("qi", "qbg") and "separate_inputs" not in args:
-            args["separate_inputs"] = separate_inputs
         surrogates[key] = surrogate_cls(**args)
     return surrogates
 
@@ -330,11 +312,10 @@ def _get_loss_module(
 
     # Filter kwargs to only what the loss constructor accepts.
     import inspect
+
     sig = inspect.signature(loss_cls.__init__)
     params = sig.parameters
-    has_var_keyword = any(
-        p.kind == p.VAR_KEYWORD for p in params.values()
-    )
+    has_var_keyword = any(p.kind == p.VAR_KEYWORD for p in params.values())
     if not has_var_keyword:
         valid_keys = set(params.keys()) - {"self"}
         kwargs = {k: v for k, v in kwargs.items() if k in valid_keys}
