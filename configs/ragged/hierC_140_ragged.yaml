@@ -5,7 +5,7 @@ global_vars:
   n_bins: 30
 
 integrator:
-  name: hierarchicalC_ragged
+  name: hierarchical_ragged
   args:
     data_dim: 3d
     d: 9

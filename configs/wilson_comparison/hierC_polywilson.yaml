@@ -7,7 +7,7 @@ global_vars:
   w: &w 25
 
 integrator:
-  name: hierarchicalC
+  name: hierarchical
   args:
     data_dim: 2d
     d: *d
@@ -17,7 +17,6 @@ integrator:
     encoder_out: *encoder_out
     weight_decay: 0.0
     mc_samples: *mc_samples
-    renyi_scale: 0.0
     predict_keys:
       - refl_ids
       - qi_mean
