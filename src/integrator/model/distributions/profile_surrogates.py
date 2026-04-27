@@ -134,13 +134,30 @@ class LearnedBasisProfileSurrogate(nn.Module):
     def __init__(
         self,
         input_dim: int,
-        latent_dim: int = 8,
+        latent_dim: int | None = None,
         output_dim: int = 441,
         init_std: float = 0.5,
         warmstart_basis_path: str | None = None,
         freeze_bias: bool = False,
     ) -> None:
         super().__init__()
+
+        self._basis_W: Tensor | None = None
+        self._basis_b: Tensor | None = None
+
+        if warmstart_basis_path is not None:
+            basis = torch.load(warmstart_basis_path, weights_only=False)
+            self._basis_W = basis["W"].float()  # (K, d_basis)
+            self._basis_b = basis["b"].float()  # (K,)
+            d_basis = self._basis_W.shape[1]
+            if latent_dim is None:
+                latent_dim = d_basis
+
+        # TODO: remove latent_dim fallback once legacy configs (ablation
+        # runs Apr 2026) are done — latent_dim should always be inferred
+        # from the basis file when warmstarting.
+        if latent_dim is None:
+            latent_dim = 8
 
         self.d: int = latent_dim
 
@@ -151,35 +168,29 @@ class LearnedBasisProfileSurrogate(nn.Module):
         nn.init.zeros_(self.std_head.weight)
         nn.init.constant_(self.std_head.bias, _softplus_inverse(init_std))
 
-        if warmstart_basis_path is not None:
-            self._warmstart_from_basis(warmstart_basis_path, output_dim)
+        if self._basis_W is not None:
+            self._apply_warmstart(output_dim)
 
         if freeze_bias:
             self.decoder.bias.requires_grad_(False)
 
-    def _warmstart_from_basis(self, basis_path: str, output_dim: int) -> None:
-        basis = torch.load(basis_path, weights_only=False)
-        W = basis["W"].float()  # (K, d_basis)
-        b = basis["b"].float()  # (K,)
+    def _apply_warmstart(self, output_dim: int) -> None:
+        W, b = self._basis_W, self._basis_b
         if W.shape[0] != output_dim:
             raise ValueError(
                 f"warmstart basis W has K={W.shape[0]} but output_dim="
-                f"{output_dim}. Basis shape doesn't match the surrogate's "
-                "profile size."
+                f"{output_dim}."
             )
         if b.shape[0] != output_dim:
             raise ValueError(
                 f"warmstart basis b has K={b.shape[0]} but output_dim="
                 f"{output_dim}."
             )
-        d_basis = W.shape[1]
-        d_copy = min(self.d, d_basis)
-        # nn.Linear.weight has shape (out_features, in_features) = (K, d).
-        # Basis W is also (K, d). Copy the first d_copy columns into the
-        # corresponding decoder columns; leave extra columns at random init.
+        d_copy = min(self.d, W.shape[1])
         with torch.no_grad():
             self.decoder.weight.data[:, :d_copy].copy_(W[:, :d_copy])
             self.decoder.bias.data.copy_(b)
+        del self._basis_W, self._basis_b
 
     def forward(
         self,
