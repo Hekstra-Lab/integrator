@@ -135,9 +135,6 @@ surrogates:
       eps: 1.0e-06
       k_min: 0.1
       parameterization: log
-      k_init: 1.0
-      r_init: 1.0
-      zero_head_weights: true
   qi:
     name: gammaA
     args:
@@ -196,3 +193,6 @@ logger:
   w: 21
 output:
   refl_file: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data/reflections_.refl
+  dials_merge_html: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/merged_reference.html
+  phenix_refine_log: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/refine_001.log
+  anomalous_peaks: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/reference_peaks.csv
