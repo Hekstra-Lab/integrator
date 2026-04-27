@@ -132,45 +132,44 @@ def main():
         # Writing epoch prediction dir
         ckpt_dir = pred_dir / f"epoch_{epoch:04d}"
 
-        # Skip if predictions already exist (resume support)
-        if ckpt_dir.exists() and any(ckpt_dir.iterdir()):
-            logger.info("Skipping epoch %d (predictions already exist)", epoch)
-            continue
-
         ckpt_dir.mkdir(parents=True, exist_ok=True)
 
-        # Construct callbacks
-        callbacks = []
-        pred_writer = BatchPredWriter(
-            output_dir=ckpt_dir,
-            write_interval="batch",
-            epoch=epoch,
-        )
-        callbacks.append(pred_writer)
+        # Skip prediction if outputs already exist (resume support),
+        # but still run post-processing (write-refl, write-mtz) below.
+        has_preds = any(ckpt_dir.glob("preds_epoch_*"))
+        if has_preds:
+            logger.info(
+                "Predictions for epoch %d already exist — skipping inference",
+                epoch,
+            )
+        else:
+            callbacks = []
+            pred_writer = BatchPredWriter(
+                output_dir=ckpt_dir,
+                write_interval="batch",
+                epoch=epoch,
+            )
+            callbacks.append(pred_writer)
 
-        # Construct trainer
-        trainer = construct_trainer(
-            config,
-            callbacks=callbacks,
-            logger=None,
-        )
+            trainer = construct_trainer(
+                config,
+                callbacks=callbacks,
+                logger=None,
+            )
 
-        # load checkpoints weights
-        ckpt_ = torch.load(ckpt.as_posix())
-        integrator = construct_integrator(config, skip_warmstart=True)
-        integrator.load_state_dict(ckpt_["state_dict"])
+            ckpt_ = torch.load(ckpt.as_posix())
+            integrator = construct_integrator(config, skip_warmstart=True)
+            integrator.load_state_dict(ckpt_["state_dict"])
 
-        # Use gpu if available
-        if torch.cuda.is_available():
-            integrator.to(torch.device("cuda"))
+            if torch.cuda.is_available():
+                integrator.to(torch.device("cuda"))
 
-        # predict over checkpoints
-        integrator.eval()
-        trainer.predict(
-            integrator,
-            return_predictions=False,
-            dataloaders=data_loader.predict_dataloader(),
-        )
+            integrator.eval()
+            trainer.predict(
+                integrator,
+                return_predictions=False,
+                dataloaders=data_loader.predict_dataloader(),
+            )
 
         if args.write_refl:
             logger.info("Writing .refl output for epoch %d", epoch)
@@ -217,21 +216,27 @@ def main():
                 pred_dir,
             )
         else:
-            out_path = pred_dir / "test_preds_all.parquet"
-            logger.info("Aggregating test predictions → %s", out_path)
-            (
-                pl.scan_parquet(parquet_glob, include_file_paths="src")
-                .filter(pl.col("is_test") == 1.0)
-                .with_columns(
-                    pl.col("src")
-                    .str.extract(r"epoch_(\d+)", 1)
-                    .cast(pl.Int32)
-                    .alias("epoch")
+            lf = pl.scan_parquet(parquet_glob, include_file_paths="src")
+            schema = lf.collect_schema()
+            if "is_test" not in schema:
+                logger.info(
+                    "is_test not in predictions — skipping test-set aggregation"
                 )
-                .drop("src")
-                .sink_parquet(out_path)
-            )
-            logger.info("Wrote %s", out_path)
+            else:
+                out_path = pred_dir / "test_preds_all.parquet"
+                logger.info("Aggregating test predictions → %s", out_path)
+                (
+                    lf.filter(pl.col("is_test") == 1.0)
+                    .with_columns(
+                        pl.col("src")
+                        .str.extract(r"epoch_(\d+)", 1)
+                        .cast(pl.Int32)
+                        .alias("epoch")
+                    )
+                    .drop("src")
+                    .sink_parquet(out_path)
+                )
+                logger.info("Wrote %s", out_path)
 
 
 if __name__ == "__main__":
