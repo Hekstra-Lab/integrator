@@ -147,10 +147,10 @@ class GammaDistributionRepamB(nn.Module):
         r = 1.0 / fano
         k = mu * r
 
-        if self.floor_k_min is not None:
-            k = F.softplus(k - self.floor_k_min) + self.floor_k_min
-            r = k / mu
-
+        # if self.floor_k_min is not None:
+        #     k = F.softplus(k - self.floor_k_min) + self.floor_k_min
+        #     r = k / mu
+        #
         return Gamma(concentration=k.flatten(), rate=r.flatten())
 
 
