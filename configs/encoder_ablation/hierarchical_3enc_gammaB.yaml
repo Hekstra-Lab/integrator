@@ -55,12 +55,11 @@ encoders:
 
 surrogates:
   qp:
-    name: learned_basis_profile
+    name: fixed_basis_profile
     args:
       input_dim: *encoder_out
-      output_dim: 1323
+      basis_path: hermite_profile_basis.pt
       init_std: 0.5
-      warmstart_basis_path: hermite_profile_basis.pt
   qbg:
     name: gammaB
     args:
@@ -82,9 +81,11 @@ loss:
     mc_samples: *mc_samples
     eps: 1.0e-06
     n_bins: 30
-    bg_rate_per_group: bg_rate_per_group.pt
     init_log_K: 5.0
     init_log_B: 2.0
+    bg_rate_per_group: bg_rate_per_group.pt
+    profile_basis_per_bin: hermite_profile_basis.pt
+    profile_sigma_prior: 3.0
     pi_weight: 1.0
     pbg_weight: 1.0
     pprf_weight: 1.0
