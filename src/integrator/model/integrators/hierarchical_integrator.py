@@ -15,6 +15,30 @@ from integrator.model.integrators.integrator_utils import (
 )
 
 
+def _tensor_stats(name: str, t: Tensor) -> str:
+    """One-line summary: name | min max mean nan% inf%."""
+    with torch.no_grad():
+        flat = t.detach().float().flatten()
+        nan_pct = flat.isnan().float().mean().item() * 100
+        inf_pct = flat.isinf().float().mean().item() * 100
+        finite = flat[flat.isfinite()]
+        if finite.numel() == 0:
+            return f"  {name:20s} | ALL non-finite  nan={nan_pct:.1f}%  inf={inf_pct:.1f}%"
+        return (
+            f"  {name:20s} | min={finite.min().item():+.4e}  max={finite.max().item():+.4e}"
+            f"  mean={finite.mean().item():+.4e}  nan={nan_pct:.1f}%  inf={inf_pct:.1f}%"
+        )
+
+
+def _gamma_stats(name: str, dist) -> str:
+    """Stats for a Gamma distribution's concentration and rate."""
+    lines = [
+        _tensor_stats(f"{name}.concentration", dist.concentration),
+        _tensor_stats(f"{name}.rate", dist.rate),
+    ]
+    return "\n".join(lines)
+
+
 def _add_group_outputs(out: dict, metadata: dict, loss) -> None:
     """Add group_label, tau_per_refl, and alpha_per_refl to forward outputs."""
     group_labels = metadata["group_label"].long()
@@ -50,6 +74,29 @@ def _hierarchical_step(self, batch, step: Literal["train", "val"]):
 
     # get total steps
     total_loss = loss_dict["loss"]
+
+    # === DEBUG: print loss components every step for first 200 steps ===
+    if step == "train" and self.global_step < 200:
+        parts = []
+        parts.append(f"[DEBUG step={self.global_step}]")
+        parts.append(f"  loss={total_loss.item():.4e}")
+        for k in ("neg_ll_mean", "kl_mean", "kl_prf_mean", "kl_i_mean", "kl_bg_mean", "kl_hyper"):
+            if k in loss_dict:
+                v = loss_dict[k]
+                parts.append(f"  {k}={v.item():.4e}")
+        parts.append(_gamma_stats("qi", outputs["qi"]))
+        parts.append(_gamma_stats("qbg", outputs["qbg"]))
+        parts.append(_tensor_stats("rate", forward_out["rates"]))
+        parts.append(_tensor_stats("counts", forward_out["counts"]))
+        # Check surrogate linear layer weights for NaN
+        for sname, surr in self.surrogates.items():
+            for pname, p in surr.named_parameters():
+                if p.grad is not None:
+                    parts.append(_tensor_stats(f"{sname}.{pname}.grad", p.grad))
+                if p.data.isnan().any():
+                    parts.append(f"  *** NaN in {sname}.{pname} weights! ***")
+        print("\n".join(parts), flush=True)
+    # === END DEBUG ===
 
     _log_loss(
         self,
@@ -186,6 +233,19 @@ class HierarchicalIntegrator3Enc(Integrator):
 
         qbg = self.surrogates["qbg"](x_bg, x_bg)
         qi = self.surrogates["qi"](x_i, x_i)
+
+        # === DEBUG: catch NaN at the source ===
+        if self.training and (qi.concentration.isnan().any() or qbg.concentration.isnan().any()):
+            parts = [f"[DEBUG NaN detected in forward! global_step={self.global_step}]"]
+            parts.append(_tensor_stats("x_i", x_i))
+            parts.append(_tensor_stats("x_bg", x_bg))
+            parts.append(_gamma_stats("qi", qi))
+            parts.append(_gamma_stats("qbg", qbg))
+            for sname, surr in self.surrogates.items():
+                for pname, p in surr.named_parameters():
+                    parts.append(_tensor_stats(f"{sname}.{pname}", p.data))
+            print("\n".join(parts), flush=True)
+        # === END DEBUG ===
 
         prf_labels = metadata.get(
             "profile_group_label", metadata.get("group_label")
