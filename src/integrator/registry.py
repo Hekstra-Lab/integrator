@@ -24,6 +24,7 @@ from integrator.model.encoders import (
 )
 from integrator.model.integrators import (
     HierarchicalIntegrator,
+    HierarchicalIntegrator3Enc,
     Integrator,
     RaggedHierarchicalIntegrator,
 )
@@ -48,6 +49,7 @@ REGISTRY = {
     "integrator": {
         "integrator": Integrator,
         "hierarchical": HierarchicalIntegrator,
+        "hierarchical_3enc": HierarchicalIntegrator3Enc,
         "hierarchical_ragged": RaggedHierarchicalIntegrator,
     },
     "surrogates": {
