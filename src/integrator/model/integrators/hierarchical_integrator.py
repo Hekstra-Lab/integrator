@@ -201,18 +201,19 @@ class HierarchicalIntegrator(Integrator):
 
 
 class HierarchicalIntegrator3Enc(Integrator):
-    """Hierarchical integrator with 3 encoders: profile, intensity_i, intensity_bg.
+    """Hierarchical integrator with 3 encoders: profile, k, r.
 
-    Each intensity surrogate receives the same encoder output for both args,
-    so mu and fano heads learn independent projections from shared features.
+    Matches old IntegratorModelB / HierarchicalIntegratorB architecture:
+    the k encoder feeds linear_mu of both qi and qbg, the r encoder
+    feeds linear_fano of both qi and qbg.
     """
 
     from integrator import configs
 
     REQUIRED_ENCODERS = {
         "profile": configs.ShoeboxEncoderArgs,
-        "intensity_i": configs.IntensityEncoderArgs,
-        "intensity_bg": configs.IntensityEncoderArgs,
+        "k": configs.IntensityEncoderArgs,
+        "r": configs.IntensityEncoderArgs,
     }
 
     def _forward_impl(
@@ -228,24 +229,11 @@ class HierarchicalIntegrator3Enc(Integrator):
         shoebox_reshaped = shoebox.reshape(b, 1, *self.shoebox_shape)
 
         x_profile = self.encoders["profile"](shoebox_reshaped)
-        x_i = self.encoders["intensity_i"](shoebox_reshaped)
-        x_bg = self.encoders["intensity_bg"](shoebox_reshaped)
+        x_k = self.encoders["k"](shoebox_reshaped)
+        x_r = self.encoders["r"](shoebox_reshaped)
 
-        qbg = self.surrogates["qbg"](x_bg, x_bg)
-        qi = self.surrogates["qi"](x_i, x_i)
-
-        # === DEBUG: catch NaN at the source ===
-        if self.training and (qi.concentration.isnan().any() or qbg.concentration.isnan().any()):
-            parts = [f"[DEBUG NaN detected in forward! global_step={self.global_step}]"]
-            parts.append(_tensor_stats("x_i", x_i))
-            parts.append(_tensor_stats("x_bg", x_bg))
-            parts.append(_gamma_stats("qi", qi))
-            parts.append(_gamma_stats("qbg", qbg))
-            for sname, surr in self.surrogates.items():
-                for pname, p in surr.named_parameters():
-                    parts.append(_tensor_stats(f"{sname}.{pname}", p.data))
-            print("\n".join(parts), flush=True)
-        # === END DEBUG ===
+        qbg = self.surrogates["qbg"](x_k, x_r)
+        qi = self.surrogates["qi"](x_k, x_r)
 
         prf_labels = metadata.get(
             "profile_group_label", metadata.get("group_label")
