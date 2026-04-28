@@ -217,7 +217,7 @@ def prepare_per_bin_priors(
                 if events_out is not None:
                     events_out.append(
                         {
-                            "key": "wavelength_bin_edges",
+                            "file": wbe_path.name,
                             "path": str(wbe_path),
                             "action": "regenerated"
                             if wbe_path.exists()
