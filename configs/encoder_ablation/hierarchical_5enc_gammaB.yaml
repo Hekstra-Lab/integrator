@@ -9,6 +9,9 @@ integrator:
     encoder_out: &encoder_out 64
     weight_decay: 0.0
     mc_samples: &mc_samples 100
+    lr_schedule: cosine_warmup
+    warmup_epochs: 5
+    lr_min: 1.0e-05
     predict_keys:
       [refl_ids, is_test, qi_mean, qi_var, qbg_mean, qbg_var,
        intensity.prf.value, intensity.prf.variance, background.mean,
@@ -80,11 +83,9 @@ loss:
     eps: 1.0e-06
     n_bins: 30
     bg_rate_per_group: bg_rate_per_group.pt
+    init_log_K: 5.0
+    init_log_B: 2.0
     profile_sigma_prior: 3.0
-    profile_basis_per_bin: hermite_profile_basis.pt
-    profile_basis_type: hermite
-    profile_basis_max_order: 4
-    profile_basis_sigma_ref: 3.0
     pi_weight: 1.0
     pbg_weight: 1.0
     pprf_weight: 1.0
