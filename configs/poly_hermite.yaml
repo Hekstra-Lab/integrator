@@ -62,14 +62,14 @@ surrogates:
       input_dim: *encoder_out
       output_dim: 625
       init_std: 0.5
-      warmstart_basis_path: hermite_profile_basis.pt
+      # warmstart_basis_path: hermite_profile_basis.pt
   qbg:
     name: gammaA
     args:
       in_features: *encoder_out
       eps: 1.0e-06
       k_min: 0.01
-      positive_constraint: log
+      positive_constraint: softplus
   qi:
     name: gammaA
     args:
@@ -84,11 +84,11 @@ loss:
     mc_samples: *mc_samples
     eps: 1.0e-06
     n_bins: 30
-    n_lambda_bins: 8
+    n_lambda_bins: 16
     bg_rate_per_group: bg_rate_per_group.pt
     profile_sigma_prior: 1.0
     profile_basis_type: hermite
-    profile_basis_max_order: 6
+    profile_basis_max_order: 5
     profile_basis_sigma_ref: 1.0
     pi_weight: 1.0
     pbg_weight: 1.0
@@ -123,7 +123,7 @@ trainer:
   devices: 1
   logger: true
   precision: '32'
-  check_val_every_n_epoch: 5
+  check_val_every_n_epoch: 2
   log_every_n_steps: 1
   deterministic: false
   enable_checkpointing: true
