@@ -439,13 +439,6 @@ class ShoeboxDataModule(pl.LightningDataModule):
         self.standardized_counts = shoebox_file_names["standardized_counts"]
         self.get_dxyz = get_dxyz
         self.anscombe = anscombe
-        # Resolve encoder-input transform. Explicit `transform` wins; absent
-        # that we honor the legacy `anscombe` flag for backward compat.
-        # log1p deliberately skips global z-scoring — matches scvi-tools'
-        # `log_variational=True` recipe (encoder GroupNorm handles
-        # per-batch normalization). On heavy-tailed counts the global std
-        # would otherwise be dominated by the bright Bragg peaks and
-        # squash bulk voxels near zero.
         if transform is None:
             self.transform = "anscombe" if anscombe else "none"
         elif transform not in ("anscombe", "log1p", "none"):
