@@ -66,11 +66,15 @@ surrogates:
     args:
       in_features: *encoder_out
       eps: 1.0e-06
+      fano_init: null
+      floor_k_min: 0.1
   qi:
     name: gammaB
     args:
       in_features: *encoder_out
       eps: 1.0e-06
+      fano_init: null
+      floor_k_min: 0.1
 
 loss:
   name: wilson
