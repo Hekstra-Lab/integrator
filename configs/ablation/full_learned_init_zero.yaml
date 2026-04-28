@@ -68,7 +68,7 @@ surrogates:
     args:
       in_features: *encoder_out
       eps: 1.0e-06
-      k_min: 0.01
+      k_min: 0.1
       positive_constraint: log
       k_init: 1.0
       r_init: 1.0
@@ -78,7 +78,7 @@ surrogates:
     args:
       in_features: *encoder_out
       eps: 1.0e-06
-      k_min: 0.01
+      k_min: 0.1
       positive_constraint: log
       k_init: 100.0
       r_init: 1.0
