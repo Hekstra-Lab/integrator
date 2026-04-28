@@ -291,7 +291,7 @@ class WilsonLoss(nn.Module):
                 "WilsonLoss requires metadata['d'] (per-reflection resolution) to compute s^2."
             )
         d = metadata["d"].to(device)
-        s_sq = 1.0 / (4.0 * d.pow(2))  # (B,)
+        s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))  # (B,)
 
         if self.learn_concentration:
             alpha_i = F.softplus(self.log_alpha_per_group[groups])  # (B,)
@@ -333,8 +333,7 @@ class WilsonLoss(nn.Module):
         kl_hyper = self.kl_hyperparams() / self.dataset_size
 
         # Poisson NLL
-        # ll = Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
-        ll = Poisson(rate).log_prob(counts.unsqueeze(1))
+        ll = Poisson(rate.clamp(min=1e-12)).log_prob(counts.unsqueeze(1))
         ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
         neg_ll = (-ll_mean).sum(1)
 

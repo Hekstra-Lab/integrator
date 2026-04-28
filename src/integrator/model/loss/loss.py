@@ -205,7 +205,7 @@ class Loss(nn.Module):
             kl += kl_bg
 
         # Calculating log likelihood (B, S, Pixels)
-        ll = Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
+        ll = Poisson(rate.clamp(min=1e-12)).log_prob(counts.unsqueeze(1))
         # (B, S, Pixels)
         ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
         # (B, Pixels)

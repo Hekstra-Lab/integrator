@@ -208,7 +208,7 @@ class PolyWilsonLoss(WilsonLoss):
                 "PolyWilsonLoss requires metadata['d'] and metadata['wavelength']."
             )
         d = metadata["d"].to(device)
-        s_sq = 1.0 / (4.0 * d.pow(2))  # (B,)
+        s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))  # (B,)
         wavelength = metadata["wavelength"].to(device)
         lam_bin = self._wavelength_to_bin(wavelength)  # (B,) long
 
@@ -252,7 +252,7 @@ class PolyWilsonLoss(WilsonLoss):
         kl_hyper = self.kl_hyperparams() / self.dataset_size
 
         # Poisson NLL
-        ll = Poisson(rate).log_prob(counts.unsqueeze(1))
+        ll = Poisson(rate.clamp(min=1e-12)).log_prob(counts.unsqueeze(1))
         ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
         neg_ll = (-ll_mean).sum(1)
 
