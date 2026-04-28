@@ -59,7 +59,8 @@ class WilsonLoss(nn.Module):
         # Empirical Bayes priors (per-bin)
         bg_rate_per_group: list[float] | str,
         bg_concentration: float = 1.0,
-        # Global Normal prior on the latent h (used by ProfileSurrogateOutput qp)
+        # Profile prior
+        profile_basis_per_bin: str | None = None,
         profile_sigma_prior: float = 3.0,
         # Wilson initialization; optional
         tau_per_group: list[float] | str | None = None,
@@ -100,6 +101,26 @@ class WilsonLoss(nn.Module):
         self.pbg_weight = pbg_cfg.weight if pbg_cfg is not None else pbg_weight
         self.pi_weight = pi_cfg.weight if pi_cfg is not None else pi_weight
         self.n_wilson_samples = n_wilson_samples
+
+        # Per-bin profile priors from basis file
+        if profile_basis_per_bin is not None:
+            basis = torch.load(profile_basis_per_bin, weights_only=False)
+            self.profile_sigma_prior = float(
+                basis.get("sigma_prior", profile_sigma_prior)
+            )
+            if "mu_per_group" in basis:
+                self.register_buffer(
+                    "profile_mu_prior", basis["mu_per_group"]
+                )
+                self.register_buffer(
+                    "profile_std_prior", basis["std_per_group"]
+                )
+            else:
+                self.profile_mu_prior = None
+                self.profile_std_prior = None
+        else:
+            self.profile_mu_prior = None
+            self.profile_std_prior = None
 
         # if pi_cfg.name == "gamma" -> learn per-bin alpha
         if (
@@ -270,13 +291,12 @@ class WilsonLoss(nn.Module):
         kl_i = torch.zeros(batch_size, device=device)
         kl_bg = torch.zeros(batch_size, device=device)
 
-        # Profile KL — global N(0, profile_sigma_prior²) prior on h.
         kl_prf = compute_profile_kl(
             qp,
             groups,
             self.profile_sigma_prior,
-            None,
-            None,
+            self.profile_mu_prior,
+            self.profile_std_prior,
             self.pprf_weight,
             device,
             metadata=kwargs.get("metadata"),
@@ -333,7 +353,7 @@ class WilsonLoss(nn.Module):
         kl_hyper = self.kl_hyperparams() / self.dataset_size
 
         # Poisson NLL
-        ll = Poisson(rate.clamp(min=1e-12)).log_prob(counts.unsqueeze(1))
+        ll = Poisson(rate + self.eps).log_prob(counts.unsqueeze(1))
         ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
         neg_ll = (-ll_mean).sum(1)
 
