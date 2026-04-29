@@ -159,6 +159,20 @@ def parse_args():
         help="Use a subset of the data (for debugging)",
     )
 
+    # Resume
+    parser.add_argument(
+        "--ckpt-path",
+        type=str,
+        default=None,
+        help="Path to checkpoint to resume training from (e.g. last.ckpt)",
+    )
+    parser.add_argument(
+        "--wandb-resume-id",
+        type=str,
+        default=None,
+        help="W&B run ID to resume logging into (uses 'must' resume mode)",
+    )
+
     # Misc
     parser.add_argument(
         "-v",
@@ -245,11 +259,15 @@ def main():
     ]
 
     # load wandb logger
-    wb_logger = WandbLogger(
+    wb_kwargs = dict(
         project=args.wb_project,
         save_dir=args.save_dir,
         tags=tags,
     )
+    if args.wandb_resume_id:
+        wb_kwargs["id"] = args.wandb_resume_id
+        wb_kwargs["resume"] = "must"
+    wb_logger = WandbLogger(**wb_kwargs)
 
     # Explicit git capture; gets integrator git location;
     # NOTE: for development only
@@ -454,6 +472,7 @@ def main():
         integrator,
         train_dataloaders=data_loader.train_dataloader(),
         val_dataloaders=data_loader.val_dataloader(),
+        ckpt_path=args.ckpt_path,
     )
 
     logger.info("Traning complete!")
