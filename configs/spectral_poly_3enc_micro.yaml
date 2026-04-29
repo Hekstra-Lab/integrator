@@ -67,7 +67,7 @@ loss:
     eps: 1.0e-06
     n_bins: 30
     spectrum_type: polynomial
-    degree: 2
+    degree: 3
     b_min: 1.0
     bg_rate_per_group: bg_rate_per_group.pt
     profile_sigma_prior: 3.0
