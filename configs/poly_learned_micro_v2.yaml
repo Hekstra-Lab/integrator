@@ -1,5 +1,5 @@
 integrator:
-  name: hierarchical
+  name: hierarchical_3enc
   args:
     data_dim: 2d
     d: &d 1
@@ -18,6 +18,7 @@ integrator:
        background.sum.value, background.sum.variance,
        d, wavelength, group_label, qp_mean]
 
+# 3 encoders: profile, k, r
 encoders:
 - name: shoebox_encoder
   args:
@@ -34,8 +35,6 @@ encoders:
     conv1_out_channels: 16
     conv2_out_channels: 32
     conv3_out_channels: 64
-- *intensity_enc
-- *intensity_enc
 - *intensity_enc
 
 surrogates:
