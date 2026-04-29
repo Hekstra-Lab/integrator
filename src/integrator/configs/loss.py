@@ -23,5 +23,5 @@ class LossArgs:
 
 @dataclass
 class LossConfig:
-    name: Literal["default", "wilson", "poly_wilson"]
+    name: Literal["default", "wilson", "poly_wilson", "spectral_wilson"]
     args: LossArgs

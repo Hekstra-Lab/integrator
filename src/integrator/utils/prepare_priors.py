@@ -188,7 +188,7 @@ def prepare_per_bin_priors(
             a summary and record what happened in run_metadata.yaml.
     """
     loss_name = cfg.get("loss", {}).get("name", "")
-    if loss_name not in ("wilson", "poly_wilson"):
+    if loss_name not in ("wilson", "poly_wilson", "spectral_wilson"):
         return
 
     data_dir = Path(cfg["data_loader"]["args"]["data_dir"])
@@ -197,6 +197,24 @@ def prepare_per_bin_priors(
     # Read n_bins from config, fall back to 20
     if n_bins <= 0:
         n_bins = int(loss_args.get("n_bins", 20))
+
+    # Spectral Wilson: auto-compute lambda_min/lambda_max from data
+    if loss_name == "spectral_wilson":
+        if "lambda_min" not in loss_args or "lambda_max" not in loss_args:
+            ref_path = _resolve_reference_path(data_dir, cfg)
+            ref = torch.load(ref_path, weights_only=False)
+            col_names = ref.get("column_names", [])
+            if "wavelength" in col_names:
+                wl_idx = col_names.index("wavelength")
+                wl = ref["reference"][:, wl_idx]
+                pad = 0.01
+                loss_args.setdefault("lambda_min", float(wl.min()) - pad)
+                loss_args.setdefault("lambda_max", float(wl.max()) + pad)
+                logger.info(
+                    "spectral_wilson: auto lambda_min=%.4f lambda_max=%.4f",
+                    loss_args["lambda_min"],
+                    loss_args["lambda_max"],
+                )
 
     # Polychromatic-only: auto-inject wavelength_bin_edges path and generate
     # quantile-based edges from metadata['wavelength'] if the file is missing.

@@ -31,6 +31,7 @@ from integrator.model.integrators import (
 from integrator.model.loss import (
     Loss,
     PolyWilsonLoss,
+    SpectralWilsonLoss,
     WilsonLoss,
 )
 
@@ -45,6 +46,7 @@ REGISTRY = {
         "default": Loss,
         "wilson": WilsonLoss,
         "poly_wilson": PolyWilsonLoss,
+        "spectral_wilson": SpectralWilsonLoss,
     },
     "integrator": {
         "integrator": Integrator,
