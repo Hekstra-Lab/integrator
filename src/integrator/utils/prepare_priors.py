@@ -203,10 +203,15 @@ def prepare_per_bin_priors(
         if "lambda_min" not in loss_args or "lambda_max" not in loss_args:
             ref_path = _resolve_reference_path(data_dir, cfg)
             ref = torch.load(ref_path, weights_only=False)
-            col_names = ref.get("column_names", [])
-            if "wavelength" in col_names:
-                wl_idx = col_names.index("wavelength")
-                wl = ref["reference"][:, wl_idx]
+            wl = None
+            if isinstance(ref, dict) and "wavelength" in ref:
+                wl = ref["wavelength"]
+            elif isinstance(ref, dict) and "column_names" in ref:
+                col_names = ref["column_names"]
+                if "wavelength" in col_names:
+                    wl_idx = col_names.index("wavelength")
+                    wl = ref["reference"][:, wl_idx]
+            if wl is not None:
                 pad = 0.01
                 loss_args.setdefault("lambda_min", float(wl.min()) - pad)
                 loss_args.setdefault("lambda_max", float(wl.max()) + pad)
