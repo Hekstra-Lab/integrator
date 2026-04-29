@@ -78,11 +78,12 @@ class LearnedSpectrum(nn.Module):
 
 
 class PolynomialSpectrum(nn.Module):
-    """Continuous log G(λ) via low-order polynomial.
+    """Continuous log G(λ) via Chebyshev polynomial expansion.
 
-    log G(λ) = Σ_k c_k · ((λ - λ_mid) / scale)^k
+    log G(λ) = Σ_k c_k · T_k(x),  x = (λ - λ_mid) / scale ∈ [-1, 1]
 
-    Wavelengths are centered and scaled to [-1, 1] for numerical stability.
+    Chebyshev polynomials are bounded in [-1, 1] across the domain,
+    avoiding the edge blow-up of monomial bases.
     """
 
     def __init__(
@@ -111,10 +112,20 @@ class PolynomialSpectrum(nn.Module):
         self.coeff_loc = nn.Parameter(init)
         self.coeff_log_scale = nn.Parameter(torch.full((self.n_basis,), -2.0))
 
+    @staticmethod
+    def _chebyshev(x: Tensor, degree: int) -> list[Tensor]:
+        """Evaluate Chebyshev polynomials T_0..T_degree via recurrence."""
+        T = [torch.ones_like(x)]
+        if degree >= 1:
+            T.append(x)
+        for k in range(2, degree + 1):
+            T.append(2 * x * T[k - 1] - T[k - 2])
+        return T
+
     def design_matrix(self, wavelength: Tensor) -> Tensor:
         """(B,) -> (B, degree+1)"""
         x = (wavelength - self.lam_mid) / self.lam_scale
-        return torch.stack([x**k for k in range(self.n_basis)], dim=-1)
+        return torch.stack(self._chebyshev(x, self.degree), dim=-1)
 
     def q(self) -> Normal:
         return Normal(self.coeff_loc, F.softplus(self.coeff_log_scale))
