@@ -74,6 +74,7 @@ class WilsonLoss(nn.Module):
         hp_log_B_loc: float = 3.4,
         hp_log_B_scale: float = 1.0,
         n_wilson_samples: int = 4,
+        b_min: float = 0.0,
         # Per-bin learnable concentration
         learn_concentration: bool = False,
         init_alpha: float = 1.0,
@@ -93,6 +94,7 @@ class WilsonLoss(nn.Module):
         self.mc_samples = mc_samples
         self.eps = eps
         self.dataset_size = dataset_size
+        self.b_min = b_min
         self.bg_concentration = bg_concentration
         self.profile_sigma_prior = profile_sigma_prior
         self.pprf_weight = (
@@ -322,7 +324,7 @@ class WilsonLoss(nn.Module):
             log_K = self.q_log_K().rsample()  # scalar
             log_B = self.q_log_B().rsample()  # scalar
             K = torch.exp(log_K)
-            B = torch.exp(log_B)
+            B = torch.exp(log_B).clamp(min=self.b_min) if self.b_min > 0 else torch.exp(log_B)
             tau = self.compute_tau(K, B, s_sq)  # (B,)
             if alpha_i is not None:
                 p_i = Gamma(concentration=alpha_i, rate=alpha_i * tau)

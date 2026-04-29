@@ -221,7 +221,7 @@ class PolyWilsonLoss(WilsonLoss):
             log_K_bins = self.q_log_K().rsample()  # (n_lambda_bins,)
             log_B = self.q_log_B().rsample()  # scalar
             K_per_refl = torch.exp(log_K_bins)[lam_bin]  # (B,)
-            B = torch.exp(log_B)
+            B = torch.exp(log_B).clamp(min=self.b_min) if self.b_min > 0 else torch.exp(log_B)
             tau = (1.0 / K_per_refl) * torch.exp(2.0 * B * s_sq)
             if alpha_i is not None:
                 p_i = Gamma(concentration=alpha_i, rate=alpha_i * tau)

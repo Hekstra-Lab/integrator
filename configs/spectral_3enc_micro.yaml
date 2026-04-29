@@ -67,6 +67,7 @@ loss:
     eps: 1.0e-06
     n_bins: 30
     n_basis: 16
+    b_min: 1.0
     bg_rate_per_group: bg_rate_per_group.pt
     profile_sigma_prior: 3.0
     pi_weight: 1.0
