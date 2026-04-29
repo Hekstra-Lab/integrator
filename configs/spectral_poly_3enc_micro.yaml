@@ -1,0 +1,120 @@
+integrator:
+  name: hierarchical_3enc
+  args:
+    data_dim: 2d
+    d: &d 1
+    h: &h 25
+    w: &w 25
+    lr: 0.001
+    encoder_out: &encoder_out 32
+    weight_decay: 0.0
+    decoder_weight_decay: 1.0e-3
+    qp_smoothness_weight: 1.0e-3
+    qp_orthogonality_weight: 1.0e-2
+    mc_samples: &mc_samples 50
+    predict_keys:
+      [refl_ids, qi_mean, qi_var, qbg_mean, qbg_var,
+       intensity.sum.value, intensity.sum.variance,
+       background.sum.value, background.sum.variance,
+       d, wavelength, group_label, qp_mean]
+
+# 3 encoders: profile, k, r
+encoders:
+- name: shoebox_encoder
+  args:
+    data_dim: 2d
+    input_shape: [*h, *w]
+    encoder_out: *encoder_out
+    conv1_out_channels: 16
+    conv2_out_channels: 32
+- &intensity_enc
+  name: intensity_encoder
+  args:
+    data_dim: 2d
+    encoder_out: *encoder_out
+    conv1_out_channels: 16
+    conv2_out_channels: 32
+    conv3_out_channels: 64
+- *intensity_enc
+
+surrogates:
+  qp:
+    name: learned_basis_profile
+    args:
+      input_dim: *encoder_out
+      latent_dim: 14
+      output_dim: 625
+      init_std: 0.5
+  qbg:
+    name: gammaA
+    args:
+      in_features: *encoder_out
+      eps: 1.0e-06
+      k_min: 0.01
+      positive_constraint: log
+  qi:
+    name: gammaA
+    args:
+      in_features: *encoder_out
+      eps: 1.0e-06
+      k_min: 0.01
+      positive_constraint: log
+
+loss:
+  name: spectral_wilson
+  args:
+    mc_samples: *mc_samples
+    eps: 1.0e-06
+    n_bins: 30
+    spectrum_type: polynomial
+    degree: 2
+    b_min: 1.0
+    bg_rate_per_group: bg_rate_per_group.pt
+    profile_sigma_prior: 3.0
+    pi_weight: 1.0
+    pbg_weight: 1.0
+    pprf_weight: 1.0
+
+data_loader:
+  name: poly_data
+  args:
+    data_dir: &data_dir /n/hekstra_lab/people/aldama/integrator_data/hewl_1118/pytorch_data
+    batch_size: 256
+    val_split: 0.2
+    test_split: 0.0
+    num_workers: 8
+    include_test: true
+    subset_size: null
+    cutoff: null
+    shoebox_file_names:
+      data_dir: *data_dir
+      counts: counts.npy
+      masks: masks.npy
+      stats: anscombe_stats.pt
+      reference: metadata.pt
+      standardized_counts: null
+    D: *d
+    H: *h
+    W: *w
+    anscombe: true
+
+trainer:
+  max_epochs: 50
+  accelerator: gpu
+  devices: 1
+  logger: true
+  precision: '32'
+  check_val_every_n_epoch: 5
+  log_every_n_steps: 1
+  deterministic: false
+  enable_checkpointing: true
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+
+logger:
+  d: *d
+  h: *h
+  w: *w
+
+output:
+  refl_file: /n/hekstra_lab/people/aldama/integrator_data/hewl_1118/pytorch_data/reflections_.refl
