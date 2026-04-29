@@ -324,7 +324,7 @@ class WilsonLoss(nn.Module):
             log_K = self.q_log_K().rsample()  # scalar
             log_B = self.q_log_B().rsample()  # scalar
             K = torch.exp(log_K)
-            B = torch.exp(log_B).clamp(min=self.b_min) if self.b_min > 0 else torch.exp(log_B)
+            B = F.softplus(log_B) + self.b_min
             tau = self.compute_tau(K, B, s_sq)  # (B,)
             if alpha_i is not None:
                 p_i = Gamma(concentration=alpha_i, rate=alpha_i * tau)

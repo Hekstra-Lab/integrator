@@ -13,7 +13,7 @@ from integrator.model.loss.kl_helpers import (
     compute_bg_kl,
     compute_profile_kl,
 )
-from integrator.model.loss.learned_spectrum import LearnedSpectrum
+from integrator.model.loss.learned_spectrum import LearnedSpectrum, PolynomialSpectrum
 from integrator.model.loss.wilson_loss import WilsonLoss
 
 
@@ -27,10 +27,13 @@ class SpectralWilsonLoss(WilsonLoss):
     def __init__(
         self,
         *,
+        spectrum_type: str = "rbf",
         n_basis: int = 16,
+        degree: int = 2,
         lambda_min: float = 0.9,
         lambda_max: float = 1.1,
         overlap_factor: float = 1.5,
+        spectrum_smoothness_weight: float = 0.0,
         init_from_tau: bool = False,
         tau_per_group=None,
         s_squared_per_group=None,
@@ -53,15 +56,26 @@ class SpectralWilsonLoss(WilsonLoss):
         del self.q_log_K_loc
         del self.q_log_K_log_scale
 
-        self.spectrum = LearnedSpectrum(
-            n_basis=n_basis,
-            lambda_min=lambda_min,
-            lambda_max=lambda_max,
-            overlap_factor=overlap_factor,
-            init_log_K=init_log_K,
-            hp_loc=float(self.hp_log_K_loc),
-            hp_scale=float(self.hp_log_K_scale),
-        )
+        self.spectrum_smoothness_weight = spectrum_smoothness_weight
+        if spectrum_type == "polynomial":
+            self.spectrum = PolynomialSpectrum(
+                degree=degree,
+                lambda_min=lambda_min,
+                lambda_max=lambda_max,
+                init_log_K=init_log_K,
+                hp_loc=float(self.hp_log_K_loc),
+                hp_scale=float(self.hp_log_K_scale),
+            )
+        else:
+            self.spectrum = LearnedSpectrum(
+                n_basis=n_basis,
+                lambda_min=lambda_min,
+                lambda_max=lambda_max,
+                overlap_factor=overlap_factor,
+                init_log_K=init_log_K,
+                hp_loc=float(self.hp_log_K_loc),
+                hp_scale=float(self.hp_log_K_scale),
+            )
 
     def kl_hyperparams(self) -> Tensor:
         """KL on spectrum coefficients (G) + scalar B."""
@@ -145,7 +159,7 @@ class SpectralWilsonLoss(WilsonLoss):
             log_K_per_refl = self.spectrum.sample_log_G(wavelength)
             log_B = self.q_log_B().rsample()
             K_per_refl = torch.exp(log_K_per_refl)
-            B = torch.exp(log_B).clamp(min=self.b_min) if self.b_min > 0 else torch.exp(log_B)
+            B = F.softplus(log_B) + self.b_min
             tau = (1.0 / K_per_refl) * torch.exp(2.0 * B * s_sq)
             if alpha_i is not None:
                 p_i = Gamma(concentration=alpha_i, rate=alpha_i * tau)
@@ -180,7 +194,10 @@ class SpectralWilsonLoss(WilsonLoss):
         ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
         neg_ll = (-ll_mean).sum(1)
 
-        loss = (neg_ll + kl).mean() + kl_hyper
+        # Spectrum smoothness penalty
+        smooth = self.spectrum.smoothness_penalty() * self.spectrum_smoothness_weight
+
+        loss = (neg_ll + kl).mean() + kl_hyper + smooth
 
         return {
             "loss": loss,

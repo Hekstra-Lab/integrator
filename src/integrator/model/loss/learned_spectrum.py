@@ -70,3 +70,74 @@ class LearnedSpectrum(nn.Module):
     def kl(self) -> Tensor:
         """KL(q(c) || p(c)), summed over basis functions."""
         return kl_divergence(self.q(), self.p()).sum()
+
+    def smoothness_penalty(self) -> Tensor:
+        """First-order roughness: Σ(c_{j+1} - c_j)²."""
+        diff = self.coeff_loc[1:] - self.coeff_loc[:-1]
+        return diff.pow(2).sum()
+
+
+class PolynomialSpectrum(nn.Module):
+    """Continuous log G(λ) via low-order polynomial.
+
+    log G(λ) = Σ_k c_k · ((λ - λ_mid) / scale)^k
+
+    Wavelengths are centered and scaled to [-1, 1] for numerical stability.
+    """
+
+    def __init__(
+        self,
+        degree: int = 2,
+        lambda_min: float = 0.9,
+        lambda_max: float = 1.1,
+        init_log_K: float = 0.0,
+        hp_loc: float = 0.0,
+        hp_scale: float = 3.0,
+    ):
+        super().__init__()
+        self.degree = degree
+        self.n_basis = degree + 1
+
+        lam_mid = (lambda_min + lambda_max) / 2.0
+        lam_scale = (lambda_max - lambda_min) / 2.0
+
+        self.register_buffer("lam_mid", torch.tensor(lam_mid))
+        self.register_buffer("lam_scale", torch.tensor(lam_scale))
+        self.register_buffer("hp_loc", torch.tensor(hp_loc))
+        self.register_buffer("hp_scale", torch.tensor(hp_scale))
+
+        init = torch.zeros(self.n_basis)
+        init[0] = init_log_K
+        self.coeff_loc = nn.Parameter(init)
+        self.coeff_log_scale = nn.Parameter(torch.full((self.n_basis,), -2.0))
+
+    def design_matrix(self, wavelength: Tensor) -> Tensor:
+        """(B,) -> (B, degree+1)"""
+        x = (wavelength - self.lam_mid) / self.lam_scale
+        return torch.stack([x**k for k in range(self.n_basis)], dim=-1)
+
+    def q(self) -> Normal:
+        return Normal(self.coeff_loc, F.softplus(self.coeff_log_scale))
+
+    def p(self) -> Normal:
+        return Normal(
+            self.hp_loc.expand(self.n_basis),
+            self.hp_scale.expand(self.n_basis),
+        )
+
+    def sample_log_G(self, wavelength: Tensor) -> Tensor:
+        """(B,) -> (B,)"""
+        phi = self.design_matrix(wavelength)
+        c = self.q().rsample()
+        return phi @ c
+
+    def mean_log_G(self, wavelength: Tensor) -> Tensor:
+        """(B,) -> (B,)"""
+        phi = self.design_matrix(wavelength)
+        return phi @ self.coeff_loc
+
+    def kl(self) -> Tensor:
+        return kl_divergence(self.q(), self.p()).sum()
+
+    def smoothness_penalty(self) -> Tensor:
+        return torch.tensor(0.0, device=self.coeff_loc.device)
