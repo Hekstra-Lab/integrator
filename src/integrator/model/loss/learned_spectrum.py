@@ -43,7 +43,8 @@ class LearnedSpectrum(nn.Module):
     def design_matrix(self, wavelength: Tensor) -> Tensor:
         """(B,) -> (B, n_basis)"""
         return torch.exp(
-            -0.5 * ((wavelength.unsqueeze(-1) - self.centers) / self.width) ** 2
+            -0.5
+            * ((wavelength.unsqueeze(-1) - self.centers) / self.width) ** 2
         )
 
     def q(self) -> Normal:

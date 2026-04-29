@@ -351,6 +351,11 @@ def main():
     # create integrator
     integrator = construct_integrator(cfg)
 
+    # Set dataset_size for hyperprior KL amortization
+    if hasattr(integrator.loss, "dataset_size"):
+        integrator.loss.dataset_size = len(data_loader.train_dataset)
+        logger.info(f"Set loss.dataset_size = {integrator.loss.dataset_size}")
+
     # save prior artifacts (rescaled concentration, param counts, etc.)
     save_run_artifacts(integrator, cfg, logdir)
 
