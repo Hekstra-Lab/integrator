@@ -13,27 +13,23 @@ from integrator.model.loss.kl_helpers import (
     compute_bg_kl,
     compute_profile_kl,
 )
-from integrator.model.loss.learned_spectrum import LearnedSpectrum, PolynomialSpectrum
+from integrator.model.loss.learned_spectrum import ChebyshevSpectrum
 from integrator.model.loss.wilson_loss import WilsonLoss
 
 
 class SpectralWilsonLoss(WilsonLoss):
     """ELBO loss with continuous learned spectrum G(λ) instead of per-bin G_k.
 
-    Uses a Gaussian RBF basis expansion for log G(λ), replacing the discrete
+    Uses a Chebyshev polynomial expansion for log G(λ), replacing the discrete
     wavelength binning in PolyWilsonLoss.
     """
 
     def __init__(
         self,
         *,
-        spectrum_type: str = "rbf",
-        n_basis: int = 16,
-        degree: int = 2,
+        degree: int = 4,
         lambda_min: float = 0.9,
         lambda_max: float = 1.1,
-        overlap_factor: float = 1.5,
-        spectrum_smoothness_weight: float = 0.0,
         init_from_tau: bool = False,
         tau_per_group=None,
         s_squared_per_group=None,
@@ -52,30 +48,17 @@ class SpectralWilsonLoss(WilsonLoss):
 
         init_log_K = float(self.q_log_K_loc.detach())
 
-        # Replace parent's scalar K params with the continuous spectrum
         del self.q_log_K_loc
         del self.q_log_K_log_scale
 
-        self.spectrum_smoothness_weight = spectrum_smoothness_weight
-        if spectrum_type == "polynomial":
-            self.spectrum = PolynomialSpectrum(
-                degree=degree,
-                lambda_min=lambda_min,
-                lambda_max=lambda_max,
-                init_log_K=init_log_K,
-                hp_loc=float(self.hp_log_K_loc),
-                hp_scale=float(self.hp_log_K_scale),
-            )
-        else:
-            self.spectrum = LearnedSpectrum(
-                n_basis=n_basis,
-                lambda_min=lambda_min,
-                lambda_max=lambda_max,
-                overlap_factor=overlap_factor,
-                init_log_K=init_log_K,
-                hp_loc=float(self.hp_log_K_loc),
-                hp_scale=float(self.hp_log_K_scale),
-            )
+        self.spectrum = ChebyshevSpectrum(
+            degree=degree,
+            lambda_min=lambda_min,
+            lambda_max=lambda_max,
+            init_log_K=init_log_K,
+            hp_loc=float(self.hp_log_K_loc),
+            hp_scale=float(self.hp_log_K_scale),
+        )
 
     def kl_hyperparams(self) -> Tensor:
         """KL on spectrum coefficients (G) + scalar B."""
@@ -85,12 +68,10 @@ class SpectralWilsonLoss(WilsonLoss):
 
     def posterior_means(self) -> dict[str, float]:
         s_B = F.softplus(self.q_log_B_log_scale)
-        log_G_at_centers = self.spectrum.mean_log_G(self.spectrum.centers)
-        G_means = log_G_at_centers.exp().detach()
+        lam_mid = self.spectrum.lam_mid.unsqueeze(0)
+        log_G_mid = self.spectrum.mean_log_G(lam_mid)
         out = {
-            "K_mean": G_means.mean().item(),
-            "K_min": G_means.min().item(),
-            "K_max": G_means.max().item(),
+            "K_mean": log_G_mid.exp().item(),
             "B_mean": (self.q_log_B_loc + 0.5 * s_B**2).exp().item(),
             "B_std": self._lognormal_std(self.q_log_B_loc, s_B),
         }
@@ -194,10 +175,7 @@ class SpectralWilsonLoss(WilsonLoss):
         ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
         neg_ll = (-ll_mean).sum(1)
 
-        # Spectrum smoothness penalty
-        smooth = self.spectrum.smoothness_penalty() * self.spectrum_smoothness_weight
-
-        loss = (neg_ll + kl).mean() + kl_hyper + smooth
+        loss = (neg_ll + kl).mean() + kl_hyper
 
         return {
             "loss": loss,

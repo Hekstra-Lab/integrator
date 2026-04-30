@@ -11,6 +11,9 @@ integrator:
     decoder_weight_decay: 1.0e-3
     qp_smoothness_weight: 1.0e-3
     qp_orthogonality_weight: 1.0e-2
+    lr_schedule: cosine_warmup
+    warmup_epochs: 3
+    lr_min: 1.0e-5
     mc_samples: &mc_samples 50
     predict_keys:
       [refl_ids, qi_mean, qi_var, qbg_mean, qbg_var,
@@ -27,6 +30,7 @@ encoders:
     encoder_out: *encoder_out
     conv1_out_channels: 16
     conv2_out_channels: 32
+    dropout: 0.2
 - &intensity_enc
   name: intensity_encoder
   args:
@@ -65,9 +69,8 @@ loss:
   args:
     mc_samples: *mc_samples
     eps: 1.0e-06
-    n_bins: 30
-    spectrum_type: polynomial
-    degree: 5
+    n_bins: 20
+    degree: 15
     b_min: 1.0
     bg_rate_per_group: bg_rate_per_group.pt
     bg_concentration_per_group: bg_concentration_per_group.pt
@@ -80,7 +83,7 @@ data_loader:
   name: poly_data
   args:
     data_dir: &data_dir /n/hekstra_lab/people/aldama/integrator_data/hewl_1118/pytorch_data
-    batch_size: 256
+    batch_size: 512
     val_split: 0.2
     test_split: 0.0
     num_workers: 8
