@@ -66,7 +66,7 @@ loss:
     mc_samples: *mc_samples
     eps: 1.0e-06
     n_bins: 30
-    n_basis: 16
+    degree: 4
     b_min: 1.0
     bg_rate_per_group: bg_rate_per_group.pt
     profile_sigma_prior: 3.0
