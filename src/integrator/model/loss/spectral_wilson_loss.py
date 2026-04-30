@@ -1,9 +1,10 @@
 import inspect
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from torch.distributions import Distribution, Gamma, Poisson, kl_divergence
+from torch.distributions import Distribution, Gamma, Poisson
 
 from integrator.model.distributions.profile_surrogates import (
     ProfileSurrogateOutput,
@@ -18,10 +19,11 @@ from integrator.model.loss.wilson_loss import WilsonLoss
 
 
 class SpectralWilsonLoss(WilsonLoss):
-    """ELBO loss with continuous learned spectrum G(λ) instead of per-bin G_k.
+    """ELBO loss with continuous learned spectrum G(λ).
 
-    Uses a Chebyshev polynomial expansion for log G(λ), replacing the discrete
-    wavelength binning in PolyWilsonLoss.
+    Uses a Chebyshev polynomial for log G(λ) and a point-estimate B factor.
+    No variational inference over G or B — both are learned directly as
+    parameters, since the dataset is large enough to determine them.
     """
 
     def __init__(
@@ -30,6 +32,7 @@ class SpectralWilsonLoss(WilsonLoss):
         degree: int = 4,
         lambda_min: float = 0.9,
         lambda_max: float = 1.1,
+        b_min: float = 1.0,
         init_from_tau: bool = False,
         tau_per_group=None,
         s_squared_per_group=None,
@@ -46,8 +49,9 @@ class SpectralWilsonLoss(WilsonLoss):
             **parent_kwargs,
         )
 
-        init_log_K = float(self.q_log_K_loc.detach())
+        self.b_min = b_min
 
+        # Replace parent's variational K params with the Chebyshev spectrum
         del self.q_log_K_loc
         del self.q_log_K_log_scale
 
@@ -55,25 +59,24 @@ class SpectralWilsonLoss(WilsonLoss):
             degree=degree,
             lambda_min=lambda_min,
             lambda_max=lambda_max,
-            init_log_K=init_log_K,
-            hp_loc=float(self.hp_log_K_loc),
-            hp_scale=float(self.hp_log_K_scale),
         )
 
-    def kl_hyperparams(self) -> Tensor:
-        """KL on spectrum coefficients (G) + scalar B."""
-        kl_K = self.spectrum.kl()
-        kl_B = kl_divergence(self.q_log_B(), self.p_log_B())
-        return kl_K + kl_B
+        # Replace parent's variational B with a point estimate
+        del self.q_log_B_loc
+        del self.q_log_B_log_scale
+
+        self.raw_B = nn.Parameter(torch.tensor(3.0))
+
+    def get_B(self) -> Tensor:
+        return F.softplus(self.raw_B) + self.b_min
 
     def posterior_means(self) -> dict[str, float]:
-        s_B = F.softplus(self.q_log_B_log_scale)
+        B = self.get_B()
         lam_mid = self.spectrum.lam_mid.unsqueeze(0)
-        log_G_mid = self.spectrum.mean_log_G(lam_mid)
+        log_G_mid = self.spectrum.get_log_G(lam_mid)
         out = {
             "K_mean": log_G_mid.exp().item(),
-            "B_mean": (self.q_log_B_loc + 0.5 * s_B**2).exp().item(),
-            "B_std": self._lognormal_std(self.q_log_B_loc, s_B),
+            "B_mean": B.item(),
         }
         if self.learn_concentration:
             alphas = F.softplus(self.log_alpha_per_group).detach()
@@ -100,9 +103,6 @@ class SpectralWilsonLoss(WilsonLoss):
         groups = group_labels.long()
 
         kl = torch.zeros(batch_size, device=device)
-        kl_prf = torch.zeros(batch_size, device=device)
-        kl_i = torch.zeros(batch_size, device=device)
-        kl_bg = torch.zeros(batch_size, device=device)
 
         # Profile KL
         kl_prf = compute_profile_kl(
@@ -117,7 +117,7 @@ class SpectralWilsonLoss(WilsonLoss):
         )
         kl = kl + kl_prf
 
-        # Wilson intensity KL with continuous spectrum
+        # Wilson intensity KL — point estimates for G and B
         metadata = kwargs.get("metadata")
         if (
             metadata is None
@@ -131,26 +131,20 @@ class SpectralWilsonLoss(WilsonLoss):
         s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))
         wavelength = metadata["wavelength"].to(device)
 
+        log_G = self.spectrum.get_log_G(wavelength)
+        G = torch.exp(log_G)
+        B = self.get_B()
+        tau = (1.0 / G) * torch.exp(2.0 * B * s_sq)
+
         if self.learn_concentration:
             alpha_i = F.softplus(self.log_alpha_per_group[groups])
+            p_i = Gamma(concentration=alpha_i, rate=alpha_i * tau)
         else:
-            alpha_i = None
-
-        for _ in range(self.n_wilson_samples):
-            log_K_per_refl = self.spectrum.sample_log_G(wavelength)
-            log_B = self.q_log_B().rsample()
-            K_per_refl = torch.exp(log_K_per_refl)
-            B = F.softplus(log_B) + self.b_min
-            tau = (1.0 / K_per_refl) * torch.exp(2.0 * B * s_sq)
-            if alpha_i is not None:
-                p_i = Gamma(concentration=alpha_i, rate=alpha_i * tau)
-            else:
-                p_i = Gamma(
-                    concentration=torch.ones_like(tau),
-                    rate=tau,
-                )
-            kl_i = kl_i + _kl(qi, p_i, self.mc_samples, eps=self.eps)
-        kl_i = kl_i / self.n_wilson_samples
+            p_i = Gamma(
+                concentration=torch.ones_like(tau),
+                rate=tau,
+            )
+        kl_i = _kl(qi, p_i, self.mc_samples, eps=self.eps)
         kl_i = kl_i * self.pi_weight
         kl = kl + kl_i
 
@@ -167,15 +161,12 @@ class SpectralWilsonLoss(WilsonLoss):
         )
         kl = kl + kl_bg
 
-        # Hyperprior KL
-        kl_hyper = self.kl_hyperparams() / self.dataset_size
-
         # Poisson NLL
         ll = Poisson(rate.clamp(min=1e-12)).log_prob(counts.unsqueeze(1))
         ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
         neg_ll = (-ll_mean).sum(1)
 
-        loss = (neg_ll + kl).mean() + kl_hyper
+        loss = (neg_ll + kl).mean()
 
         return {
             "loss": loss,
@@ -184,5 +175,4 @@ class SpectralWilsonLoss(WilsonLoss):
             "kl_prf_mean": kl_prf.mean(),
             "kl_i_mean": kl_i.mean(),
             "kl_bg_mean": kl_bg.mean(),
-            "kl_hyper": kl_hyper,
         }

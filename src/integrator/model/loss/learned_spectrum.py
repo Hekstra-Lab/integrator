@@ -1,8 +1,6 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch import Tensor
-from torch.distributions import Normal, kl_divergence
 
 
 class ChebyshevSpectrum(nn.Module):
@@ -17,11 +15,10 @@ class ChebyshevSpectrum(nn.Module):
     def __init__(
         self,
         degree: int = 4,
-        lambda_min: float = 0.9,
-        lambda_max: float = 1.1,
-        init_log_K: float = 0.0,
-        hp_loc: float = 0.0,
-        hp_scale: float = 3.0,
+        lambda_min: float = 0.95,
+        lambda_max: float = 1.25,
+        # init log K value
+        # Hyperprior defaults
     ):
         super().__init__()
         self.degree = degree
@@ -32,13 +29,9 @@ class ChebyshevSpectrum(nn.Module):
 
         self.register_buffer("lam_mid", torch.tensor(lam_mid))
         self.register_buffer("lam_scale", torch.tensor(lam_scale))
-        self.register_buffer("hp_loc", torch.tensor(hp_loc))
-        self.register_buffer("hp_scale", torch.tensor(hp_scale))
 
         init = torch.zeros(self.n_basis)
-        init[0] = init_log_K
-        self.coeff_loc = nn.Parameter(init)
-        self.coeff_log_scale = nn.Parameter(torch.full((self.n_basis,), -2.0))
+        self.c = nn.Parameter(init)
 
     @staticmethod
     def _chebyshev(x: Tensor, degree: int) -> list[Tensor]:
@@ -55,25 +48,7 @@ class ChebyshevSpectrum(nn.Module):
         x = (wavelength - self.lam_mid) / self.lam_scale
         return torch.stack(self._chebyshev(x, self.degree), dim=-1)
 
-    def q(self) -> Normal:
-        return Normal(self.coeff_loc, F.softplus(self.coeff_log_scale))
-
-    def p(self) -> Normal:
-        return Normal(
-            self.hp_loc.expand(self.n_basis),
-            self.hp_scale.expand(self.n_basis),
-        )
-
-    def sample_log_G(self, wavelength: Tensor) -> Tensor:
+    def get_log_G(self, wavelength: Tensor) -> Tensor:
         """(B,) -> (B,)"""
         phi = self.design_matrix(wavelength)
-        c = self.q().rsample()
-        return phi @ c
-
-    def mean_log_G(self, wavelength: Tensor) -> Tensor:
-        """(B,) -> (B,)"""
-        phi = self.design_matrix(wavelength)
-        return phi @ self.coeff_loc
-
-    def kl(self) -> Tensor:
-        return kl_divergence(self.q(), self.p()).sum()
+        return phi @ self.c
