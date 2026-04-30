@@ -70,7 +70,7 @@ loss:
     mc_samples: *mc_samples
     eps: 1.0e-06
     n_bins: 20
-    degree: 128
+    degree: 20
     b_min: 1.0
     bg_rate_per_group: bg_rate_per_group.pt
     bg_concentration_per_group: bg_concentration_per_group.pt

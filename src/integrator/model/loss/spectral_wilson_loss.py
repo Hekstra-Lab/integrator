@@ -70,21 +70,6 @@ class SpectralWilsonLoss(WilsonLoss):
     def get_B(self) -> Tensor:
         return F.softplus(self.raw_B) + self.b_min
 
-    def posterior_means(self) -> dict[str, float]:
-        B = self.get_B()
-        lam_mid = self.spectrum.lam_mid.unsqueeze(0)
-        log_G_mid = self.spectrum.get_log_G(lam_mid)
-        out = {
-            "K_mean": log_G_mid.exp().item(),
-            "B_mean": B.item(),
-        }
-        if self.learn_concentration:
-            alphas = F.softplus(self.log_alpha_per_group).detach()
-            out["alpha_mean"] = alphas.mean().item()
-            out["alpha_min"] = alphas.min().item()
-            out["alpha_max"] = alphas.max().item()
-        return out
-
     def forward(
         self,
         rate: Tensor,
@@ -131,6 +116,7 @@ class SpectralWilsonLoss(WilsonLoss):
         s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))
         wavelength = metadata["wavelength"].to(device)
 
+        # Getting the K/G factors for each reflection
         log_G = self.spectrum.get_log_G(wavelength)
         G = torch.exp(log_G)
         B = self.get_B()

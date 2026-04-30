@@ -111,9 +111,7 @@ class WilsonLoss(nn.Module):
                 basis.get("sigma_prior", profile_sigma_prior)
             )
             if "mu_per_group" in basis:
-                self.register_buffer(
-                    "profile_mu_prior", basis["mu_per_group"]
-                )
+                self.register_buffer("profile_mu_prior", basis["mu_per_group"])
                 self.register_buffer(
                     "profile_std_prior", basis["std_per_group"]
                 )
