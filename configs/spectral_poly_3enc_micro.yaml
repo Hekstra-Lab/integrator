@@ -42,7 +42,7 @@ surrogates:
     name: learned_basis_profile
     args:
       input_dim: *encoder_out
-      latent_dim: 14
+      latent_dim: 12
       output_dim: 625
       init_std: 0.5
   qbg:
@@ -67,9 +67,10 @@ loss:
     eps: 1.0e-06
     n_bins: 30
     spectrum_type: polynomial
-    degree: 4
+    degree: 5
     b_min: 1.0
     bg_rate_per_group: bg_rate_per_group.pt
+    bg_concentration_per_group: bg_concentration_per_group.pt
     profile_sigma_prior: 3.0
     pi_weight: 1.0
     pbg_weight: 1.0
