@@ -63,21 +63,21 @@ def _assemble_outputs(
         return base
 
     # Storing the surrogate distribution parameters
+    def _dist_params(dist):
+        if hasattr(dist, "arg_constraints"):
+            return {name: getattr(dist, name) for name in dist.arg_constraints}
+        if hasattr(dist, "gamma"):
+            return {
+                "concentration": dist.gamma.concentration,
+                "rate": dist.gamma.rate,
+                "pi": dist.pi,
+            }
+        return {}
+
     distribution_params = {
-        "qbg_params": {
-            name: getattr(out.qbg, name) for name in out.qbg.arg_constraints
-        },
+        "qbg_params": _dist_params(out.qbg),
+        "qi_params": _dist_params(out.qi),
     }
-    if hasattr(out.qi, "arg_constraints"):
-        distribution_params["qi_params"] = {
-            name: getattr(out.qi, name) for name in out.qi.arg_constraints
-        }
-    elif hasattr(out.qi, "gamma"):
-        distribution_params["qi_params"] = {
-            "concentration": out.qi.gamma.concentration,
-            "rate": out.qi.gamma.rate,
-            "pi": out.qi.pi,
-        }
 
     # Update base dictionary
     base.update(out.metadata)
