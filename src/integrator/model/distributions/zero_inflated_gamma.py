@@ -43,18 +43,7 @@ class ZeroInflatedGammaOutput:
             pi = self.pi.unsqueeze(0).expand_as(z)
         else:
             pi = self.pi
-
-        if self.gamma.concentration.requires_grad:
-            # Training: straight-through estimator
-            # Forward: hard threshold (0 or 1)
-            # Backward: gradient flows through soft pi
-            hard = (pi > 0.5).float()
-            gate = hard - pi.detach() + pi  # straight-through
-        else:
-            # Eval: hard threshold
-            gate = (pi > 0.5).float()
-
-        return gate * z
+        return pi * z
 
 
 class ZeroInflatedGammaA(nn.Module):

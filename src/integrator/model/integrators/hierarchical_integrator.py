@@ -65,9 +65,12 @@ def _hierarchical_step(self, batch, step: Literal["train", "val"]):
     self.log(f"{step} qi_r_median", qi_gamma.rate.median(), on_step=False, on_epoch=True)
 
     if hasattr(qi, "pi"):
-        self.log(f"{step} qi_pi_min", qi.pi.min(), on_step=False, on_epoch=True)
-        self.log(f"{step} qi_pi_median", qi.pi.median(), on_step=False, on_epoch=True)
-        self.log(f"{step} qi_pi_mean", qi.pi.mean(), on_step=False, on_epoch=True)
+        pi = qi.pi
+        self.log(f"{step} qi_pi_min", pi.min(), on_step=False, on_epoch=True)
+        self.log(f"{step} qi_pi_median", pi.median(), on_step=False, on_epoch=True)
+        self.log(f"{step} qi_pi_mean", pi.mean(), on_step=False, on_epoch=True)
+        self.log(f"{step} qi_pi_below_02", (pi < 0.2).float().mean(), on_step=False, on_epoch=True)
+        self.log(f"{step} qi_pi_above_08", (pi > 0.8).float().mean(), on_step=False, on_epoch=True)
 
     qbg = outputs["qbg"]
     self.log(f"{step} qbg_mean_min", qbg.mean.min(), on_step=False, on_epoch=True)
