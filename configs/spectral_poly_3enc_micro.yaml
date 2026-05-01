@@ -75,7 +75,7 @@ loss:
     bg_rate_per_group: bg_rate_per_group.pt
     bg_concentration_per_group: bg_concentration_per_group.pt
     profile_sigma_prior: 3.0
-    pi_weight: 0.1
+    pi_weight: 1.0
     pbg_weight: 1.0
     pprf_weight: 1.0
 
