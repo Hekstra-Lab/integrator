@@ -32,7 +32,6 @@ from integrator.model.integrators import (
 )
 from integrator.model.loss import (
     Loss,
-    MultinomialSpectralWilsonLoss,
     PolyWilsonLoss,
     SpectralWilsonLoss,
     WilsonLoss,
@@ -50,7 +49,6 @@ REGISTRY = {
         "wilson": WilsonLoss,
         "poly_wilson": PolyWilsonLoss,
         "spectral_wilson": SpectralWilsonLoss,
-        "multinomial_spectral_wilson": MultinomialSpectralWilsonLoss,
     },
     "integrator": {
         "integrator": Integrator,
