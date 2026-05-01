@@ -54,7 +54,7 @@ surrogates:
     args:
       in_features: *encoder_out
       eps: 1.0e-06
-      k_min: 0.01
+      k_min: 0.001
       positive_constraint: log
   qi:
     name: gammaA
@@ -70,12 +70,12 @@ loss:
     mc_samples: *mc_samples
     eps: 1.0e-06
     n_bins: 20
-    degree: 30
+    degree: 40
     b_min: 1.0
     bg_rate_per_group: bg_rate_per_group.pt
     bg_concentration_per_group: bg_concentration_per_group.pt
     profile_sigma_prior: 3.0
-    pi_weight: 1.0
+    pi_weight: 0.1
     pbg_weight: 1.0
     pprf_weight: 1.0
 
