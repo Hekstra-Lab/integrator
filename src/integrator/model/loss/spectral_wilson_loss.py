@@ -122,7 +122,11 @@ class SpectralWilsonLoss(WilsonLoss):
         log_G = self.spectrum.get_log_G(wavelength)
         G = torch.exp(log_G)
         B = self.get_B()
-        tau = (1.0 / G) * torch.exp(2.0 * B * s_sq)
+
+        # Lorentz factor for Laue stills: L ∝ d² · λ
+        # Raw counts ∝ L · |F|², so τ_correct = τ / L
+        L = d.pow(2) * wavelength
+        tau = (1.0 / (G * L)) * torch.exp(2.0 * B * s_sq)
 
         if self.learn_concentration:
             alpha_i = F.softplus(self.log_alpha_per_group[groups])
