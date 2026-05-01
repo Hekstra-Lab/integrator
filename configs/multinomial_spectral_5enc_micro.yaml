@@ -16,7 +16,7 @@ integrator:
       [refl_ids, qi_mean, qi_var, qbg_mean, qbg_var,
        intensity.sum.value, intensity.sum.variance,
        background.sum.value, background.sum.variance,
-       d, wavelength, group_label, qp_mean, qi_pi]
+       d, wavelength, group_label, qp_mean]
 
 # 5 encoders: profile, k_i, r_i, k_bg, r_bg
 encoders:
@@ -56,23 +56,21 @@ surrogates:
       k_min: 0.1
       positive_constraint: softplus
   qi:
-    name: zi_gammaB
+    name: gammaB
     args:
       in_features: *encoder_out
       eps: 1.0e-06
       k_min: 0.1
-      mu_positive_constraint: softplus
-      pi_init: 0.7
+      positive_constraint: softplus
 
 loss:
-  name: spectral_wilson
+  name: multinomial_spectral_wilson
   args:
     mc_samples: *mc_samples
     eps: 1.0e-06
     n_bins: 20
     degree: 40
     b_min: 1.0
-    pi0: 0.7
     bg_rate_per_group: bg_rate_per_group.pt
     bg_concentration_per_group: bg_concentration_per_group.pt
     profile_sigma_prior: 3.0

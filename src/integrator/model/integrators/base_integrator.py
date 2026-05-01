@@ -280,6 +280,21 @@ class BaseIntegrator(pl.LightningModule):
 
         return total, components
 
+    def on_after_backward(self) -> None:
+        """Log gradient norms for intensity/background surrogate heads."""
+        for sname in ("qi", "qbg"):
+            if sname not in self.surrogates:
+                continue
+            surr = self.surrogates[sname]
+            for pname, p in surr.named_parameters():
+                if p.grad is not None:
+                    self.log(
+                        f"grad/{sname}.{pname}",
+                        p.grad.norm(),
+                        on_step=False,
+                        on_epoch=True,
+                    )
+
     def on_validation_epoch_end(self) -> None:
         """Log val - train generalization gaps for each ELBO component."""
         metrics = self.trainer.callback_metrics
