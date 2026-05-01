@@ -15,12 +15,13 @@ from .utils import get_positive_constraint
 class ZeroInflatedGammaOutput:
     """Output of the ZeroInflatedGamma surrogate.
 
-    Behaves like a Distribution for the integrator:
-    - .mean returns π * gamma_mean
-    - .variance returns the mixture variance
-    - .rsample() returns π * gamma_sample
-    - .gamma gives the underlying Gamma distribution (for KL)
-    - .pi gives the detection probability
+    Uses the straight-through Gumbel-Sigmoid estimator for the
+    detection decision: hard {0, 1} in the forward pass, but
+    gradients flow through the soft sigmoid in the backward pass.
+
+    Attributes:
+        gamma: Underlying Gamma distribution for intensity given detection.
+        pi: Detection probability ∈ (0, 1), shape (B,).
     """
 
     gamma: Gamma
@@ -42,17 +43,25 @@ class ZeroInflatedGammaOutput:
             pi = self.pi.unsqueeze(0).expand_as(z)
         else:
             pi = self.pi
-        return pi * z
+
+        if self.gamma.concentration.requires_grad:
+            # Training: straight-through estimator
+            # Forward: hard threshold (0 or 1)
+            # Backward: gradient flows through soft pi
+            hard = (pi > 0.5).float()
+            gate = hard - pi.detach() + pi  # straight-through
+        else:
+            # Eval: hard threshold
+            gate = (pi > 0.5).float()
+
+        return gate * z
 
 
 class ZeroInflatedGammaA(nn.Module):
     """GammaA with a learned detection probability π.
 
-    Forward returns ZeroInflatedGammaOutput with:
-    - gamma: Gamma(k, r) from the k/r heads
-    - pi: sigmoid(detection_head(x)) ∈ (0, 1)
-
-    The effective intensity is I = π · I_gamma.
+    The detection head receives BOTH encoder features (concatenated)
+    plus is independent from the k and r heads.
     """
 
     def __init__(
@@ -63,7 +72,7 @@ class ZeroInflatedGammaA(nn.Module):
         positive_constraint: str = "softplus",
         k_init: float = 1.0,
         r_init: float | None = None,
-        pi_init: float = 0.5,
+        pi_init: float = 0.7,
         **kwargs,
     ):
         super().__init__()
@@ -74,16 +83,22 @@ class ZeroInflatedGammaA(nn.Module):
 
         self.linear_k = nn.Linear(in_features, 1)
         self.linear_r = nn.Linear(in_features, 1)
-        self.detection_head = nn.Linear(in_features, 1)
+
+        # Detection head: takes BOTH x and x_ concatenated
+        self.detection_head = nn.Sequential(
+            nn.Linear(in_features * 2, 16),
+            nn.ReLU(),
+            nn.Linear(16, 1),
+        )
 
         self._init_head_bias(self.linear_k, k_init, k_min)
         if r_init is not None:
             self._init_head_bias(self.linear_r, r_init, eps)
 
+        # Initialize detection output bias to logit(pi_init)
         with torch.no_grad():
             logit = math.log(pi_init / (1 - pi_init))
-            self.detection_head.bias.fill_(logit)
-            self.detection_head.weight.zero_()
+            self.detection_head[-1].bias.fill_(logit)
 
     def _init_head_bias(self, linear: nn.Linear, target: float, floor: float) -> None:
         if linear.bias is None:
@@ -101,16 +116,17 @@ class ZeroInflatedGammaA(nn.Module):
     def forward(self, x: Tensor, x_: Tensor) -> ZeroInflatedGammaOutput:
         k = self._constrain(self.linear_k(x)) + self.k_min
         r = self._constrain(self.linear_r(x_)) + self.eps
-        pi = torch.sigmoid(self.detection_head(x))
+        pi = torch.sigmoid(self.detection_head(torch.cat([x, x_], dim=-1)))
 
         gamma = Gamma(concentration=k.flatten(), rate=r.flatten())
         return ZeroInflatedGammaOutput(gamma=gamma, pi=pi.flatten())
 
 
 class ZeroInflatedGammaB(nn.Module):
-    """GammaB (mu/fano parameterization) with a learned detection probability π.
+    """GammaB (mu/fano) with a learned detection probability π.
 
-    Forward returns ZeroInflatedGammaOutput.
+    The detection head receives BOTH encoder features (concatenated)
+    plus is independent from the mu and fano heads.
     """
 
     def __init__(
@@ -121,7 +137,7 @@ class ZeroInflatedGammaB(nn.Module):
         mean_init: float | None = None,
         fano_init: float = 1.0,
         mu_positive_constraint: str = "softplus",
-        pi_init: float = 0.5,
+        pi_init: float = 0.7,
         **kwargs,
     ):
         super().__init__()
@@ -132,7 +148,13 @@ class ZeroInflatedGammaB(nn.Module):
 
         self.linear_mu = nn.Linear(in_features, 1)
         self.linear_fano = nn.Linear(in_features, 1)
-        self.detection_head = nn.Linear(in_features, 1)
+
+        # Detection head: takes BOTH x and x_ concatenated
+        self.detection_head = nn.Sequential(
+            nn.Linear(in_features * 2, 16),
+            nn.ReLU(),
+            nn.Linear(16, 1),
+        )
 
         if mean_init is not None:
             if mu_positive_constraint == "log":
@@ -144,10 +166,10 @@ class ZeroInflatedGammaB(nn.Module):
                 self.linear_mu.weight.zero_()
                 self.linear_fano.weight.zero_()
 
+        # Initialize detection output bias to logit(pi_init)
         with torch.no_grad():
             logit = math.log(pi_init / (1 - pi_init))
-            self.detection_head.bias.fill_(logit)
-            self.detection_head.weight.zero_()
+            self.detection_head[-1].bias.fill_(logit)
 
     def forward(self, x: Tensor, x_: Tensor) -> ZeroInflatedGammaOutput:
         mu = self._mu_constrain(self.linear_mu(x))
@@ -157,7 +179,7 @@ class ZeroInflatedGammaB(nn.Module):
 
         r = 1.0 / fano
         k = (mu * r).clamp(min=self.k_min)
-        pi = torch.sigmoid(self.detection_head(x))
+        pi = torch.sigmoid(self.detection_head(torch.cat([x, x_], dim=-1)))
 
         gamma = Gamma(concentration=k.flatten(), rate=r.flatten())
         return ZeroInflatedGammaOutput(gamma=gamma, pi=pi.flatten())
