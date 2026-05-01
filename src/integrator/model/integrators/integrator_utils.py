@@ -51,6 +51,10 @@ def _assemble_outputs(
         "profile": qp_mean,
     }
 
+    if hasattr(out.qi, "pi"):
+        base["qi_pi"] = out.qi.pi
+        base["qi_gamma_mean"] = out.qi.gamma.mean
+
     if is_profile_output:
         base["qp_mu_h"] = out.qp.mu_h
         base["qp_std_h"] = out.qp.std_h
@@ -63,10 +67,17 @@ def _assemble_outputs(
         "qbg_params": {
             name: getattr(out.qbg, name) for name in out.qbg.arg_constraints
         },
-        "qi_params": {
-            name: getattr(out.qi, name) for name in out.qi.arg_constraints
-        },
     }
+    if hasattr(out.qi, "arg_constraints"):
+        distribution_params["qi_params"] = {
+            name: getattr(out.qi, name) for name in out.qi.arg_constraints
+        }
+    elif hasattr(out.qi, "gamma"):
+        distribution_params["qi_params"] = {
+            "concentration": out.qi.gamma.concentration,
+            "rate": out.qi.gamma.rate,
+            "pi": out.qi.pi,
+        }
 
     # Update base dictionary
     base.update(out.metadata)
