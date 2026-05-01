@@ -98,6 +98,20 @@ def _hierarchical_step(self, batch, step: Literal["train", "val"]):
         print("\n".join(parts), flush=True)
     # === END DEBUG ===
 
+    # Log intensity surrogate stats
+    qi = outputs["qi"]
+    qi_mean = qi.mean
+    self.log(f"{step} qi_mean_min", qi_mean.min(), on_step=False, on_epoch=True)
+    self.log(f"{step} qi_mean_median", qi_mean.median(), on_step=False, on_epoch=True)
+    self.log(f"{step} qi_k_min", qi.concentration.min(), on_step=False, on_epoch=True)
+    self.log(f"{step} qi_k_median", qi.concentration.median(), on_step=False, on_epoch=True)
+    self.log(f"{step} qi_r_min", qi.rate.min(), on_step=False, on_epoch=True)
+    self.log(f"{step} qi_r_median", qi.rate.median(), on_step=False, on_epoch=True)
+
+    qbg = outputs["qbg"]
+    self.log(f"{step} qbg_mean_min", qbg.mean.min(), on_step=False, on_epoch=True)
+    self.log(f"{step} qbg_mean_median", qbg.mean.median(), on_step=False, on_epoch=True)
+
     _log_loss(
         self,
         kl=loss_dict["kl_mean"],

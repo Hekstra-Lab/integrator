@@ -11,9 +11,6 @@ integrator:
     decoder_weight_decay: 1.0e-3
     qp_smoothness_weight: 1.0e-3
     qp_orthogonality_weight: 1.0e-2
-    lr_schedule: cosine_warmup
-    warmup_epochs: 3
-    lr_min: 1.0e-5
     mc_samples: &mc_samples 50
     predict_keys:
       [refl_ids, qi_mean, qi_var, qbg_mean, qbg_var,
@@ -52,19 +49,19 @@ surrogates:
       output_dim: 625
       init_std: 0.5
   qbg:
-    name: gammaA
+    name: gammaB
     args:
       in_features: *encoder_out
       eps: 1.0e-06
-      k_min: 0.001
-      positive_constraint: log
+      k_min: 0.1
+      positive_constraint: softplus
   qi:
-    name: gammaA
+    name: gammaB
     args:
       in_features: *encoder_out
       eps: 1.0e-06
-      k_min: 0.01
-      positive_constraint: log
+      k_min: 0.1
+      positive_constraint: softplus
 
 loss:
   name: spectral_wilson

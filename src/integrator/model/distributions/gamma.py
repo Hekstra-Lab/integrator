@@ -113,7 +113,7 @@ class GammaDistributionRepamB(nn.Module):
         self.linear_mu = nn.Linear(in_features, 1)
         self.linear_fano = nn.Linear(in_features, 1)
         self._init_mu_head(self.linear_mu, mean_init)
-        self._init_fano_head(self.linear_fano, fano_init)
+        # self._init_fano_head(self.linear_fano, fano_init)
 
         if mean_init is not None:
             with torch.no_grad():
