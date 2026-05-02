@@ -128,14 +128,12 @@ class SpectralWilsonLoss(WilsonLoss):
         L = d.pow(2) * wavelength
         tau = (1.0 / (G * L)) * torch.exp(2.0 * B * s_sq)
 
-        if self.learn_concentration:
-            alpha_i = F.softplus(self.log_alpha_per_group[groups])
-            p_i = Gamma(concentration=alpha_i, rate=alpha_i * tau)
-        else:
-            p_i = Gamma(
-                concentration=torch.ones_like(tau),
-                rate=tau,
-            )
+        # Shape-matched prior: Gamma(k, k·τ) where k matches the posterior
+        # This eliminates the digamma penalty from shape mismatch
+        qi_gamma = qi.gamma if hasattr(qi, "gamma") else qi
+        k_posterior = qi_gamma.concentration.detach()
+        p_i = Gamma(concentration=k_posterior, rate=k_posterior * tau)
+
         kl_i = compute_zi_intensity_kl(qi, p_i, self.pi0, self.mc_samples, eps=self.eps)
         kl_i = kl_i * self.pi_weight
         kl = kl + kl_i
