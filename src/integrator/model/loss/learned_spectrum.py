@@ -17,8 +17,7 @@ class ChebyshevSpectrum(nn.Module):
         degree: int = 4,
         lambda_min: float = 0.95,
         lambda_max: float = 1.25,
-        # init log K value
-        # Hyperprior defaults
+        init_from: str | None = None,
     ):
         super().__init__()
         self.degree = degree
@@ -30,7 +29,19 @@ class ChebyshevSpectrum(nn.Module):
         self.register_buffer("lam_mid", torch.tensor(lam_mid))
         self.register_buffer("lam_scale", torch.tensor(lam_scale))
 
-        init = torch.zeros(self.n_basis)
+        if init_from is not None:
+            saved = torch.load(init_from, map_location="cpu", weights_only=False)
+            c_saved = saved["c"]
+            if c_saved.shape[0] == self.n_basis:
+                init = c_saved.clone()
+            elif c_saved.shape[0] < self.n_basis:
+                init = torch.zeros(self.n_basis)
+                init[: c_saved.shape[0]] = c_saved
+            else:
+                init = c_saved[: self.n_basis].clone()
+        else:
+            init = torch.zeros(self.n_basis)
+
         self.c = nn.Parameter(init)
 
     @staticmethod

@@ -395,6 +395,14 @@ def _get_loss_module(
             kwargs["wavelength_bin_edges"], data_dir, None
         )
 
+    # Spectrum warm-start file — resolve against data_dir, no n_bins suffix.
+    if "spectrum_init_from" in kwargs and isinstance(
+        kwargs["spectrum_init_from"], str
+    ):
+        kwargs["spectrum_init_from"] = _resolve_data_path(
+            kwargs["spectrum_init_from"], data_dir, None
+        )
+
     # Filter kwargs to only what the loss constructor accepts.
     import inspect
 

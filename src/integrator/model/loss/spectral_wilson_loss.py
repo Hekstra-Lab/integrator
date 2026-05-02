@@ -32,6 +32,7 @@ class SpectralWilsonLoss(WilsonLoss):
         degree: int = 4,
         lambda_min: float = 0.9,
         lambda_max: float = 1.1,
+        spectrum_init_from: str | None = None,
         b_min: float = 1.0,
         pi0: float = 0.7,
         init_from_tau: bool = False,
@@ -61,6 +62,7 @@ class SpectralWilsonLoss(WilsonLoss):
             degree=degree,
             lambda_min=lambda_min,
             lambda_max=lambda_max,
+            init_from=spectrum_init_from,
         )
 
         # Replace parent's variational B with a point estimate
