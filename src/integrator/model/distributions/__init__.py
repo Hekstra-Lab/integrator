@@ -12,7 +12,6 @@ from .profile_surrogates import (
     ProfileSurrogateOutput,
 )
 from .ragged_logistic_normal import RaggedLogisticNormalSurrogate
-from .zero_inflated_gamma import ZeroInflatedGammaA, ZeroInflatedGammaB
 
 __all__ = [
     "DirichletDistribution",
@@ -25,6 +24,4 @@ __all__ = [
     "LearnedBasisProfileSurrogate",
     "ProfileSurrogateOutput",
     "RaggedLogisticNormalSurrogate",
-    "ZeroInflatedGammaA",
-    "ZeroInflatedGammaB",
 ]

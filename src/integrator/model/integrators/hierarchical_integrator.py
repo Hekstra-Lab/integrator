@@ -57,20 +57,10 @@ def _hierarchical_step(self, batch, step: Literal["train", "val"]):
     self.log(f"{step} qi_mean_min", qi_mean.min(), on_step=False, on_epoch=True)
     self.log(f"{step} qi_mean_median", qi_mean.median(), on_step=False, on_epoch=True)
 
-    # Gamma params — handle both regular Gamma and ZeroInflatedGamma
-    qi_gamma = qi.gamma if hasattr(qi, "gamma") else qi
-    self.log(f"{step} qi_k_min", qi_gamma.concentration.min(), on_step=False, on_epoch=True)
-    self.log(f"{step} qi_k_median", qi_gamma.concentration.median(), on_step=False, on_epoch=True)
-    self.log(f"{step} qi_r_min", qi_gamma.rate.min(), on_step=False, on_epoch=True)
-    self.log(f"{step} qi_r_median", qi_gamma.rate.median(), on_step=False, on_epoch=True)
-
-    if hasattr(qi, "pi"):
-        pi = qi.pi
-        self.log(f"{step} qi_pi_min", pi.min(), on_step=False, on_epoch=True)
-        self.log(f"{step} qi_pi_median", pi.median(), on_step=False, on_epoch=True)
-        self.log(f"{step} qi_pi_mean", pi.mean(), on_step=False, on_epoch=True)
-        self.log(f"{step} qi_pi_below_02", (pi < 0.2).float().mean(), on_step=False, on_epoch=True)
-        self.log(f"{step} qi_pi_above_08", (pi > 0.8).float().mean(), on_step=False, on_epoch=True)
+    self.log(f"{step} qi_k_min", qi.concentration.min(), on_step=False, on_epoch=True)
+    self.log(f"{step} qi_k_median", qi.concentration.median(), on_step=False, on_epoch=True)
+    self.log(f"{step} qi_r_min", qi.rate.min(), on_step=False, on_epoch=True)
+    self.log(f"{step} qi_r_median", qi.rate.median(), on_step=False, on_epoch=True)
 
     qbg = outputs["qbg"]
     self.log(f"{step} qbg_mean_min", qbg.mean.min(), on_step=False, on_epoch=True)

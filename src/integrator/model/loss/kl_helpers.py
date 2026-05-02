@@ -153,39 +153,6 @@ def compute_profile_kl(
     )
 
 
-def compute_zi_intensity_kl(
-    qi,
-    p_i: Distribution,
-    pi0: float,
-    mc_samples: int,
-    eps: float = 0.0,
-) -> Tensor:
-    """KL for a zero-inflated Gamma posterior vs Gamma prior.
-
-    KL = KL_bernoulli(π || π₀) + π · KL(Gamma(k,r) || p_i)
-
-    The intensity KL is weighted by π — when π→0, no penalty for the
-    Gamma parameters.
-    """
-    from integrator.model.distributions.zero_inflated_gamma import (
-        ZeroInflatedGammaOutput,
-    )
-
-    if not isinstance(qi, ZeroInflatedGammaOutput):
-        return _kl(qi, p_i, mc_samples, eps=eps)
-
-    pi = qi.pi
-    pi0_t = torch.tensor(pi0, device=pi.device, dtype=pi.dtype)
-
-    kl_bernoulli = (
-        pi * torch.log((pi + 1e-8) / pi0_t)
-        + (1 - pi) * torch.log((1 - pi + 1e-8) / (1 - pi0_t))
-    )
-
-    kl_gamma = _kl(qi.gamma, p_i, mc_samples, eps=eps)
-
-    return kl_bernoulli + pi * kl_gamma
-
 
 def compute_bg_kl(
     qbg: Distribution,

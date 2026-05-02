@@ -10,9 +10,9 @@ from integrator.model.distributions.profile_surrogates import (
     ProfileSurrogateOutput,
 )
 from integrator.model.loss.kl_helpers import (
+    _kl,
     compute_bg_kl,
     compute_profile_kl,
-    compute_zi_intensity_kl,
 )
 from integrator.model.loss.learned_spectrum import ChebyshevSpectrum
 from integrator.model.loss.wilson_loss import WilsonLoss
@@ -35,7 +35,6 @@ class SpectralWilsonLoss(WilsonLoss):
         spectrum_init_from: str | None = None,
         b_min: float = 1.0,
         k_prior: float = 1.0,
-        pi0: float = 0.7,
         init_from_tau: bool = False,
         tau_per_group=None,
         s_squared_per_group=None,
@@ -54,7 +53,6 @@ class SpectralWilsonLoss(WilsonLoss):
 
         self.b_min = b_min
         self.k_prior = k_prior
-        self.pi0 = pi0
 
         # Replace parent's variational K params with the Chebyshev spectrum
         del self.q_log_K_loc
@@ -139,7 +137,7 @@ class SpectralWilsonLoss(WilsonLoss):
                 rate=k_prior * tau,
             )
 
-        kl_i = compute_zi_intensity_kl(qi, p_i, self.pi0, self.mc_samples, eps=self.eps)
+        kl_i = _kl(qi, p_i, self.mc_samples, eps=self.eps)
         kl_i = kl_i * self.pi_weight
         kl = kl + kl_i
 

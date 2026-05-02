@@ -15,8 +15,6 @@ from integrator.model.distributions import (
     LearnedBasisProfileSurrogate,
     LogNormalDistribution,
     RaggedLogisticNormalSurrogate,
-    ZeroInflatedGammaA,
-    ZeroInflatedGammaB,
 )
 from integrator.model.encoders import (
     IntensityEncoder,
@@ -66,8 +64,6 @@ REGISTRY = {
         "learned_basis_profile": LearnedBasisProfileSurrogate,
         "fixed_basis_profile": FixedBasisProfileSurrogate,
         "ragged_learned_basis_profile": RaggedLogisticNormalSurrogate,
-        "zi_gammaA": ZeroInflatedGammaA,
-        "zi_gammaB": ZeroInflatedGammaB,
     },
     "data_loader": {
         "default": ShoeboxDataModule,

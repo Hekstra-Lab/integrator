@@ -51,10 +51,6 @@ def _assemble_outputs(
         "profile": qp_mean,
     }
 
-    if hasattr(out.qi, "pi"):
-        base["qi_pi"] = out.qi.pi
-        base["qi_gamma_mean"] = out.qi.gamma.mean
-
     if is_profile_output:
         base["qp_mu_h"] = out.qp.mu_h
         base["qp_std_h"] = out.qp.std_h
@@ -63,20 +59,13 @@ def _assemble_outputs(
         return base
 
     # Storing the surrogate distribution parameters
-    def _dist_params(dist):
-        if hasattr(dist, "arg_constraints"):
-            return {name: getattr(dist, name) for name in dist.arg_constraints}
-        if hasattr(dist, "gamma"):
-            return {
-                "concentration": dist.gamma.concentration,
-                "rate": dist.gamma.rate,
-                "pi": dist.pi,
-            }
-        return {}
-
     distribution_params = {
-        "qbg_params": _dist_params(out.qbg),
-        "qi_params": _dist_params(out.qi),
+        "qbg_params": {
+            name: getattr(out.qbg, name) for name in out.qbg.arg_constraints
+        },
+        "qi_params": {
+            name: getattr(out.qi, name) for name in out.qi.arg_constraints
+        },
     }
 
     # Update base dictionary
