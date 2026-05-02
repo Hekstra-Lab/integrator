@@ -34,6 +34,7 @@ class SpectralWilsonLoss(WilsonLoss):
         lambda_max: float = 1.1,
         spectrum_init_from: str | None = None,
         b_min: float = 1.0,
+        k_prior: float = 1.0,
         pi0: float = 0.7,
         init_from_tau: bool = False,
         tau_per_group=None,
@@ -52,6 +53,7 @@ class SpectralWilsonLoss(WilsonLoss):
         )
 
         self.b_min = b_min
+        self.k_prior = k_prior
         self.pi0 = pi0
 
         # Replace parent's variational K params with the Chebyshev spectrum
@@ -130,11 +132,15 @@ class SpectralWilsonLoss(WilsonLoss):
         L = d.pow(2) * wavelength
         tau = (1.0 / (G * L)) * torch.exp(2.0 * B * s_sq)
 
-        # Shape-matched prior: Gamma(k, k·τ) where k matches the posterior
-        # This eliminates the digamma penalty from shape mismatch
-        qi_gamma = qi.gamma if hasattr(qi, "gamma") else qi
-        k_posterior = qi_gamma.concentration.detach()
-        p_i = Gamma(concentration=k_posterior, rate=k_posterior * tau)
+        if self.learn_concentration:
+            alpha_i = F.softplus(self.log_alpha_per_group[groups])
+            p_i = Gamma(concentration=alpha_i, rate=alpha_i * tau)
+        else:
+            k_prior = self.k_prior
+            p_i = Gamma(
+                concentration=torch.full_like(tau, k_prior),
+                rate=k_prior * tau,
+            )
 
         kl_i = compute_zi_intensity_kl(qi, p_i, self.pi0, self.mc_samples, eps=self.eps)
         kl_i = kl_i * self.pi_weight
