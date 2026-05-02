@@ -120,36 +120,37 @@ def compute_profile_kl(
 ) -> Tensor:
     """Compute profile KL divergence.
 
-    Only latent-decoder surrogates (`ProfileSurrogateOutput`) are supported;
-    they use a closed-form Normal-Normal KL against either a global
-    `sigma_prior` or a per-bin `(mu_prior_per_group, std_prior_per_group)`.
-    The per-bin Dirichlet-concentration prior route was removed — pick a
-    `ProfileSurrogateOutput`-emitting surrogate instead (e.g.
-    `LearnedBasisProfileSurrogate`, `FixedBasisProfileSurrogate`,
-    `LogisticNormalSurrogate`).
+    Supports:
+    - ProfileSurrogateOutput: Normal-Normal KL (global or per-bin prior)
+    - Dirichlet: KL(q || Dirichlet(1,...,1)) with uniform prior
     """
     prf_groups = _get_profile_groups(groups, metadata, device)
 
-    if not isinstance(qp, ProfileSurrogateOutput):
-        raise NotImplementedError(
-            f"Profile surrogate of type {type(qp).__name__} is not supported "
-            "by compute_profile_kl. The per-bin Dirichlet concentration prior "
-            "was removed; use a ProfileSurrogateOutput-emitting surrogate "
-            "such as LearnedBasisProfileSurrogate, FixedBasisProfileSurrogate, "
-            "or LogisticNormalSurrogate."
-        )
+    if isinstance(qp, ProfileSurrogateOutput):
+        if mu_prior_per_group is not None:
+            kl = compute_profile_kl_per_bin(
+                qp.mu_h,
+                qp.std_h,
+                mu_prior_per_group,
+                std_prior_per_group,
+                prf_groups,
+            )
+        else:
+            kl = compute_profile_kl_global(qp.mu_h, qp.std_h, sigma_prior)
+        return kl * pprf_weight
 
-    if mu_prior_per_group is not None:
-        kl = compute_profile_kl_per_bin(
-            qp.mu_h,
-            qp.std_h,
-            mu_prior_per_group,
-            std_prior_per_group,
-            prf_groups,
-        )
-    else:
-        kl = compute_profile_kl_global(qp.mu_h, qp.std_h, sigma_prior)
-    return kl * pprf_weight
+    from torch.distributions import Dirichlet, kl_divergence
+
+    if isinstance(qp, Dirichlet):
+        n_pixels = qp.concentration.shape[-1]
+        prior = Dirichlet(torch.ones(n_pixels, device=device))
+        kl = kl_divergence(qp, prior)
+        return kl * pprf_weight
+
+    raise NotImplementedError(
+        f"Profile surrogate of type {type(qp).__name__} is not supported "
+        "by compute_profile_kl."
+    )
 
 
 def compute_zi_intensity_kl(
