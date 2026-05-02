@@ -125,15 +125,17 @@ class ZeroInflatedGammaB(nn.Module):
         k_min: float = 0.1,
         mean_init: float | None = None,
         fano_init: float = 1.0,
-        mu_positive_constraint: str = "softplus",
+        positive_constraint: str = "softplus",
+        mu_positive_constraint: str | None = None,
         pi_init: float = 0.7,
         **kwargs,
     ):
         super().__init__()
         self.eps = eps
         self.k_min = k_min
-        self._mu_constrain = get_positive_constraint(mu_positive_constraint)
-        self._mu_constraint_name = mu_positive_constraint
+        constraint = mu_positive_constraint or positive_constraint
+        self._mu_constrain = get_positive_constraint(constraint)
+        self._mu_constraint_name = constraint
 
         self.linear_mu = nn.Linear(in_features, 1)
         self.linear_fano = nn.Linear(in_features, 1)
@@ -146,7 +148,7 @@ class ZeroInflatedGammaB(nn.Module):
         )
 
         if mean_init is not None:
-            if mu_positive_constraint == "log":
+            if constraint == "log":
                 bias_val = math.log(max(mean_init, 1e-12))
             else:
                 bias_val = _softplus_inverse_shifted(mean_init, eps)

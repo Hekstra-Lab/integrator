@@ -97,7 +97,8 @@ class GammaDistributionRepamB(nn.Module):
         k_min: float = 0.1,
         mean_init: float | None = None,
         fano_init: float = 1.0,
-        mu_positive_constraint: str = "softplus",
+        positive_constraint: str = "softplus",
+        mu_positive_constraint: str | None = None,
         floor_k_min: float | None = None,
         **kwargs,
     ):
@@ -107,8 +108,10 @@ class GammaDistributionRepamB(nn.Module):
         self.floor_k_min = (
             float(floor_k_min) if floor_k_min is not None else None
         )
-        self._mu_constrain = get_positive_constraint(mu_positive_constraint)
-        self._mu_constraint_name = mu_positive_constraint
+        # Accept both names for backwards compat
+        constraint = mu_positive_constraint or positive_constraint
+        self._mu_constrain = get_positive_constraint(constraint)
+        self._mu_constraint_name = constraint
 
         self.linear_mu = nn.Linear(in_features, 1)
         self.linear_fano = nn.Linear(in_features, 1)
