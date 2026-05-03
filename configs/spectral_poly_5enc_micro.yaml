@@ -77,15 +77,15 @@ loss:
     eps: 1.0e-06
     n_bins: 20
     degree: 40
-    # spectrum_init_from: spectrum_init.pt
+    spectrum_init_from: spectrum_init.pt
     b_min: 1.0
     k_prior: 1.0
     bg_rate_per_group: bg_rate_per_group.pt
     bg_concentration_per_group: bg_concentration_per_group.pt
-    profile_sigma_prior: 3.0
+    # profile_sigma_prior: 3.0
     pi_weight: 1.0
     pbg_weight: 1.0
-    pprf_weight: 1.0
+    pprf_weight: 0.5
 
 data_loader:
   name: poly_data
