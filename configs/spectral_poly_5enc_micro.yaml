@@ -41,19 +41,19 @@ encoders:
 - *intensity_enc
 
 surrogates:
-  # qp:
-  #   name: learned_basis_profile
-  #   args:
-  #     input_dim: *encoder_out
-  #     latent_dim: 12
-  #     output_dim: 625
-  #     init_std: 0.5
   qp:
-    name: dirichlet
+    name: learned_basis_profile
     args:
-      in_features: *encoder_out
-      sbox_shape: [*h, *w]
-      eps: 1.0e-06
+      input_dim: *encoder_out
+      latent_dim: 12
+      output_dim: 625
+      init_std: 0.5
+  # qp:
+  #   name: dirichlet
+  #   args:
+  #     in_features: *encoder_out
+  #     sbox_shape: [*h, *w]
+  #     eps: 1.0e-06
   qbg:
     name: gammaB
     args:
@@ -77,7 +77,7 @@ loss:
     eps: 1.0e-06
     n_bins: 20
     degree: 40
-    spectrum_init_from: spectrum_init.pt
+    # spectrum_init_from: spectrum_init.pt
     b_min: 1.0
     k_prior: 1.0
     bg_rate_per_group: bg_rate_per_group.pt
@@ -85,7 +85,7 @@ loss:
     # profile_sigma_prior: 3.0
     pi_weight: 1.0
     pbg_weight: 1.0
-    pprf_weight: 0.5
+    pprf_weight: 1.0
 
 data_loader:
   name: poly_data
