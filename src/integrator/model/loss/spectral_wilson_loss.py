@@ -22,8 +22,6 @@ class SpectralWilsonLoss(WilsonLoss):
     """ELBO loss with continuous learned spectrum G(λ).
 
     Uses a Chebyshev polynomial for log G(λ) and a point-estimate B factor.
-    No variational inference over G or B — both are learned directly as
-    parameters, since the dataset is large enough to determine them.
     """
 
     def __init__(
@@ -106,7 +104,8 @@ class SpectralWilsonLoss(WilsonLoss):
         )
         kl = kl + kl_prf
 
-        # Wilson intensity KL — point estimates for G and B
+        # Wilson intensity KL
+        # using point estimates for G and B
         metadata = kwargs.get("metadata")
         if (
             metadata is None
@@ -120,7 +119,7 @@ class SpectralWilsonLoss(WilsonLoss):
         s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))
         wavelength = metadata["wavelength"].to(device)
 
-        # Getting the K/G factors for each reflection
+        # Getting the G factors for each reflection
         log_G = self.spectrum.get_log_G(wavelength)
         G = torch.exp(log_G)
         B = self.get_B()

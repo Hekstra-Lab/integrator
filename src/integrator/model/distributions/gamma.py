@@ -108,6 +108,7 @@ class GammaDistributionRepamB(nn.Module):
         self.floor_k_min = (
             float(floor_k_min) if floor_k_min is not None else None
         )
+
         # Accept both names for backwards compat
         constraint = mu_positive_constraint or positive_constraint
         self._mu_constrain = get_positive_constraint(constraint)
