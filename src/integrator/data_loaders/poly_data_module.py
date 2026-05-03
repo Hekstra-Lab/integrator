@@ -164,7 +164,7 @@ class PolyShoeboxDataModule(pl.LightningDataModule):
             ]
 
         if is_test is not None and is_test.any():
-            test_mask = is_test[all_indices]
+            test_mask = is_test[all_indices].bool()
             test_idx = all_indices[test_mask]
             train_val_idx = all_indices[~test_mask]
         else:
