@@ -79,7 +79,9 @@ loss:
     degree: 40
     # spectrum_init_from: spectrum_init.pt
     b_min: 1.0
-    k_prior: 1.0
+    learn_concentration: true
+    init_alpha: 0.1
+    # k_prior: 1.0
     bg_rate_per_group: bg_rate_per_group.pt
     bg_concentration_per_group: bg_concentration_per_group.pt
     # profile_sigma_prior: 3.0
