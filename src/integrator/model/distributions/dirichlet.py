@@ -20,6 +20,6 @@ class DirichletDistribution(nn.Module):
         self.eps = eps
         self._constrain = get_positive_constraint(positive_constraint)
 
-    def forward(self, x, mc_samples=None, group_labels=None):
+    def forward(self, x, mc_samples=None, group_labels=None, **kwargs):
         alpha = self._constrain(self.alpha_layer(x)) + self.eps
         return Dirichlet(alpha)

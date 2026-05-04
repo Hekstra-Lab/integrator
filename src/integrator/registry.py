@@ -14,6 +14,7 @@ from integrator.model.distributions import (
     GammaDistributionRepamE,
     LearnedBasisProfileSurrogate,
     LogNormalDistribution,
+    PositionAwareProfileSurrogate,
     RaggedLogisticNormalSurrogate,
 )
 from integrator.model.encoders import (
@@ -62,6 +63,7 @@ REGISTRY = {
         "folded_normal": FoldedNormalDistribution,
         "dirichlet": DirichletDistribution,
         "learned_basis_profile": LearnedBasisProfileSurrogate,
+        "position_aware_profile": PositionAwareProfileSurrogate,
         "fixed_basis_profile": FixedBasisProfileSurrogate,
         "ragged_learned_basis_profile": RaggedLogisticNormalSurrogate,
     },

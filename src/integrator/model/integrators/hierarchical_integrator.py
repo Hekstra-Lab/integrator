@@ -135,7 +135,8 @@ class HierarchicalIntegrator(Integrator):
         )
         prf_labels = prf_labels.long() if prf_labels is not None else None
         qp = self.surrogates["qp"](
-            x_profile, mc_samples=self.mc_samples, group_labels=prf_labels
+            x_profile, mc_samples=self.mc_samples, group_labels=prf_labels,
+            metadata=metadata,
         )
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
@@ -208,7 +209,8 @@ class HierarchicalIntegrator3Enc(Integrator):
         )
         prf_labels = prf_labels.long() if prf_labels is not None else None
         qp = self.surrogates["qp"](
-            x_profile, mc_samples=self.mc_samples, group_labels=prf_labels
+            x_profile, mc_samples=self.mc_samples, group_labels=prf_labels,
+            metadata=metadata,
         )
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)

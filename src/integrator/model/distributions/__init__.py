@@ -11,6 +11,7 @@ from .profile_surrogates import (
     LearnedBasisProfileSurrogate,
     ProfileSurrogateOutput,
 )
+from .position_aware_profile import PositionAwareProfileSurrogate
 from .ragged_logistic_normal import RaggedLogisticNormalSurrogate
 
 __all__ = [
@@ -23,5 +24,6 @@ __all__ = [
     "FixedBasisProfileSurrogate",
     "LearnedBasisProfileSurrogate",
     "ProfileSurrogateOutput",
+    "PositionAwareProfileSurrogate",
     "RaggedLogisticNormalSurrogate",
 ]

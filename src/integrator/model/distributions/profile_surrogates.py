@@ -97,6 +97,7 @@ class FixedBasisProfileSurrogate(nn.Module):
         x: Tensor,
         mc_samples: int = 1,
         group_labels: Tensor | None = None,
+        **kwargs,
     ) -> ProfileSurrogateOutput:
         mu_h = self.mu_head(x)  # (B, d)
         std_h = F.softplus(self.std_head(x))  # (B, d)
@@ -197,6 +198,7 @@ class LearnedBasisProfileSurrogate(nn.Module):
         x: Tensor,
         mc_samples: int = 1,
         group_labels: Tensor | None = None,
+        **kwargs,
     ) -> ProfileSurrogateOutput:
         mu_h = self.mu_head(x)  # (B, d)
         std_h = F.softplus(self.std_head(x))  # (B, d)
