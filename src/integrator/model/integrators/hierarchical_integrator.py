@@ -54,17 +54,43 @@ def _hierarchical_step(self, batch, step: Literal["train", "val"]):
     # Log intensity surrogate stats
     qi = outputs["qi"]
     qi_mean = qi.mean
-    self.log(f"{step} qi_mean_min", qi_mean.min(), on_step=False, on_epoch=True)
-    self.log(f"{step} qi_mean_median", qi_mean.median(), on_step=False, on_epoch=True)
+    self.log(
+        f"{step} qi_mean_min", qi_mean.min(), on_step=False, on_epoch=True
+    )
+    self.log(
+        f"{step} qi_mean_median",
+        qi_mean.median(),
+        on_step=False,
+        on_epoch=True,
+    )
 
-    self.log(f"{step} qi_k_min", qi.concentration.min(), on_step=False, on_epoch=True)
-    self.log(f"{step} qi_k_median", qi.concentration.median(), on_step=False, on_epoch=True)
+    self.log(
+        f"{step} qi_k_min",
+        qi.concentration.min(),
+        on_step=False,
+        on_epoch=True,
+    )
+    self.log(
+        f"{step} qi_k_median",
+        qi.concentration.median(),
+        on_step=False,
+        on_epoch=True,
+    )
     self.log(f"{step} qi_r_min", qi.rate.min(), on_step=False, on_epoch=True)
-    self.log(f"{step} qi_r_median", qi.rate.median(), on_step=False, on_epoch=True)
+    self.log(
+        f"{step} qi_r_median", qi.rate.median(), on_step=False, on_epoch=True
+    )
 
     qbg = outputs["qbg"]
-    self.log(f"{step} qbg_mean_min", qbg.mean.min(), on_step=False, on_epoch=True)
-    self.log(f"{step} qbg_mean_median", qbg.mean.median(), on_step=False, on_epoch=True)
+    self.log(
+        f"{step} qbg_mean_min", qbg.mean.min(), on_step=False, on_epoch=True
+    )
+    self.log(
+        f"{step} qbg_mean_median",
+        qbg.mean.median(),
+        on_step=False,
+        on_epoch=True,
+    )
 
     _log_loss(
         self,
@@ -119,7 +145,8 @@ class HierarchicalIntegrator(Integrator):
         counts = torch.clamp(counts, min=0)
 
         b = shoebox.shape[0]
-        shoebox_reshaped = shoebox.reshape(b, 1, *self.shoebox_shape)
+        shoebox_masked = shoebox * mask
+        shoebox_reshaped = shoebox_masked.reshape(b, 1, *self.shoebox_shape)
 
         x_profile = self.encoders["profile"](shoebox_reshaped)
         x_k_i = self.encoders["k_i"](shoebox_reshaped)
@@ -135,7 +162,9 @@ class HierarchicalIntegrator(Integrator):
         )
         prf_labels = prf_labels.long() if prf_labels is not None else None
         qp = self.surrogates["qp"](
-            x_profile, mc_samples=self.mc_samples, group_labels=prf_labels,
+            x_profile,
+            mc_samples=self.mc_samples,
+            group_labels=prf_labels,
             metadata=metadata,
         )
 
@@ -170,12 +199,7 @@ class HierarchicalIntegrator(Integrator):
 
 
 class HierarchicalIntegrator3Enc(Integrator):
-    """Hierarchical integrator with 3 encoders: profile, k, r.
-
-    Matches old IntegratorModelB / HierarchicalIntegratorB architecture:
-    the k encoder feeds linear_mu of both qi and qbg, the r encoder
-    feeds linear_fano of both qi and qbg.
-    """
+    """Hierarchical integrator with 3 encoders: profile, k, r."""
 
     from integrator import configs
 
@@ -195,7 +219,8 @@ class HierarchicalIntegrator3Enc(Integrator):
         counts = torch.clamp(counts, min=0)
 
         b = shoebox.shape[0]
-        shoebox_reshaped = shoebox.reshape(b, 1, *self.shoebox_shape)
+        shoebox_masked = shoebox * mask
+        shoebox_reshaped = shoebox_masked.reshape(b, 1, *self.shoebox_shape)
 
         x_profile = self.encoders["profile"](shoebox_reshaped)
         x_k = self.encoders["k"](shoebox_reshaped)
@@ -209,7 +234,9 @@ class HierarchicalIntegrator3Enc(Integrator):
         )
         prf_labels = prf_labels.long() if prf_labels is not None else None
         qp = self.surrogates["qp"](
-            x_profile, mc_samples=self.mc_samples, group_labels=prf_labels,
+            x_profile,
+            mc_samples=self.mc_samples,
+            group_labels=prf_labels,
             metadata=metadata,
         )
 

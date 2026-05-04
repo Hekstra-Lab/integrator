@@ -72,7 +72,9 @@ class SpectralWilsonLoss(WilsonLoss):
 
         # Warm-start B and concentration from the same init file
         if spectrum_init_from is not None:
-            saved = torch.load(spectrum_init_from, map_location="cpu", weights_only=False)
+            saved = torch.load(
+                spectrum_init_from, map_location="cpu", weights_only=False
+            )
             if "raw_B" in saved and saved["raw_B"] is not None:
                 with torch.no_grad():
                     self.raw_B.copy_(saved["raw_B"])

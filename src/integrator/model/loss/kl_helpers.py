@@ -1,5 +1,3 @@
-"""Shared KL-divergence helpers and utilities for loss classes."""
-
 import torch
 from torch import Tensor
 from torch.distributions import Distribution, Gamma
@@ -151,7 +149,6 @@ def compute_profile_kl(
         f"Profile surrogate of type {type(qp).__name__} is not supported "
         "by compute_profile_kl."
     )
-
 
 
 def compute_bg_kl(

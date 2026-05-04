@@ -11,8 +11,6 @@ anisotropic Gaussian oriented radially — correctly capturing the
 elongation direction without needing encoder signal.
 """
 
-import math
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -22,7 +20,6 @@ from .profile_surrogates import (
     LearnedBasisProfileSurrogate,
     ProfileSurrogateOutput,
     _sample_and_decode,
-    _softplus_inverse,
 )
 
 
@@ -71,8 +68,12 @@ class PositionAwareProfileSurrogate(LearnedBasisProfileSurrogate):
         # Learnable radial/tangential widths: sigma = softplus(raw) + eps
         # sigma_radial(r) = a_r + b_r * r  (linear in detector radius)
         # sigma_tangential(r) = a_t + b_t * r
-        self.raw_sigma_radial = nn.Parameter(torch.tensor([1.5, 0.0]))  # [a, b]
-        self.raw_sigma_tangential = nn.Parameter(torch.tensor([1.5, 0.0]))  # [a, b]
+        self.raw_sigma_radial = nn.Parameter(
+            torch.tensor([1.5, 0.0])
+        )  # [a, b]
+        self.raw_sigma_tangential = nn.Parameter(
+            torch.tensor([1.5, 0.0])
+        )  # [a, b]
 
         # Precompute local pixel grid (relative to shoebox center)
         cy_local = (H - 1) / 2.0
@@ -105,12 +106,22 @@ class PositionAwareProfileSurrogate(LearnedBasisProfileSurrogate):
         uy = dy / r  # (B,)
 
         # Radial and tangential sigmas (linear in r, softplus for positivity)
-        sigma_r = F.softplus(self.raw_sigma_radial[0] + self.raw_sigma_radial[1] * r / 1000.0) + 0.5
-        sigma_t = F.softplus(self.raw_sigma_tangential[0] + self.raw_sigma_tangential[1] * r / 1000.0) + 0.5
+        sigma_r = (
+            F.softplus(
+                self.raw_sigma_radial[0]
+                + self.raw_sigma_radial[1] * r / 1000.0
+            )
+            + 0.5
+        )
+        sigma_t = (
+            F.softplus(
+                self.raw_sigma_tangential[0]
+                + self.raw_sigma_tangential[1] * r / 1000.0
+            )
+            + 0.5
+        )
 
         # Project each pixel onto radial and tangential axes
-        # pixel_x, pixel_y: (K,) local coords
-        # ux, uy: (B,)
         # radial component: pixel dot radial_unit
         px = self.pixel_x.unsqueeze(0)  # (1, K)
         py = self.pixel_y.unsqueeze(0)  # (1, K)
