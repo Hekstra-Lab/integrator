@@ -31,6 +31,7 @@ class SpectralWilsonLoss(WilsonLoss):
         lambda_min: float = 0.9,
         lambda_max: float = 1.1,
         spectrum_init_from: str | None = None,
+        freeze_prior: bool = False,
         b_min: float = 1.0,
         k_prior: float = 1.0,
         init_from_tau: bool = False,
@@ -80,6 +81,12 @@ class SpectralWilsonLoss(WilsonLoss):
                 if saved_alpha.shape == self.log_alpha_per_group.shape:
                     with torch.no_grad():
                         self.log_alpha_per_group.copy_(saved_alpha)
+
+        if freeze_prior:
+            self.spectrum.c.requires_grad_(False)
+            self.raw_B.requires_grad_(False)
+            if self.learn_concentration:
+                self.log_alpha_per_group.requires_grad_(False)
 
     def get_B(self) -> Tensor:
         return F.softplus(self.raw_B) + self.b_min
