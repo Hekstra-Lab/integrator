@@ -69,6 +69,18 @@ class SpectralWilsonLoss(WilsonLoss):
 
         self.raw_B = nn.Parameter(torch.tensor(3.0))
 
+        # Warm-start B and concentration from the same init file
+        if spectrum_init_from is not None:
+            saved = torch.load(spectrum_init_from, map_location="cpu", weights_only=False)
+            if "raw_B" in saved and saved["raw_B"] is not None:
+                with torch.no_grad():
+                    self.raw_B.copy_(saved["raw_B"])
+            if "log_alpha_per_group" in saved and self.learn_concentration:
+                saved_alpha = saved["log_alpha_per_group"]
+                if saved_alpha.shape == self.log_alpha_per_group.shape:
+                    with torch.no_grad():
+                        self.log_alpha_per_group.copy_(saved_alpha)
+
     def get_B(self) -> Tensor:
         return F.softplus(self.raw_B) + self.b_min
 
