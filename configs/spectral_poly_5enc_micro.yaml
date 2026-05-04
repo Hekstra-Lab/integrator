@@ -87,8 +87,11 @@ loss:
   name: spectral_wilson
   args:
     spectrum_init_from: prior_init.pt
+    mc_samples: *mc_samples
+    eps: 1.0e-06
     freeze_prior: true
     degree: 40
+    n_bins: 20
     b_min: 1.0
     learn_concentration: true
     # k_prior: 1.0
