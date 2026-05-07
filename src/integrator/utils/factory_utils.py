@@ -376,6 +376,16 @@ def _get_loss_module(
             kwargs["spectrum_init_from"], data_dir, None
         )
 
+    # Inject global background prior from bg_prior.pt if not set explicitly
+    if "bg_rate" not in kwargs or "bg_concentration" not in kwargs:
+        bg_prior_path = Path(data_dir) / "bg_prior.pt"
+        if bg_prior_path.is_file():
+            bg_prior = torch.load(
+                bg_prior_path, weights_only=False, map_location="cpu"
+            )
+            kwargs.setdefault("bg_rate", bg_prior["bg_rate"])
+            kwargs.setdefault("bg_concentration", bg_prior["bg_concentration"])
+
     import inspect
 
     sig = inspect.signature(loss_cls.__init__)

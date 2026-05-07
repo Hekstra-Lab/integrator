@@ -266,7 +266,20 @@ def prepare_per_bin_priors(
         or _gammaB_wants_mean_init(cfg, "qbg")
     ) and (force or not init_path.exists())
 
-    if not needed and not need_group_labels and not need_init:
+    # Check if global background prior needs computing.
+    # Fits Gamma MLE on all background values and saves (alpha, rate).
+    bg_prior_path = data_dir / "bg_prior.pt"
+    need_bg_prior = (
+        "bg_rate" not in loss_args
+        and "bg_concentration" not in loss_args
+    ) and (force or not bg_prior_path.exists())
+
+    if (
+        not needed
+        and not need_group_labels
+        and not need_init
+        and not need_bg_prior
+    ):
         return
 
     logger.info(
@@ -408,6 +421,40 @@ def prepare_per_bin_priors(
                         "qbg_mean": init_stats["qbg_mean"],
                     }
                 )
+
+    # Global background prior via Gamma MLE
+    if need_bg_prior:
+        bg_vals = metadata.get(
+            "background.mean",
+            metadata.get("background.sum.value"),
+        )
+        if bg_vals is not None:
+            pos = bg_vals[bg_vals > 0]
+            if pos.numel() >= 10:
+                alpha, rate = _fit_gamma_mle(pos)
+                bg_prior = {
+                    "bg_concentration": float(alpha.item()),
+                    "bg_rate": float(rate.item()),
+                    "n_samples": int(pos.numel()),
+                }
+                torch.save(bg_prior, bg_prior_path)
+                logger.info(
+                    "Saved bg_prior.pt (Gamma MLE: alpha=%.3f, rate=%.3f, n=%d)",
+                    bg_prior["bg_concentration"],
+                    bg_prior["bg_rate"],
+                    bg_prior["n_samples"],
+                )
+            else:
+                logger.warning(
+                    "Too few positive background values (%d) for MLE; "
+                    "using default bg_rate=1.0, bg_concentration=1.0",
+                    pos.numel(),
+                )
+        else:
+            logger.warning(
+                "No background column in metadata; "
+                "using default bg_rate=1.0, bg_concentration=1.0"
+            )
 
 
 def inject_binning_labels(data_loader, cfg: dict) -> None:
