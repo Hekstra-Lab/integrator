@@ -350,14 +350,10 @@ def _get_loss_module(
     )
     kwargs = shallow_dict(loss_args)
 
-    # Forward extra keys from loss.args that the loss class actually accepts.
-    # Instead of maintaining a deny-list of pipeline-only keys, introspect
-    # the constructor signature: only pass kwargs the class declares.
     for k, v in cfg["loss"]["args"].items():
         if k not in kwargs:
             kwargs[k] = v
 
-    # Map empirical_profile_basis_per_bin -> profile_basis_per_bin
     if (
         "empirical_profile_basis_per_bin" in kwargs
         and "profile_basis_per_bin" not in kwargs
@@ -368,8 +364,6 @@ def _get_loss_module(
     elif "empirical_profile_basis_per_bin" in kwargs:
         kwargs.pop("empirical_profile_basis_per_bin")
 
-    # Resolve relative .pt paths for custom loss buffers
-    # Include n_bins in filename to prevent concurrent runs from clobbering files
     data_dir = _get_data_dir(cfg)
     n_bins = _get_n_bins(cfg)
     for pt_key in (
@@ -385,9 +379,7 @@ def _get_loss_module(
             kwargs[pt_key] = _resolve_data_path(
                 kwargs[pt_key], data_dir, n_bins
             )
-    # wavelength_bin_edges is keyed by n_lambda_bins (not resolution n_bins),
-    # and prepare_priors already bakes the suffix into the filename.
-    # Resolve against data_dir only, no n_bins suffix.
+
     if "wavelength_bin_edges" in kwargs and isinstance(
         kwargs["wavelength_bin_edges"], str
     ):
@@ -395,7 +387,6 @@ def _get_loss_module(
             kwargs["wavelength_bin_edges"], data_dir, None
         )
 
-    # Spectrum warm-start file — resolve against data_dir, no n_bins suffix.
     if "spectrum_init_from" in kwargs and isinstance(
         kwargs["spectrum_init_from"], str
     ):
@@ -403,7 +394,6 @@ def _get_loss_module(
             kwargs["spectrum_init_from"], data_dir, None
         )
 
-    # Filter kwargs to only what the loss constructor accepts.
     import inspect
 
     sig = inspect.signature(loss_cls.__init__)
@@ -496,13 +486,9 @@ def construct_data_loader(cfg):
     dl_cls = _get_dataloader_cls(cfg["data_loader"]["name"])
     args = cfg["data_loader"]["args"]
 
-    # Ragged path: the ragged data module has a different kwarg surface
-    # (chunks_dir, val_frac, bucket_mult, ...) that doesn't fit the
-    # fixed-pipeline DataLoaderArgs dataclass. Pass through directly.
-    if cfg["data_loader"]["name"] in ("ragged_data", "poly_data"):
+    if cfg["data_loader"]["name"] in ("poly_data"):
         return dl_cls(**args)
 
-    # Fixed-pipeline path — keep existing behavior.
     dl_args = configs.DataLoaderArgs(**args)
     data_dir = Path(dl_args.data_dir)
 
@@ -591,8 +577,7 @@ def _collect_resolved_paths(cfg: dict) -> dict:
     if dl_paths:
         report["data_loader"] = dl_paths
 
-    # Surrogates: resolve any of the two basis-like path kwargs. Both get
-    # the n_bins suffix rewrite via _resolve_data_path.
+    # Surrogates
     surr_paths: dict = {}
     for key, surrogate_cfg in cfg.get("surrogates", {}).items():
         args = surrogate_cfg.get("args", {}) or {}

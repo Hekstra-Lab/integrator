@@ -2,6 +2,10 @@ import torch
 from torch import Tensor
 from torch.distributions import Distribution, Gamma
 
+from integrator.model.distributions.profile_surrogates import (
+    ProfileSurrogateOutput,
+)
+
 
 def _load_buffer(value: list[float] | str) -> Tensor:
     """Load a tensor from a list of floats or a .pt file path."""
@@ -11,11 +15,6 @@ def _load_buffer(value: list[float] | str) -> Tensor:
             return next(iter(loaded.values())).float()
         return loaded.float()
     return torch.tensor(value, dtype=torch.float32)
-
-
-from integrator.model.distributions.profile_surrogates import (
-    ProfileSurrogateOutput,
-)
 
 
 def _kl(

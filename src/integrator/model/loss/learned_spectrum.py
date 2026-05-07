@@ -3,14 +3,9 @@ import torch.nn as nn
 from torch import Tensor
 
 
+# NOTE: this is not a variational implementation; uses learnable parameters
 class ChebyshevSpectrum(nn.Module):
-    """Continuous log G(λ) via Chebyshev polynomial expansion.
-
-    log G(λ) = Σ_k c_k · T_k(x),  x = (λ - λ_mid) / scale ∈ [-1, 1]
-
-    Chebyshev polynomials are bounded in [-1, 1] across the domain,
-    avoiding the edge blow-up of monomial bases.
-    """
+    """Continuous log G(λ) via Chebyshev polynomial expansion."""
 
     def __init__(
         self,
@@ -30,7 +25,9 @@ class ChebyshevSpectrum(nn.Module):
         self.register_buffer("lam_scale", torch.tensor(lam_scale))
 
         if init_from is not None:
-            saved = torch.load(init_from, map_location="cpu", weights_only=False)
+            saved = torch.load(
+                init_from, map_location="cpu", weights_only=False
+            )
             c_saved = saved["c"]
             if c_saved.shape[0] == self.n_basis:
                 init = c_saved.clone()
@@ -63,3 +60,33 @@ class ChebyshevSpectrum(nn.Module):
         """(B,) -> (B,)"""
         phi = self.design_matrix(wavelength)
         return phi @ self.c
+
+
+if __name__ == "__main__":
+    import matplotlib.pyplot as plt
+
+    cheb = ChebyshevSpectrum(degree=5)
+
+    x = torch.linspace(-1, 1, 1000)
+    y = cheb.design_matrix(wavelength=x)
+
+    for i in range(y.size(1)):
+        plt.plot(x, y[:, i])
+    plt.grid()
+    plt.show()
+
+    for i, _y in enumerate(cheb._chebyshev(x, 5)):
+        plt.plot(x, _y, label=f"T{i}")
+    plt.grid(alpha=0.3)
+    plt.legend()
+    plt.title("First six Chebyshev polynomials")
+    plt.show()
+
+
+for f in log_dir.glob("*refine*.log"):
+    data = {"config": f.parts[-3]}
+    for line in f.read_text().splitlines():
+        m = re.match(r"(Start|Final) R-work\s*=\s*(\S+)", line)
+        if m:
+            data[m.group(1)] = float(m.group(2).strip(","))
+    print(data)

@@ -8,7 +8,10 @@ POSITIVE_CONSTRAINTS: dict[str, Callable[[torch.Tensor], torch.Tensor]] = {
     "log": torch.exp,
 }
 
-def get_positive_constraint(name: str) -> Callable[[torch.Tensor], torch.Tensor]:
+
+def get_positive_constraint(
+    name: str,
+) -> Callable[[torch.Tensor], torch.Tensor]:
     if name not in POSITIVE_CONSTRAINTS:
         raise ValueError(
             f"positive_constraint must be one of {set(POSITIVE_CONSTRAINTS)}, got {name!r}"

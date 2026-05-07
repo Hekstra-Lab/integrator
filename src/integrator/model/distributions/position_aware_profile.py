@@ -1,16 +1,3 @@
-"""Position-aware profile surrogate.
-
-Extends LearnedBasisProfileSurrogate with a detector-position-dependent
-bias b(r, θ) that orients the default profile radially based on the
-reflection's position on the detector.
-
-    profile = softmax(W @ h + b(r, θ))
-
-When the encoder is uncertain (h ≈ 0), the profile defaults to an
-anisotropic Gaussian oriented radially — correctly capturing the
-elongation direction without needing encoder signal.
-"""
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -24,16 +11,7 @@ from .profile_surrogates import (
 
 
 class PositionAwareProfileSurrogate(LearnedBasisProfileSurrogate):
-    """Learned basis profile with position-dependent anisotropic Gaussian bias.
-
-    The bias b for each reflection is computed from its detector position
-    (xcal, ycal) as a 2D anisotropic Gaussian whose major axis points
-    radially away from the beam center.
-
-    Args:
-        beam_center: (cx, cy) in pixels. If None, uses (H/2, W/2) of shoebox.
-        H, W: shoebox spatial dimensions.
-    """
+    """Learned basis profile with position-dependent anisotropic Gaussian bias."""
 
     def __init__(
         self,

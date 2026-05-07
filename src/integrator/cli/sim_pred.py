@@ -1,10 +1,3 @@
-"""
-Prediction CLI for simulated shoebox data.
-
-Example use:
-    integrator.sim_pred -v --run-dir /path/to/run_dir
-"""
-
 import argparse
 import logging
 import re

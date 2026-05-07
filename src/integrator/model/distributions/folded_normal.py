@@ -3,14 +3,14 @@ from math import pi, sqrt
 import torch
 import torch.nn as nn
 from torch import Tensor
-
-from .utils import get_positive_constraint
 from torch.distributions import (
     Normal,
     TransformedDistribution,
     constraints,
 )
 from torch.distributions.transforms import AbsTransform
+
+from .utils import get_positive_constraint
 
 
 class FoldedNormal(TransformedDistribution):

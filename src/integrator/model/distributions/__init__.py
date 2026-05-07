@@ -6,13 +6,12 @@ from .gamma import (
     GammaDistributionRepamE,
 )
 from .log_normal import LogNormalDistribution
+from .position_aware_profile import PositionAwareProfileSurrogate
 from .profile_surrogates import (
     FixedBasisProfileSurrogate,
     LearnedBasisProfileSurrogate,
     ProfileSurrogateOutput,
 )
-from .position_aware_profile import PositionAwareProfileSurrogate
-from .ragged_logistic_normal import RaggedLogisticNormalSurrogate
 
 __all__ = [
     "DirichletDistribution",
@@ -25,5 +24,4 @@ __all__ = [
     "LearnedBasisProfileSurrogate",
     "ProfileSurrogateOutput",
     "PositionAwareProfileSurrogate",
-    "RaggedLogisticNormalSurrogate",
 ]

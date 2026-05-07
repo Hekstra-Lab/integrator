@@ -9,11 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 def _nbins_path(filename: str, n_bins: int, data_dir: Path) -> Path:
-    """Resolve a prior filename with n_bins suffix: 'foo.pt' -> data_dir/'foo_30.pt'.
-
-    This prevents concurrent runs with different n_bins from clobbering
-    each other's prior files in the same data directory.
-    """
+    """Resolve a prior filename with n_bins suffix: 'foo.pt' -> data_dir/'foo_30.pt'."""
     p = Path(filename)
     suffixed = f"{p.stem}_{n_bins}{p.suffix}"
     if p.is_absolute():
@@ -45,8 +41,6 @@ def _compute_qi_qbg_mean_init(
 
     Uses the same quiet-frame / border-pixel background subtraction as
     `_bg_subtract_signal` — fully independent of DIALS estimates.
-    Returns both median and mean for each; the factory defaults to using
-    the median (more robust to the heavy-tail of strong reflections).
     """
     import torch as _t
 
@@ -97,12 +91,6 @@ def prepare_global_priors(
 ) -> None:
     """Generate global prior .pt files for the default Loss if needed.
 
-    When the default loss uses a Dirichlet profile prior
-    (`pprf_cfg.name = "dirichlet"`) with a `.pt` file path as the
-    concentration, this function generates that file using a global MOM
-    estimate (bg-subtracted, across all reflections with no binning).
-
-    Idempotent: skips if the file already exists unless force=True.
 
     Args:
         cfg: Full YAML config dict.
@@ -188,7 +176,7 @@ def prepare_per_bin_priors(
             a summary and record what happened in run_metadata.yaml.
     """
     loss_name = cfg.get("loss", {}).get("name", "")
-    if loss_name not in ("wilson", "poly_wilson", "spectral_wilson"):
+    if loss_name not in ("wilson", "spectral_wilson"):
         return
 
     data_dir = Path(cfg["data_loader"]["args"]["data_dir"])
@@ -220,37 +208,6 @@ def prepare_per_bin_priors(
                     loss_args["lambda_min"],
                     loss_args["lambda_max"],
                 )
-
-    # Polychromatic-only: auto-inject wavelength_bin_edges path and generate
-    # quantile-based edges from metadata['wavelength'] if the file is missing.
-    if loss_name == "poly_wilson":
-        n_lambda_bins = int(loss_args.get("n_lambda_bins", 8))
-        if "wavelength_bin_edges" not in loss_args:
-            loss_args["wavelength_bin_edges"] = (
-                f"wavelength_bin_edges_{n_lambda_bins}.pt"
-            )
-        wbe = loss_args["wavelength_bin_edges"]
-        # Only generate when it's a path (str). Explicit list overrides.
-        if isinstance(wbe, str):
-            wbe_path = data_dir / wbe
-            if force or not wbe_path.exists():
-                ref_path = _resolve_reference_path(data_dir, cfg)
-                edges = _compute_wavelength_bin_edges(ref_path, n_lambda_bins)
-                torch.save(edges, wbe_path)
-                if events_out is not None:
-                    events_out.append(
-                        {
-                            "file": wbe_path.name,
-                            "path": str(wbe_path),
-                            "action": "regenerated"
-                            if wbe_path.exists()
-                            else "created",
-                            "reason": (
-                                f"quantile edges from metadata['wavelength'] "
-                                f"with n_lambda_bins={n_lambda_bins}"
-                            ),
-                        }
-                    )
 
     # Auto-inject concentration file paths when pi_cfg/pbg_cfg request gamma
     pi_cfg = loss_args.get("pi_cfg")
@@ -376,11 +333,6 @@ def prepare_per_bin_priors(
         ", ".join(needed.keys()),
     )
 
-    # Load metadata always (cheap); counts/masks lazily — the ragged data
-    # layout doesn't have flat counts.npy/masks.npy. Prior types that derive
-    # purely from per-reflection metadata (bg_rate_per_group with
-    # tau_source='dials', s_squared_per_group, tau_per_group from
-    # intensity.prf.value) work without ever loading counts/masks.
     metadata = torch.load(
         _resolve_reference_path(data_dir, cfg), weights_only=False
     )
@@ -391,7 +343,7 @@ def prepare_per_bin_priors(
             raise FileNotFoundError(
                 f"Computing '{prior_name}' requires per-pixel counts/masks, "
                 f"but neither counts.npy nor counts.pt was found in "
-                f"{data_dir}. This is the ragged data layout (chunks/*.npz). "
+                f"{data_dir}. "
                 f"Either remove '{prior_name}' from the loss config, or "
                 f"provide a precomputed file."
             )
@@ -721,7 +673,7 @@ def prepare_per_bin_priors(
     if need_init:
         if counts is None or masks is None:
             logger.info(
-                "qi_qbg_mean_init.pt requires counts/masks; ragged data "
+                "qi_qbg_mean_init.pt requires counts/masks;  "
                 "layout has none. Skipping — set explicit mean_init values "
                 "in the YAML (or `mean_init: null` to opt out)."
             )
@@ -891,11 +843,6 @@ def inject_binning_labels(data_loader, cfg: dict) -> None:
     If the files don't exist (e.g. old data without per-bin priors),
     this is a no-op and existing labels in metadata.pt are used.
     """
-    # The ragged data module exposes group_label per-reflection via the
-    # batch dict already, sourced from group_labels_*.pt at dataset init —
-    # there is no `full_dataset.reference` to mutate here. Skip cleanly.
-    if cfg.get("data_loader", {}).get("name") == "ragged_data":
-        return
 
     loss_args = cfg.get("loss", {}).get("args", {})
     n_bins = int(loss_args.get("n_bins", 20))
@@ -966,19 +913,6 @@ def _try_load_counts_masks(
     data_dir: Path,
     cfg: dict,
 ) -> tuple[Tensor | None, Tensor | None]:
-    """Best-effort counts/masks load — returns (None, None) if files don't exist.
-
-    The fixed pipeline writes flat (N, V) arrays to data_dir/counts.npy and
-    masks.npy. The ragged pipeline (data_loader.name == "ragged_data") splits
-    its data across data_dir/chunks/chunk_*.npz instead, so neither file
-    exists. Prior-generation paths that genuinely need per-pixel counts must
-    null-check the result and raise a clearer error than FileNotFoundError.
-
-    Per-reflection summaries already in metadata.pt (e.g. background.mean,
-    intensity.prf.value, d) cover most prior types — bg_rate_per_group,
-    s_squared_per_group, tau_per_group with tau_source='dials' — without
-    touching this function.
-    """
     sfn = cfg["data_loader"]["args"].get("shoebox_file_names", {})
     counts_name = sfn.get("counts", "counts.pt")
     masks_name = sfn.get("masks", "masks.pt")
@@ -996,7 +930,7 @@ def _try_load_counts_masks(
     if not _exists(counts_path) or not _exists(masks_path):
         logger.info(
             "Counts/masks not found at %s / %s — skipping count-dependent "
-            "prior computations. (This is expected for the ragged data layout.)",
+            "prior computations. ",
             counts_path,
             masks_path,
         )
@@ -1539,19 +1473,10 @@ def _get_intensity_for_prior(
     metadata: dict,
     cfg: dict,
 ) -> Tensor:
-    """Return intensity tensor for prior fitting, respecting tau_source config.
-
-    counts/masks may be None when the dataset is in the ragged layout (no
-    flat counts.npy). The DIALS path doesn't need them; the crude path does
-    and will raise a clear error.
-    """
+    """Return intensity tensor for prior fitting, respecting tau_source config."""
     if tau_source == "crude":
         if counts is None or masks is None:
-            raise FileNotFoundError(
-                "tau_source='crude' requires counts/masks but the dataset "
-                "is in the ragged layout (no flat counts.npy). Switch to "
-                "tau_source='dials' to use metadata['intensity.prf.value']."
-            )
+            raise FileNotFoundError()
         return _crude_intensity_from_cfg(counts, masks, cfg)
 
     intensity = metadata.get(
@@ -1562,12 +1487,7 @@ def _get_intensity_for_prior(
         return intensity
 
     if counts is None or masks is None:
-        raise FileNotFoundError(
-            "No intensity column in metadata.pt and counts/masks are not "
-            "available (ragged layout). Either drop the prior that depends "
-            "on intensity, or rerun mksbox so metadata.pt includes "
-            "intensity.prf.value."
-        )
+        raise FileNotFoundError()
 
     logger.warning(
         "No intensity column found and tau_source='dials'; "
@@ -1583,17 +1503,11 @@ def _get_background_for_prior(
     metadata: dict,
     cfg: dict,
 ) -> Tensor:
-    """Return per-reflection background estimate, respecting tau_source config.
-
-    counts/masks may be None for the ragged data layout. The default
-    tau_source='dials' path uses metadata['background.mean'] and works fine
-    without them; tau_source='crude' raises a clear error if they're missing.
-    """
+    """Return per-reflection background estimate, respecting tau_source config."""
     if tau_source == "crude":
         if counts is None or masks is None:
             raise FileNotFoundError(
                 "tau_source='crude' requires counts/masks but the dataset "
-                "is in the ragged layout (no flat counts.npy). Switch to "
                 "tau_source='dials' to use metadata['background.mean']."
             )
         return _crude_background_from_cfg(counts, masks, cfg)
@@ -1605,8 +1519,6 @@ def _get_background_for_prior(
     if counts is None or masks is None:
         raise FileNotFoundError(
             "No background.mean column in metadata.pt and counts/masks "
-            "are not available (ragged layout). Rerun mksbox so "
-            "metadata.pt includes background.mean."
         )
     logger.warning(
         "No background.mean column found and tau_source='dials'; "

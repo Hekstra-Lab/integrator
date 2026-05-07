@@ -1,9 +1,3 @@
-"""
-# Example use
-integrator.pred -v \
-        --run-dir \
-"""
-
 import argparse
 import logging
 import re

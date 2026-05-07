@@ -93,20 +93,17 @@ def physical_params_to_profile(
         indexing="ij",
     )
 
-    # Expand grid for broadcasting: (H, W) -> (1..., H, W)
     batch_dims = cx.shape
     for _ in range(len(batch_dims)):
         xx = xx.unsqueeze(0)
         yy = yy.unsqueeze(0)
 
-    # Expand params: (...,) -> (..., 1, 1)
     cx = cx[..., None, None]
     cy = cy[..., None, None]
     sigma1 = sigma1[..., None, None]
     sigma2 = sigma2[..., None, None]
     theta = theta[..., None, None]
 
-    # Rotated coordinates
     dx = xx - cx
     dy = yy - cy
     cos_t = torch.cos(theta)
@@ -114,15 +111,12 @@ def physical_params_to_profile(
     x_rot = dx * cos_t + dy * sin_t
     y_rot = -dx * sin_t + dy * cos_t
 
-    # Gaussian
     profile = torch.exp(-0.5 * (x_rot**2 / sigma1**2 + y_rot**2 / sigma2**2))
 
-    # Normalize to sum to 1
     profile = profile / profile.sum(dim=(-2, -1), keepdim=True).clamp(
         min=1e-10
     )
 
-    # Flatten spatial dims
     return profile.reshape(*batch_dims, H * W)
 
 
