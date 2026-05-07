@@ -1,9 +1,9 @@
 from .encoders import (
     IntensityEncoder,
-    ShoeboxEncoder,
+    ProfileEncoder,
 )
 
 __all__ = [
     "IntensityEncoder",
-    "ShoeboxEncoder",
+    "ProfileEncoder",
 ]

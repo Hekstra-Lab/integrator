@@ -159,7 +159,7 @@ def _remove_flagged_variance(
     return counts, masks, metadata
 
 
-class ShoeboxDataModule(pl.LightningDataModule):
+class RotationDataModule(pl.LightningDataModule):
     """
 
     Attributes:

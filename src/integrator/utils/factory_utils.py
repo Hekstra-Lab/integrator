@@ -38,7 +38,7 @@ TUPLE_FIELDS = {
 # User-supplied YAML args override these.
 # Only data_dim is required.
 _ENCODER_PRESETS: dict[tuple[str, str], dict] = {
-    ("shoebox_encoder", "3d"): dict(
+    ("profile_encoder", "3d"): dict(
         in_channels=1,
         encoder_out=64,
         input_shape=(3, 21, 21),
@@ -53,7 +53,7 @@ _ENCODER_PRESETS: dict[tuple[str, str], dict] = {
         conv2_padding=(0, 0, 0),
         norm2_num_groups=4,
     ),
-    ("shoebox_encoder", "2d"): dict(
+    ("profile_encoder", "2d"): dict(
         in_channels=1,
         encoder_out=64,
         input_shape=(21, 21),
@@ -468,7 +468,7 @@ def construct_data_loader(cfg):
     dl_cls = _get_dataloader_cls(cfg["data_loader"]["name"])
     args = cfg["data_loader"]["args"]
 
-    if cfg["data_loader"]["name"] in ("poly_data"):
+    if cfg["data_loader"]["name"] in ("polychromatic_data"):
         return dl_cls(**args)
 
     dl_args = configs.DataLoaderArgs(**args)

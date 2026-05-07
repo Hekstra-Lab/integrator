@@ -34,7 +34,7 @@ class HierarchicalIntegrator(BaseIntegrator):
     """Hierarchical integrator with 5 decoupled encoders."""
 
     REQUIRED_ENCODERS = {
-        "profile": configs.ShoeboxEncoderArgs,
+        "profile": configs.ProfileEncoderArgs,
         "k_i": configs.IntensityEncoderArgs,
         "r_i": configs.IntensityEncoderArgs,
         "k_bg": configs.IntensityEncoderArgs,
@@ -106,7 +106,7 @@ class HierarchicalIntegrator3Enc(BaseIntegrator):
     """Hierarchical integrator with 3 encoders: profile, k, r."""
 
     REQUIRED_ENCODERS = {
-        "profile": configs.ShoeboxEncoderArgs,
+        "profile": configs.ProfileEncoderArgs,
         "k": configs.IntensityEncoderArgs,
         "r": configs.IntensityEncoderArgs,
     }

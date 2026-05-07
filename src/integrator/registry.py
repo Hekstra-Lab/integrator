@@ -1,6 +1,6 @@
 from integrator.data_loaders import (
-    PolyShoeboxDataModule,
-    ShoeboxDataModule,
+    PolychromaticDataModule,
+    RotationDataModule,
 )
 from integrator.model.distributions import (
     DirichletDistribution,
@@ -13,7 +13,7 @@ from integrator.model.distributions import (
 )
 from integrator.model.encoders import (
     IntensityEncoder,
-    ShoeboxEncoder,
+    ProfileEncoder,
 )
 from integrator.model.integrators import (
     HierarchicalIntegrator,
@@ -26,7 +26,7 @@ from integrator.model.loss import (
 
 REGISTRY = {
     "encoders": {
-        "shoebox_encoder": ShoeboxEncoder,
+        "profile_encoder": ProfileEncoder,
         "intensity_encoder": IntensityEncoder,
     },
     "loss": {
@@ -47,7 +47,7 @@ REGISTRY = {
         "fixed_basis_profile": FixedBasisProfileSurrogate,
     },
     "data_loader": {
-        "default": ShoeboxDataModule,
-        "poly_data": PolyShoeboxDataModule,
+        "rotation_data": RotationDataModule,
+        "polychromatic_data": PolychromaticDataModule,
     },
 }

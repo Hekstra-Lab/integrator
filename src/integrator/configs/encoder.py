@@ -3,7 +3,7 @@ from typing import Literal
 
 
 @dataclass
-class ShoeboxEncoderArgs:
+class ProfileEncoderArgs:
     data_dim: Literal["2d", "3d"]
     in_channels: int
     input_shape: tuple[int, ...]
@@ -65,4 +65,4 @@ class IntensityEncoderArgs:
 @dataclass
 class EncoderConfig:
     name: str
-    args: ShoeboxEncoderArgs | IntensityEncoderArgs
+    args: ProfileEncoderArgs | IntensityEncoderArgs

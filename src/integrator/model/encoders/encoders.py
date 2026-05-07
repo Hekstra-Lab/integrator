@@ -19,7 +19,7 @@ OPERATIONS = {
 }
 
 
-class ShoeboxEncoder(nn.Module):
+class ProfileEncoder(nn.Module):
     """CNN encoder producing a fixed-length embedding from a shoebox volume.
 
     This module applies two Conv3d + GroupNorm + relu blocks with an

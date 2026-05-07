@@ -21,7 +21,7 @@ integrator:
        d, group_label, qp_mean, qp_loc, qp_scale]
 
 encoders:
-- name: shoebox_encoder
+- name: profile_encoder
   args:
     data_dim: 3d
     input_shape: [*d, *h, *w]
@@ -75,7 +75,7 @@ loss:
     pprf_weight: 1.0
 
 data_loader:
-  name: default
+  name: rotation_data
   args:
     data_dir: &data_dir /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data
     batch_size: 2048

@@ -20,7 +20,7 @@ integrator:
 
 # 3 encoders: profile, k, r
 encoders:
-- name: shoebox_encoder
+- name: profile_encoder
   args:
     data_dim: 2d
     input_shape: [*h, *w]
@@ -74,7 +74,7 @@ loss:
     pprf_weight: 1.0
 
 data_loader:
-  name: poly_data
+  name: polychromatic_data
   args:
     data_dir: &data_dir /n/hekstra_lab/people/aldama/integrator_data/hewl_1118/pytorch_data
     batch_size: 256

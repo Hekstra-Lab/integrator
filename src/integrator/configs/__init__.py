@@ -13,7 +13,7 @@ from .distributions import (
 from .encoder import (
     EncoderConfig,
     IntensityEncoderArgs,
-    ShoeboxEncoderArgs,
+    ProfileEncoderArgs,
 )
 from .integrator import IntegratorCfg, IntegratorConfig
 from .logger import LoggerConfig
@@ -42,7 +42,7 @@ __all__ = [
     "EncoderConfig",
     "IntensityEncoderArgs",
     "IntegratorConfig",
-    "ShoeboxEncoderArgs",
+    "ProfileEncoderArgs",
     "PriorConfig",
     "LossConfig",
     "OutputConfig",

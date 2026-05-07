@@ -37,7 +37,7 @@ POLY_DS_COLS = [
 ]
 
 
-class PolyShoeboxDataModule(pl.LightningDataModule):
+class PolychromaticDataModule(pl.LightningDataModule):
     """DataModule for polychromatic (Laue) stills shoeboxes."""
 
     def __init__(

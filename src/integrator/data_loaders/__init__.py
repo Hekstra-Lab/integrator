@@ -1,7 +1,7 @@
-from .data_module import ShoeboxDataModule
-from .poly_data_module import PolyShoeboxDataModule
+from .data_module import RotationDataModule
+from .poly_data_module import PolychromaticDataModule
 
 __all__ = [
-    "ShoeboxDataModule",
-    "PolyShoeboxDataModule",
+    "RotationDataModule",
+    "PolychromaticDataModule",
 ]
