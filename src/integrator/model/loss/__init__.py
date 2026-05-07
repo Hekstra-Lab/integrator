@@ -1,9 +1,9 @@
-from .loss import Loss
-from .spectral_wilson_loss import SpectralWilsonLoss
+from .monochromatic_wilson_loss import MonochromaticWilsonLoss
+from .polychromatic_wilson_loss import PolychromaticWilsonLoss
 from .wilson_loss import WilsonLoss
 
 __all__ = [
-    "Loss",
-    "SpectralWilsonLoss",
+    "MonochromaticWilsonLoss",
+    "PolychromaticWilsonLoss",
     "WilsonLoss",
 ]

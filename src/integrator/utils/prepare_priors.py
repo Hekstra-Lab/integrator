@@ -1,5 +1,4 @@
 import logging
-import math
 from pathlib import Path
 
 import torch
@@ -157,7 +156,7 @@ def prepare_per_bin_priors(
     """Generate per-bin prior .pt files if the loss config requires them.
 
     Checks whether the loss config references per-bin files
-    (bg_rate_per_group, concentration_per_group, s_squared_per_group, etc.)
+    (s_squared_per_group, tau_per_group, i_concentration_per_group, etc.)
     and generates any that are missing.
 
     Idempotent: skips files that already exist unless force=True.
@@ -176,7 +175,7 @@ def prepare_per_bin_priors(
             a summary and record what happened in run_metadata.yaml.
     """
     loss_name = cfg.get("loss", {}).get("name", "")
-    if loss_name not in ("wilson", "spectral_wilson"):
+    if loss_name not in ("monochromatic_wilson", "polychromatic_wilson"):
         return
 
     data_dir = Path(cfg["data_loader"]["args"]["data_dir"])
@@ -187,7 +186,7 @@ def prepare_per_bin_priors(
         n_bins = int(loss_args.get("n_bins", 20))
 
     # Spectral Wilson: auto-compute lambda_min/lambda_max from data
-    if loss_name == "spectral_wilson":
+    if loss_name == "polychromatic_wilson":
         if "lambda_min" not in loss_args or "lambda_max" not in loss_args:
             ref_path = _resolve_reference_path(data_dir, cfg)
             ref = torch.load(ref_path, weights_only=False)
@@ -204,33 +203,21 @@ def prepare_per_bin_priors(
                 loss_args.setdefault("lambda_min", float(wl.min()) - pad)
                 loss_args.setdefault("lambda_max", float(wl.max()) + pad)
                 logger.info(
-                    "spectral_wilson: auto lambda_min=%.4f lambda_max=%.4f",
+                    "polychromatic_wilson: auto lambda_min=%.4f lambda_max=%.4f",
                     loss_args["lambda_min"],
                     loss_args["lambda_max"],
                 )
 
-    # Auto-inject concentration file paths when pi_cfg/pbg_cfg request gamma
+    # Auto-inject concentration file paths when pi_cfg requests gamma
     pi_cfg = loss_args.get("pi_cfg")
-    pbg_cfg = loss_args.get("pbg_cfg")
     if (
         isinstance(pi_cfg, dict)
         and pi_cfg.get("name") == "gamma"
         and "i_concentration_per_group" not in loss_args
     ):
         loss_args["i_concentration_per_group"] = "i_concentration_per_group.pt"
-    if (
-        isinstance(pbg_cfg, dict)
-        and pbg_cfg.get("name") == "gamma"
-        and "bg_concentration_per_group" not in loss_args
-    ):
-        loss_args["bg_concentration_per_group"] = (
-            "bg_concentration_per_group.pt"
-        )
-
     # Determine which files are referenced and which are missing
     per_bin_keys = [
-        "bg_concentration_per_group",
-        "bg_rate_per_group",
         "i_concentration_per_group",
         "s_squared_per_group",
         "tau_per_group",
@@ -247,7 +234,6 @@ def prepare_per_bin_priors(
                 needed[key] = path
 
     # Check group_label consistency with n_bins even if all files exist
-    rebinned = False
     need_group_labels = False
     gl_path = _nbins_path("group_labels.pt", n_bins, data_dir)
     if not gl_path.exists():
@@ -270,44 +256,6 @@ def prepare_per_bin_priors(
                 filename = loss_args[key]
                 if isinstance(filename, str):
                     needed[key] = _nbins_path(filename, n_bins, data_dir)
-            rebinned = True
-
-    # Check profile_group_label consistency with 2D binning config
-    profile_binning = loss_args.get("profile_binning")
-    need_2d_rebinning = False
-    pgl_path = _nbins_path("profile_group_labels.pt", n_bins, data_dir)
-    if profile_binning is not None:
-        if not pgl_path.exists():
-            need_2d_rebinning = True
-        elif rebinned:
-            need_2d_rebinning = True
-
-    # Check if profile_basis_per_bin needs generating. Two separate sources
-    # can request a Hermite basis file: loss.args.profile_basis_per_bin
-    # (for per-bin KL priors) and surrogates.qp.args.warmstart_basis_path
-    # (for decoder warmstart). Either missing/stale path counts.
-    basis_filename = loss_args.get("profile_basis_per_bin")
-    need_basis = False
-    if isinstance(basis_filename, str):
-        basis_path = _nbins_path(basis_filename, n_bins, data_dir)
-        if force or not basis_path.exists():
-            need_basis = True
-    qp_args = (cfg.get("surrogates", {}).get("qp", {}) or {}).get(
-        "args", {}
-    ) or {}
-    warmstart_filename = qp_args.get("warmstart_basis_path")
-    if isinstance(warmstart_filename, str):
-        ws_path = _nbins_path(warmstart_filename, n_bins, data_dir)
-        if force or not ws_path.exists():
-            need_basis = True
-
-    # Check if empirical_profile_basis_per_bin needs generating
-    emp_basis_filename = loss_args.get("empirical_profile_basis_per_bin")
-    need_emp_basis = False
-    if isinstance(emp_basis_filename, str):
-        emp_basis_path = _nbins_path(emp_basis_filename, n_bins, data_dir)
-        if force or not emp_basis_path.exists():
-            need_emp_basis = True
 
     # Check if mean_init needs computing for any gammaB surrogate (qi/qbg)
     # that didn't set it explicitly. Cached to qi_qbg_mean_init.pt to avoid
@@ -318,14 +266,7 @@ def prepare_per_bin_priors(
         or _gammaB_wants_mean_init(cfg, "qbg")
     ) and (force or not init_path.exists())
 
-    if (
-        not needed
-        and not need_2d_rebinning
-        and not need_basis
-        and not need_emp_basis
-        and not need_group_labels
-        and not need_init
-    ):
+    if not needed and not need_group_labels and not need_init:
         return
 
     logger.info(
@@ -364,83 +305,6 @@ def prepare_per_bin_priors(
     logger.info("Saved %s (%d bins)", gl_path.name, n_bins)
 
     # Generate each missing file
-    if "bg_rate_per_group" in needed:
-        bg_per_refl = _get_background_for_prior(
-            loss_args.get("tau_source", "dials"), counts, masks, metadata, cfg
-        )
-        bg_rate = _compute_bg_rate_per_group(bg_per_refl, group_labels, n_bins)
-        torch.save(bg_rate, needed["bg_rate_per_group"])
-        logger.info("Saved bg_rate_per_group.pt")
-
-    if "bg_concentration_per_group" in needed:
-        bg_per_refl = _get_background_for_prior(
-            loss_args.get("tau_source", "dials"), counts, masks, metadata, cfg
-        )
-        bg_alpha = _fit_gamma_prior_per_group(
-            bg_per_refl, group_labels, n_bins, min_intensity=1e-6
-        )
-        torch.save(bg_alpha, needed["bg_concentration_per_group"])
-        logger.info(
-            "Saved bg_concentration_per_group.pt (Gamma MLE alpha, source=%s)",
-            loss_args.get("tau_source", "dials"),
-        )
-
-    # 2D profile binning (resolution x azimuthal)
-    # Run independently so profile_group_label is available for both
-    # concentration_per_group (Dirichlet) and profile_basis_per_bin (latent).
-    profile_binning = loss_args.get("profile_binning")
-    pgl_path = _nbins_path("profile_group_labels.pt", n_bins, data_dir)
-    if profile_binning is not None and (
-        need_2d_rebinning or not pgl_path.exists()
-    ):
-        max_azi_bins = int(profile_binning.get("max_azi_bins", 16))
-        min_per_bin = int(profile_binning.get("min_per_bin", 200))
-        beam_center = profile_binning.get("beam_center")
-        if beam_center is None:
-            raise ValueError(
-                "profile_binning.beam_center is required for 2D profile binning"
-            )
-        beam_center = (float(beam_center[0]), float(beam_center[1]))
-
-        profile_group_labels, azi_per_shell, n_profile_bins = (
-            _bin_2d_for_profiles(
-                metadata,
-                group_labels,
-                n_bins,
-                max_azi_bins,
-                beam_center,
-                min_per_bin=min_per_bin,
-            )
-        )
-
-        # Save profile_group_labels as a separate n_bins-suffixed file
-        # Also set in-memory for downstream prior computation in this function.
-        metadata["profile_group_label"] = profile_group_labels
-        pgl_path = _nbins_path("profile_group_labels.pt", n_bins, data_dir)
-        torch.save(profile_group_labels, pgl_path)
-        logger.info("Saved %s (%d 2D bins)", pgl_path.name, n_profile_bins)
-
-        # Save diagnostic plot (non-fatal)
-        try:
-            _plot_profile_binning(
-                metadata,
-                group_labels,
-                profile_group_labels,
-                n_bins,
-                azi_per_shell,
-                max_azi_bins,
-                beam_center,
-                save_path=data_dir / "profile_binning.png",
-            )
-        except Exception as exc:
-            logger.warning("Could not save profile binning plot: %s", exc)
-
-    # If profile_group_labels file exists but wasn't just computed, load into metadata
-    if "profile_group_label" not in metadata and pgl_path.exists():
-        metadata["profile_group_label"] = torch.load(
-            pgl_path, weights_only=True
-        )
-
     if "s_squared_per_group" in needed:
         s_squared = _compute_s_squared_per_group(d, group_labels, n_bins)
         torch.save(s_squared, needed["s_squared_per_group"])
@@ -500,169 +364,6 @@ def prepare_per_bin_priors(
             tau_source,
         )
 
-    # ── Profile basis generation ──────────────────────────────────────
-    # Two independent config sources can request a Hermite/PCA basis file:
-    #   1. loss.args.profile_basis_per_bin — loss consumes per-bin priors
-    #      (mu_per_group / std_per_group) from the file
-    #   2. surrogates.qp.args.warmstart_basis_path — learned_basis_profile
-    #      warm-starts its decoder from W and b in the file
-    # Collect all unique paths requested, regenerate any stale/missing.
-    dl_args = cfg.get("data_loader", {}).get("args", {})
-    D_dim = int(dl_args.get("D", dl_args.get("d", 1)))
-    H_dim = int(dl_args.get("H", dl_args.get("h", 21)))
-    W_dim = int(dl_args.get("W", dl_args.get("w", 21)))
-
-    basis_type = str(loss_args.get("profile_basis_type", "hermite"))
-    basis_d = int(loss_args.get("profile_basis_d", 14))
-    basis_max_order = int(loss_args.get("profile_basis_max_order", 4))
-    basis_sigma_ref = float(loss_args.get("profile_basis_sigma_ref", 3.0))
-    basis_sigma_z = float(loss_args.get("profile_basis_sigma_z", 1.0))
-
-    prf_labels = metadata.get("profile_group_label", group_labels)
-    n_prf_bins = int(prf_labels.max().item()) + 1
-
-    expected_prov = {
-        "basis_type": basis_type,
-        "D": D_dim,
-        "H": H_dim,
-        "W": W_dim,
-        "max_order": basis_max_order,
-        "sigma_ref": basis_sigma_ref,
-        "sigma_z": basis_sigma_z,
-        "n_bins": n_prf_bins,
-    }
-
-    basis_paths: set[Path] = set()
-    loss_basis = loss_args.get("profile_basis_per_bin")
-    if isinstance(loss_basis, str):
-        basis_paths.add(_nbins_path(loss_basis, n_bins, data_dir))
-    qp_cfg = cfg.get("surrogates", {}).get("qp", {})
-    qp_args = qp_cfg.get("args", {}) or {}
-    warmstart = qp_args.get("warmstart_basis_path")
-    if isinstance(warmstart, str):
-        basis_paths.add(_nbins_path(warmstart, n_bins, data_dir))
-    # fixed_basis_profile reads the same format via `basis_path`
-    if qp_cfg.get("name") == "fixed_basis_profile":
-        fixed_path = qp_args.get("basis_path")
-        if isinstance(fixed_path, str):
-            basis_paths.add(_nbins_path(fixed_path, n_bins, data_dir))
-
-    for basis_path in basis_paths:
-        existed = basis_path.exists()
-        reason: str | None = None
-        if force:
-            reason = "force=True"
-        elif not existed:
-            reason = "file did not exist"
-        else:
-            mismatch = _basis_provenance_mismatch_reason(
-                basis_path, expected_prov
-            )
-            if mismatch is not None:
-                reason = f"provenance mismatch: {mismatch}"
-
-        if reason is None:
-            if events_out is not None:
-                events_out.append(
-                    {
-                        "file": basis_path.name,
-                        "action": "reused",
-                        "path": str(basis_path),
-                        "reason": "cached file matches config",
-                    }
-                )
-            continue
-
-        if existed:
-            logger.warning(
-                "Regenerating %s because %s",
-                basis_path.name,
-                reason,
-            )
-            action = "regenerated"
-        else:
-            action = "created"
-
-        c, m = _require_counts(f"profile basis {basis_path.name}")
-        basis_data = _fit_profile_basis_per_bin(
-            c,
-            m,
-            prf_labels,
-            n_prf_bins,
-            basis_type=basis_type,
-            D=D_dim,
-            H=H_dim,
-            W=W_dim,
-            d=basis_d,
-            max_order=basis_max_order,
-            sigma_ref=basis_sigma_ref,
-            sigma_z=basis_sigma_z,
-        )
-        torch.save(basis_data, basis_path)
-        logger.info(
-            "Saved %s (type=%s, d=%d, %d bins, sigma_ref=%.2f, sigma_z=%.2f)",
-            basis_path.name,
-            basis_type,
-            basis_data["d"],
-            n_prf_bins,
-            basis_sigma_ref,
-            basis_sigma_z,
-        )
-        if events_out is not None:
-            events_out.append(
-                {
-                    "file": basis_path.name,
-                    "action": action,
-                    "path": str(basis_path),
-                    "reason": reason,
-                    "basis_type": basis_type,
-                    "d": int(basis_data["d"]),
-                    "n_bins": n_prf_bins,
-                    "sigma_ref": basis_sigma_ref,
-                    "sigma_z": basis_sigma_z,
-                }
-            )
-
-    # ── Empirical profile basis (per-bin empirical bias) ──────────────
-    emp_basis_filename = loss_args.get("empirical_profile_basis_per_bin")
-    if isinstance(emp_basis_filename, str):
-        emp_basis_path = _nbins_path(emp_basis_filename, n_bins, data_dir)
-        if force or not emp_basis_path.exists():
-            dl_args = cfg.get("data_loader", {}).get("args", {})
-            D_dim = int(dl_args.get("D", dl_args.get("d", 1)))
-            H_dim = int(dl_args.get("H", dl_args.get("h", 21)))
-            W_dim = int(dl_args.get("W", dl_args.get("w", 21)))
-
-            basis_max_order = int(loss_args.get("profile_basis_max_order", 4))
-            basis_sigma_ref = float(
-                loss_args.get("profile_basis_sigma_ref", 3.0)
-            )
-            smooth_sigma = float(loss_args.get("profile_smooth_sigma", 0.0))
-
-            prf_labels = metadata.get("profile_group_label", group_labels)
-            n_prf_bins = int(prf_labels.max().item()) + 1
-
-            c, m = _require_counts("empirical_profile_basis_per_bin")
-            emp_basis_data = _fit_empirical_profile_basis(
-                c,
-                m,
-                prf_labels,
-                n_prf_bins,
-                D=D_dim,
-                H=H_dim,
-                W=W_dim,
-                max_order=basis_max_order,
-                sigma_ref=basis_sigma_ref,
-                smooth_sigma=smooth_sigma,
-            )
-            torch.save(emp_basis_data, emp_basis_path)
-            logger.info(
-                "Saved %s (empirical bias, d=%d, %d bins)",
-                emp_basis_path.name,
-                emp_basis_data["d"],
-                n_prf_bins,
-            )
-
     # ── qi / qbg mean_init from raw counts ─────────────────────────────
     # Computes a dataset-level estimate of the typical intensity and bg
     # rate using the same bg-subtraction logic as _bg_subtract_signal, so
@@ -678,6 +379,10 @@ def prepare_per_bin_priors(
                 "in the YAML (or `mean_init: null` to opt out)."
             )
         else:
+            dl_args = cfg.get("data_loader", {}).get("args", {})
+            D_dim = int(dl_args.get("D", dl_args.get("d", 1)))
+            H_dim = int(dl_args.get("H", dl_args.get("h", 21)))
+            W_dim = int(dl_args.get("W", dl_args.get("w", 21)))
             init_stats = _compute_qi_qbg_mean_init(
                 counts, masks, D_dim, H_dim, W_dim
             )
@@ -703,134 +408,6 @@ def prepare_per_bin_priors(
                         "qbg_mean": init_stats["qbg_mean"],
                     }
                 )
-
-
-def _fit_empirical_profile_basis(
-    counts: Tensor,
-    masks: Tensor,
-    group_labels: Tensor,
-    n_bins: int,
-    D: int = 1,
-    H: int = 21,
-    W: int = 21,
-    d: int = 14,
-    max_order: int = 4,
-    sigma_ref: float = 3.0,
-    smooth_sigma: float = 0.0,
-) -> dict:
-    """Build a profile basis with per-bin empirical biases.
-
-    Like `_fit_profile_basis_per_bin` but replaces the single symmetric
-    Gaussian bias with per-bin empirical biases computed from the mean
-    bg-subtracted profile in each bin.  This means z=0 reproduces the
-    empirical average profile for each bin; the model only learns
-    per-reflection corrections.
-
-    Args:
-        counts: (N, D*H*W) raw data.
-        masks: (N, D*H*W) raw data.
-        group_labels: (N,) bin assignment per reflection.
-        n_bins: Number of bins.
-        D: Shoebox depth (frames).
-        H: Shoebox height.
-        W: Shoebox width.
-        d: Unused (Hermite uses max_order).
-        max_order: Max Hermite polynomial order.
-        sigma_ref: Reference Gaussian width in pixels.
-        smooth_sigma: If > 0, apply Gaussian smoothing to each mean profile
-            before taking log.  Reduces noise in bins with few reflections.
-
-    Returns:
-        Dict ready for torch.save as empirical_profile_basis_per_bin.pt.
-    """
-    signal = _bg_subtract_signal(counts, masks, D, H, W)
-
-    # Build shared Hermite basis
-    if D > 1:
-        W_basis, b_ref, orders = _build_hermite_basis_3d(
-            D, H, W, max_order, sigma_ref
-        )
-    else:
-        W_basis, b_ref, orders = _build_hermite_basis_2d(
-            H, W, max_order, sigma_ref
-        )
-    d_actual = W_basis.shape[1]
-    K = signal.shape[1]
-    logger.info(
-        "Empirical profile basis: %dD, max_order=%d, sigma_ref=%.1f, d=%d",
-        3 if D > 1 else 2,
-        max_order,
-        sigma_ref,
-        d_actual,
-    )
-
-    # Compute per-bin empirical biases from mean profiles
-    totals = signal.sum(dim=1, keepdim=True).clamp(min=1)
-    proportions = signal / totals
-    log_profiles = torch.log(proportions.clamp(min=1e-8))
-
-    b_per_group = torch.zeros(n_bins, K)
-    for k in range(n_bins):
-        mask_k = group_labels == k
-        props_k = proportions[mask_k]
-        if props_k.shape[0] >= 1:
-            mean_k = props_k.mean(dim=0)
-
-            # Remove noise floor: signal occupies a small fraction of
-            # the shoebox, so a high quantile of pixel values estimates
-            # the background level well
-            floor = mean_k.quantile(0.75)
-            mean_k = (mean_k - floor).clamp(min=0)
-
-            # Optional Gaussian smoothing in pixel space
-            if smooth_sigma > 0:
-                mean_3d = mean_k.reshape(D, H, W)
-                mean_3d = _gaussian_smooth_3d(mean_3d, smooth_sigma)
-                mean_k = mean_3d.reshape(-1)
-
-            mean_k = mean_k / mean_k.sum().clamp(min=1e-10)
-            b_per_group[k] = torch.log(mean_k.clamp(min=1e-8))
-        else:
-            b_per_group[k] = b_ref  # fallback to symmetric Gaussian
-    b_per_group = b_per_group.float()
-
-    # Project each reflection using its bin's empirical bias
-    b_selected = b_per_group[group_labels]  # (N, K)
-    centered = log_profiles - b_selected
-    h_all = centered @ W_basis  # (N, d)
-
-    # Per-bin latent statistics
-    mu_per_group = torch.zeros(n_bins, d_actual)
-    std_per_group = torch.ones(n_bins, d_actual)
-
-    for k in range(n_bins):
-        h_k = h_all[group_labels == k]
-        if h_k.shape[0] >= 2:
-            mu_per_group[k] = h_k.mean(dim=0)
-            std_per_group[k] = h_k.std(dim=0).clamp(min=0.1)
-        elif h_k.shape[0] == 1:
-            mu_per_group[k] = h_k[0]
-        logger.debug(
-            "Bin %d: n=%d, |mu|=%.2f, mean(std)=%.2f",
-            k,
-            h_k.shape[0],
-            mu_per_group[k].norm().item(),
-            std_per_group[k].mean().item(),
-        )
-
-    sigma_prior = max(float(h_all.std().item()), 1.0)
-
-    result = {
-        "W": W_basis,
-        "b_per_group": b_per_group,
-        "d": d_actual,
-        "mu_per_group": mu_per_group,
-        "std_per_group": std_per_group,
-        "sigma_prior": sigma_prior,
-        "basis_type": "empirical_per_bin",
-        "orders": orders,
-    }
-    return result
 
 
 def inject_binning_labels(data_loader, cfg: dict) -> None:
@@ -981,233 +558,6 @@ def _bin_by_resolution(
     group_labels = torch.zeros(len(d), dtype=torch.long)
     bin_edges = torch.tensor([d.min(), d.max()])
     return group_labels, bin_edges, 1
-
-
-def _bin_2d_for_profiles(
-    metadata: dict,
-    res_labels: Tensor,
-    n_res_bins: int,
-    max_azi_bins: int,
-    beam_center: tuple[float, float],
-    min_per_bin: int = 200,
-) -> tuple[Tensor, list[int], int]:
-    """Create adaptive 2D group labels (resolution x azimuthal) for profiles.
-
-    For each resolution shell, the number of azimuthal sectors is reduced
-    from *max_azi_bins* until every sector has at least *min_per_bin*
-    reflections.  Shells with sparse detector coverage (e.g. outer shells
-    where the rectangular detector doesn't fill all azimuthal angles)
-    automatically get fewer sectors.
-
-    Args:
-        metadata: Must contain `xyzcal.px.0` (x) and `xyzcal.px.1` (y).
-        res_labels: Resolution bin per reflection, shape `(N,)`.
-        n_res_bins: Number of resolution bins.
-        max_azi_bins: Maximum number of azimuthal sectors to try per shell.
-        beam_center: Beam center on the detector in pixels `(x, y)`.
-        min_per_bin: Minimum reflections per 2D bin.  Azimuthal sectors are
-            reduced per shell until this threshold is met.
-
-    Returns:
-        Tuple of (profile_group_labels, azi_bins_per_shell, n_profile_bins)
-        where profile_group_labels is a flat 2D bin index per reflection
-        of shape `(N,)`, azi_bins_per_shell is the number of azimuthal
-        bins actually used in each resolution shell, and n_profile_bins is
-        the total number of 2D bins.
-    """
-    x_det = metadata["xyzcal.px.0"]
-    y_det = metadata["xyzcal.px.1"]
-
-    dx = x_det - beam_center[0]
-    dy = y_det - beam_center[1]
-    phi = torch.atan2(dy, dx)  # [-pi, pi]
-
-    profile_group_labels = torch.zeros_like(res_labels)
-    azi_bins_per_shell: list[int] = []
-    offset = 0
-
-    for rb in range(n_res_bins):
-        shell_mask = res_labels == rb
-        phi_shell = phi[shell_mask]
-        n_in_shell = int(shell_mask.sum().item())
-
-        # Try max_azi_bins, reduce until all sectors meet min_per_bin
-        n_azi = max_azi_bins
-        while n_azi > 1:
-            azi_edges = torch.linspace(-math.pi, math.pi, n_azi + 1)
-            azi_lab = torch.searchsorted(azi_edges[1:-1], phi_shell).long()
-            occ = torch.bincount(azi_lab, minlength=n_azi)
-            if occ.min().item() >= min_per_bin:
-                break
-            n_azi -= 1
-
-        # Recompute with final n_azi (handles n_azi==1 case too)
-        if n_azi > 1:
-            azi_edges = torch.linspace(-math.pi, math.pi, n_azi + 1)
-            azi_lab = torch.searchsorted(azi_edges[1:-1], phi_shell).long()
-        else:
-            azi_lab = torch.zeros(n_in_shell, dtype=torch.long)
-
-        profile_group_labels[shell_mask] = offset + azi_lab
-        azi_bins_per_shell.append(n_azi)
-        offset += n_azi
-
-    n_profile_bins = offset
-
-    # Log summary
-    occupancy = torch.bincount(profile_group_labels, minlength=n_profile_bins)
-    unique_azi = sorted(set(azi_bins_per_shell))
-    logger.info(
-        "Adaptive 2D profile binning: %d res shells, max %d azi sectors, "
-        "%d total bins (occupancy min=%d max=%d)",
-        n_res_bins,
-        max_azi_bins,
-        n_profile_bins,
-        occupancy.min().item(),
-        occupancy.max().item(),
-    )
-    logger.info(
-        "  Azi bins per shell: %s (unique values: %s)",
-        azi_bins_per_shell,
-        unique_azi,
-    )
-
-    return profile_group_labels, azi_bins_per_shell, n_profile_bins
-
-
-def _plot_profile_binning(
-    metadata: dict,
-    res_labels: Tensor,
-    profile_group_labels: Tensor,
-    n_res_bins: int,
-    azi_bins_per_shell: list[int],
-    max_azi_bins: int,
-    beam_center: tuple[float, float],
-    save_path: Path,
-) -> None:
-    """Save a diagnostic plot of the adaptive 2D profile binning.
-
-    Left: reflections colored by profile bin (flat index).
-    Right: azi bins per resolution shell (bar chart).
-    """
-    try:
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        import numpy as np
-    except ImportError:
-        logger.info("matplotlib not available; skipping binning diagram")
-        return
-
-    x = metadata["xyzcal.px.0"].numpy()
-    y = metadata["xyzcal.px.1"].numpy()
-    dx = x - beam_center[0]
-    dy = y - beam_center[1]
-    r = np.sqrt(dx**2 + dy**2)
-    r_max = float(r.max()) * 1.05
-
-    n_profile_bins = sum(azi_bins_per_shell)
-
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-
-    # ── Left: color by profile group label ──
-    ax = axes[0]
-    ax.scatter(
-        dx,
-        dy,
-        c=profile_group_labels.numpy(),
-        cmap="nipy_spectral",
-        s=0.3,
-        alpha=0.4,
-        rasterized=True,
-    )
-    # Draw finest sector lines for reference
-    azi_edges = np.linspace(-np.pi, np.pi, max_azi_bins + 1)
-    for edge in azi_edges:
-        ax.plot(
-            [0, r_max * np.cos(edge)],
-            [0, r_max * np.sin(edge)],
-            "k-",
-            linewidth=0.3,
-            alpha=0.3,
-        )
-    ax.plot(0, 0, "r+", markersize=10, markeredgewidth=2)
-    ax.set_aspect("equal")
-    ax.set_title(f"Profile bins ({n_profile_bins} total)")
-    ax.set_xlabel("dx (px from beam center)")
-    ax.set_ylabel("dy (px from beam center)")
-
-    # ── Center: color by resolution bin ──
-    ax = axes[1]
-    sc = ax.scatter(
-        dx,
-        dy,
-        c=res_labels.numpy(),
-        cmap="viridis",
-        s=0.3,
-        alpha=0.4,
-        rasterized=True,
-    )
-    for edge in azi_edges:
-        ax.plot(
-            [0, r_max * np.cos(edge)],
-            [0, r_max * np.sin(edge)],
-            "k-",
-            linewidth=0.3,
-            alpha=0.3,
-        )
-    ax.plot(0, 0, "r+", markersize=10, markeredgewidth=2)
-    ax.set_aspect("equal")
-    ax.set_title(f"Resolution bins ({n_res_bins} shells)")
-    ax.set_xlabel("dx (px from beam center)")
-    fig.colorbar(sc, ax=ax, label="resolution bin")
-
-    # ── Right: bar chart of azi bins per shell ──
-    ax = axes[2]
-    shells = np.arange(n_res_bins)
-    ax.bar(shells, azi_bins_per_shell, color="steelblue", edgecolor="white")
-    ax.axhline(
-        max_azi_bins,
-        color="red",
-        linestyle="--",
-        linewidth=1,
-        label=f"max={max_azi_bins}",
-    )
-    ax.set_xlabel("Resolution shell")
-    ax.set_ylabel("Azimuthal bins")
-    ax.set_title("Adaptive azi bins per shell")
-    ax.legend()
-
-    fig.suptitle(
-        f"Adaptive profile binning: {n_res_bins} res, max {max_azi_bins} azi, "
-        f"{n_profile_bins} total bins\n"
-        f"beam center = ({beam_center[0]:.1f}, {beam_center[1]:.1f}) px, "
-        f"min_per_bin threshold applied",
-        fontsize=11,
-    )
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=150)
-    plt.close()
-    logger.info("Saved profile binning diagram: %s", save_path)
-
-
-def _compute_bg_rate_per_group(
-    bg_per_refl: Tensor,
-    group_labels: Tensor,
-    n_bins: int,
-) -> Tensor:
-    """Exponential rate for background: lambda_k = 1 / mean(bg_k).
-
-    Works with any per-reflection background estimate (DIALS
-    `background.mean` or crude quietest-frame estimate).
-    """
-    bg_rate = torch.zeros(n_bins)
-    for b in range(n_bins):
-        sel = bg_per_refl[group_labels == b]
-        if len(sel) > 0:
-            bg_rate[b] = 1.0 / sel.mean().clamp(min=1e-6)
-    return bg_rate
 
 
 def _crude_intensity_from_cfg(
@@ -1496,142 +846,6 @@ def _get_intensity_for_prior(
     return _crude_intensity_from_cfg(counts, masks, cfg)
 
 
-def _get_background_for_prior(
-    tau_source: str,
-    counts: Tensor | None,
-    masks: Tensor | None,
-    metadata: dict,
-    cfg: dict,
-) -> Tensor:
-    """Return per-reflection background estimate, respecting tau_source config."""
-    if tau_source == "crude":
-        if counts is None or masks is None:
-            raise FileNotFoundError(
-                "tau_source='crude' requires counts/masks but the dataset "
-                "tau_source='dials' to use metadata['background.mean']."
-            )
-        return _crude_background_from_cfg(counts, masks, cfg)
-
-    bg_mean = metadata.get("background.mean")
-    if bg_mean is not None:
-        return bg_mean
-
-    if counts is None or masks is None:
-        raise FileNotFoundError(
-            "No background.mean column in metadata.pt and counts/masks "
-        )
-    logger.warning(
-        "No background.mean column found and tau_source='dials'; "
-        "falling back to crude bg estimation (border-ring for D=1, "
-        "quietest-frame for D>1)"
-    )
-    return _crude_background_from_cfg(counts, masks, cfg)
-
-
-def _crude_background_from_cfg(
-    counts: Tensor, masks: Tensor, cfg: dict
-) -> Tensor:
-    """Read shoebox dimensions from config and compute crude background.
-
-    Tolerates both the uppercase (D/H/W) and lowercase (d/h/w) conventions,
-    since data_loader.args is uppercase but global_vars is lowercase.
-    Falls back to (3, 21, 21) only if neither casing is present, and
-    cross-checks the inferred geometry against counts.shape[1].
-    """
-    dl_args = cfg.get("data_loader", {}).get("args", {})
-
-    def _get_upper_or_lower(
-        key_upper: str, key_lower: str, default: int
-    ) -> int:
-        if key_upper in dl_args:
-            return int(dl_args[key_upper])
-        if key_lower in dl_args:
-            return int(dl_args[key_lower])
-        return default
-
-    n_frames = _get_upper_or_lower("D", "d", 3)
-    h = _get_upper_or_lower("H", "h", 21)
-    w = _get_upper_or_lower("W", "w", 21)
-    n_pixels = h * w
-
-    expected = n_frames * n_pixels
-    actual = int(counts.shape[1])
-    if expected != actual:
-        raise ValueError(
-            f"shoebox geometry mismatch: config says D*H*W = {n_frames}*{h}*{w} "
-            f"= {expected}, but counts has shape (N, {actual}). Update "
-            "data_loader.args.{D,H,W} (uppercase) to match the dimensions used "
-            "in refltorch.mksbox-laue."
-        )
-    return _compute_crude_background(counts, masks, n_frames, h, w)
-
-
-def _compute_crude_background(
-    counts: Tensor,
-    masks: Tensor,
-    n_frames: int,
-    H: int,
-    W: int,
-) -> Tensor:
-    """Estimate per-pixel background rate.
-
-    For multi-frame shoeboxes (D > 1): the frame with the lowest total
-    (masked) counts is treated as pure background (the "quietest frame").
-
-    For single-frame shoeboxes (D == 1): uses the mean of the outer
-    2-pixel border ring, which is away from the Bragg peak.
-
-    Args:
-        counts: Raw shoebox counts, shape ``(N, D * H * W)``.
-        masks: Valid-pixel masks, same shape as *counts*.
-        n_frames: Number of frames per shoebox (D; typically 3; 1 for stills).
-        H: Shoebox height in pixels.
-        W: Shoebox width in pixels.
-
-    Returns:
-        Per-pixel background rate per reflection, shape ``(N,)``.
-    """
-    N = counts.shape[0]
-    n_pixels_per_frame = H * W
-
-    counts_clean = counts.float().clamp(min=0)
-    masks_f = masks.float()
-
-    if n_frames > 1:
-        counts_3d = (counts_clean * masks_f).reshape(
-            N, n_frames, n_pixels_per_frame
-        )
-        masks_3d = masks_f.reshape(N, n_frames, n_pixels_per_frame)
-
-        frame_counts = counts_3d.sum(dim=-1)  # (N, n_frames)
-        frame_n_pixels = masks_3d.sum(dim=-1)  # (N, n_frames)
-
-        min_frame_idx = frame_counts.argmin(dim=-1)  # (N,)
-        bg_frame_counts = frame_counts.gather(
-            1, min_frame_idx.unsqueeze(-1)
-        ).squeeze(-1)
-        bg_frame_n_pixels = frame_n_pixels.gather(
-            1, min_frame_idx.unsqueeze(-1)
-        ).squeeze(-1)
-
-        bg_per_pixel = bg_frame_counts / bg_frame_n_pixels.clamp(min=1)
-    else:
-        frame_2d = (counts_clean * masks_f).reshape(N, H, W)
-        border_mask = torch.ones(H, W, dtype=torch.bool)
-        border_mask[2:-2, 2:-2] = False
-        border_vals = frame_2d[:, border_mask]  # (N, n_border)
-        bg_per_pixel = border_vals.mean(dim=-1)  # (N,)
-
-    logger.info(
-        "Crude background: min=%.2f, median=%.2f, max=%.2f",
-        bg_per_pixel.min().item(),
-        bg_per_pixel.median().item(),
-        bg_per_pixel.max().item(),
-    )
-
-    return bg_per_pixel
-
-
 def _fit_gamma_mle(
     x: Tensor,
     n_iter: int = 100,
@@ -1700,9 +914,6 @@ def _fit_gamma_prior_per_group(
             "Bin %d: Gamma MLE alpha=%.3f (n=%d)", b, alpha.item(), len(sel)
         )
     return alpha_per_group
-
-
-#  Profile basis construction (Hermite + PCA) with per-bin priors
 
 
 def _hermite_polynomial(n_order: int, x: Tensor) -> Tensor:
@@ -1834,85 +1045,6 @@ def _build_hermite_basis_3d(
     return W_basis, b, orders
 
 
-def _build_pca_basis(
-    signal: Tensor,
-    d: int = 8,
-    eps: float = 1e-8,
-) -> tuple[Tensor, Tensor, Tensor]:
-    """PCA basis from bg-subtracted, normalized profiles.
-
-    Args:
-        signal: (N, K) bg-subtracted signal (already clamped >= 0).
-        d: Number of principal components.
-
-    Returns:
-        Tuple of (W, b, explained_var) where W is a (K, d) basis matrix,
-        b is a (K,) mean of log-profiles (bias), and explained_var is a
-        (d,) fraction of variance explained per component.
-    """
-    # Normalize to proportions
-    totals = signal.sum(dim=1, keepdim=True).clamp(min=1)
-    proportions = signal / totals
-
-    # Log-transform
-    log_profiles = torch.log(proportions.clamp(min=eps))
-
-    # Center
-    b = log_profiles.mean(dim=0)  # (K,)
-    centered = log_profiles - b
-
-    # SVD
-    _U, S, Vh = torch.linalg.svd(centered, full_matrices=False)
-
-    # Top d components
-    d_actual = min(d, S.shape[0])
-    W_basis = Vh[:d_actual].T  # (K, d_actual)
-
-    total_var = (S**2).sum()
-    explained_var = (S[:d_actual] ** 2) / total_var
-
-    return W_basis.float(), b.float(), explained_var.float()
-
-
-def _gaussian_smooth_3d(vol: Tensor, sigma: float) -> Tensor:
-    """Apply Gaussian smoothing to a (D, H, W) volume (or (1, H, W) for 2D).
-
-    Uses separable 1D convolutions per axis. Kernel is truncated at 3*sigma.
-    """
-    import torch.nn.functional as F_smooth  # local to avoid top-level clash
-
-    ksize = max(int(math.ceil(sigma * 3)) * 2 + 1, 3)
-    half = ksize // 2
-    x = torch.arange(ksize, dtype=vol.dtype, device=vol.device) - half
-    kernel_1d = torch.exp(-0.5 * (x / sigma) ** 2)
-    kernel_1d = kernel_1d / kernel_1d.sum()
-
-    # Work in 5-D: (1, 1, D, H, W)
-    v = vol.unsqueeze(0).unsqueeze(0)
-    # Smooth along W (dim=-1)
-    kw = kernel_1d.reshape(1, 1, 1, 1, -1)
-    v = F_smooth.pad(v, (half, half, 0, 0, 0, 0), mode="reflect")
-    v = F_smooth.conv3d(v, kw)
-    # Smooth along H (dim=-2)
-    kh = kernel_1d.reshape(1, 1, 1, -1, 1)
-    v = F_smooth.pad(v, (0, 0, half, half, 0, 0), mode="reflect")
-    v = F_smooth.conv3d(v, kh)
-    # Smooth along D (dim=-3) only if D > kernel size
-    if vol.shape[0] > ksize:
-        kd = kernel_1d.reshape(1, 1, -1, 1, 1)
-        v = F_smooth.pad(v, (0, 0, 0, 0, half, half), mode="reflect")
-        v = F_smooth.conv3d(v, kd)
-    elif vol.shape[0] > 1:
-        # D is small, use a 3-tap kernel
-        kd_small = torch.tensor(
-            [0.25, 0.5, 0.25], dtype=vol.dtype, device=vol.device
-        )
-        kd_small = kd_small.reshape(1, 1, -1, 1, 1)
-        v = F_smooth.pad(v, (0, 0, 0, 0, 1, 1), mode="reflect")
-        v = F_smooth.conv3d(v, kd_small)
-    return v.squeeze(0).squeeze(0).clamp(min=0)
-
-
 def _bg_subtract_signal(
     counts: Tensor,
     masks: Tensor,
@@ -1959,171 +1091,3 @@ def _bg_subtract_signal(
 
     signal = counts_masked - bg_per_pixel.unsqueeze(-1) * masks_f
     return signal.clamp(min=0)
-
-
-def _basis_provenance_mismatch_reason(
-    basis_path: Path, expected: dict
-) -> str | None:
-    """Load the basis file's provenance dict and diff against expected.
-
-    Returns None when the cached file's generation parameters match the
-    caller's expectations. Returns a human-readable description of the
-    first mismatch otherwise, so the caller can log WHY regeneration was
-    triggered. Also treats "no provenance key" as a mismatch — old-format
-    files get rewritten with the new metadata schema.
-    """
-    try:
-        cached = torch.load(basis_path, weights_only=False, map_location="cpu")
-    except Exception as err:
-        return f"failed to load cached file for validation: {err}"
-    if not isinstance(cached, dict):
-        return "cached file is not a dict"
-    prov = cached.get("provenance")
-    if prov is None:
-        return (
-            "cached file predates provenance schema; rewriting with metadata"
-        )
-    # Compare all expected keys; float fields use an epsilon to tolerate
-    # float32 round-trip differences.
-    for key, want in expected.items():
-        got = prov.get(key)
-        if got is None:
-            return f"missing provenance key {key!r}"
-        if isinstance(want, float):
-            if abs(float(got) - want) > 1e-6:
-                return f"{key}: cached={got}, config={want}"
-        elif got != want:
-            return f"{key}: cached={got!r}, config={want!r}"
-    return None
-
-
-def _fit_profile_basis_per_bin(
-    counts: Tensor,
-    masks: Tensor,
-    group_labels: Tensor,
-    n_bins: int,
-    basis_type: str = "hermite",
-    D: int = 1,
-    H: int = 21,
-    W: int = 21,
-    d: int = 14,
-    max_order: int = 4,
-    sigma_ref: float = 3.0,
-    sigma_z: float = 1.0,
-) -> dict:
-    """Build a fixed profile basis and compute per-bin latent priors.
-
-    Args:
-        counts: (N, D*H*W) raw data.
-        masks: (N, D*H*W) raw data.
-        group_labels: (N,) bin assignment per reflection.
-        n_bins: Number of bins.
-        basis_type: "hermite" or "pca".
-        D: Shoebox depth (frames).
-        H: Shoebox height.
-        W: Shoebox width.
-        d: Latent dimensionality (PCA only; Hermite uses max_order).
-        max_order: Max Hermite polynomial order (Hermite only).
-        sigma_ref: Reference Gaussian width in pixels (Hermite only).
-        sigma_z: Reference Gaussian width along z/frame axis (Hermite 3D).
-
-    Returns:
-        Dict ready for torch.save as profile_basis_per_bin.pt. Includes
-        provenance keys (max_order, sigma_ref, sigma_z, D, H, W, basis_type,
-        n_bins) that downstream loaders validate against cfg before
-        re-using the cached file.
-    """
-    signal = _bg_subtract_signal(counts, masks, D, H, W)
-
-    if basis_type == "hermite":
-        if D > 1:
-            W_basis, b, orders = _build_hermite_basis_3d(
-                D, H, W, max_order, sigma_ref, sigma_z
-            )
-        else:
-            W_basis, b, orders = _build_hermite_basis_2d(
-                H, W, max_order, sigma_ref
-            )
-        d_actual = W_basis.shape[1]
-        explained_var = None
-        logger.info(
-            "Hermite basis: %dD, max_order=%d, sigma_ref=%.2f, sigma_z=%.2f, d=%d",
-            3 if D > 1 else 2,
-            max_order,
-            sigma_ref,
-            sigma_z,
-            d_actual,
-        )
-    elif basis_type == "pca":
-        W_basis, b, explained_var = _build_pca_basis(signal, d)
-        d_actual = W_basis.shape[1]
-        orders = None
-        logger.info(
-            "PCA basis: d=%d, explained variance=%.3f",
-            d_actual,
-            explained_var.sum().item(),
-        )
-    else:
-        raise ValueError(f"Unknown profile basis type: {basis_type!r}")
-
-    # Project all reflections into latent space
-    # For Hermite: project bg-subtracted signal (as log-proportions) onto basis
-    totals = signal.sum(dim=1, keepdim=True).clamp(min=1)
-    proportions = signal / totals
-    log_profiles = torch.log(proportions.clamp(min=1e-8))
-    centered = log_profiles - b  # (N, K)
-    h_all = centered @ W_basis  # (N, d)
-
-    # Per-bin mean and std of latent codes
-    mu_per_group = torch.zeros(n_bins, d_actual)
-    std_per_group = torch.ones(n_bins, d_actual)
-
-    for k in range(n_bins):
-        mask_k = group_labels == k
-        h_k = h_all[mask_k]
-        if h_k.shape[0] >= 2:
-            mu_per_group[k] = h_k.mean(dim=0)
-            std_per_group[k] = h_k.std(dim=0).clamp(min=0.1)
-        elif h_k.shape[0] == 1:
-            mu_per_group[k] = h_k[0]
-        logger.debug(
-            "Bin %d: n=%d, |mu|=%.2f, mean(std)=%.2f",
-            k,
-            h_k.shape[0],
-            mu_per_group[k].norm().item(),
-            std_per_group[k].mean().item(),
-        )
-
-    # Global sigma_prior = std of all latent codes (for fallback)
-    sigma_prior = float(h_all.std().item())
-    sigma_prior = max(sigma_prior, 1.0)  # floor at 1.0
-
-    result = {
-        "W": W_basis,
-        "b": b,
-        "d": d_actual,
-        "mu_per_group": mu_per_group,
-        "std_per_group": std_per_group,
-        "sigma_prior": sigma_prior,
-        "basis_type": f"{basis_type}_per_bin",
-        # Provenance: parameters used to generate this file. Downstream
-        # loaders compare these to the YAML cfg to decide whether the
-        # cached file is still valid or needs to be regenerated.
-        "provenance": {
-            "basis_type": basis_type,
-            "D": int(D),
-            "H": int(H),
-            "W": int(W),
-            "max_order": int(max_order),
-            "sigma_ref": float(sigma_ref),
-            "sigma_z": float(sigma_z),
-            "n_bins": int(n_bins),
-            "d": int(d_actual),
-        },
-    }
-    if orders is not None:
-        result["orders"] = orders
-    if explained_var is not None:
-        result["explained_var"] = explained_var
-
-    return result

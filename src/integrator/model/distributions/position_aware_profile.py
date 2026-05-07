@@ -121,8 +121,8 @@ class PositionAwareProfileSurrogate(LearnedBasisProfileSurrogate):
         group_labels: Tensor | None = None,
         metadata: dict | None = None,
     ) -> ProfileSurrogateOutput:
-        mu_h = self.mu_head(x)  # (B, d)
-        std_h = F.softplus(self.std_head(x))  # (B, d)
+        loc = self.loc_head(x)  # (B, d)
+        scale = F.softplus(self.scale_head(x))  # (B, d)
 
         # Position-dependent bias
         if metadata is not None and "xyzcal.px.0" in metadata:
@@ -133,11 +133,11 @@ class PositionAwareProfileSurrogate(LearnedBasisProfileSurrogate):
             b = self.decoder.bias
 
         zp, mean_profile = _sample_and_decode(
-            mu_h, std_h, self.decoder.weight, b, mc_samples
+            loc, scale, self.decoder.weight, b, mc_samples
         )
         return ProfileSurrogateOutput(
             zp=zp,
             mean_profile=mean_profile,
-            mu_h=mu_h,
-            std_h=std_h,
+            loc=loc,
+            scale=scale,
         )

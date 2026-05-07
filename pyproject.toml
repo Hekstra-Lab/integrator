@@ -38,10 +38,6 @@ dev = ['pytest','ruff','mypy','wandb>=0.17']
 [project.scripts]
 "integrator.train" = "integrator.cli.train:main"
 "integrator.pred" = "integrator.cli.pred:main"
-"integrator.sim_train" = "integrator.cli.sim_train:main"
-"integrator.sim_pred" = "integrator.cli.sim_pred:main"
-"integrator.sim_analyze" = "integrator.cli.sim_analyze:main"
-"integrator.sim_generate" = "integrator.cli.sim_generate:main"
 
 [project.urls]
 Homepage = "https://github.com/Hekstra-Lab/integrator/tree/integrator_mvn"

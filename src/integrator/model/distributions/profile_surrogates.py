@@ -14,8 +14,8 @@ def _softplus_inverse(x: float) -> float:
 
 
 def _sample_and_decode(
-    mu_h: Tensor,
-    std_h: Tensor,
+    loc: Tensor,
+    scale: Tensor,
     W: Tensor,
     b: Tensor,
     mc_samples: int,
@@ -23,8 +23,8 @@ def _sample_and_decode(
     """Sample h from q(h|x) and decode to profile vectors.
 
     Args:
-        mu_h: Posterior mean, shape (B, d).
-        std_h: Posterior std, shape (B, d).
+        loc: Posterior mean, shape (B, d).
+        scale: Posterior std, shape (B, d).
         W: Decoder weight matrix, shape (K, d).
         b: Decoder bias, shape (K,) or (B, K) for per-bin bias.
         mc_samples: Number of Monte Carlo samples.
@@ -33,12 +33,12 @@ def _sample_and_decode(
         zp: Profile samples on the simplex, shape (S, B, K).
         mean_profile: Profile at posterior mean h, shape (B, K).
     """
-    q_h = Normal(mu_h, std_h)
+    q_h = Normal(loc, scale)
     h = q_h.rsample([mc_samples])  # (S, B, d)
     logits = h @ W.T + b  # (S, B, K)
     zp = F.softmax(logits, dim=-1)
 
-    mean_logits = mu_h @ W.T + b  # (B, K)
+    mean_logits = loc @ W.T + b  # (B, K)
     mean_profile = F.softmax(mean_logits, dim=-1)
 
     return zp, mean_profile
@@ -51,19 +51,19 @@ class ProfileSurrogateOutput:
     Fields:
         zp: Profile samples on the simplex, shape (S, B, K).
         mean_profile: Profile at posterior mean h, shape (B, K).
-        mu_h: Posterior mean of h, shape (B, d).
-        std_h: Posterior std of h, shape (B, d).
+        loc: Posterior mean of h, shape (B, d).
+        scale: Posterior std of h, shape (B, d).
     """
 
     zp: Tensor
     mean_profile: Tensor
-    mu_h: Tensor
-    std_h: Tensor
+    loc: Tensor
+    scale: Tensor
 
 
 # %%
 class FixedBasisProfileSurrogate(nn.Module):
-    """Profile surrogate with a fixed basis (Hermite or PCA).
+    """Profile surrogate with a fixed basis (Hermite basis).
 
     Args:
         input_dim: Dimension of the encoder output.
@@ -86,11 +86,11 @@ class FixedBasisProfileSurrogate(nn.Module):
         self.register_buffer("b", basis["b"])  # (K,)
         self.d: int = int(basis["d"])
 
-        self.mu_head = nn.Linear(input_dim, self.d)
-        self.std_head = nn.Linear(input_dim, self.d)
+        self.loc_head = nn.Linear(input_dim, self.d)
+        self.scale_head = nn.Linear(input_dim, self.d)
 
-        nn.init.zeros_(self.std_head.weight)
-        nn.init.constant_(self.std_head.bias, _softplus_inverse(init_std))
+        nn.init.zeros_(self.scale_head.weight)
+        nn.init.constant_(self.scale_head.bias, _softplus_inverse(init_std))
 
     def forward(
         self,
@@ -99,18 +99,18 @@ class FixedBasisProfileSurrogate(nn.Module):
         group_labels: Tensor | None = None,
         **kwargs,
     ) -> ProfileSurrogateOutput:
-        mu_h = self.mu_head(x)  # (B, d)
-        std_h = F.softplus(self.std_head(x))  # (B, d)
+        loc = self.loc_head(x)  # (B, d)
+        scale = F.softplus(self.scale_head(x))  # (B, d)
 
         zp, mean_profile = _sample_and_decode(
-            mu_h, std_h, self.W, self.b, mc_samples
+            loc, scale, self.W, self.b, mc_samples
         )
 
         return ProfileSurrogateOutput(
             zp=zp,
             mean_profile=mean_profile,
-            mu_h=mu_h,
-            std_h=std_h,
+            loc=loc,
+            scale=scale,
         )
 
 
@@ -119,7 +119,7 @@ class LearnedBasisProfileSurrogate(nn.Module):
     """Profile surrogate with a learned linear decoder.
 
         prf = softmax(W @ h + b)
-        q(h | x) = N(mu_h(x), diag(sigma_h(x)^2))
+        q(h | x) = N(loc(x), diag(scale(x)^2))
 
     Args:
         input_dim: Dimension of the encoder output.
@@ -162,12 +162,12 @@ class LearnedBasisProfileSurrogate(nn.Module):
 
         self.d: int = latent_dim
 
-        self.mu_head = nn.Linear(input_dim, self.d)
-        self.std_head = nn.Linear(input_dim, self.d)
+        self.loc_head = nn.Linear(input_dim, self.d)
+        self.scale_head = nn.Linear(input_dim, self.d)
         self.decoder = nn.Linear(self.d, output_dim)
 
-        nn.init.zeros_(self.std_head.weight)
-        nn.init.constant_(self.std_head.bias, _softplus_inverse(init_std))
+        nn.init.zeros_(self.scale_head.weight)
+        nn.init.constant_(self.scale_head.bias, _softplus_inverse(init_std))
 
         if self._basis_W is not None:
             self._apply_warmstart(output_dim)
@@ -200,15 +200,15 @@ class LearnedBasisProfileSurrogate(nn.Module):
         group_labels: Tensor | None = None,
         **kwargs,
     ) -> ProfileSurrogateOutput:
-        mu_h = self.mu_head(x)  # (B, d)
-        std_h = F.softplus(self.std_head(x))  # (B, d)
+        loc = self.loc_head(x)  # (B, d)
+        scale = F.softplus(self.scale_head(x))  # (B, d)
 
         zp, mean_profile = _sample_and_decode(
-            mu_h, std_h, self.decoder.weight, self.decoder.bias, mc_samples
+            loc, scale, self.decoder.weight, self.decoder.bias, mc_samples
         )
         return ProfileSurrogateOutput(
             zp=zp,
             mean_profile=mean_profile,
-            mu_h=mu_h,
-            std_h=std_h,
+            loc=loc,
+            scale=scale,
         )

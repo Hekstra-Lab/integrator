@@ -27,7 +27,7 @@ class ShoeboxEncoder(nn.Module):
 
     Args:
         dropout: Probability of zeroing entire channels after each
-            conv+norm+relu block (using ``DropoutNd``, not ``Dropout``).
+            conv+norm+relu block (using `DropoutNd`, not `Dropout`).
     """
 
     def __init__(

@@ -60,33 +60,3 @@ class ChebyshevSpectrum(nn.Module):
         """(B,) -> (B,)"""
         phi = self.design_matrix(wavelength)
         return phi @ self.c
-
-
-if __name__ == "__main__":
-    import matplotlib.pyplot as plt
-
-    cheb = ChebyshevSpectrum(degree=5)
-
-    x = torch.linspace(-1, 1, 1000)
-    y = cheb.design_matrix(wavelength=x)
-
-    for i in range(y.size(1)):
-        plt.plot(x, y[:, i])
-    plt.grid()
-    plt.show()
-
-    for i, _y in enumerate(cheb._chebyshev(x, 5)):
-        plt.plot(x, _y, label=f"T{i}")
-    plt.grid(alpha=0.3)
-    plt.legend()
-    plt.title("First six Chebyshev polynomials")
-    plt.show()
-
-
-for f in log_dir.glob("*refine*.log"):
-    data = {"config": f.parts[-3]}
-    for line in f.read_text().splitlines():
-        m = re.match(r"(Start|Final) R-work\s*=\s*(\S+)", line)
-        if m:
-            data[m.group(1)] = float(m.group(2).strip(","))
-    print(data)

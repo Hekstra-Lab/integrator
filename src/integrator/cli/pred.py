@@ -86,7 +86,6 @@ def main():
     meta = yaml.safe_load((run_dir / "run_metadata.yaml").read_text())
     config = load_config(meta["config"])
     wandb_info = meta["wandb"]
-    slurm_info = meta["slurm"]
 
     # writing prediction directories
     log_dir = Path(wandb_info["log_dir"])
@@ -128,8 +127,8 @@ def main():
 
         ckpt_dir.mkdir(parents=True, exist_ok=True)
 
-        # Skip prediction if outputs already exist (resume support),
-        # but still run post-processing (write-refl, write-mtz) below.
+        # Skip prediction if outputs already exist, but still
+        # run post-processing (write-refl, write-mtz) below.
         has_preds = any(ckpt_dir.glob("preds_epoch_*"))
         if has_preds:
             logger.info(

@@ -19,10 +19,6 @@ from integrator.registry import REGISTRY
 PRIOR_PARAMS = {
     "gamma": configs.GammaParams,
     "dirichlet": configs.DirichletParams,
-    "exponential": configs.ExponentialParams,
-    "half_cauchy": configs.HalfCauchyParams,
-    "log_normal": configs.LogNormalParams,
-    "gaussian_profile": configs.GaussianProfilePriorParams,
 }
 
 TUPLE_FIELDS = {
@@ -156,7 +152,7 @@ def _get_data_dir(cfg: dict) -> str:
 
 
 def _get_n_bins(cfg: dict) -> int | None:
-    # n_bins is genuinely optional (some losses don't use it).
+    # n_bins is optional
     loss_args = _require(cfg, "loss", "args")
     return loss_args.get("n_bins")
 
@@ -251,6 +247,7 @@ def _get_surrogate_modules(
             bp = args["basis_path"]
             if isinstance(bp, str):
                 args["basis_path"] = _resolve_data_path(bp, data_dir, n_bins)
+
         # warmstart_basis_path for learned_basis_profile: same data_dir +
         # n_bins suffix handling as basis_path above.
         if surrogate_cfg["name"] == "learned_basis_profile" and isinstance(
@@ -354,26 +351,11 @@ def _get_loss_module(
         if k not in kwargs:
             kwargs[k] = v
 
-    if (
-        "empirical_profile_basis_per_bin" in kwargs
-        and "profile_basis_per_bin" not in kwargs
-    ):
-        kwargs["profile_basis_per_bin"] = kwargs.pop(
-            "empirical_profile_basis_per_bin"
-        )
-    elif "empirical_profile_basis_per_bin" in kwargs:
-        kwargs.pop("empirical_profile_basis_per_bin")
-
     data_dir = _get_data_dir(cfg)
     n_bins = _get_n_bins(cfg)
     for pt_key in (
-        "tau_per_group",
-        "bg_rate_per_group",
-        "s_squared_per_group",
         "i_concentration_per_group",
-        "bg_concentration_per_group",
-        "profile_basis_per_bin",
-        "empirical_profile_basis_per_bin",
+        "profile_basis",
     ):
         if pt_key in kwargs and isinstance(kwargs[pt_key], str):
             kwargs[pt_key] = _resolve_data_path(
@@ -593,17 +575,12 @@ def _collect_resolved_paths(cfg: dict) -> dict:
     if surr_paths:
         report["surrogates"] = surr_paths
 
-    # Loss buffers (bg_rate_per_group, tau_per_group, etc.)
+    # Loss buffers
     loss_args = cfg.get("loss", {}).get("args", {}) or {}
     loss_paths: dict = {}
     for pt_key in (
-        "tau_per_group",
-        "bg_rate_per_group",
-        "s_squared_per_group",
         "i_concentration_per_group",
-        "bg_concentration_per_group",
-        "profile_basis_per_bin",
-        "empirical_profile_basis_per_bin",
+        "profile_basis",
     ):
         v = loss_args.get(pt_key)
         if isinstance(v, str):

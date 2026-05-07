@@ -1,140 +1,46 @@
-from typing import Any, Literal
+from typing import Any
 
 import torch
 import torch.nn.functional as F
 from torch import Tensor
 
-from integrator.model.integrators.base_integrator import _log_loss
-from integrator.model.integrators.integrator import (
-    Integrator,
-    _sample_profile,
+from integrator import configs
+from integrator.model.distributions.profile_surrogates import (
+    ProfileSurrogateOutput,
 )
+from integrator.model.integrators.base_integrator import BaseIntegrator
 from integrator.model.integrators.integrator_utils import (
     IntegratorBaseOutputs,
     _assemble_outputs,
 )
 
 
+def _sample_profile(qp, mc_samples: int) -> Tensor:
+    if isinstance(qp, ProfileSurrogateOutput):
+        return qp.zp.permute(1, 0, 2)
+    return qp.rsample([mc_samples]).permute(1, 0, 2)
+
+
 def _add_group_outputs(out: dict, metadata: dict, loss) -> None:
-    """Add group_label, tau_per_refl, and alpha_per_refl to forward outputs."""
     group_labels = metadata["group_label"].long()
     out["group_label"] = group_labels
-    if hasattr(loss, "tau_per_group"):
-        out["tau_per_refl"] = loss.tau_per_group[group_labels]
     if hasattr(loss, "log_alpha_per_group"):
         out["alpha_per_refl"] = F.softplus(
             loss.log_alpha_per_group[group_labels]
         )
-    elif getattr(loss, "i_concentration_per_group", None) is not None:
-        out["alpha_per_refl"] = loss.i_concentration_per_group[group_labels]
 
 
-def _hierarchical_step(self, batch, step: Literal["train", "val"]):
-    """Shared _step for hierarchical integrators; passes group_labels to loss."""
-    counts, shoebox, mask, metadata = batch
-    outputs = self(counts, shoebox, mask, metadata)
-    forward_out = outputs["forward_out"]
+class HierarchicalIntegrator(BaseIntegrator):
+    """Hierarchical integrator with 5 decoupled encoders."""
 
-    group_labels = metadata["group_label"].long()
-
-    loss_dict = self.loss(
-        rate=forward_out["rates"],
-        counts=forward_out["counts"],
-        qp=outputs["qp"],
-        qi=outputs["qi"],
-        qbg=outputs["qbg"],
-        mask=forward_out["mask"],
-        group_labels=group_labels,
-        metadata=metadata,
-    )
-
-    # get total steps
-    total_loss = loss_dict["loss"]
-
-    # Log intensity surrogate stats
-    qi = outputs["qi"]
-    qi_mean = qi.mean
-    self.log(
-        f"{step} qi_mean_min", qi_mean.min(), on_step=False, on_epoch=True
-    )
-    self.log(
-        f"{step} qi_mean_median",
-        qi_mean.median(),
-        on_step=False,
-        on_epoch=True,
-    )
-
-    self.log(
-        f"{step} qi_k_min",
-        qi.concentration.min(),
-        on_step=False,
-        on_epoch=True,
-    )
-    self.log(
-        f"{step} qi_k_median",
-        qi.concentration.median(),
-        on_step=False,
-        on_epoch=True,
-    )
-    self.log(f"{step} qi_r_min", qi.rate.min(), on_step=False, on_epoch=True)
-    self.log(
-        f"{step} qi_r_median", qi.rate.median(), on_step=False, on_epoch=True
-    )
-
-    qbg = outputs["qbg"]
-    self.log(
-        f"{step} qbg_mean_min", qbg.mean.min(), on_step=False, on_epoch=True
-    )
-    self.log(
-        f"{step} qbg_mean_median",
-        qbg.mean.median(),
-        on_step=False,
-        on_epoch=True,
-    )
-
-    _log_loss(
-        self,
-        kl=loss_dict["kl_mean"],
-        nll=loss_dict["neg_ll_mean"],
-        total_loss=total_loss,
-        step=step,
-        kl_components={
-            k.removesuffix("_mean"): v
-            for k, v in loss_dict.items()
-            if k in ("kl_prf_mean", "kl_i_mean", "kl_bg_mean", "kl_hyper_mean")
-        },
-    )
-
-    # Auxiliary regularizers on the learned profile decoder
-    penalty, penalty_components = self._profile_basis_penalty()
-    for name, value in penalty_components.items():
-        self.log(
-            f"{step} {name}",
-            value,
-            on_step=False,
-            on_epoch=True,
-        )
-    total_loss = total_loss + penalty
-
-    loss_components = {
-        "loss": total_loss.detach(),
-        "nll": loss_dict["neg_ll_mean"].detach(),
-        "kl": loss_dict["kl_mean"].detach(),
-        "kl_prf": loss_dict["kl_prf_mean"].detach(),
-        "kl_i": loss_dict["kl_i_mean"].detach(),
-        "kl_bg": loss_dict["kl_bg_mean"].detach(),
-    }
-    if "kl_hyper" in loss_dict:
-        loss_components["kl_hyper"] = loss_dict["kl_hyper"].detach()
-
-    return {
-        "loss": total_loss,
-        "forward_out": forward_out,
-        "loss_components": loss_components,
+    REQUIRED_ENCODERS = {
+        "profile": configs.ShoeboxEncoderArgs,
+        "k_i": configs.IntensityEncoderArgs,
+        "r_i": configs.IntensityEncoderArgs,
+        "k_bg": configs.IntensityEncoderArgs,
+        "r_bg": configs.IntensityEncoderArgs,
     }
 
-
-class HierarchicalIntegrator(Integrator):
     def _forward_impl(
         self,
         counts: Tensor,
@@ -195,13 +101,9 @@ class HierarchicalIntegrator(Integrator):
             "qbg": qbg,
         }
 
-    _step = _hierarchical_step
 
-
-class HierarchicalIntegrator3Enc(Integrator):
+class HierarchicalIntegrator3Enc(BaseIntegrator):
     """Hierarchical integrator with 3 encoders: profile, k, r."""
-
-    from integrator import configs
 
     REQUIRED_ENCODERS = {
         "profile": configs.ShoeboxEncoderArgs,
@@ -266,5 +168,3 @@ class HierarchicalIntegrator3Enc(Integrator):
             "qi": qi,
             "qbg": qbg,
         }
-
-    _step = _hierarchical_step

@@ -3,15 +3,15 @@ import os
 from pathlib import Path
 
 import numpy as np
-import torch
-
-logger = logging.getLogger(__name__)
 import pytorch_lightning as pl
+import torch
 from torch.utils.data import (
     DataLoader,
     Dataset,
     Subset,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _load_shoebox_array(path, weights_only=True):
@@ -43,6 +43,7 @@ SIMULATED_COLS = [
     "is_test",
     "group_label",
     "profile_group_label",
+    "d",
 ]
 
 # Default columns from rs.io.read_dials_stills
@@ -196,15 +197,7 @@ class ShoeboxDataModule(pl.LightningDataModule):
         single_sample_index=None,
         cutoff: float | None = None,
         min_valid_pixels: int = 10,
-        persistent_workers: bool = True,
-        shoebox_file_names={
-            "counts": "counts.pt",
-            "masks": "masks.pt",
-            "stats": "stats.pt",
-            "reference": "reference.pt",
-            "standardized_counts": None,
-        },
-        refl_file: Path | None = None,
+        shoebox_file_names: dict | None = None,
         H: int = 21,
         W: int = 21,
         D: int = 3,
@@ -224,6 +217,14 @@ class ShoeboxDataModule(pl.LightningDataModule):
         self.cutoff = cutoff
         self.min_valid_pixels = min_valid_pixels
         self.full_dataset = None  # Will store the full dataset
+        if shoebox_file_names is None:
+            shoebox_file_names = {
+                "counts": "counts.pt",
+                "masks": "masks.pt",
+                "stats": "stats.pt",
+                "reference": "reference.pt",
+                "standardized_counts": None,
+            }
         self.shoebox_file_names = shoebox_file_names
         self.H = H
         self.W = W
@@ -435,15 +436,7 @@ class SimulatedShoeboxLoader(pl.LightningDataModule):
         single_sample_index=None,
         cutoff: float | None = None,
         min_valid_pixels: int = 10,
-        persistent_workers: bool = True,
-        shoebox_file_names={
-            "counts": "counts.pt",
-            "masks": "masks.pt",
-            "stats": "stats.pt",
-            "reference": "reference.pt",
-            "standardized_counts": None,
-        },
-        refl_file: Path | None = None,
+        shoebox_file_names: dict | None = None,
         H: int = 21,
         W: int = 21,
         D: int = 3,
@@ -463,6 +456,14 @@ class SimulatedShoeboxLoader(pl.LightningDataModule):
         self.cutoff = cutoff
         self.min_valid_pixels = min_valid_pixels
         self.full_dataset = None  # Will store the full dataset
+        if shoebox_file_names is None:
+            shoebox_file_names = {
+                "counts": "counts.pt",
+                "masks": "masks.pt",
+                "stats": "stats.pt",
+                "reference": "reference.pt",
+                "standardized_counts": None,
+            }
         self.shoebox_file_names = shoebox_file_names
         self.H = H
         self.W = W

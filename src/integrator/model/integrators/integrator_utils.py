@@ -52,8 +52,8 @@ def _assemble_outputs(
     }
 
     if is_profile_output:
-        base["qp_mu_h"] = out.qp.mu_h
-        base["qp_std_h"] = out.qp.std_h
+        base["qp_loc"] = out.qp.loc
+        base["qp_scale"] = out.qp.scale
 
     if out.metadata is None:
         return base

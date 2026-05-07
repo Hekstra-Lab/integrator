@@ -1,6 +1,5 @@
 import argparse
 import logging
-import re
 from copy import deepcopy
 from pathlib import Path
 
@@ -23,12 +22,6 @@ def parse_args():
         help="Path to configuration YAML file",
     )
     parser.add_argument(
-        "--wb-project",
-        type=str,
-        required=True,
-        help="Name of the W&B project to save to",
-    )
-    parser.add_argument(
         "--run-dir",
         type=str,
         required=True,
@@ -45,8 +38,27 @@ def parse_args():
     parser.add_argument(
         "--save-dir",
         type=str,
-        default="/n/netscratch/hekstra_lab/Lab/laldama/lightning_logs/",
-        help="Path to store local W&B logs",
+        default="lightning_logs",
+        help="Path to store logs and checkpoints",
+    )
+
+    # W&B (optional)
+    parser.add_argument(
+        "--wb-project",
+        type=str,
+        default=None,
+        help="W&B project name. Enables W&B logging when set.",
+    )
+    parser.add_argument(
+        "--wandb-resume-id",
+        type=str,
+        default=None,
+        help="W&B run ID to resume logging into (uses 'must' resume mode)",
+    )
+    parser.add_argument(
+        "--tags",
+        nargs="+",
+        help="Optional W&B tags for run identification",
     )
 
     # Training
@@ -166,12 +178,6 @@ def parse_args():
         default=None,
         help="Path to checkpoint to resume training from (e.g. last.ckpt)",
     )
-    parser.add_argument(
-        "--wandb-resume-id",
-        type=str,
-        default=None,
-        help="W&B run ID to resume logging into (uses 'must' resume mode)",
-    )
 
     # Misc
     parser.add_argument(
@@ -181,23 +187,80 @@ def parse_args():
         default=0,
         help="Increase verbosity (-v = INFO, -vv = DEBUG)",
     )
-    parser.add_argument(
-        "--tags",
-        nargs="+",
-        help="Optional W&B tags for run identification",
-    )
     return parser.parse_args()
+
+
+def _make_logger(args, tags, save_dir):
+    """Create a Lightning CSV logger (or W&B if requested)"""
+    use_wandb = args.wb_project is not None
+    if use_wandb:
+        try:
+            from pytorch_lightning.loggers import WandbLogger
+        except ImportError:
+            logger.warning(
+                "wandb not installed; falling back to CSVLogger. "
+                "Install with: pip install wandb"
+            )
+            use_wandb = False
+
+    if use_wandb:
+        wb_kwargs = dict(
+            project=args.wb_project,
+            save_dir=save_dir,
+            tags=tags,
+        )
+        if args.wandb_resume_id:
+            wb_kwargs["id"] = args.wandb_resume_id
+            wb_kwargs["resume"] = "must"
+        return WandbLogger(**wb_kwargs)
+
+    from pytorch_lightning.loggers import CSVLogger
+
+    return CSVLogger(save_dir=save_dir, name="integrator")
+
+
+def _log_git_info(pl_logger):
+    """Capture git SHA and dirty state into the logger (W&B only)."""
+    import subprocess
+
+    if not hasattr(pl_logger, "experiment") or not hasattr(
+        pl_logger.experiment, "config"
+    ):
+        return
+
+    _start = Path(__file__).resolve()
+    _repo_root = next(
+        (p for p in [_start, *_start.parents] if (p / ".git").exists()),
+        None,
+    )
+    if _repo_root is None:
+        return
+    try:
+        _sha = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=_repo_root,
+            text=True,
+        ).strip()
+        _dirty = bool(
+            subprocess.check_output(
+                ["git", "status", "--porcelain"],
+                cwd=_repo_root,
+                text=True,
+            ).strip()
+        )
+        pl_logger.experiment.config.update(
+            {"git_sha": _sha, "git_dirty": _dirty},
+            allow_val_change=True,
+        )
+    except Exception as _exc:
+        logger.warning("git capture failed: %s", _exc)
 
 
 def main():
     import os
 
     import torch
-
-    torch.set_float32_matmul_precision("high")
-
     from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
-    from pytorch_lightning.loggers import WandbLogger
 
     from integrator.callbacks import (
         EpochMetricRecorder,
@@ -216,20 +279,14 @@ def main():
     )
     from integrator.utils.factory_utils import _collect_resolved_paths
 
-    # parse args
-    args = parse_args()
+    torch.set_float32_matmul_precision("high")
 
-    # logger
+    args = parse_args()
     setup_logging(args.verbose)
 
-    # to use gpu
-    torch.set_float32_matmul_precision("medium")
-
-    # load configuration file
     cfg = load_config(args.config)
     cfg = _apply_cli_overrides(cfg, args=args)
 
-    # load data
     logger.info("Starting Training")
 
     # Auto-generate prior files if needed by the loss
@@ -246,7 +303,7 @@ def main():
                 f"Prior file {action}: {event['file']} — {event['reason']}"
             )
 
-    # load data
+    # Load data
     data_loader = construct_data_loader(cfg)
     data_loader.setup()
     inject_binning_labels(data_loader, cfg)
@@ -258,65 +315,36 @@ def main():
         cfg["surrogates"]["qi"]["name"],
     ]
 
-    # load wandb logger
-    wb_kwargs = dict(
-        project=args.wb_project,
-        save_dir=args.save_dir,
-        tags=tags,
+    # Logger (W&B or CSV)
+    save_dir = args.save_dir
+    pl_logger = _make_logger(args, tags, save_dir)
+    _log_git_info(pl_logger)
+
+    is_wandb = hasattr(pl_logger, "experiment") and hasattr(
+        pl_logger.experiment, "dir"
     )
-    if args.wandb_resume_id:
-        wb_kwargs["id"] = args.wandb_resume_id
-        wb_kwargs["resume"] = "must"
-    wb_logger = WandbLogger(**wb_kwargs)
 
-    # Explicit git capture; gets integrator git location;
-    # NOTE: for development only
-    import subprocess
+    if is_wandb:
+        logdir = Path(pl_logger.experiment.dir)
+    else:
+        logdir = Path(pl_logger.log_dir)
+    logdir.mkdir(parents=True, exist_ok=True)
 
-    _start = Path(__file__).resolve()
-    _repo_root = next(
-        (p for p in [_start, *_start.parents] if (p / ".git").exists()),
-        None,
-    )
-    if _repo_root is not None:
-        try:
-            _sha = subprocess.check_output(
-                ["git", "rev-parse", "HEAD"],
-                cwd=_repo_root,
-                text=True,
-            ).strip()
-            _dirty = bool(
-                subprocess.check_output(
-                    ["git", "status", "--porcelain"],
-                    cwd=_repo_root,
-                    text=True,
-                ).strip()
-            )
-            wb_logger.experiment.config.update(
-                {"git_sha": _sha, "git_dirty": _dirty},
-                allow_val_change=True,
-            )
-        except Exception as _exc:
-            logger.warning("git capture failed: %s", _exc)
-
-    # Logging directory
-    logdir = Path(wb_logger.experiment.dir)
     run_dir = Path(args.run_dir)
-
     logger.info(f"Logging directory: {logdir.as_posix()}")
     logger.info(f"Run directory: {run_dir}")
 
-    # Write a copy of the config.yaml file
+    # Write a copy of the config
     config_copy = run_dir / "config_copy.yaml"
     cfg_json = deepcopy(cfg)
-
     with open(config_copy, "w") as f:
         yaml.safe_dump(cfg_json, f, sort_keys=False)
 
-    # log hyperparameters
-    wb_logger.log_hyperparams(cfg_json)
+    # Log hyperparameters
+    if hasattr(pl_logger, "log_hyperparams"):
+        pl_logger.log_hyperparams(cfg_json)
 
-    # Resolve every file the factory will load, with absolute paths
+    # Resolve every file the factory will load
     resolved_paths = _collect_resolved_paths(cfg)
 
     # Run metadata
@@ -325,37 +353,29 @@ def main():
         "slurm": {
             "job_id": os.environ.get("SLURM_JOB_ID"),
         },
-        "wandb": {
-            "project": args.wb_project,
-            "run_id": wb_logger.experiment.id,
-            "entity": wb_logger.experiment.entity,
-            "log_dir": wb_logger.experiment.dir,
-        },
         "resolved_paths": resolved_paths,
         "prior_events": prior_events,
     }
-
-    wb_logger.log_hyperparams(metadata)
+    if is_wandb:
+        metadata["wandb"] = {
+            "project": args.wb_project,
+            "run_id": pl_logger.experiment.id,
+            "entity": pl_logger.experiment.entity,
+            "log_dir": pl_logger.experiment.dir,
+        }
+        pl_logger.log_hyperparams(metadata)
 
     m_fname = run_dir / "run_metadata.yaml"
-    (m_fname).write_text(yaml.safe_dump(metadata))
-
+    m_fname.write_text(yaml.safe_dump(metadata))
     logger.info(f"Saved run_metadata: {m_fname}")
 
     assign_labels(dataset=data_loader, save_dir=logdir.as_posix())
 
-    # create integrator
+    # Create integrator
     integrator = construct_integrator(cfg)
-
-    # Set dataset_size for hyperprior KL amortization
-    if hasattr(integrator.loss, "dataset_size"):
-        integrator.loss.dataset_size = len(data_loader.train_dataset)
-        logger.info(f"Set loss.dataset_size = {integrator.loss.dataset_size}")
-
-    # save prior artifacts (rescaled concentration, param counts, etc.)
     save_run_artifacts(integrator, cfg, logdir)
 
-    # Echo resolved file paths (same data that's also in run_metadata.yaml)
+    # Echo resolved file paths
     logger.info(f"data_dir: {resolved_paths.get('data_dir')}")
     logger.info(f"n_bins: {resolved_paths.get('n_bins')}")
     for section in ("data_loader", "surrogates", "loss"):
@@ -391,18 +411,16 @@ def main():
         every_n_epochs=1,
         max_rows_per_epoch=200_000,
     )
-
     val_epoch_recorder = EpochMetricRecorder(
         out_dir=val_metric_dir,
         keys=keys,
         split="val",
     )
-
     loss_trace_recorder = LossTraceRecorder(
         out_dir=logdir / "loss_traces",
     )
 
-    # Early-stopping callback (optional).
+    # Early-stopping (optional)
     early_stop_cb = None
     es_cfg = cfg.get("early_stop")
     if es_cfg:
@@ -422,8 +440,7 @@ def main():
             float(es_cfg.get("min_delta", 0.0)),
         )
 
-    # to save checkpoints. When early-stop is active, default to
-    # save_top_k=1 (pick the best according to the monitored metric)
+    # Checkpoints
     ckpt_cfg = cfg.get("checkpoint", {}) or {}
     default_top_k = 1 if early_stop_cb else -1
     save_top_k = int(ckpt_cfg.get("save_top_k", default_top_k))
@@ -461,14 +478,14 @@ def main():
     if early_stop_cb is not None:
         callbacks.append(early_stop_cb)
 
-    # PyTorch-Lightning Trainer
+    # Trainer
     trainer = construct_trainer(
         cfg,
         callbacks=callbacks,
-        logger=wb_logger,
+        logger=pl_logger,
     )
 
-    # Fit the model
+    # Fit
     trainer.fit(
         integrator,
         train_dataloaders=data_loader.train_dataloader(),
@@ -476,7 +493,7 @@ def main():
         ckpt_path=args.ckpt_path,
     )
 
-    logger.info("Traning complete!")
+    logger.info("Training complete!")
 
 
 if __name__ == "__main__":

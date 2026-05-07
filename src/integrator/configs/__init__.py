@@ -24,11 +24,7 @@ from .loss import (
 from .output import OutputConfig
 from .priors import (
     DirichletParams,
-    ExponentialParams,
     GammaParams,
-    GaussianProfilePriorParams,
-    HalfCauchyParams,
-    LogNormalParams,
     PriorConfig,
 )
 from .trainer import TrainerConfig
@@ -37,11 +33,7 @@ from .yaml_config import YAMLConfig
 __all__ = [
     "DirichletParams",
     "DirichletArgs",
-    "ExponentialParams",
     "GammaParams",
-    "HalfCauchyParams",
-    "LogNormalParams",
-    "GaussianProfilePriorParams",
     "LossArgs",
     "DataFileNames",
     "DataLoaderConfig",

@@ -43,17 +43,6 @@ class DirichletParams:
 
 
 @dataclass
-class ExponentialParams:
-    rate: float
-
-    def __post_init__(self):
-        if self.rate < 0:
-            raise ValueError(
-                f"Exponential rate parameter must be non-negative, got {self.rate}"
-            )
-
-
-@dataclass
 class GammaParams:
     concentration: float
     rate: float
@@ -73,48 +62,11 @@ class GammaParams:
 
 
 @dataclass
-class HalfCauchyParams:
-    scale: float
-
-    def __post_init__(self):
-        if self.scale <= 0:
-            raise ValueError(
-                f"HalfCauchy scale must be positive, got {self.scale}"
-            )
-
-
-@dataclass
-class LogNormalParams:
-    loc: float
-    scale: float
-
-    def __post_init__(self):
-        if self.scale <= 0:
-            raise ValueError(
-                f"LogNormal scale must be positive, got {self.scale}"
-            )
-
-
-@dataclass
-class GaussianProfilePriorParams:
-    """Prior params for the low-rank logistic-normal profile surrogate.
-
-    The prior on h is N(0, sigma_prior^2 I).  sigma_prior is stored in
-    `profile_basis.pt`; no params need to be configured here.
-    This dataclass exists only so that `pprf_cfg` can carry a `weight`.
-    Leave `params: {}` in the YAML.
-    """
-
-
-@dataclass
 class PriorConfig[P]:
     name: Literal[
         "dirichlet",
         "exponential",
         "gamma",
-        "half_cauchy",
-        "log_normal",
-        "gaussian_profile",
     ]
     params: P
     weight: float

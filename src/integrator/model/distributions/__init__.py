@@ -1,11 +1,9 @@
 from .dirichlet import DirichletDistribution
-from .folded_normal import FoldedNormalDistribution
 from .gamma import (
     GammaDistributionRepamA,
     GammaDistributionRepamB,
     GammaDistributionRepamE,
 )
-from .log_normal import LogNormalDistribution
 from .position_aware_profile import PositionAwareProfileSurrogate
 from .profile_surrogates import (
     FixedBasisProfileSurrogate,
@@ -15,8 +13,6 @@ from .profile_surrogates import (
 
 __all__ = [
     "DirichletDistribution",
-    "LogNormalDistribution",
-    "FoldedNormalDistribution",
     "GammaDistributionRepamA",
     "GammaDistributionRepamB",
     "GammaDistributionRepamE",

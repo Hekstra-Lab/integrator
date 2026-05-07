@@ -2,7 +2,6 @@ import math
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.distributions import Gamma
 
 from .utils import get_positive_constraint
@@ -49,6 +48,7 @@ class GammaDistributionRepamA(nn.Module):
 
         self.linear_k = nn.Linear(in_features, 1)
         self.linear_r = nn.Linear(in_features, 1)
+
         self._init_k_head_bias(self.linear_k, k_init)
         self._init_r_head_bias(self.linear_r, r_init)
 
@@ -95,61 +95,33 @@ class GammaDistributionRepamB(nn.Module):
         in_features: int = 64,
         eps: float = 1e-6,
         k_min: float = 0.1,
-        mean_init: float | None = None,
-        fano_init: float = 1.0,
-        positive_constraint: str = "softplus",
-        mu_positive_constraint: str | None = None,
-        floor_k_min: float | None = None,
+        fano_positive_constraint: str = "softplus",
+        mu_positive_constraint: str = "softplus",
         **kwargs,
     ):
         super().__init__()
         self.eps = eps
         self.k_min = k_min
-        self.floor_k_min = (
-            float(floor_k_min) if floor_k_min is not None else None
-        )
 
-        # Accept both names for backwards compat
-        constraint = mu_positive_constraint or positive_constraint
-        self._mu_constrain = get_positive_constraint(constraint)
-        self._mu_constraint_name = constraint
+        self._mu_constrain = get_positive_constraint(mu_positive_constraint)
+        self._mu_constraint_name = mu_positive_constraint
+
+        self.fano_constrain = get_positive_constraint(fano_positive_constraint)
+        self.fano_constraint_name = fano_positive_constraint
 
         self.linear_mu = nn.Linear(in_features, 1)
         self.linear_fano = nn.Linear(in_features, 1)
-        self._init_mu_head(self.linear_mu, mean_init)
-        # self._init_fano_head(self.linear_fano, fano_init)
-
-        if mean_init is not None:
-            with torch.no_grad():
-                self.linear_mu.weight.zero_()
-                self.linear_fano.weight.zero_()
-
-    def _mu_bias(self, target: float) -> float:
-        """Bias value so the mu head evaluates to `target` at init."""
-        if self._mu_constraint_name == "log":
-            return math.log(max(target, 1e-12))
-        return _softplus_inverse_shifted(target, self.eps)
-
-    def _init_mu_head(self, linear: nn.Linear, target: float | None) -> None:
-        if target is None or linear.bias is None:
-            return
-        with torch.no_grad():
-            linear.bias.fill_(self._mu_bias(target))
-
-    def _init_fano_head(self, linear: nn.Linear, target: float | None) -> None:
-        if target is None or linear.bias is None:
-            return
-        with torch.no_grad():
-            linear.bias.fill_(_softplus_inverse_shifted(target, self.eps))
 
     def forward(self, x: torch.Tensor, x_: torch.Tensor):
         mu = self._mu_constrain(self.linear_mu(x))
         if self._mu_constraint_name == "softplus":
             mu = mu + self.eps
-        fano = F.softplus(self.linear_fano(x_)) + self.eps
+        fano = self.fano_constrain(self.linear_fano(x_))
+        if self.fano_constraint_name == "softplus":
+            fano = fano + self.eps
 
         r = 1.0 / fano
-        k = (mu * r).clamp(min=self.k_min)
+        k = (mu * r) + self.k_min
 
         return Gamma(concentration=k.flatten(), rate=r.flatten())
 

@@ -105,13 +105,6 @@ class BaseIntegrator(pl.LightningModule):
 
         self.automatic_optimization = True
 
-    def setup(self, stage: str) -> None:
-        """Infer dataset_size for losses that need it (e.g. HierarchicalLoss)."""
-        if stage == "fit" and hasattr(self.loss, "dataset_size"):
-            dm = self.trainer.datamodule
-            if dm is not None and hasattr(dm, "train_dataset"):
-                self.loss.dataset_size = len(dm.train_dataset)
-
     def forward(
         self,
         counts: Tensor,
@@ -136,6 +129,8 @@ class BaseIntegrator(pl.LightningModule):
         outputs = self(counts, shoebox, mask, metadata)
         forward_out = outputs["forward_out"]
 
+        group_labels = metadata["group_label"].long()
+
         loss_dict = self.loss(
             rate=forward_out["rates"],
             counts=forward_out["counts"],
@@ -143,6 +138,8 @@ class BaseIntegrator(pl.LightningModule):
             qi=outputs["qi"],
             qbg=outputs["qbg"],
             mask=forward_out["mask"],
+            group_labels=group_labels,
+            metadata=metadata,
         )
 
         total_loss = loss_dict["loss"]
@@ -156,13 +153,7 @@ class BaseIntegrator(pl.LightningModule):
             kl_components={
                 k.removesuffix("_mean"): v
                 for k, v in loss_dict.items()
-                if k
-                in (
-                    "kl_prf_mean",
-                    "kl_i_mean",
-                    "kl_bg_mean",
-                    "kl_hyper_mean",
-                )
+                if k in ("kl_prf_mean", "kl_i_mean", "kl_bg_mean")
             },
         )
 
@@ -176,23 +167,6 @@ class BaseIntegrator(pl.LightningModule):
                 on_epoch=True,
             )
         total_loss = total_loss + penalty
-
-        # Log hyperprior diagnostics if present (HierarchicalLoss)
-        for key in (
-            "kl_global",
-            "hp_alpha_mean",
-            "hp_beta_mean",
-            "hp_alpha_std",
-            "hp_beta_std",
-            "hp_prior_mean",
-        ):
-            if key in loss_dict:
-                self.log(
-                    f"{step} {key}",
-                    loss_dict[key],
-                    on_step=False,
-                    on_epoch=True,
-                )
 
         return {
             "loss": total_loss,
