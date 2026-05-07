@@ -15,7 +15,7 @@ integrator:
     predict_keys:
       [refl_ids, is_test, qi_mean, qi_var, qbg_mean, qbg_var,
        intensity.prf.value, intensity.prf.variance, background.mean,
-       d, group_label, qp_mean, qp_mu_h, qp_std_h]
+       d, group_label, qp_mean, qp_loc, qp_scale]
 
 encoders:
 - name: shoebox_encoder
@@ -84,13 +84,12 @@ surrogates:
       positive_constraint: log
 
 loss:
-  name: wilson
+  name: monochromatic_wilson
   args:
     mc_samples: *mc_samples
     eps: 1.0e-06
     n_bins: 25
-    bg_rate_per_group: bg_rate_per_group.pt
-    profile_sigma_prior: 1.0
+    profile_prior_scale: 1.0
     profile_basis_type: hermite
     profile_basis_max_order: 4
     profile_basis_sigma_ref: 1.0

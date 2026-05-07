@@ -28,7 +28,7 @@ encoders:
     conv1_out_channels: 16
     conv2_out_channels: 32
     dropout: 0.2
-- &intensity_enc
+- &intensity_enc # k_i
   name: intensity_encoder
   args:
     data_dim: 2d
@@ -36,9 +36,9 @@ encoders:
     conv1_out_channels: 16
     conv2_out_channels: 32
     conv3_out_channels: 64
-- *intensity_enc
-- *intensity_enc
-- *intensity_enc
+- *intensity_enc # r_i
+- *intensity_enc # k_bg
+- *intensity_enc # r_bg
 
 surrogates:
   qp:
@@ -48,12 +48,6 @@ surrogates:
       latent_dim: 12
       output_dim: 625
       init_std: 0.5
-  # qp:
-  #   name: dirichlet
-  #   args:
-  #     in_features: *encoder_out
-  #     sbox_shape: [*h, *w]
-  #     eps: 1.0e-06
   qbg:
     name: gammaB
     args:
@@ -67,40 +61,19 @@ surrogates:
       in_features: *encoder_out
       eps: 1.0e-06
       k_min: 0.1
-      # mean_init: 1.0
       positive_constraint: log
 
-# loss:
-#   name: spectral_wilson
-#   args:
-#     mc_samples: *mc_samples
-#     eps: 1.0e-06
-#     n_bins: 20
-#     degree: 40
-#     # spectrum_init_from: spectrum_init.pt
-#     b_min: 1.0
-#     learn_concentration: true
-#     init_alpha: 0.7
-#
-
 loss:
-  name: spectral_wilson
+  name: polychromatic_wilson
   args:
-    spectrum_init_from: prior_init.pt
     mc_samples: *mc_samples
     eps: 1.0e-06
-    freeze_prior: true
     degree: 40
     n_bins: 20
     b_min: 1.0
-    learn_concentration: true
-    # k_prior: 1.0
-    bg_rate_per_group: bg_rate_per_group.pt
-    bg_concentration_per_group: bg_concentration_per_group.pt
-    # profile_sigma_prior: 3.0
     pi_weight: 1.0
     pbg_weight: 1.0
-    pprf_weight: 0.002
+    pprf_weight: 1.0
 
 data_loader:
   name: poly_data
