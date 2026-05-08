@@ -27,7 +27,7 @@ class ProfileEncoder(nn.Module):
 
     When `position_dim > 0`, detector position features are concatenated
     to the flattened CNN output before the MLP head, giving the encoder
-    awareness of where the shoebox lives on the detector.
+    spatial information about the shoebox.
 
     Args:
         dropout: Probability of zeroing entire channels after each
@@ -35,7 +35,7 @@ class ProfileEncoder(nn.Module):
         position_dim: Number of position features to concatenate (0=off,
             2=raw (x,y), or higher for Fourier features).
         position_fourier_order: If > 0, expand (x,y) into sinusoidal
-            Fourier features: [sin(πkx̃), cos(πkx̃), ...] for k=1..order.
+            Fourier features: [sin(πkx), cos(πkx), ...] for k=1..order.
             Gives 4*order features. position_dim is ignored when set.
     """
 
@@ -134,9 +134,7 @@ class ProfileEncoder(nn.Module):
             )
             # pos: (B, 2), freqs: (K,) → angles: (B, 2, K)
             angles = pos.unsqueeze(-1) * freqs * torch.pi
-            return torch.cat(
-                [angles.sin(), angles.cos()], dim=-1
-            ).flatten(1)
+            return torch.cat([angles.sin(), angles.cos()], dim=-1).flatten(1)
         return pos
 
     def forward(self, x: Tensor, position: Tensor | None = None) -> Tensor:
