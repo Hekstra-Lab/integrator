@@ -91,11 +91,6 @@ loss:
     polarization: true
     beam_center: [1990.3, 1972.8]
     polarization_fraction: 0.99
-    absorption_cfg:
-      beam_center: [1990.3, 1972.8]
-      r_min: 0.0
-      r_max: 1800.0
-      path_degree: 4
 
 data_loader:
   name: polychromatic_data
