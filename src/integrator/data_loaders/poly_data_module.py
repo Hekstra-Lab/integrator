@@ -3,6 +3,7 @@ import os
 
 import pytorch_lightning as pl
 import torch
+import yaml
 from torch.utils.data import DataLoader, Subset
 
 from integrator.data_loaders.data_module import (
@@ -91,6 +92,7 @@ class PolychromaticDataModule(pl.LightningDataModule):
             self.transform = transform
 
         self.full_dataset = None
+        self.beam_center_px = None
 
     def setup(self, stage=None):
         counts = _load_shoebox_array(
@@ -105,6 +107,18 @@ class PolychromaticDataModule(pl.LightningDataModule):
         reference = torch.load(
             os.path.join(self.data_dir, self.shoebox_file_names["reference"]),
         )
+
+        crystal_path = os.path.join(self.data_dir, "crystal.yaml")
+        if os.path.exists(crystal_path):
+            with open(crystal_path) as f:
+                crystal_meta = yaml.safe_load(f)
+            self.beam_center_px = crystal_meta.get("beam_center_px")
+            if self.beam_center_px is not None:
+                logger.info(
+                    "Beam center (px): %.1f, %.1f",
+                    self.beam_center_px[0],
+                    self.beam_center_px[1],
+                )
 
         # Filter reflections with too few valid pixels
         all_dead = masks.sum(-1) < self.min_valid_pixels

@@ -8,15 +8,16 @@ integrator:
     lr: 0.001
     encoder_out: &encoder_out 32
     weight_decay: 0.0
-    # decoder_weight_decay: 1.0e-3   # only for learned_basis_profile
-    # qp_smoothness_weight: 1.0e-3  # only for learned_basis_profile
-    # qp_orthogonality_weight: 1.0e-2  # only for learned_basis_profile
+    decoder_weight_decay: 1.0e-3
+    qp_smoothness_weight: 1.0e-3
+    qp_orthogonality_weight: 1.0e-2
     mc_samples: &mc_samples 50
     predict_keys:
       [refl_ids, qi_mean, qi_var, qbg_mean, qbg_var,
        intensity.sum.value, intensity.sum.variance,
        background.sum.value, background.sum.variance,
-       d, wavelength, group_label, qp_mean]
+       d, wavelength, group_label, qp_mean,
+       xyzcal.px.0, xyzcal.px.1]
 
 # 5 encoders: profile, k_i, r_i, k_bg, r_bg
 encoders:
@@ -28,7 +29,7 @@ encoders:
     conv1_out_channels: 16
     conv2_out_channels: 32
     dropout: 0.2
-- &intensity_enc # k_i
+- &intensity_enc
   name: intensity_encoder
   args:
     data_dim: 2d
@@ -36,9 +37,9 @@ encoders:
     conv1_out_channels: 16
     conv2_out_channels: 32
     conv3_out_channels: 64
-- *intensity_enc # r_i
-- *intensity_enc # k_bg
-- *intensity_enc # r_bg
+- *intensity_enc
+- *intensity_enc
+- *intensity_enc
 
 surrogates:
   qp:
@@ -48,13 +49,15 @@ surrogates:
       latent_dim: 12
       output_dim: 625
       init_std: 0.5
+      H: *h
+      W: *w
   qbg:
     name: gammaB
     args:
       in_features: *encoder_out
       eps: 1.0e-06
       k_min: 0.1
-      positive_constraint: log 
+      positive_constraint: log
   qi:
     name: gammaB
     args:
@@ -68,18 +71,27 @@ loss:
   args:
     mc_samples: *mc_samples
     eps: 1.0e-06
+    n_bins: 20
     degree: 40
     b_min: 1.0
+    learn_concentration: true
+    init_alpha: 0.7
+    profile_prior_scale: 3.0
     pi_weight: 1.0
-    pprf_weight: 1.0
     pbg_weight: 1.0
+    pprf_weight: 1.0
+    # Learned background prior as function of detector radius
     bg_prior_cfg:
       degree: 4
-      beam_center: [1250.0, 1250.0]
-      r_min: 50.0
-      r_max: 1500.0
+      beam_center: [1990.3, 1972.8]
+      r_min: 0.0
+      r_max: 1800.0
       init_rate: 1.0
       init_alpha: 1.0
+    # Polarization correction
+    polarization: true
+    beam_center: [1990.3, 1972.8]
+    init_tau_pol: 0.95
 
 data_loader:
   name: polychromatic_data
