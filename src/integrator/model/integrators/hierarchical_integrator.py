@@ -21,6 +21,17 @@ def _sample_profile(qp, mc_samples: int) -> Tensor:
     return qp.rsample([mc_samples]).permute(1, 0, 2)
 
 
+def _get_normalized_position(metadata: dict, device) -> torch.Tensor | None:
+    """Build (B, 2) normalized detector position from metadata, or None."""
+    x = metadata.get("xyzcal.px.0")
+    y = metadata.get("xyzcal.px.1")
+    if x is None or y is None:
+        return None
+    x = x.to(device).float() / 2000.0 - 1.0
+    y = y.to(device).float() / 2000.0 - 1.0
+    return torch.stack([x, y], dim=-1)
+
+
 def _add_group_outputs(out: dict, metadata: dict, loss) -> None:
     group_labels = metadata["group_label"].long()
     out["group_label"] = group_labels
@@ -54,7 +65,10 @@ class HierarchicalIntegrator(BaseIntegrator):
         shoebox_masked = shoebox * mask
         shoebox_reshaped = shoebox_masked.reshape(b, 1, *self.shoebox_shape)
 
-        x_profile = self.encoders["profile"](shoebox_reshaped)
+        position = _get_normalized_position(metadata, shoebox.device)
+        x_profile = self.encoders["profile"](
+            shoebox_reshaped, position=position
+        )
         x_k_i = self.encoders["k_i"](shoebox_reshaped)
         x_r_i = self.encoders["r_i"](shoebox_reshaped)
         x_k_bg = self.encoders["k_bg"](shoebox_reshaped)
@@ -124,7 +138,10 @@ class HierarchicalIntegrator3Enc(BaseIntegrator):
         shoebox_masked = shoebox * mask
         shoebox_reshaped = shoebox_masked.reshape(b, 1, *self.shoebox_shape)
 
-        x_profile = self.encoders["profile"](shoebox_reshaped)
+        position = _get_normalized_position(metadata, shoebox.device)
+        x_profile = self.encoders["profile"](
+            shoebox_reshaped, position=position
+        )
         x_k = self.encoders["k"](shoebox_reshaped)
         x_r = self.encoders["r"](shoebox_reshaped)
 

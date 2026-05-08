@@ -28,6 +28,7 @@ encoders:
     conv1_out_channels: 16
     conv2_out_channels: 32
     dropout: 0.2
+    position_fourier_order: 4
 - &intensity_enc # k_i
   name: intensity_encoder
   args:

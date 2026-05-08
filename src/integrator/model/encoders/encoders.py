@@ -25,9 +25,18 @@ class ProfileEncoder(nn.Module):
     This module applies two Conv3d + GroupNorm + relu blocks with an
     intermediate MaxPool3d, then flattens and projects to `encoder_out`.
 
+    When `position_dim > 0`, detector position features are concatenated
+    to the flattened CNN output before the MLP head, giving the encoder
+    awareness of where the shoebox lives on the detector.
+
     Args:
         dropout: Probability of zeroing entire channels after each
             conv+norm+relu block (using `DropoutNd`, not `Dropout`).
+        position_dim: Number of position features to concatenate (0=off,
+            2=raw (x,y), or higher for Fourier features).
+        position_fourier_order: If > 0, expand (x,y) into sinusoidal
+            Fourier features: [sin(πkx̃), cos(πkx̃), ...] for k=1..order.
+            Gives 4*order features. position_dim is ignored when set.
     """
 
     def __init__(
@@ -47,19 +56,26 @@ class ProfileEncoder(nn.Module):
         conv2_padding: tuple[int, int, int] = (0, 0, 0),
         norm2_num_groups: int = 4,
         dropout: float = 0.0,
+        position_dim: int = 0,
+        position_fourier_order: int = 0,
     ):
         super().__init__()
 
         self.encoder_out = encoder_out
         self.dropout_p = float(dropout)
         if self.dropout_p > 0:
-            # dropout feature maps
             dropout_cls = OPERATIONS[data_dim]["dropout"]
             self.dropout1 = dropout_cls(self.dropout_p)
             self.dropout2 = dropout_cls(self.dropout_p)
         else:
             self.dropout1 = nn.Identity()
             self.dropout2 = nn.Identity()
+
+        self.position_fourier_order = position_fourier_order
+        if position_fourier_order > 0:
+            self.n_pos_features = 4 * position_fourier_order
+        else:
+            self.n_pos_features = position_dim
 
         effective_in_channels = in_channels
 
@@ -96,23 +112,34 @@ class ProfileEncoder(nn.Module):
             in_channels=effective_in_channels,
         )
         self.fc = torch.nn.Linear(
-            in_features=self.flattened_size,
+            in_features=self.flattened_size + self.n_pos_features,
             out_features=encoder_out,
         )
 
     def _infer_flattened_size(self, input_shape, in_channels):
-        # input_shape: (H, W, D)
         with torch.no_grad():
-            dummy = torch.zeros(
-                1,
-                in_channels,
-                *input_shape,
-            )  # (B, C, D, H, W)
+            dummy = torch.zeros(1, in_channels, *input_shape)
             x = self.pool(F.relu(self.norm1(self.conv1(dummy))))
             x = F.relu(self.norm2(self.conv2(x)))
             return x.numel()
 
-    def forward(self, x):
+    def _position_features(self, pos: Tensor) -> Tensor:
+        """(B, 2) normalized position → (B, n_pos_features)."""
+        if self.position_fourier_order > 0:
+            freqs = torch.arange(
+                1,
+                self.position_fourier_order + 1,
+                device=pos.device,
+                dtype=pos.dtype,
+            )
+            # pos: (B, 2), freqs: (K,) → angles: (B, 2, K)
+            angles = pos.unsqueeze(-1) * freqs * torch.pi
+            return torch.cat(
+                [angles.sin(), angles.cos()], dim=-1
+            ).flatten(1)
+        return pos
+
+    def forward(self, x: Tensor, position: Tensor | None = None) -> Tensor:
         x = F.relu(self.norm1(self.conv1(x)))
         x = self.dropout1(x)
         x = self.pool(x)
@@ -120,6 +147,13 @@ class ProfileEncoder(nn.Module):
         x = self.dropout2(x)
 
         x = x.view(x.size(0), -1)
+
+        if self.n_pos_features > 0:
+            if position is not None:
+                pos_feat = self._position_features(position)
+            else:
+                pos_feat = x.new_zeros(x.size(0), self.n_pos_features)
+            x = torch.cat([x, pos_feat], dim=-1)
 
         x = self.fc(x)
         x = F.relu(x)
