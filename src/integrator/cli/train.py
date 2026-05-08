@@ -204,6 +204,7 @@ def _make_logger(args, tags, save_dir):
             use_wandb = False
 
     if use_wandb:
+        Path(save_dir).mkdir(parents=True, exist_ok=True)
         wb_kwargs = dict(
             project=args.wb_project,
             save_dir=save_dir,

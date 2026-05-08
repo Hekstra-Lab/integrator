@@ -14,6 +14,7 @@ from integrator.model.loss.kl_helpers import (
     _load_buffer,
     compute_profile_kl,
 )
+from integrator.model.loss.learned_background import ChebyshevBackgroundPrior
 
 
 class WilsonLoss(nn.Module):
@@ -28,9 +29,10 @@ class WilsonLoss(nn.Module):
         *,
         mc_samples: int = 4,
         eps: float = 1e-6,
-        # Background prior (global)
+        # Background prior
         bg_rate: float = 1.0,
         bg_concentration: float = 1.0,
+        bg_prior_cfg: dict | None = None,
         # Profile prior
         profile_basis: str | None = None,
         profile_prior_scale: float = 3.0,
@@ -57,6 +59,10 @@ class WilsonLoss(nn.Module):
         self.b_min = b_min
         self.bg_rate = bg_rate
         self.bg_concentration = bg_concentration
+        if bg_prior_cfg is not None:
+            self.bg_prior = ChebyshevBackgroundPrior(**bg_prior_cfg)
+        else:
+            self.bg_prior = None
         self.profile_prior_scale = profile_prior_scale
         self.pprf_weight = (
             pprf_cfg.weight if pprf_cfg is not None else pprf_weight
@@ -150,12 +156,20 @@ class WilsonLoss(nn.Module):
         kl = kl + kl_i
 
         # Background KL
-        p_bg = Gamma(
-            concentration=torch.tensor(self.bg_concentration, device=device),
-            rate=torch.tensor(
-                self.bg_concentration * self.bg_rate, device=device
-            ),
-        )
+        if self.bg_prior is not None:
+            x_px = metadata["xyzcal.px.0"].to(device)
+            y_px = metadata["xyzcal.px.1"].to(device)
+            bg_rate, bg_alpha = self.bg_prior(x_px, y_px)
+            p_bg = Gamma(concentration=bg_alpha, rate=bg_alpha * bg_rate)
+        else:
+            p_bg = Gamma(
+                concentration=torch.tensor(
+                    self.bg_concentration, device=device
+                ),
+                rate=torch.tensor(
+                    self.bg_concentration * self.bg_rate, device=device
+                ),
+            )
         kl_bg = kl_divergence(qbg, p_bg) * self.pbg_weight
         kl = kl + kl_bg
 
