@@ -19,18 +19,24 @@ def _load_buffer(value: list[float] | str) -> Tensor:
 
 def compute_profile_kl(
     qp: Distribution | ProfileSurrogateOutput,
-    prior_scale: float,
+    prior_scale: float | Tensor,
     pprf_weight: float,
     device: torch.device,
 ) -> Tensor:
     """Compute profile KL divergence.
 
+    Args:
+        prior_scale: scalar or (B,) tensor for per-reflection σ_prior(r).
+            When a (B,) tensor, it is broadcast across the latent dimensions.
+
     Supports:
-    - ProfileSurrogateOutput: Normal-Normal KL with global N(0, prior_scale^2 I)
+    - ProfileSurrogateOutput: Normal-Normal KL with N(0, prior_scale² I)
     - Dirichlet: KL(q || Dirichlet(1,...,1)) with uniform prior
     """
     if isinstance(qp, ProfileSurrogateOutput):
         q = Normal(qp.loc, qp.scale)
+        if isinstance(prior_scale, Tensor) and prior_scale.dim() >= 1:
+            prior_scale = prior_scale.unsqueeze(-1)
         p = Normal(torch.zeros_like(qp.loc), prior_scale)
         kl = kl_divergence(q, p).sum(dim=-1)
         return kl * pprf_weight

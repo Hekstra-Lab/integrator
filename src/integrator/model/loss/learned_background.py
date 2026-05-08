@@ -8,6 +8,50 @@ from torch import Tensor
 from integrator.model.loss.learned_spectrum import ChebyshevSpectrum
 
 
+class ChebyshevProfilePriorScale(nn.Module):
+    """Learned profile prior scale σ_prior(r) as a smooth function of
+    detector radius, parameterized via Chebyshev polynomials.
+
+    σ_prior(r) = softplus(Σ cₖ Tₖ(r̃))  > 0
+    """
+
+    def __init__(
+        self,
+        degree: int = 4,
+        beam_center: list[float] | None = None,
+        r_min: float = 0.0,
+        r_max: float = 1500.0,
+        init_scale: float = 3.0,
+    ):
+        super().__init__()
+        self.degree = degree
+        n_basis = degree + 1
+
+        cx, cy = beam_center or [0.0, 0.0]
+        r_mid = (r_min + r_max) / 2.0
+        r_scale = (r_max - r_min) / 2.0
+
+        self.register_buffer("beam_cx", torch.tensor(cx))
+        self.register_buffer("beam_cy", torch.tensor(cy))
+        self.register_buffer("r_mid", torch.tensor(r_mid))
+        self.register_buffer("r_scale", torch.tensor(r_scale))
+
+        c = torch.zeros(n_basis)
+        c[0] = math.log(math.expm1(init_scale))
+        self.c = nn.Parameter(c)
+
+    def forward(self, x: Tensor, y: Tensor) -> Tensor:
+        """Returns σ_prior per reflection, > 0."""
+        r = torch.sqrt(
+            (x - self.beam_cx).pow(2) + (y - self.beam_cy).pow(2)
+        )
+        xn = ((r - self.r_mid) / self.r_scale).clamp(-1.0, 1.0)
+        phi = torch.stack(
+            ChebyshevSpectrum._chebyshev(xn, self.degree), dim=-1
+        )
+        return F.softplus(phi @ self.c)
+
+
 class ChebyshevBackgroundPrior(nn.Module):
     """Smooth background prior Gamma(conc(r), conc(r)·rate(r)) as a function of
     detector radius from beam center, parameterized via Chebyshev polynomials.

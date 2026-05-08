@@ -14,7 +14,10 @@ from integrator.model.loss.kl_helpers import (
     _load_buffer,
     compute_profile_kl,
 )
-from integrator.model.loss.learned_background import ChebyshevBackgroundPrior
+from integrator.model.loss.learned_background import (
+    ChebyshevBackgroundPrior,
+    ChebyshevProfilePriorScale,
+)
 
 
 class WilsonLoss(nn.Module):
@@ -36,6 +39,7 @@ class WilsonLoss(nn.Module):
         # Profile prior
         profile_basis: str | None = None,
         profile_prior_scale: float = 3.0,
+        profile_prior_cfg: dict | None = None,
         # B factor
         init_log_B: float = 3.0,
         b_min: float = 0.0,
@@ -64,6 +68,10 @@ class WilsonLoss(nn.Module):
         else:
             self.bg_prior = None
         self.profile_prior_scale = profile_prior_scale
+        if profile_prior_cfg is not None:
+            self.profile_prior = ChebyshevProfilePriorScale(**profile_prior_cfg)
+        else:
+            self.profile_prior = None
         self.pprf_weight = (
             pprf_cfg.weight if pprf_cfg is not None else pprf_weight
         )
@@ -131,16 +139,23 @@ class WilsonLoss(nn.Module):
 
         kl = torch.zeros(batch_size, device=device)
 
+        metadata = kwargs.get("metadata")
+        if metadata is None or "d" not in metadata:
+            raise ValueError("Wilson loss requires metadata['d'].")
+
         # Profile KL
+        if self.profile_prior is not None:
+            x_px = metadata["xyzcal.px.0"].to(device)
+            y_px = metadata["xyzcal.px.1"].to(device)
+            prf_prior_scale = self.profile_prior(x_px, y_px)
+        else:
+            prf_prior_scale = self.profile_prior_scale
         kl_prf = compute_profile_kl(
-            qp, self.profile_prior_scale, self.pprf_weight, device
+            qp, prf_prior_scale, self.pprf_weight, device
         )
         kl = kl + kl_prf
 
         # Wilson intensity KL
-        metadata = kwargs.get("metadata")
-        if metadata is None or "d" not in metadata:
-            raise ValueError("Wilson loss requires metadata['d'].")
         d = metadata["d"].to(device)
         s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))
 
