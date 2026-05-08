@@ -9,7 +9,7 @@ integrator:
     encoder_out: &encoder_out 32
     weight_decay: 0.0
     # decoder_weight_decay: 1.0e-3   # only for learned_basis_profile
-    qp_smoothness_weight: 1.0e-3  # only for learned_basis_profile
+    # qp_smoothness_weight: 1.0e-3  # only for learned_basis_profile
     # qp_orthogonality_weight: 1.0e-2  # only for learned_basis_profile
     mc_samples: &mc_samples 50
     predict_keys:

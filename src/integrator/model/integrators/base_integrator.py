@@ -186,9 +186,10 @@ class BaseIntegrator(pl.LightningModule):
 
     def validation_step(self, batch, _batch_idx):
         return self._step(batch, step="val")
+
+    def predict_step(self, batch, _batch_idx):
         counts, shoebox, mask, metadata = batch
         outputs = self(counts, shoebox, mask, metadata)
-
         return {
             k: v
             for k, v in outputs["forward_out"].items()
