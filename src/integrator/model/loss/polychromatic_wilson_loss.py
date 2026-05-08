@@ -1,7 +1,4 @@
-import math
-
 import torch
-import torch.nn as nn
 from torch import Tensor
 
 from integrator.model.loss.learned_spectrum import ChebyshevSpectrum
@@ -26,10 +23,10 @@ class PolychromaticWilsonLoss(WilsonLoss):
         lambda_max: float = 1.25,
         spectrum_init_from: str | None = None,
         freeze_prior: bool = False,
-        # Physical corrections
+        # Physical corrections (deterministic, not learned)
         beam_center: list[float] | None = None,
         polarization: bool = False,
-        init_tau_pol: float = 0.95,
+        polarization_fraction: float = 0.99,
         lorentz: bool = False,
         **kwargs,
     ):
@@ -62,7 +59,7 @@ class PolychromaticWilsonLoss(WilsonLoss):
             if self.learn_concentration:
                 self.log_alpha_per_group.requires_grad_(False)
 
-        # Polarization correction
+        # Polarization correction (fixed geometric correction)
         self._apply_polarization = polarization
         self._apply_lorentz = lorentz
         if polarization:
@@ -72,23 +69,26 @@ class PolychromaticWilsonLoss(WilsonLoss):
                 )
             self.register_buffer("beam_cx", torch.tensor(beam_center[0]))
             self.register_buffer("beam_cy", torch.tensor(beam_center[1]))
-            self.raw_tau_pol = nn.Parameter(
-                torch.tensor(math.atanh(init_tau_pol))
-            )
+            tau_pol = 2.0 * polarization_fraction - 1.0
+            self.register_buffer("tau_pol", torch.tensor(tau_pol))
 
     def _polarization_factor(
         self, two_theta: Tensor, metadata: dict, device: torch.device
     ) -> Tensor:
-        """f_P per reflection (Ren & Moffat eq. 11)."""
+        """f_P per reflection (Ren & Moffat eq. 11).
+
+        Deterministic correction using known beam polarization fraction.
+        φ measured from horizontal (synchrotron polarization plane).
+        """
         x = metadata["xyzcal.px.0"].to(device)
         y = metadata["xyzcal.px.1"].to(device)
         phi = torch.atan2(y - self.beam_cy, x - self.beam_cx)
 
-        tau_pol = torch.tanh(self.raw_tau_pol)
         cos2t = torch.cos(two_theta)
         sin2t = torch.sin(two_theta)
         return 2.0 / (
-            1.0 + cos2t.pow(2) - tau_pol * torch.cos(2.0 * phi) * sin2t.pow(2)
+            1.0 + cos2t.pow(2)
+            - self.tau_pol * torch.cos(2.0 * phi) * sin2t.pow(2)
         )
 
     @staticmethod

@@ -82,7 +82,7 @@ loss:
       init_alpha: 1.0
     polarization: true
     beam_center: [1990.3, 1972.8]
-    init_tau_pol: 0.95
+    polarization_fraction: 0.99
 
 data_loader:
   name: polychromatic_data
