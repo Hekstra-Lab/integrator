@@ -19,6 +19,8 @@ class ProfileEncoderArgs:
     conv2_padding: tuple[int, ...]
     norm2_num_groups: int
     dropout: float = 0.0
+    position_dim: int = 0
+    position_fourier_order: int = 0
 
     def __post_init__(self):
         if self.in_channels < 1:
