@@ -14,6 +14,7 @@ from integrator.model.distributions import (
 from integrator.model.encoders import (
     IntensityEncoder,
     ProfileEncoder,
+    ResidualProfileEncoder,
 )
 from integrator.model.integrators import (
     HierarchicalIntegrator,
@@ -27,6 +28,7 @@ from integrator.model.loss import (
 REGISTRY = {
     "encoders": {
         "profile_encoder": ProfileEncoder,
+        "residual_profile_encoder": ResidualProfileEncoder,
         "intensity_encoder": IntensityEncoder,
     },
     "loss": {

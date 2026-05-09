@@ -65,6 +65,18 @@ class IntensityEncoderArgs:
 
 
 @dataclass
+class ResidualProfileEncoderArgs:
+    encoder_out: int = 64
+    in_channels: int = 1
+    stem_channels: int = 32
+    block_channels: int = 64
+    groups: int = 8
+    se_reduction: int = 4
+    dropout: float = 0.0
+    data_dim: str = "2d"
+
+
+@dataclass
 class EncoderConfig:
     name: str
-    args: ProfileEncoderArgs | IntensityEncoderArgs
+    args: ProfileEncoderArgs | IntensityEncoderArgs | ResidualProfileEncoderArgs

@@ -11,12 +11,6 @@ from integrator.model.loss.learned_spectrum import ChebyshevSpectrum
 class ChebyshevProfilePriorScale(nn.Module):
     """Learned profile prior scale σ_prior(r, θ) as a smooth function of
     detector radius and azimuthal angle.
-
-    Parameterized as Chebyshev(r) × Fourier(θ):
-      σ_prior(r, θ) = softplus(Σₖ aₖ(r) + Σₘ [bₘ(r)·cos(mθ) + cₘ(r)·sin(mθ)])
-
-    where aₖ(r), bₘ(r), cₘ(r) are Chebyshev expansions in radius.
-    When fourier_order=0, this reduces to σ_prior(r) only.
     """
 
     def __init__(
@@ -44,7 +38,7 @@ class ChebyshevProfilePriorScale(nn.Module):
         self.register_buffer("r_scale", torch.tensor(r_scale))
 
         # c shape: (n_angular, n_radial)
-        # First row is the radial-only (DC) component, rest are cos/sin terms
+        # First row is the radial-only component, rest are cos/sin terms
         c = torch.zeros(n_angular, n_radial)
         c[0, 0] = math.log(math.expm1(init_scale))
         self.c = nn.Parameter(c)
@@ -59,14 +53,14 @@ class ChebyshevProfilePriorScale(nn.Module):
             ChebyshevSpectrum._chebyshev(rn, self.degree), dim=-1
         )  # (B, n_radial)
 
-        # DC term: radial only
+        # radial term
         out = phi_r @ self.c[0]  # (B,)
 
         if self.fourier_order > 0:
             theta = torch.atan2(dy, dx)
             for m in range(1, self.fourier_order + 1):
                 cos_coeff = phi_r @ self.c[2 * m - 1]  # (B,)
-                sin_coeff = phi_r @ self.c[2 * m]       # (B,)
+                sin_coeff = phi_r @ self.c[2 * m]  # (B,)
                 out = out + cos_coeff * torch.cos(m * theta)
                 out = out + sin_coeff * torch.sin(m * theta)
 
