@@ -21,6 +21,11 @@ class ProfileEncoderArgs:
     dropout: float = 0.0
     position_dim: int = 0
     position_fourier_order: int = 0
+    # ResidualProfileEncoder fields (ignored by ProfileEncoder)
+    stem_channels: int | None = None
+    block_channels: int | None = None
+    groups: int = 8
+    se_reduction: int = 4
 
     def __post_init__(self):
         if self.in_channels < 1:
