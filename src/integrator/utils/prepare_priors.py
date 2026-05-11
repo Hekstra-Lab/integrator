@@ -270,8 +270,7 @@ def prepare_per_bin_priors(
     # Fits Gamma MLE on all background values and saves (alpha, rate).
     bg_prior_path = data_dir / "bg_prior.pt"
     need_bg_prior = (
-        "bg_rate" not in loss_args
-        and "bg_concentration" not in loss_args
+        "bg_rate" not in loss_args and "bg_concentration" not in loss_args
     ) and (force or not bg_prior_path.exists())
 
     if (

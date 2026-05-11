@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 POSITIVE_CONSTRAINTS: dict[str, Callable[[torch.Tensor], torch.Tensor]] = {
     "softplus": F.softplus,
-    "log": torch.exp,
+    "exp": torch.exp,
 }
 
 

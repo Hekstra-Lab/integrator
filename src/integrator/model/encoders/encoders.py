@@ -23,8 +23,8 @@ class ProfileEncoder(nn.Module):
     """CNN encoder producing a fixed-length embedding from a shoebox volume.
 
     Args:
-        dropout: Probability of zeroing entire channels after each
-            conv+norm+relu block (using `DropoutNd`, not `Dropout`).
+        dropout: Probability of zeroing entire channels after each block
+        (using `DropoutNd`, not `Dropout`).
         position_dim: Number of position features to concatenate (0=off,
             2=raw (x,y), or higher for Fourier features).
         position_fourier_order: If > 0, expand (x,y) into sinusoidal

@@ -28,7 +28,6 @@ encoders:
     conv1_out_channels: 16
     conv2_out_channels: 32
     dropout: 0.2
-    position_fourier_order: 4
 - &intensity_enc # k_i
   name: intensity_encoder
   args:
@@ -55,14 +54,14 @@ surrogates:
       in_features: *encoder_out
       eps: 1.0e-06
       k_min: 0.1
-      positive_constraint: log 
+      mu_positive_constraint: log 
   qi:
     name: gammaB
     args:
       in_features: *encoder_out
       eps: 1.0e-06
       k_min: 0.1
-      positive_constraint: log
+      mu_positive_constraint: log
 
 loss:
   name: polychromatic_wilson
@@ -75,19 +74,12 @@ loss:
     pprf_weight: 1.0
     pbg_weight: 1.0
     bg_prior_cfg:
-      degree: 10
+      degree: 6
       beam_center: [1990.3, 1972.8]
       r_min: 0.0
       r_max: 1800.0
       init_rate: 1.0
       init_alpha: 1.0
-    profile_prior_cfg:
-      degree: 10
-      beam_center: [1990.3, 1972.8]
-      r_min: 0.0
-      r_max: 1800.0
-      init_scale: 3.0
-      fourier_order: 2
     polarization: true
     beam_center: [1990.3, 1972.8]
     polarization_fraction: 0.99
