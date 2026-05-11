@@ -54,14 +54,14 @@ surrogates:
       in_features: *encoder_out
       eps: 1.0e-06
       k_min: 0.1
-      mu_positive_constraint: log 
+      mu_positive_constraint: exp
   qi:
     name: gammaB
     args:
       in_features: *encoder_out
       eps: 1.0e-06
       k_min: 0.1
-      mu_positive_constraint: log
+      mu_positive_constraint: exp
 
 loss:
   name: polychromatic_wilson
