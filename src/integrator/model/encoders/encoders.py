@@ -22,13 +22,6 @@ OPERATIONS = {
 class ProfileEncoder(nn.Module):
     """CNN encoder producing a fixed-length embedding from a shoebox volume.
 
-    This module applies two Conv3d + GroupNorm + relu blocks with an
-    intermediate MaxPool3d, then flattens and projects to `encoder_out`.
-
-    When `position_dim > 0`, detector position features are concatenated
-    to the flattened CNN output before the MLP head, giving the encoder
-    spatial information about the shoebox.
-
     Args:
         dropout: Probability of zeroing entire channels after each
             conv+norm+relu block (using `DropoutNd`, not `Dropout`).
@@ -156,120 +149,6 @@ class ProfileEncoder(nn.Module):
         x = self.fc(x)
         x = F.relu(x)
 
-        return x
-
-
-class _SEBlock(nn.Module):
-    """Squeeze-and-Excitation channel attention."""
-
-    def __init__(self, channels: int, reduction: int = 4):
-        super().__init__()
-        mid = max(channels // reduction, 4)
-        self.fc1 = nn.Linear(channels, mid)
-        self.fc2 = nn.Linear(mid, channels)
-
-    def forward(self, x: Tensor) -> Tensor:
-        b, c = x.shape[:2]
-        s = x.view(b, c, -1).mean(dim=-1)
-        s = F.silu(self.fc1(s))
-        s = torch.sigmoid(self.fc2(s))
-        return x * s.view(b, c, *([1] * (x.dim() - 2)))
-
-
-class _ResBlock2d(nn.Module):
-    """Pre-activation residual block with optional SE and channel change."""
-
-    def __init__(
-        self,
-        in_ch: int,
-        out_ch: int,
-        stride: int = 1,
-        groups: int = 8,
-        se_reduction: int = 4,
-    ):
-        super().__init__()
-        self.conv1 = nn.Conv2d(
-            in_ch, out_ch, 3, stride=stride, padding=1, bias=False
-        )
-        self.norm1 = nn.GroupNorm(min(groups, out_ch), out_ch)
-        self.conv2 = nn.Conv2d(out_ch, out_ch, 3, padding=1, bias=False)
-        self.norm2 = nn.GroupNorm(min(groups, out_ch), out_ch)
-        self.se = _SEBlock(out_ch, se_reduction)
-
-        if stride != 1 or in_ch != out_ch:
-            self.skip = nn.Conv2d(in_ch, out_ch, 1, stride=stride, bias=False)
-        else:
-            self.skip = nn.Identity()
-
-    def forward(self, x: Tensor) -> Tensor:
-        out = F.silu(self.norm1(self.conv1(x)))
-        out = self.norm2(self.conv2(out))
-        out = self.se(out)
-        return F.silu(out + self.skip(x))
-
-
-class ResidualProfileEncoder(nn.Module):
-    """Mini-ResNet encoder for 2D shoeboxes.
-
-    Architecture:
-      5×5 stem → ResBlock(C1→C1) → ResBlock(C1→C2, stride=2) →
-      ResBlock(C2→C2) → GlobalAvgPool → Linear → SiLU
-
-    Compared to ProfileEncoder:
-      - 5×5 first kernel for larger initial receptive field
-      - Residual connections + SE attention
-      - Global average pooling instead of flatten (eliminates huge FC layer)
-      - SiLU activation throughout
-    """
-
-    def __init__(
-        self,
-        encoder_out: int = 64,
-        in_channels: int = 1,
-        stem_channels: int = 32,
-        block_channels: int = 64,
-        groups: int = 8,
-        se_reduction: int = 4,
-        dropout: float = 0.0,
-        # unused — accepted for compatibility with factory/presets
-        data_dim: str = "2d",
-        input_shape: tuple[int, ...] | None = None,
-        **kwargs,
-    ):
-        super().__init__()
-        self.encoder_out = encoder_out
-
-        self.stem = nn.Sequential(
-            nn.Conv2d(in_channels, stem_channels, 5, padding=2, bias=False),
-            nn.GroupNorm(min(groups, stem_channels), stem_channels),
-            nn.SiLU(),
-        )
-
-        self.block1 = _ResBlock2d(
-            stem_channels, stem_channels, stride=1,
-            groups=groups, se_reduction=se_reduction,
-        )
-        self.block2 = _ResBlock2d(
-            stem_channels, block_channels, stride=2,
-            groups=groups, se_reduction=se_reduction,
-        )
-        self.block3 = _ResBlock2d(
-            block_channels, block_channels, stride=1,
-            groups=groups, se_reduction=se_reduction,
-        )
-
-        self.pool = nn.AdaptiveAvgPool2d(1)
-        self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
-        self.fc = nn.Linear(block_channels, encoder_out)
-
-    def forward(self, x: Tensor, position: Tensor | None = None) -> Tensor:
-        x = self.stem(x)
-        x = self.block1(x)
-        x = self.block2(x)
-        x = self.block3(x)
-        x = self.pool(x).flatten(1)
-        x = self.dropout(x)
-        x = F.silu(self.fc(x))
         return x
 
 
