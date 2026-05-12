@@ -208,6 +208,25 @@ def prepare_per_bin_priors(
                     loss_args["lambda_max"],
                 )
 
+    # Auto-compute d_min/d_max for concentration_cfg from data
+    conc_cfg = loss_args.get("concentration_cfg")
+    if isinstance(conc_cfg, dict) and (
+        "d_min" not in conc_cfg or "d_max" not in conc_cfg
+    ):
+        ref_path = _resolve_reference_path(data_dir, cfg)
+        ref = torch.load(ref_path, weights_only=False)
+        d = None
+        if isinstance(ref, dict) and "d" in ref:
+            d = ref["d"]
+        if d is not None:
+            conc_cfg.setdefault("d_min", float(d.min()))
+            conc_cfg.setdefault("d_max", float(d.max()))
+            logger.info(
+                "concentration_cfg: auto d_min=%.4f d_max=%.4f",
+                conc_cfg["d_min"],
+                conc_cfg["d_max"],
+            )
+
     # Auto-inject concentration file paths when pi_cfg requests gamma
     pi_cfg = loss_args.get("pi_cfg")
     if (

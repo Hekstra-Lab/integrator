@@ -67,6 +67,44 @@ class ChebyshevProfilePriorScale(nn.Module):
         return F.softplus(out)
 
 
+class ChebyshevConcentration(nn.Module):
+    """Learned intensity prior concentration α(s²) as a smooth function of
+    resolution, parameterized via Chebyshev polynomials.
+
+    """
+
+    def __init__(
+        self,
+        degree: int = 4,
+        d_min: float = 1.5,
+        d_max: float = 50.0,
+        init_alpha: float = 1.0,
+    ):
+        super().__init__()
+        self.degree = degree
+        n_basis = degree + 1
+
+        s_sq_min = 1.0 / (4.0 * d_max**2)
+        s_sq_max = 1.0 / (4.0 * d_min**2)
+        s_sq_mid = (s_sq_min + s_sq_max) / 2.0
+        s_sq_scale = (s_sq_max - s_sq_min) / 2.0
+
+        self.register_buffer("s_sq_mid", torch.tensor(s_sq_mid))
+        self.register_buffer("s_sq_scale", torch.tensor(s_sq_scale))
+
+        c = torch.zeros(n_basis)
+        c[0] = math.log(math.expm1(init_alpha))
+        self.c = nn.Parameter(c)
+
+    def forward(self, s_sq: Tensor) -> Tensor:
+        """Returns α per reflection, > 0."""
+        xn = ((s_sq - self.s_sq_mid) / self.s_sq_scale).clamp(-1.0, 1.0)
+        phi = torch.stack(
+            ChebyshevSpectrum._chebyshev(xn, self.degree), dim=-1
+        )
+        return F.softplus(phi @ self.c)
+
+
 class ChebyshevBackgroundPrior(nn.Module):
     """Smooth background prior Gamma(conc(r), conc(r)·rate(r)) as a function of
     detector radius from beam center, parameterized via Chebyshev polynomials.

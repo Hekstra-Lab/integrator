@@ -73,6 +73,11 @@ loss:
     pi_weight: 1.0
     pprf_weight: 1.0
     pbg_weight: 1.0
+    concentration_cfg:
+      degree: 4
+      d_min: 1.5
+      d_max: 50.0
+      init_alpha: 1.0
     bg_prior_cfg:
       degree: 4
       beam_center: [1990.3, 1972.8]

@@ -16,6 +16,7 @@ from integrator.model.loss.kl_helpers import (
 )
 from integrator.model.loss.learned_background import (
     ChebyshevBackgroundPrior,
+    ChebyshevConcentration,
     ChebyshevProfilePriorScale,
 )
 
@@ -48,6 +49,7 @@ class WilsonLoss(nn.Module):
         init_alpha: float = 1.0,
         n_bins: int = 20,
         i_concentration_per_group: list[float] | str | None = None,
+        concentration_cfg: dict | None = None,
         # Prior configs from yaml
         pi_cfg=None,
         pbg_cfg=None,
@@ -98,7 +100,13 @@ class WilsonLoss(nn.Module):
         # used by polychromatic and monochromatic loss classes
         self.raw_B = nn.Parameter(torch.tensor(float(init_log_B)))
 
-        # Per-bin learnable concentration (Gamma shape)
+        # Continuous learnable concentration α(s²)
+        if concentration_cfg is not None:
+            self.concentration_fn = ChebyshevConcentration(**concentration_cfg)
+        else:
+            self.concentration_fn = None
+
+        # Per-bin learnable concentration (Gamma shape) — legacy
         if self.learn_concentration:
             if i_concentration_per_group is not None:
                 alpha_init = _load_buffer(i_concentration_per_group).clamp(
@@ -161,7 +169,10 @@ class WilsonLoss(nn.Module):
 
         tau = self._get_tau(metadata, s_sq, device)
 
-        if self.learn_concentration:
+        if self.concentration_fn is not None:
+            alpha_i = self.concentration_fn(s_sq)
+            p_i = Gamma(concentration=alpha_i, rate=alpha_i * tau)
+        elif self.learn_concentration:
             alpha_i = F.softplus(self.log_alpha_per_group[groups])
             p_i = Gamma(concentration=alpha_i, rate=alpha_i * tau)
         else:
