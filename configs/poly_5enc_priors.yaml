@@ -6,11 +6,8 @@ integrator:
     h: &h 25
     w: &w 25
     lr: 0.001
-    encoder_out: &encoder_out 64
-    weight_decay: 1.0e-4
-    lr_schedule: cosine_warmup
-    warmup_epochs: 5
-    lr_min: 1.0e-5
+    encoder_out: &encoder_out 32
+    weight_decay: 0.0
     mc_samples: &mc_samples 50
     predict_keys:
       [refl_ids, qi_mean, qi_var, qbg_mean, qbg_var,
@@ -25,17 +22,17 @@ encoders:
     data_dim: 2d
     input_shape: [*h, *w]
     encoder_out: *encoder_out
-    conv1_out_channels: 32
-    conv2_out_channels: 64
+    conv1_out_channels: 16
+    conv2_out_channels: 32
     dropout: 0.1
 - &intensity_enc
   name: intensity_encoder
   args:
     data_dim: 2d
     encoder_out: *encoder_out
-    conv1_out_channels: 32
-    conv2_out_channels: 64
-    conv3_out_channels: 128
+    conv1_out_channels: 16
+    conv2_out_channels: 32
+    conv3_out_channels: 64
 - *intensity_enc
 - *intensity_enc
 - *intensity_enc
@@ -54,14 +51,14 @@ surrogates:
       in_features: *encoder_out
       eps: 1.0e-06
       k_min: 0.1
-      positive_constraint: log
+      mu_positive_constraint: exp
   qi:
     name: gammaB
     args:
       in_features: *encoder_out
       eps: 1.0e-06
       k_min: 0.1
-      positive_constraint: log
+      mu_positive_constraint: exp
 
 loss:
   name: polychromatic_wilson
@@ -74,24 +71,21 @@ loss:
     pprf_weight: 1.0
     pbg_weight: 1.0
     concentration_cfg:
-      degree: 4
-      d_min: 1.5
-      d_max: 50.0
+      degree: 8
       init_alpha: 1.0
     bg_prior_cfg:
-      degree: 4
+      degree: 8
       beam_center: [1990.3, 1972.8]
       r_min: 0.0
       r_max: 1800.0
       init_rate: 1.0
       init_alpha: 1.0
     profile_prior_cfg:
-      degree: 4
+      degree: 6
       beam_center: [1990.3, 1972.8]
       r_min: 0.0
       r_max: 1800.0
       init_scale: 3.0
-      fourier_order: 2
     polarization: true
     beam_center: [1990.3, 1972.8]
     polarization_fraction: 0.99
