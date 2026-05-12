@@ -34,55 +34,64 @@ class GammaDistributionRepamA(nn.Module):
         in_features: int = 64,
         eps: float = 1e-6,
         k_min: float = 0.01,
-        positive_constraint: str = "softplus",
-        k_init: float = 1.0,
-        r_init: float | None = None,
-        zero_head_weights: bool = False,
+        k_constraint: str = "softplus",
+        r_constraint: str = "softplus",
+        # k_init: float = 1.0,
+        # r_init: float | None = None,
+        # zero_head_weights: bool = False,
         **kwargs,
     ):
         super().__init__()
         self.eps = eps
         self.k_min = k_min
-        self._constrain = get_positive_constraint(positive_constraint)
-        self._constraint_name = positive_constraint
 
+        # Positivity constraints
+        self.k_constrain = get_positive_constraint(k_constraint)
+        self.k_constraint_name = k_constraint
+
+        self.r_constrain = get_positive_constraint(r_constraint)
+        self.r_constraint_name = r_constraint
+
+        # linear layers
         self.linear_k = nn.Linear(in_features, 1)
         self.linear_r = nn.Linear(in_features, 1)
 
-        self._init_k_head_bias(self.linear_k, k_init)
-        self._init_r_head_bias(self.linear_r, r_init)
+        # self._init_k_head_bias(self.linear_k, k_init)
+        # self._init_r_head_bias(self.linear_r, r_init)
+        #
+        # if zero_head_weights:
+        #     with torch.no_grad():
+        #         self.linear_k.weight.zero_()
+        #         self.linear_r.weight.zero_()
+        #
 
-        if zero_head_weights:
-            with torch.no_grad():
-                self.linear_k.weight.zero_()
-                self.linear_r.weight.zero_()
-
-    def _inverse_bias(self, target: float, floor: float) -> float:
-        """Bias so that `act(bias) + floor ≈ target` at init."""
-        delta = max(target - floor, 1e-12)
-        if self._constraint_name == "log":
-            return math.log(delta)
-        if delta > 30.0:
-            return float(delta)
-        return math.log(math.expm1(delta))
-
-    def _init_k_head_bias(self, linear: nn.Linear, target: float) -> None:
-        if linear.bias is None:
-            return
-        with torch.no_grad():
-            linear.bias.fill_(self._inverse_bias(target, self.k_min))
-
-    def _init_r_head_bias(
-        self, linear: nn.Linear, target: float | None
-    ) -> None:
-        if target is None or linear.bias is None:
-            return
-        with torch.no_grad():
-            linear.bias.fill_(self._inverse_bias(target, self.eps))
+    #
+    # def _inverse_bias(self, target: float, floor: float) -> float:
+    #     """Bias so that `act(bias) + floor ≈ target` at init."""
+    #     delta = max(target - floor, 1e-12)
+    #     if self._constraint_name == "log":
+    #         return math.log(delta)
+    #     if delta > 30.0:
+    #         return float(delta)
+    #     return math.log(math.expm1(delta))
+    #
+    # def _init_k_head_bias(self, linear: nn.Linear, target: float) -> None:
+    #     if linear.bias is None:
+    #         return
+    #     with torch.no_grad():
+    #         linear.bias.fill_(self._inverse_bias(target, self.k_min))
+    #
+    # def _init_r_head_bias(
+    #     self, linear: nn.Linear, target: float | None
+    # ) -> None:
+    #     if target is None or linear.bias is None:
+    #         return
+    #     with torch.no_grad():
+    #         linear.bias.fill_(self._inverse_bias(target, self.eps))
 
     def forward(self, x: torch.Tensor, x_: torch.Tensor):
-        k = self._constrain(self.linear_k(x)) + self.k_min
-        r = self._constrain(self.linear_r(x_)) + self.eps
+        k = self.k_constrain(self.linear_k(x)) + self.k_min
+        r = self.r_constrain(self.linear_r(x_)) + self.eps
         return Gamma(concentration=k.flatten(), rate=r.flatten())
 
 
