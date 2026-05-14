@@ -165,6 +165,14 @@ def write_refl_from_preds(
     # REPLACE WITH FUNCTION
     data = get_pred_files(ckpt_dir=ckpt_dir, filetype=filetype)
 
+    # Exclude coset reflections — they have no meaningful intensity predictions
+    if "is_coset" in data:
+        is_coset = data["is_coset"]
+        if hasattr(is_coset, "astype"):
+            is_coset = is_coset.astype(bool)
+        lattice_mask = ~is_coset
+        data = {k: v[lattice_mask] for k, v in data.items()}
+
     # filename of output .refl file
     fname = ckpt_dir / f"preds_epoch_{epoch:04d}.refl"
 
