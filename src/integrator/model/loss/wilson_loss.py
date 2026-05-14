@@ -71,7 +71,9 @@ class WilsonLoss(nn.Module):
             self.bg_prior = None
         self.profile_prior_scale = profile_prior_scale
         if profile_prior_cfg is not None:
-            self.profile_prior = ChebyshevProfilePriorScale(**profile_prior_cfg)
+            self.profile_prior = ChebyshevProfilePriorScale(
+                **profile_prior_cfg
+            )
         else:
             self.profile_prior = None
         self.pprf_weight = (

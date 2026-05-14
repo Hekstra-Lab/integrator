@@ -94,6 +94,10 @@ class HierarchicalIntegrator(BaseIntegrator):
 
         rate = zI * zp + zbg
 
+        if "is_coset" in metadata:
+            coset = metadata["is_coset"].bool().view(-1, 1, 1)
+            rate = torch.where(coset, zbg, rate)
+
         out = IntegratorBaseOutputs(
             rates=rate,
             counts=counts,
@@ -164,6 +168,10 @@ class HierarchicalIntegrator3Enc(BaseIntegrator):
         zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
         rate = zI * zp + zbg
+
+        if "is_coset" in metadata:
+            coset = metadata["is_coset"].bool().view(-1, 1, 1)
+            rate = torch.where(coset, zbg, rate)
 
         out = IntegratorBaseOutputs(
             rates=rate,

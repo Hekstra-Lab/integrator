@@ -102,6 +102,7 @@ DEFAULT_DS_COLS = [
     "K",
     "L",
     "is_test",
+    "is_coset",
     "group_label",
     "profile_group_label",
 ]

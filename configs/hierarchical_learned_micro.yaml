@@ -8,9 +8,9 @@ integrator:
     lr: 0.001
     encoder_out: &encoder_out 32
     weight_decay: 0.0
-    decoder_weight_decay: 1.0e-3
-    qp_smoothness_weight: 1.0e-3
-    qp_orthogonality_weight: 1.0e-2
+    decoder_weight_decay: 1.0e-4
+    qp_smoothness_weight: 1.0e-4
+    qp_orthogonality_weight: 1.0e-4
     lr_schedule: cosine_warmup
     warmup_epochs: 5
     lr_min: 1.0e-5
@@ -18,7 +18,7 @@ integrator:
     predict_keys:
       [refl_ids, is_test, qi_mean, qi_var, qbg_mean, qbg_var,
        intensity.prf.value, intensity.prf.variance, background.mean,
-       d, group_label, qp_mean, qp_loc, qp_scale]
+       d, group_label, qp_mean, qp_loc, qp_scale, is_coset]
 
 encoders:
 - name: profile_encoder
@@ -77,7 +77,7 @@ loss:
 data_loader:
   name: rotation_data
   args:
-    data_dir: &data_dir /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data
+    data_dir: &data_dir /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/merged_pytorch_data
     batch_size: 2048
     val_split: 0.2
     test_split: 0.0
@@ -87,8 +87,8 @@ data_loader:
     cutoff: null
     shoebox_file_names:
       data_dir: *data_dir
-      counts: counts.pt
-      masks: masks.pt
+      counts: counts.npy
+      masks: masks.npy
       stats: anscombe_stats.pt
       reference: metadata.pt
       standardized_counts: null
