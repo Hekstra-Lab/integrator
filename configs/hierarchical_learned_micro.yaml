@@ -49,19 +49,19 @@ surrogates:
       output_dim: 1323
       init_std: 0.5
   qbg:
-    name: gammaA
+    name: gammaB
     args:
       in_features: *encoder_out
       eps: 1.0e-06
       k_min: 0.01
-      positive_constraint: softplus
+      mu_positive_constraint: log
   qi:
-    name: gammaA
+    name: gammaB
     args:
       in_features: *encoder_out
       eps: 1.0e-06
       k_min: 0.01
-      positive_constraint: log
+      mu_positive_constraint: log
 
 loss:
   name: monochromatic_wilson
