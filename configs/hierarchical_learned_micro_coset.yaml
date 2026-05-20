@@ -6,7 +6,7 @@ integrator:
     h: &h 21
     w: &w 21
     lr: 0.001
-    encoder_out: &encoder_out 64
+    encoder_out: &encoder_out 32
     weight_decay: 0.0
     decoder_weight_decay: 1.0e-4
     qp_smoothness_weight: 1.0e-4
@@ -14,7 +14,7 @@ integrator:
     lr_schedule: cosine_warmup
     warmup_epochs: 5
     lr_min: 1.0e-5
-    mc_samples: &mc_samples 50
+    mc_samples: &mc_samples 24
     predict_keys:
       [refl_ids, is_test, qi_mean, qi_var, qbg_mean, qbg_var,
        intensity.prf.value, intensity.prf.variance, background.mean,
@@ -77,7 +77,7 @@ loss:
 data_loader:
   name: rotation_data
   args:
-    data_dir: &data_dir /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data
+    data_dir: &data_dir /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/merged_pytorch_data
     batch_size: 2048
     val_split: 0.2
     test_split: 0.0
@@ -120,7 +120,3 @@ output:
   dials_merge_html: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/merged_reference.html
   phenix_refine_log: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/refine_001.log
   anomalous_peaks: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/reference_peaks.csv
-  phenix_eff: /n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/reference_data/phenix.eff
-  pdb: /n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/reference_data/9b7c.pdb
-  expt_file: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/dials_2026-05-14/integrated.expt
-
