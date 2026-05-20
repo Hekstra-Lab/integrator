@@ -66,6 +66,7 @@ surrogates:
 loss:
   name: monochromatic_wilson
   args:
+    lp_correction: true
     mc_samples: *mc_samples
     eps: 1.0e-06
     n_bins: 25
