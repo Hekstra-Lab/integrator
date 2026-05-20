@@ -326,13 +326,10 @@ class RotationDataModule(pl.LightningDataModule):
             reference,
         )
 
-        # indicators for reflections flagged for the test set
-        is_test = reference["is_test"]
-
-        # indices
+        # Split using is_test if available
+        is_test = reference.get("is_test")
         all_indices = torch.arange(len(self.full_dataset))
 
-        # Optionally, create a subset of the dataset
         if self.subset_size is not None and self.subset_size < len(
             self.full_dataset
         ):
@@ -340,22 +337,21 @@ class RotationDataModule(pl.LightningDataModule):
                 torch.randperm(len(all_indices))[: self.subset_size]
             ]
 
-        # Split the indices using is_test
-        test_mask = is_test[all_indices]
-        test_idx = all_indices[test_mask]
-        train_val_idx = all_indices[~test_mask]
+        if is_test is not None and is_test.any():
+            test_mask = is_test[all_indices].bool()
+            test_idx = all_indices[test_mask]
+            train_val_idx = all_indices[~test_mask]
+        else:
+            test_idx = torch.tensor([], dtype=torch.long)
+            train_val_idx = all_indices
 
-        # test dataset
         self.test_dataset = Subset(self.full_dataset, test_idx.tolist())
 
         perm = torch.randperm(len(train_val_idx))
-
         val_size = int(len(train_val_idx) * self.val_split)
-
         val_idx = train_val_idx[perm[:val_size]]
         train_idx = train_val_idx[perm[val_size:]]
 
-        # Train and validation test sets
         self.val_dataset = Subset(self.full_dataset, val_idx.tolist())
         self.train_dataset = Subset(self.full_dataset, train_idx.tolist())
 
@@ -517,13 +513,10 @@ class SimulatedShoeboxLoader(pl.LightningDataModule):
             column_names=SIMULATED_COLS,
         )
 
-        # indicators for reflections flagged for the test set
-        is_test = reference["is_test"]
-
-        # indices
+        # Split using is_test if available
+        is_test = reference.get("is_test")
         all_indices = torch.arange(len(self.full_dataset))
 
-        # Optionally, create a subset of the dataset
         if self.subset_size is not None and self.subset_size < len(
             self.full_dataset
         ):
@@ -531,22 +524,21 @@ class SimulatedShoeboxLoader(pl.LightningDataModule):
                 torch.randperm(len(all_indices))[: self.subset_size]
             ]
 
-        # Split the indices using is_test
-        test_mask = is_test[all_indices]
-        test_idx = all_indices[test_mask]
-        train_val_idx = all_indices[~test_mask]
+        if is_test is not None and is_test.any():
+            test_mask = is_test[all_indices].bool()
+            test_idx = all_indices[test_mask]
+            train_val_idx = all_indices[~test_mask]
+        else:
+            test_idx = torch.tensor([], dtype=torch.long)
+            train_val_idx = all_indices
 
-        # test dataset
         self.test_dataset = Subset(self.full_dataset, test_idx.tolist())
 
         perm = torch.randperm(len(train_val_idx))
-
         val_size = int(len(train_val_idx) * self.val_split)
-
         val_idx = train_val_idx[perm[:val_size]]
         train_idx = train_val_idx[perm[val_size:]]
 
-        # Train and validation test sets
         self.val_dataset = Subset(self.full_dataset, val_idx.tolist())
         self.train_dataset = Subset(self.full_dataset, train_idx.tolist())
 
