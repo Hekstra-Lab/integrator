@@ -241,7 +241,7 @@ def _get_surrogate_modules(
 
     for key, surrogate_cfg in cfg["surrogates"].items():
         surrogate_cls = REGISTRY["surrogates"][surrogate_cfg["name"]]
-        args = dict(surrogate_cfg["args"])
+        args = dict(surrogate_cfg.get("args", {}))
 
         # GammaB: inject mean_init
         if (

@@ -312,10 +312,12 @@ def main():
     inject_binning_labels(data_loader, cfg)
 
     # Tags for identification
+    qi_cfg = cfg["surrogates"].get("qi")
+    qi_tag = qi_cfg["name"] if qi_cfg else "hkl_table"
     tags = [
         cfg["integrator"]["name"],
         cfg["integrator"]["args"]["data_dim"],
-        cfg["surrogates"]["qi"]["name"],
+        qi_tag,
     ]
 
     # Logger (W&B or CSV)
