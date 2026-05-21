@@ -43,6 +43,8 @@ class ScalingIntegrator(BaseIntegrator):
     SparseAdam for the HKL embedding table.
     """
 
+    _MANUAL_OPTIMIZATION = True
+
     REQUIRED_ENCODERS = {
         "profile": configs.ProfileEncoderArgs,
         "k_bg": configs.IntensityEncoderArgs,
@@ -79,8 +81,8 @@ class ScalingIntegrator(BaseIntegrator):
         self.scaling_lr = (
             cfg.scaling_lr if cfg.scaling_lr is not None else cfg.lr
         )
-        self._clip_val = cfg.gradient_clip_val
-        self._clip_algo = cfg.gradient_clip_algorithm
+        self._clip_val = getattr(cfg, "gradient_clip_val", 1.0)
+        self._clip_algo = getattr(cfg, "gradient_clip_algorithm", "norm")
 
     def _forward_impl(
         self,

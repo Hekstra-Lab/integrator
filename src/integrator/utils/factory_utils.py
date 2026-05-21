@@ -555,12 +555,17 @@ def construct_trainer(
         enable_progress_bar=True,
     )
 
-    if tr_cfg.gradient_clip_val is not None:
-        trainer_kwargs["gradient_clip_val"] = tr_cfg.gradient_clip_val
-    if tr_cfg.gradient_clip_algorithm is not None:
-        trainer_kwargs["gradient_clip_algorithm"] = (
-            tr_cfg.gradient_clip_algorithm
-        )
+    # Manual-optimization integrators handle clipping themselves;
+    # Lightning rejects gradient_clip_val on the Trainer for those.
+    integrator_cls = _get_integrator_cls(cfg["integrator"]["name"])
+    manual_opt = getattr(integrator_cls, "_MANUAL_OPTIMIZATION", False)
+    if not manual_opt:
+        if tr_cfg.gradient_clip_val is not None:
+            trainer_kwargs["gradient_clip_val"] = tr_cfg.gradient_clip_val
+        if tr_cfg.gradient_clip_algorithm is not None:
+            trainer_kwargs["gradient_clip_algorithm"] = (
+                tr_cfg.gradient_clip_algorithm
+            )
 
     return pl.Trainer(**trainer_kwargs)
 
