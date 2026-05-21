@@ -21,6 +21,14 @@ class IntegratorCfg:
     mc_samples: int = 4
     predict_keys: Literal["default"] | list[str] = "default"
 
+    # Scaling model: per-HKL structure factor lookup table
+    n_hkl: int | None = None
+    scaling_init_mu: float = 1.0
+    scaling_init_fano: float = 1.0
+    scaling_eps: float = 1e-6
+    scaling_k_min: float = 0.1
+    scaling_lr: float | None = None
+
     def __post_init__(self):
         if self.data_dim not in ("2d", "3d"):
             raise ValueError(

@@ -105,6 +105,7 @@ DEFAULT_DS_COLS = [
     "is_coset",
     "group_label",
     "profile_group_label",
+    "asu_id",
 ]
 
 
