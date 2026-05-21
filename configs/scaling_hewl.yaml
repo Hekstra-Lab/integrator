@@ -25,8 +25,8 @@ integrator:
 
     # Chebyshev scale s(frame): captures beam decay / image-to-image drift
     scale_degree: 5
-    scale_frame_min: 0.0
-    scale_frame_max: 3600.0
+    scale_frame_min: -2.0
+    scale_frame_max: 1442.0
 
 encoders:
 - name: profile_encoder

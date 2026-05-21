@@ -34,6 +34,10 @@ class IntegratorCfg:
     scale_frame_min: float = 0.0
     scale_frame_max: float = 1000.0
 
+    # Manual gradient clipping (for manual-optimization integrators)
+    gradient_clip_val: float = 1.0
+    gradient_clip_algorithm: str = "norm"
+
     def __post_init__(self):
         if self.data_dim not in ("2d", "3d"):
             raise ValueError(

@@ -79,6 +79,8 @@ class ScalingIntegrator(BaseIntegrator):
         self.scaling_lr = (
             cfg.scaling_lr if cfg.scaling_lr is not None else cfg.lr
         )
+        self._clip_val = cfg.gradient_clip_val
+        self._clip_algo = cfg.gradient_clip_algorithm
 
     def _forward_impl(
         self,
@@ -227,6 +229,12 @@ class ScalingIntegrator(BaseIntegrator):
         main_opt.zero_grad()
         sparse_opt.zero_grad()
         self.manual_backward(loss)
+        if self._clip_val is not None and self._clip_val > 0:
+            self.clip_gradients(
+                main_opt,
+                gradient_clip_val=self._clip_val,
+                gradient_clip_algorithm=self._clip_algo,
+            )
         main_opt.step()
         sparse_opt.step()
 
