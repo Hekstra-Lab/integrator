@@ -123,13 +123,16 @@ class LearnedBasisProfileSurrogate(nn.Module):
 
     Args:
         input_dim: Dimension of the encoder output.
-        latent_dim: Dimension of the latent h. Default 8.
-        output_dim: Number of profile pixels (H * W). Default 441.
+        latent_dim: Dimension of the latent h. When `warmstart_basis_path`
+            is provided, defaults to the basis's `d` and must match it
+            exactly if set explicitly. Without warm-start, defaults to 8.
+        output_dim: Number of profile pixels (D*H*W). Default 441.
         warmstart_basis_path: Optional .pt file with keys 'W' (K, d) and
-            'b' (K,) to warm-start the decoder. When `latent_dim` differs
-            from the basis's `d`, the first `min(latent_dim, basis_d)`
-            columns of W are copied; any extra columns stay randomly
-            initialized.
+            'b' (K,) to warm-start the decoder.
+
+    Raises:
+        ValueError: If `latent_dim` is set explicitly and differs from
+            the basis's `d` when warm-starting.
     """
 
     def __init__(
@@ -153,10 +156,14 @@ class LearnedBasisProfileSurrogate(nn.Module):
             d_basis = self._basis_W.shape[1]
             if latent_dim is None:
                 latent_dim = d_basis
+            elif latent_dim != d_basis:
+                raise ValueError(
+                    f"latent_dim={latent_dim} does not match warmstart "
+                    f"basis d={d_basis} (from {warmstart_basis_path!r}). "
+                    f"Drop latent_dim from the config to auto-infer, or "
+                    f"set it to {d_basis} to match."
+                )
 
-        # TODO: remove latent_dim fallback once legacy configs (ablation
-        # runs Apr 2026) are done — latent_dim should always be inferred
-        # from the basis file when warmstarting.
         if latent_dim is None:
             latent_dim = 8
 
@@ -187,9 +194,8 @@ class LearnedBasisProfileSurrogate(nn.Module):
                 f"warmstart basis b has K={b.shape[0]} but output_dim="
                 f"{output_dim}."
             )
-        d_copy = min(self.d, W.shape[1])
         with torch.no_grad():
-            self.decoder.weight.data[:, :d_copy].copy_(W[:, :d_copy])
+            self.decoder.weight.data.copy_(W)
             self.decoder.bias.data.copy_(b)
         del self._basis_W, self._basis_b
 
