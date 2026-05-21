@@ -278,6 +278,21 @@ def _get_surrogate_modules(
                     data_dir,
                     n_bins,
                 )
+
+        # Hermite generation knobs are consumed by prepare_profile_basis,
+        # not the surrogate class itself.
+        if surrogate_cfg["name"] in (
+            "learned_basis_profile",
+            "fixed_basis_profile",
+        ):
+            for hermite_key in (
+                "hermite_max_order",
+                "hermite_basis_sigma",
+                "hermite_sigma_z",
+                "hermite_max_order_z",
+            ):
+                args.pop(hermite_key, None)
+
         surrogates[key] = surrogate_cls(**args)
     return surrogates
 

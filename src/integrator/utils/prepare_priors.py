@@ -145,6 +145,132 @@ def prepare_global_priors(
     )
 
 
+def prepare_profile_basis(
+    cfg: dict,
+    *,
+    force: bool = False,
+    events_out: list[dict] | None = None,
+) -> None:
+    """Auto-generate a fixed Hermite profile basis .pt file if missing.
+
+    Triggered when `surrogates.qp.args` references a basis file
+    (`warmstart_basis_path` for `learned_basis_profile` or `basis_path`
+    for `fixed_basis_profile`) that does not exist on disk. The basis is
+    built from the spatial shape in `data_loader.args` and the Hermite
+    knobs in `surrogates.qp.args`:
+
+      - `hermite_max_order` (default 4): max polynomial order in x, y
+      - `hermite_basis_sigma` (default 3.0): reference Gaussian width
+      - `hermite_sigma_z` (default 1.0): Gaussian width along z (3D only)
+      - `hermite_max_order_z` (default `min(1, D-1)`): max order in z
+
+    Idempotent: skips when file already exists unless `force=True`.
+
+    Args:
+        cfg: Full YAML config dict.
+        force: Regenerate even if file already exists.
+        events_out: Optional list appended with a structured event dict
+            describing the file action ("created").
+    """
+    qp_cfg = cfg.get("surrogates", {}).get("qp")
+    if not isinstance(qp_cfg, dict):
+        return
+    name = qp_cfg.get("name")
+    if name not in ("learned_basis_profile", "fixed_basis_profile"):
+        return
+    args = qp_cfg.get("args", {}) or {}
+
+    if name == "learned_basis_profile":
+        path_arg = args.get("warmstart_basis_path")
+    else:
+        path_arg = args.get("basis_path")
+    if not isinstance(path_arg, str):
+        return
+
+    data_dir = Path(cfg["data_loader"]["args"]["data_dir"])
+    n_bins_val = cfg.get("loss", {}).get("args", {}).get("n_bins")
+    if n_bins_val is not None:
+        basis_path = _nbins_path(path_arg, int(n_bins_val), data_dir)
+    else:
+        p = Path(path_arg)
+        basis_path = p if p.is_absolute() else data_dir / p
+
+    if basis_path.exists() and not force:
+        return
+
+    max_order = int(args.get("hermite_max_order", 4))
+    sigma_ref = float(args.get("hermite_basis_sigma", 3.0))
+    sigma_z = float(args.get("hermite_sigma_z", 1.0))
+    max_order_z_arg = args.get("hermite_max_order_z")
+    max_order_z = (
+        int(max_order_z_arg) if max_order_z_arg is not None else None
+    )
+
+    dl_args = cfg.get("data_loader", {}).get("args", {})
+    D_dim = int(dl_args.get("D", dl_args.get("d", 1)))
+    H_dim = int(dl_args.get("H", dl_args.get("h", 21)))
+    W_dim = int(dl_args.get("W", dl_args.get("w", 21)))
+
+    if D_dim > 1:
+        W_basis, b, orders = _build_hermite_basis_3d(
+            D_dim,
+            H_dim,
+            W_dim,
+            max_order,
+            sigma_ref,
+            sigma_z,
+            max_order_z=max_order_z,
+        )
+        max_order_z_used = (
+            max_order_z if max_order_z is not None else min(1, D_dim - 1)
+        )
+    else:
+        W_basis, b, orders = _build_hermite_basis_2d(
+            H_dim, W_dim, max_order, sigma_ref
+        )
+        max_order_z_used = 0
+    d = W_basis.shape[1]
+
+    basis_data = {
+        "W": W_basis,
+        "b": b,
+        "d": d,
+        "orders": orders,
+        "max_order": max_order,
+        "max_order_z": max_order_z_used,
+        "sigma_ref": sigma_ref,
+        "sigma_z": sigma_z,
+        "sigma_prior": 3.0,
+        "basis_type": "hermite",
+        "shape": (D_dim, H_dim, W_dim),
+    }
+    basis_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(basis_data, basis_path)
+    logger.info(
+        "Saved %s (Hermite basis: %dD, max_order=%d, max_order_z=%d, "
+        "sigma_ref=%.2f, d=%d)",
+        basis_path.name,
+        3 if D_dim > 1 else 2,
+        max_order,
+        max_order_z_used,
+        sigma_ref,
+        d,
+    )
+    if events_out is not None:
+        events_out.append(
+            {
+                "file": basis_path.name,
+                "action": "created",
+                "path": str(basis_path),
+                "reason": "Hermite basis warmstart auto-generated",
+                "max_order": max_order,
+                "max_order_z": max_order_z_used,
+                "sigma_ref": sigma_ref,
+                "d": d,
+            }
+        )
+
+
 def prepare_per_bin_priors(
     cfg: dict,
     *,
@@ -1055,11 +1181,25 @@ def _build_hermite_basis_3d(
     max_order: int = 4,
     sigma_ref: float = 3.0,
     sigma_z: float = 1.0,
+    max_order_z: int | None = None,
 ) -> tuple[Tensor, Tensor, list[tuple[int, int, int]]]:
     """3D Hermite function basis (frame x spatial) with half-Gaussian envelope.
 
-    Frame direction uses max order min(1, D-1) since D is typically small (3).
-    Spatial directions use the full max_order.
+    Spatial directions (x, y) use `max_order`. The frame direction (z) uses
+    `max_order_z` if provided; otherwise defaults to `min(1, D-1)` (linear
+    tilt only) which is sufficient when D=3 — the (0,0,0) mode is absorbed
+    by `b`, `nz=0` gives the symmetric rocking peak via the half-Gaussian
+    envelope, and `nz=1` captures asymmetry. For D>3, pass a larger
+    `max_order_z` to resolve higher-order z structure.
+
+    Args:
+        D: Number of frames (z dimension).
+        H: Shoebox height.
+        W: Shoebox width.
+        max_order: Max polynomial order in x, y.
+        sigma_ref: Reference Gaussian width in pixels (x, y).
+        sigma_z: Reference Gaussian width along z/frame axis.
+        max_order_z: Max polynomial order in z. Defaults to `min(1, D-1)`.
 
     Returns:
         Tuple of (W, b, orders) where W is a (D*H*W, d) basis matrix, b is a
@@ -1087,7 +1227,8 @@ def _build_hermite_basis_3d(
     ref = full_gaussian / full_gaussian.sum()
     b = torch.log(ref.reshape(-1).clamp(min=1e-10)).float()
 
-    max_order_z = min(1, D - 1)  # at most linear in frame direction
+    if max_order_z is None:
+        max_order_z = min(1, D - 1)
 
     basis_list = []
     orders = []
