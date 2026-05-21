@@ -130,12 +130,13 @@ class ScalingIntegrator(BaseIntegrator):
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
         zp = _sample_profile(qp, self.mc_samples)
 
-        # Per-observation scale: s(frame) * lp
+        # Per-observation scale: s(frame) / lp
+        # DIALS lp = L/P; I_corrected = I_raw * lp, so I_raw = F² * scale / lp.
         device = shoebox.device
         frame = metadata["xyzcal.px.2"].to(device).float()
         s = self.scale_fn(frame)
         lp = metadata["lp"].to(device).float().clamp(min=1e-8)
-        scale = (s * lp).view(b, 1, 1)
+        scale = (s / lp).view(b, 1, 1)
 
         rate = scale * F_sq * zp + zbg
 
