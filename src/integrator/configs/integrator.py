@@ -29,6 +29,11 @@ class IntegratorCfg:
     scaling_k_min: float = 0.1
     scaling_lr: float | None = None
 
+    # Scaling model: Chebyshev scale s(frame)
+    scale_degree: int = 5
+    scale_frame_min: float = 0.0
+    scale_frame_max: float = 1000.0
+
     def __post_init__(self):
         if self.data_dim not in ("2d", "3d"):
             raise ValueError(

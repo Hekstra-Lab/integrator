@@ -18,6 +18,7 @@ from integrator.model.integrators.integrator_utils import (
     IntegratorBaseOutputs,
     _assemble_outputs,
 )
+from integrator.model.scaling.chebyshev_scale import ChebyshevScale
 from integrator.model.scaling.hkl_table import HKLLookupTable
 
 
@@ -29,15 +30,17 @@ class ScalingIntegrator(BaseIntegrator):
     of the same Miller index share the same variational distribution for
     the structure factor.
 
-    Expects ``metadata["asu_id"]`` — an integer index into the reciprocal
-    asymmetric unit, precomputed upstream and stored in ``reference.pt``.
+    rate = s(frame) * lp * F^2_hkl * profile + background
 
-    Uses manual optimization with two optimizers: regular Adam for
-    encoders/surrogates/loss, and SparseAdam for the HKL embedding table.
-    SparseAdam only updates rows that appeared in the batch, preventing
-    state drift for unseen reflections.
+    where s(frame) is a smooth Chebyshev scale capturing beam decay and
+    other image-to-image variations, lp is the known Lorentz-polarization
+    correction from metadata, and F^2 has a Wilson prior (no LP — set
+    ``lp_correction: false`` in the loss config).
 
-    rate = F^2_hkl * profile + background
+    Expects ``metadata["asu_id"]`` and ``metadata["lp"]``.
+
+    Uses manual optimization: Adam for encoders/surrogates/loss/scale,
+    SparseAdam for the HKL embedding table.
     """
 
     REQUIRED_ENCODERS = {
@@ -67,6 +70,11 @@ class ScalingIntegrator(BaseIntegrator):
             init_fano=cfg.scaling_init_fano,
             eps=cfg.scaling_eps,
             k_min=cfg.scaling_k_min,
+        )
+        self.scale_fn = ChebyshevScale(
+            degree=cfg.scale_degree,
+            frame_min=cfg.scale_frame_min,
+            frame_max=cfg.scale_frame_max,
         )
         self.scaling_lr = (
             cfg.scaling_lr if cfg.scaling_lr is not None else cfg.lr
@@ -118,7 +126,14 @@ class ScalingIntegrator(BaseIntegrator):
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
         zp = _sample_profile(qp, self.mc_samples)
 
-        rate = F_sq * zp + zbg
+        # Per-observation scale: s(frame) * lp
+        device = shoebox.device
+        frame = metadata["xyzcal.px.2"].to(device).float()
+        s = self.scale_fn(frame)
+        lp = metadata["lp"].to(device).float().clamp(min=1e-8)
+        scale = (s * lp).view(b, 1, 1)
+
+        rate = scale * F_sq * zp + zbg
 
         if "is_coset" in metadata:
             coset = metadata["is_coset"].bool().view(-1, 1, 1)
