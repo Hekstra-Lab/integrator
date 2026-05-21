@@ -1,5 +1,6 @@
 import math
 
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
@@ -17,9 +18,11 @@ class HKLLookupTable(nn.Module):
     """Per-HKL Gamma variational parameters as an embedding table.
 
     Uses the GammaB parameterization: (mu, fano) -> Gamma(k, rate) where
-    k = mu/fano + k_min, rate = 1/fano. Each unique reflection in the
-    asymmetric unit gets its own (mu, fano) pair, stored as unconstrained
-    embeddings with softplus activation.
+    k = mu/fano + k_min, rate = 1/fano.
+
+    mu uses exp constraint (log-space embedding) so that small additive
+    updates produce multiplicative changes — necessary because F^2 spans
+    orders of magnitude.  fano uses softplus since it stays O(1).
 
     Observations provide a precomputed ``asu_id`` that indexes into the
     table.
@@ -41,10 +44,8 @@ class HKLLookupTable(nn.Module):
         self.raw_mu = nn.Embedding(n_hkl, 1, sparse=True)
         self.raw_fano = nn.Embedding(n_hkl, 1, sparse=True)
 
-        raw_mu_init = _softplus_inv(init_mu, eps)
-        raw_fano_init = _softplus_inv(init_fano, eps)
-        nn.init.constant_(self.raw_mu.weight, raw_mu_init)
-        nn.init.constant_(self.raw_fano.weight, raw_fano_init)
+        nn.init.constant_(self.raw_mu.weight, math.log(max(init_mu, 1e-12)))
+        nn.init.constant_(self.raw_fano.weight, _softplus_inv(init_fano, eps))
 
     def forward(
         self, asu_ids: Tensor, mc_samples: int = 1
@@ -59,7 +60,7 @@ class HKLLookupTable(nn.Module):
             qi: Gamma distribution with batch shape (B,).
             F_sq: (S, B) structure factor squared samples.
         """
-        mu = F.softplus(self.raw_mu(asu_ids).squeeze(-1)) + self.eps
+        mu = torch.exp(self.raw_mu(asu_ids).squeeze(-1))
         fano = F.softplus(self.raw_fano(asu_ids).squeeze(-1)) + self.eps
 
         rate = 1.0 / fano

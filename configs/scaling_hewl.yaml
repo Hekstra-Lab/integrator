@@ -21,7 +21,7 @@ integrator:
     n_hkl: 86402
     scaling_init_mu: 1.0
     scaling_init_fano: 1.0
-    scaling_lr: 0.001
+    scaling_lr: 0.01
 
     # Chebyshev scale s(frame): captures beam decay / image-to-image drift
     scale_degree: 5
