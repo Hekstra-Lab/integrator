@@ -1,4 +1,4 @@
-from .chebyshev_scale import ChebyshevScale
+from .chebyshev_scale import ChebyshevScale, SpatialChebyshevScale
 from .hkl_table import HKLLookupTable
 from .refinement_integrator import RefinementIntegrator
 from .scaling_integrator import ScalingIntegrator

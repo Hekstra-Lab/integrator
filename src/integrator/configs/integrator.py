@@ -29,10 +29,15 @@ class IntegratorCfg:
     scaling_k_min: float = 0.1
     scaling_lr: float | None = None
 
-    # Scaling model: Chebyshev scale s(frame)
+    # Scaling model: Chebyshev scale s(frame) or s(frame, radius)
     scale_degree: int = 5
     scale_frame_min: float = 0.0
     scale_frame_max: float = 1000.0
+    scale_spatial: bool = False
+    scale_degree_radius: int = 5
+    scale_beam_center: list[float] | None = None
+    scale_r_min: float = 0.0
+    scale_r_max: float = 1500.0
 
     # Manual gradient clipping (for manual-optimization integrators)
     gradient_clip_val: float = 1.0
