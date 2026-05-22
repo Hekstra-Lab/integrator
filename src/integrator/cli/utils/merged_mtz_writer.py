@@ -111,7 +111,7 @@ def write_merged_mtz_from_checkpoint(
 
     # Convert anomalous Friedel-pair rows into I(+)/I(-) columns
     # for phenix.refine compatibility.
-    ds.hkl_to_asu(anomalous=True)
+    ds.hkl_to_asu(anomalous=False)
     ds_anom = ds.unstack_anomalous()
     ds_anom.rename(
         columns={
