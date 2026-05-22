@@ -19,10 +19,11 @@ from integrator.model.integrators import (
     HierarchicalIntegrator,
     HierarchicalIntegrator3Enc,
 )
-from integrator.model.scaling import ScalingIntegrator
+from integrator.model.scaling import RefinementIntegrator, ScalingIntegrator
 from integrator.model.loss import (
     MonochromaticWilsonLoss,
     PolychromaticWilsonLoss,
+    RefinementLoss,
 )
 
 REGISTRY = {
@@ -33,11 +34,13 @@ REGISTRY = {
     "loss": {
         "monochromatic_wilson": MonochromaticWilsonLoss,
         "polychromatic_wilson": PolychromaticWilsonLoss,
+        "refinement": RefinementLoss,
     },
     "integrator": {
         "hierarchical": HierarchicalIntegrator,
         "hierarchical_3enc": HierarchicalIntegrator3Enc,
         "scaling": ScalingIntegrator,
+        "refinement": RefinementIntegrator,
     },
     "surrogates": {
         "gammaA": GammaDistributionRepamA,

@@ -38,6 +38,16 @@ class IntegratorCfg:
     gradient_clip_val: float = 1.0
     gradient_clip_algorithm: str = "norm"
 
+    # Refinement model: SFcalculator-based structure factors
+    pdb_path: str | None = None
+    dmin: float = 2.0
+    wavelength: float = 1.0
+    anomalous: bool = True
+    asu_id_to_hkl_path: str | None = None
+    restraint_w_xyz: float = 0.01
+    restraint_w_biso: float = 0.001
+    atom_lr: float | None = None
+
     def __post_init__(self):
         if self.data_dim not in ("2d", "3d"):
             raise ValueError(

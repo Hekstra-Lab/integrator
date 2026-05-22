@@ -492,8 +492,13 @@ def construct_integrator(
     # integrator class
     integrator_cls = _get_integrator_cls(cfg["integrator"]["name"])
 
-    # get integrator components
-    integrator_args = configs.IntegratorCfg(**cfg["integrator"]["args"])
+    # get integrator components — resolve paths before constructing dataclass
+    int_raw = dict(cfg["integrator"]["args"])
+    data_dir = _get_data_dir(cfg)
+    for path_key in ("pdb_path", "asu_id_to_hkl_path"):
+        if path_key in int_raw and isinstance(int_raw[path_key], str):
+            int_raw[path_key] = _resolve_data_path(int_raw[path_key], data_dir)
+    integrator_args = configs.IntegratorCfg(**int_raw)
     encoders = _get_encoder_modules(cfg)
     surrogates = _get_surrogate_modules(cfg, skip_warmstart=skip_warmstart)
     loss = _get_loss_module(cfg)
