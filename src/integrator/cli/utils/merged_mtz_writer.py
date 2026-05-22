@@ -2,7 +2,8 @@
 
 Extracts per-HKL Gamma parameters directly from the checkpoint's
 HKL lookup table, computes mean intensity and sigma, and writes a
-merged MTZ suitable for phenix.refine.
+merged MTZ with anomalous columns I(+)/SIGI(+)/I(-)/SIGI(-) suitable
+for phenix.refine.
 """
 
 import logging
@@ -10,11 +11,13 @@ from pathlib import Path
 
 import gemmi
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn.functional as F
 import yaml
 
 import reciprocalspaceship as rs
+from reciprocalspaceship.utils import hkl_to_asu
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +67,42 @@ def _build_asu_hkl_table(
     return canon_H, canon_K, canon_L, n_hkl
 
 
+def _to_anomalous_columns(
+    H: np.ndarray,
+    K: np.ndarray,
+    L: np.ndarray,
+    I_mean: np.ndarray,
+    sig_I: np.ndarray,
+    spacegroup: gemmi.SpaceGroup,
+    cell: gemmi.UnitCell,
+) -> rs.DataSet:
+    """Convert Friedel-pair rows into I(+)/I(-) anomalous columns."""
+    hkl = np.column_stack([H, K, L])
+    hkl_asu, isym = hkl_to_asu(hkl, spacegroup)
+    is_plus = (isym % 2 == 0)
+
+    df = pd.DataFrame({
+        "H": hkl_asu[:, 0],
+        "K": hkl_asu[:, 1],
+        "L": hkl_asu[:, 2],
+        "I": I_mean,
+        "SIGI": sig_I,
+        "is_plus": is_plus,
+    })
+
+    plus = df[df["is_plus"]].set_index(["H", "K", "L"])[["I", "SIGI"]]
+    minus = df[~df["is_plus"]].set_index(["H", "K", "L"])[["I", "SIGI"]]
+
+    merged = plus.join(minus, lsuffix="(+)", rsuffix="(-)", how="outer")
+    merged.columns = ["I(+)", "SIGI(+)", "I(-)", "SIGI(-)"]
+
+    ds = rs.DataSet(
+        merged.reset_index(), cell=cell, spacegroup=spacegroup
+    ).infer_mtz_dtypes()
+
+    return ds
+
+
 def write_merged_mtz_from_checkpoint(
     checkpoint_path: Path,
     metadata_path: Path,
@@ -91,43 +130,27 @@ def write_merged_mtz_from_checkpoint(
     sg_str = sg_str.split("(")[0].strip()
     spacegroup = gemmi.SpaceGroup(sg_str)
 
-    ds = rs.DataSet(
-        {
-            "H": canon_H,
-            "K": canon_K,
-            "L": canon_L,
-            "IMEAN": I_mean.astype(np.float64),
-            "SIGIMEAN": sig_I.astype(np.float64),
-        },
-        cell=cell,
-        spacegroup=spacegroup,
-    ).infer_mtz_dtypes()
-
-    mask = ds["SIGIMEAN"] > 0
+    mask = sig_I > 0
     n_filtered = (~mask).sum()
     if n_filtered > 0:
-        logger.info("Filtered %d reflections with SIGIMEAN==0", n_filtered)
-        ds = ds[mask]
+        logger.info("Filtered %d reflections with SIGI==0", n_filtered)
+        canon_H = canon_H[mask]
+        canon_K = canon_K[mask]
+        canon_L = canon_L[mask]
+        I_mean = I_mean[mask]
+        sig_I = sig_I[mask]
 
-    # Convert anomalous Friedel-pair rows into I(+)/I(-) columns
-    # for phenix.refine compatibility.
-    ds.hkl_to_asu(anomalous=False)
-    ds_anom = ds.unstack_anomalous()
-    ds_anom.rename(
-        columns={
-            "IMEAN(+)": "I(+)",
-            "SIGIMEAN(+)": "SIGI(+)",
-            "IMEAN(-)": "I(-)",
-            "SIGIMEAN(-)": "SIGI(-)",
-        },
-        inplace=True,
+    ds = _to_anomalous_columns(
+        canon_H, canon_K, canon_L,
+        I_mean.astype(np.float64),
+        sig_I.astype(np.float64),
+        spacegroup, cell,
     )
-    ds_anom.infer_mtz_dtypes(inplace=True)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    ds_anom.write_mtz(str(out_path), skip_problem_mtztypes=True)
+    ds.write_mtz(str(out_path), skip_problem_mtztypes=True)
     logger.info(
-        "Wrote %s (%d reflections, anomalous columns)", out_path, len(ds_anom)
+        "Wrote %s (%d reflections, anomalous columns)", out_path, len(ds)
     )
 
-    return ds_anom
+    return ds
