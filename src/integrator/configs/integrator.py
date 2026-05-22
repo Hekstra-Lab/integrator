@@ -48,6 +48,10 @@ class IntegratorCfg:
     restraint_w_biso: float = 0.001
     atom_lr: float | None = None
 
+    # Variational refinement: isotropic Gaussian position posteriors
+    atom_sigma_prior: float | None = None
+    kl_atom_weight: float = 1.0
+
     def __post_init__(self):
         if self.data_dim not in ("2d", "3d"):
             raise ValueError(

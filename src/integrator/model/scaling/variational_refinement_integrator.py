@@ -1,0 +1,386 @@
+import math
+from typing import Any, Literal
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch import Tensor
+
+import gemmi
+
+if not hasattr(gemmi.UnitCell, "fractionalization_matrix"):
+    gemmi.UnitCell.fractionalization_matrix = property(
+        lambda self: self.frac.mat
+    )
+if not hasattr(gemmi.UnitCell, "orthogonalization_matrix"):
+    gemmi.UnitCell.orthogonalization_matrix = property(
+        lambda self: self.orth.mat
+    )
+
+from integrator import configs
+from integrator.model.integrators.base_integrator import (
+    BaseIntegrator,
+    _log_loss,
+)
+from integrator.model.integrators.hierarchical_integrator import (
+    _add_group_outputs,
+    _get_normalized_position,
+    _sample_profile,
+)
+from integrator.model.integrators.integrator_utils import (
+    IntegratorBaseOutputs,
+    _assemble_outputs,
+)
+from integrator.model.scaling.chebyshev_scale import ChebyshevScale
+from integrator.model.scaling.refinement_integrator import (
+    DeterministicIntensity,
+    _build_hasu_lookup,
+)
+
+EIGHT_PI_SQ = 8.0 * math.pi**2
+
+
+def _softplus_inverse(x: Tensor) -> Tensor:
+    return torch.where(x > 20.0, x, torch.log(torch.expm1(x)))
+
+
+class VariationalRefinementIntegrator(BaseIntegrator):
+    """Refinement integrator with variational inference over atomic positions.
+
+    q(x_j) = N(mu_j, sigma_j^2 I),  B_j = 8 pi^2 sigma_j^2
+
+    The Debye-Waller factor is the analytic Fourier average over the
+    position posterior, so F_calc is deterministic given (mu, sigma) and
+    no MC sampling over atom positions is needed.
+
+    The isotropic Gaussian KL replaces the ad-hoc L2 geometry restraint:
+      KL = sum_j [3 log(s0/s) + (3 s^2 + ||mu-mu0||^2)/(2 s0^2) - 3/2]
+    """
+
+    REQUIRED_ENCODERS = {
+        "profile": configs.ProfileEncoderArgs,
+        "k_bg": configs.IntensityEncoderArgs,
+        "r_bg": configs.IntensityEncoderArgs,
+    }
+
+    def __init__(
+        self,
+        cfg: configs.IntegratorCfg,
+        loss: nn.Module,
+        encoders: dict[str, nn.Module],
+        surrogates: dict[str, nn.Module],
+    ):
+        super().__init__(cfg, loss, encoders, surrogates)
+
+        if cfg.pdb_path is None:
+            raise ValueError(
+                "VariationalRefinementIntegrator requires pdb_path."
+            )
+        if cfg.asu_id_to_hkl_path is None:
+            raise ValueError(
+                "VariationalRefinementIntegrator requires asu_id_to_hkl_path."
+            )
+
+        from SFC_Torch import SFcalculator as SFC
+
+        self.sfcalc = SFC(
+            pdbmodel=cfg.pdb_path,
+            dmin=cfg.dmin,
+            anomalous=cfg.anomalous,
+            wavelength=cfg.wavelength,
+        )
+        self.sfcalc.inspect_data()
+
+        pos_init = self.sfcalc.atom_pos_orth.clone()
+        b_init = self.sfcalc.atom_b_iso.clone().clamp(min=0.5)
+
+        self.atom_pos_mu = nn.Parameter(pos_init)
+
+        sigma_init = (b_init / EIGHT_PI_SQ).sqrt()
+        self.atom_raw_log_sigma = nn.Parameter(_softplus_inverse(sigma_init))
+
+        self.register_buffer("atom_pos_prior_mu", pos_init.clone())
+
+        if cfg.atom_sigma_prior is not None:
+            sigma_prior = torch.full_like(b_init, cfg.atom_sigma_prior)
+        else:
+            sigma_prior = sigma_init.clone()
+        self.register_buffer("atom_sigma_prior", sigma_prior)
+
+        self.kl_atom_weight = cfg.kl_atom_weight
+        self.atom_lr = cfg.atom_lr if cfg.atom_lr is not None else cfg.lr
+
+        self.scale_fn = ChebyshevScale(
+            degree=cfg.scale_degree,
+            frame_min=cfg.scale_frame_min,
+            frame_max=cfg.scale_frame_max,
+        )
+
+        self._build_hkl_map(cfg)
+
+    @property
+    def atom_sigma(self) -> Tensor:
+        return F.softplus(self.atom_raw_log_sigma) + 1e-6
+
+    @property
+    def atom_b_iso(self) -> Tensor:
+        return EIGHT_PI_SQ * self.atom_sigma.pow(2)
+
+    def _build_hkl_map(self, cfg: configs.IntegratorCfg) -> None:
+        id_to_hkl = torch.load(
+            cfg.asu_id_to_hkl_path, weights_only=False, map_location="cpu"
+        )
+        n_asu_ids = len(id_to_hkl)
+
+        hasu_lookup = _build_hasu_lookup(
+            self.sfcalc.Hasu_array, self.sfcalc.space_group, cfg.anomalous
+        )
+
+        sfc_idx = torch.full((n_asu_ids,), -1, dtype=torch.long)
+        for aid in range(n_asu_ids):
+            h, k, l = (
+                int(id_to_hkl[aid, 0]),
+                int(id_to_hkl[aid, 1]),
+                int(id_to_hkl[aid, 2]),
+            )
+            if (h, k, l) in hasu_lookup:
+                sfc_idx[aid] = hasu_lookup[(h, k, l)]
+
+        n_mapped = (sfc_idx >= 0).sum().item()
+        n_missing = n_asu_ids - n_mapped
+        if n_missing > 0:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "%d of %d asu_ids could not be mapped to SFcalculator HKLs "
+                "(likely beyond dmin=%.1f). These will get F_sq=0.",
+                n_missing,
+                n_asu_ids,
+                cfg.dmin,
+            )
+            sfc_idx[sfc_idx < 0] = 0
+
+        self.register_buffer("sfc_idx", sfc_idx)
+        self.register_buffer(
+            "sfc_valid",
+            torch.tensor(
+                [1 if s >= 0 else 0 for s in sfc_idx.tolist()],
+                dtype=torch.bool,
+            ),
+        )
+
+    def _compute_F_sq(self) -> Tensor:
+        self.sfcalc.atom_pos_orth = self.atom_pos_mu
+        self.sfcalc.atom_b_iso = self.atom_b_iso
+        Fc = self.sfcalc.calc_fprotein(Return=True)
+        return (Fc * Fc.conj()).real
+
+    def _atom_position_kl(self) -> Tensor:
+        """KL(q(x) || p(x)) for isotropic Gaussian position posteriors.
+
+        q(x_j) = N(mu_j, sigma_j^2 I_3)
+        p(x_j) = N(mu0_j, sigma0_j^2 I_3)
+
+        Per-atom KL in 3D:
+          3 log(s0/s) + (3 s^2 + ||mu - mu0||^2) / (2 s0^2) - 3/2
+        """
+        sigma = self.atom_sigma
+        sigma0 = self.atom_sigma_prior
+        mu_diff_sq = (self.atom_pos_mu - self.atom_pos_prior_mu).pow(2).sum(
+            dim=1
+        )
+
+        kl_per_atom = (
+            3.0 * torch.log(sigma0 / sigma)
+            + (3.0 * sigma.pow(2) + mu_diff_sq) / (2.0 * sigma0.pow(2))
+            - 1.5
+        )
+        return kl_per_atom.sum() * self.kl_atom_weight
+
+    def _forward_impl(
+        self,
+        counts: Tensor,
+        shoebox: Tensor,
+        mask: Tensor,
+        metadata: dict,
+    ) -> dict[str, Any]:
+        counts = torch.clamp(counts, min=0)
+
+        b = shoebox.shape[0]
+        device = shoebox.device
+        shoebox_masked = shoebox * mask
+        shoebox_reshaped = shoebox_masked.reshape(b, 1, *self.shoebox_shape)
+
+        position = _get_normalized_position(metadata, device)
+        x_profile = self.encoders["profile"](
+            shoebox_reshaped, position=position
+        )
+
+        x_k_bg = self.encoders["k_bg"](shoebox_reshaped)
+        x_r_bg = self.encoders["r_bg"](shoebox_reshaped)
+        qbg = self.surrogates["qbg"](x_k_bg, x_r_bg)
+
+        prf_labels = metadata.get(
+            "profile_group_label", metadata.get("group_label")
+        )
+        prf_labels = prf_labels.long() if prf_labels is not None else None
+        qp = self.surrogates["qp"](
+            x_profile,
+            mc_samples=self.mc_samples,
+            group_labels=prf_labels,
+            metadata=metadata,
+        )
+
+        F_sq_all = self._compute_F_sq()
+        asu_ids = metadata["asu_id"].long().to(device)
+        F_sq = F_sq_all[self.sfc_idx[asu_ids]]
+        F_sq = F_sq.view(b, 1, 1)
+
+        zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        zp = _sample_profile(qp, self.mc_samples)
+
+        frame = metadata["xyzcal.px.2"].to(device).float()
+        s = self.scale_fn(frame)
+        lp = metadata["lp"].to(device).float().clamp(min=1e-8)
+        scale = (s / lp).view(b, 1, 1)
+
+        rate = scale * F_sq * zp + zbg
+
+        if "is_coset" in metadata:
+            coset = metadata["is_coset"].bool().view(-1, 1, 1)
+            rate = torch.where(coset, zbg, rate)
+
+        qi = DeterministicIntensity(F_sq.squeeze())
+
+        out = IntegratorBaseOutputs(
+            rates=rate,
+            counts=counts,
+            mask=mask,
+            qbg=qbg,
+            qp=qp,
+            qi=qi,
+            zp=zp,
+            zbg=zbg,
+            metadata=metadata,
+        )
+        out = _assemble_outputs(out)
+        out["asu_id"] = asu_ids
+        _add_group_outputs(out, metadata, self.loss)
+
+        return {
+            "forward_out": out,
+            "qp": qp,
+            "qi": qi,
+            "qbg": qbg,
+        }
+
+    def _step(self, batch, step: Literal["train", "val"]):
+        counts, shoebox, mask, metadata = batch
+        outputs = self(counts, shoebox, mask, metadata)
+        forward_out = outputs["forward_out"]
+
+        group_labels = metadata["group_label"].long()
+
+        loss_dict = self.loss(
+            rate=forward_out["rates"],
+            counts=forward_out["counts"],
+            qp=outputs["qp"],
+            qi=outputs["qi"],
+            qbg=outputs["qbg"],
+            mask=forward_out["mask"],
+            group_labels=group_labels,
+            metadata=metadata,
+        )
+
+        total_loss = loss_dict["loss"]
+
+        _log_loss(
+            self,
+            kl=loss_dict["kl_mean"],
+            nll=loss_dict["neg_ll_mean"],
+            total_loss=total_loss,
+            step=step,
+            kl_components={
+                k.removesuffix("_mean"): v
+                for k, v in loss_dict.items()
+                if k in ("kl_prf_mean", "kl_i_mean", "kl_bg_mean")
+            },
+        )
+
+        penalty, penalty_components = self._profile_basis_penalty()
+        for name, value in penalty_components.items():
+            self.log(f"{step} {name}", value, on_step=False, on_epoch=True)
+        total_loss = total_loss + penalty
+
+        kl_atoms = self._atom_position_kl()
+        self.log(
+            f"{step} kl_atoms", kl_atoms.detach(), on_step=False, on_epoch=True
+        )
+        total_loss = total_loss + kl_atoms
+
+        # Log derived quantities for monitoring
+        with torch.no_grad():
+            b_iso = self.atom_b_iso
+            self.log(
+                f"{step} B_mean",
+                b_iso.mean(),
+                on_step=False,
+                on_epoch=True,
+            )
+            self.log(
+                f"{step} B_min",
+                b_iso.min(),
+                on_step=False,
+                on_epoch=True,
+            )
+            self.log(
+                f"{step} B_max",
+                b_iso.max(),
+                on_step=False,
+                on_epoch=True,
+            )
+            pos_shift = (
+                (self.atom_pos_mu - self.atom_pos_prior_mu)
+                .pow(2)
+                .sum(dim=1)
+                .sqrt()
+            )
+            self.log(
+                f"{step} pos_rmsd",
+                pos_shift.mean(),
+                on_step=False,
+                on_epoch=True,
+            )
+
+        return {
+            "loss": total_loss,
+            "forward_out": forward_out,
+            "loss_components": {
+                "loss": total_loss.detach(),
+                "nll": loss_dict["neg_ll_mean"].detach(),
+                "kl": loss_dict["kl_mean"].detach(),
+                "kl_prf": loss_dict["kl_prf_mean"].detach(),
+                "kl_i": loss_dict["kl_i_mean"].detach(),
+                "kl_bg": loss_dict["kl_bg_mean"].detach(),
+            },
+        }
+
+    def _build_optimizer(self) -> torch.optim.Optimizer:
+        atom_params = [self.atom_pos_mu, self.atom_raw_log_sigma]
+        atom_ids = {id(p) for p in atom_params}
+        other_params = [
+            p
+            for p in self.parameters()
+            if p.requires_grad and id(p) not in atom_ids
+        ]
+        return torch.optim.Adam(
+            [
+                {"params": other_params, "weight_decay": self.weight_decay},
+                {
+                    "params": atom_params,
+                    "lr": self.atom_lr,
+                    "weight_decay": 0.0,
+                },
+            ],
+            lr=self.lr,
+        )
