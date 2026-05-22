@@ -30,6 +30,12 @@ def parse_args():
         help="Write predictions as an .mtz file; for polychromatic data only",
     )
     parser.add_argument(
+        "--write-merged-mtz",
+        type=str,
+        default=None,
+        help="Write merged MTZ from scaling model checkpoint (e.g. merged.mtz)",
+    )
+    parser.add_argument(
         "--batch-size",
         type=int,
         help="Integer value specifying the size of each training batch",
@@ -188,6 +194,35 @@ def main():
                 crystal_yaml_path=data_dir / "crystal.yaml",
                 out_path=ckpt_dir / args.write_mtz,
             )
+
+        if args.write_merged_mtz:
+            from integrator.cli.utils.merged_mtz_writer import (
+                write_merged_mtz_from_checkpoint,
+            )
+
+            data_dir = Path(config["data_loader"]["args"]["data_dir"])
+            ref_name = (
+                config["data_loader"]["args"]
+                .get("shoebox_file_names", {})
+                .get("reference", "metadata.pt")
+            )
+            crystal_yaml = data_dir / "crystal.yaml"
+            out_path = ckpt_dir / args.write_merged_mtz
+            if not out_path.exists():
+                logger.info(
+                    "Writing merged .mtz for epoch %d", epoch
+                )
+                write_merged_mtz_from_checkpoint(
+                    checkpoint_path=ckpt,
+                    metadata_path=data_dir / ref_name,
+                    crystal_yaml_path=crystal_yaml,
+                    out_path=out_path,
+                )
+            else:
+                logger.info(
+                    "Merged .mtz for epoch %d already exists — skipping",
+                    epoch,
+                )
 
     logger.info("Prediction complete!")
 
