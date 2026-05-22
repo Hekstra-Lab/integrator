@@ -13,6 +13,10 @@ if not hasattr(gemmi.UnitCell, "fractionalization_matrix"):
     gemmi.UnitCell.fractionalization_matrix = property(
         lambda self: self.frac.mat
     )
+if not hasattr(gemmi.UnitCell, "orthogonalization_matrix"):
+    gemmi.UnitCell.orthogonalization_matrix = property(
+        lambda self: self.orth.mat
+    )
 
 from integrator import configs
 from integrator.model.integrators.base_integrator import (
