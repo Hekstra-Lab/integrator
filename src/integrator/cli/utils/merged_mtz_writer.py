@@ -109,8 +109,25 @@ def write_merged_mtz_from_checkpoint(
         logger.info("Filtered %d reflections with SIGIMEAN==0", n_filtered)
         ds = ds[mask]
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    ds.write_mtz(str(out_path), skip_problem_mtztypes=True)
-    logger.info("Wrote %s (%d reflections)", out_path, len(ds))
+    # Convert anomalous Friedel-pair rows into I(+)/I(-) columns
+    # for phenix.refine compatibility.
+    ds.hkl_to_asu(anomalous=True)
+    ds_anom = ds.unstack_anomalous()
+    ds_anom.rename(
+        columns={
+            "IMEAN(+)": "I(+)",
+            "SIGIMEAN(+)": "SIGI(+)",
+            "IMEAN(-)": "I(-)",
+            "SIGIMEAN(-)": "SIGI(-)",
+        },
+        inplace=True,
+    )
+    ds_anom.infer_mtz_dtypes(inplace=True)
 
-    return ds
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    ds_anom.write_mtz(str(out_path), skip_problem_mtztypes=True)
+    logger.info(
+        "Wrote %s (%d reflections, anomalous columns)", out_path, len(ds_anom)
+    )
+
+    return ds_anom
