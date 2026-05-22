@@ -76,28 +76,43 @@ def _to_anomalous_columns(
     spacegroup: gemmi.SpaceGroup,
     cell: gemmi.UnitCell,
 ) -> rs.DataSet:
-    """Convert Friedel-pair rows into I(+)/I(-) anomalous columns."""
+    """Convert Friedel-pair rows into anomalous columns with both I and F."""
     hkl = np.column_stack([H, K, L])
     hkl_asu, isym = hkl_to_asu(hkl, spacegroup)
     is_plus = (isym % 2 == 0)
+
+    # I → F conversion: F = sqrt(I), SigF = SigI / (2*F)
+    F_mean = np.sqrt(np.maximum(I_mean, 0.0))
+    F_safe = np.maximum(F_mean, 1e-12)
+    sig_F = sig_I / (2.0 * F_safe)
 
     df = pd.DataFrame({
         "H": hkl_asu[:, 0],
         "K": hkl_asu[:, 1],
         "L": hkl_asu[:, 2],
+        "F": F_mean,
+        "SigF": sig_F,
         "I": I_mean,
         "SIGI": sig_I,
         "is_plus": is_plus,
     })
 
-    plus = df[df["is_plus"]].set_index(["H", "K", "L"])[["I", "SIGI"]]
-    minus = df[~df["is_plus"]].set_index(["H", "K", "L"])[["I", "SIGI"]]
+    plus = df[df["is_plus"]].set_index(["H", "K", "L"])[
+        ["F", "SigF", "I", "SIGI"]
+    ]
+    minus = df[~df["is_plus"]].set_index(["H", "K", "L"])[
+        ["F", "SigF", "I", "SIGI"]
+    ]
 
     merged = plus.join(minus, lsuffix="(+)", rsuffix="(-)", how="outer")
-    merged.columns = ["I(+)", "SIGI(+)", "I(-)", "SIGI(-)"]
+    merged.columns = [
+        "F(+)", "SigF(+)", "I(+)", "SIGI(+)",
+        "F(-)", "SigF(-)", "I(-)", "SIGI(-)",
+    ]
 
     ds = rs.DataSet(
-        merged.reset_index(), cell=cell, spacegroup=spacegroup
+        merged.reset_index(), cell=cell, spacegroup=spacegroup,
+        merged=True,
     ).infer_mtz_dtypes()
 
     return ds
