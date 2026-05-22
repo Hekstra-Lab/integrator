@@ -25,7 +25,14 @@ import reciprocalspaceship as rs
 logger = logging.getLogger(__name__)
 
 
-def _extract_table_params(state_dict: dict) -> tuple[np.ndarray, np.ndarray]:
+def _extract_table_params(
+    state_dict: dict,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Extract Gamma parameters and compute exact F moments.
+
+    Returns (I_mean, sig_I, k, rate) where k and rate are the Gamma
+    concentration and rate for F² = I.
+    """
     raw_mu = state_dict["hkl_table.raw_mu.weight"].cpu().squeeze(-1)
     raw_fano = state_dict["hkl_table.raw_fano.weight"].cpu().squeeze(-1)
 
@@ -38,10 +45,9 @@ def _extract_table_params(state_dict: dict) -> tuple[np.ndarray, np.ndarray]:
     k = mu * rate + k_min
 
     gamma_mean = (k / rate).numpy()
-    gamma_var = (k / rate.pow(2)).numpy()
-    gamma_std = np.sqrt(np.clip(gamma_var, 0, None))
+    gamma_std = np.sqrt((k / rate.pow(2)).numpy())
 
-    return gamma_mean, gamma_std
+    return gamma_mean, gamma_std, k.numpy(), rate.numpy()
 
 
 def _load_asu_hkl(
@@ -64,6 +70,8 @@ def _build_anomalous_dataset(
     hkl: np.ndarray,
     I_mean: np.ndarray,
     sig_I: np.ndarray,
+    k: np.ndarray,
+    rate: np.ndarray,
     spacegroup: gemmi.SpaceGroup,
     cell: gemmi.UnitCell,
 ) -> rs.DataSet:
@@ -82,10 +90,17 @@ def _build_anomalous_dataset(
     For centric reflections, `unstack_anomalous` correctly sets
     I(-) = I(+) since centrics have no Bijvoet difference.
     """
-    # I -> F conversion: F = sqrt(I), SigF = SigI / (2*F)
-    F_mean = np.sqrt(np.maximum(I_mean, 0.0))
-    F_safe = np.maximum(F_mean, 1e-12)
-    sig_F = sig_I / (2.0 * F_safe)
+    # Exact I -> F conversion using Gamma moments.
+    # For Gamma(k, rate) on I=F²: E[F] = Γ(k+½)/(Γ(k)·√rate)
+    # This avoids the bias of the naive F=√I which overestimates F
+    # for weak reflections (small k).
+    from scipy.special import gammaln
+
+    F_mean = np.exp(
+        gammaln(k + 0.5) - gammaln(k)
+    ) / np.sqrt(np.maximum(rate, 1e-12))
+    F_var = np.maximum(I_mean - F_mean ** 2, 0.0)
+    sig_F = np.sqrt(F_var)
 
     ds = rs.DataSet(
         {
@@ -140,7 +155,7 @@ def write_merged_mtz_from_checkpoint(
     ckpt = torch.load(checkpoint_path, weights_only=False, map_location="cpu")
     state_dict = ckpt["state_dict"]
 
-    I_mean, sig_I = _extract_table_params(state_dict)
+    I_mean, sig_I, k_gamma, rate_gamma = _extract_table_params(state_dict)
 
     # Load canonical HKL from asu_id_to_hkl.pt (preferred) or fall back
     # to metadata.  The asu_id_to_hkl.pt file stores the true canonical
@@ -183,11 +198,15 @@ def write_merged_mtz_from_checkpoint(
         hkl = hkl[mask]
         I_mean = I_mean[mask]
         sig_I = sig_I[mask]
+        k_gamma = k_gamma[mask]
+        rate_gamma = rate_gamma[mask]
 
     ds = _build_anomalous_dataset(
         hkl,
         I_mean.astype(np.float64),
         sig_I.astype(np.float64),
+        k_gamma.astype(np.float64),
+        rate_gamma.astype(np.float64),
         spacegroup,
         cell,
     )
