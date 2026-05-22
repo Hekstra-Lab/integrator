@@ -133,10 +133,13 @@ def main():
 
         ckpt_dir.mkdir(parents=True, exist_ok=True)
 
-        # Skip prediction if outputs already exist, but still
-        # run post-processing (write-refl, write-mtz) below.
+        # Skip inference if only --write-merged-mtz is requested
+        # (it reads from the checkpoint directly, not from predictions)
+        needs_inference = args.write_refl or args.write_mtz
+        only_merged = args.write_merged_mtz and not needs_inference
+
         has_preds = any(ckpt_dir.glob("preds_epoch_*"))
-        if has_preds:
+        if only_merged or has_preds:
             logger.info(
                 "Predictions for epoch %d already exist — skipping inference",
                 epoch,

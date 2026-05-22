@@ -140,7 +140,7 @@ class RefinementIntegrator(BaseIntegrator):
         n_asu_ids = len(id_to_hkl)
 
         hasu_lookup = _build_hasu_lookup(
-            self.sfcalc.Hasu_array, self.sfcalc.spacegroup, cfg.anomalous
+            self.sfcalc.Hasu_array, self.sfcalc.space_group, cfg.anomalous
         )
 
         sfc_idx = torch.full((n_asu_ids,), -1, dtype=torch.long)
