@@ -1,4 +1,16 @@
+"""Wilson loss with Normal-Normal KL for amplitude parameterization.
+
+The structure factor amplitude F is modeled as F = |X| where X ~ N(mu, sigma^2).
+The Wilson prior on F (Rayleigh for acentric) is induced by X ~ N(0, sigma_w^2),
+giving a closed-form Normal-Normal KL:
+
+    KL = 0.5 * (sigma^2/sigma_w^2 + mu^2/sigma_w^2 - 1 - log(sigma^2/sigma_w^2))
+
+where sigma_w^2 = 1/(2*tau) and tau = (1/G) * exp(2*B*s^2) is the Wilson rate.
+"""
+
 import torch
+import torch.nn.functional as F
 from torch import Tensor
 from torch.distributions import (
     Distribution,
@@ -17,13 +29,12 @@ from integrator.model.loss.monochromatic_wilson_loss import (
 )
 
 
-class RefinementLoss(MonochromaticWilsonLoss):
-    """ELBO loss for end-to-end refinement.
+class AmplitudeWilsonLoss(MonochromaticWilsonLoss):
+    """Wilson loss for the amplitude (Normal/FoldedNormal) parameterization.
 
-    Inherits profile KL, background KL, and Poisson NLL from WilsonLoss.
-    Skips the intensity KL entirely since F^2 is deterministic from the
-    atomic model (not a variational distribution).  Returns ``kl_i_mean=0``
-    so all downstream logging works unchanged.
+    Replaces the Gamma-Gamma intensity KL with a closed-form Normal-Normal
+    KL in signed-amplitude space.  Profile KL, background KL, and Poisson
+    NLL are inherited unchanged.
     """
 
     def forward(
@@ -31,7 +42,7 @@ class RefinementLoss(MonochromaticWilsonLoss):
         rate: Tensor,
         counts: Tensor,
         qp: Distribution | ProfileSurrogateOutput,
-        qi,
+        qi: Distribution,
         qbg: Distribution,
         mask: Tensor,
         group_labels: Tensor,
@@ -45,8 +56,10 @@ class RefinementLoss(MonochromaticWilsonLoss):
         kl = torch.zeros(batch_size, device=device)
 
         metadata = kwargs.get("metadata")
+        if metadata is None or "d" not in metadata:
+            raise ValueError("AmplitudeWilsonLoss requires metadata['d'].")
 
-        # Profile KL
+        # Profile KL (inherited)
         if self.profile_prior is not None:
             x_px = metadata["xyzcal.px.0"].to(device)
             y_px = metadata["xyzcal.px.1"].to(device)
@@ -58,10 +71,26 @@ class RefinementLoss(MonochromaticWilsonLoss):
         )
         kl = kl + kl_prf
 
-        # No intensity KL — F^2 is deterministic from the atomic model
-        kl_i = torch.zeros(1, device=device)
+        # Amplitude KL: KL(N(mu, sigma^2) || N(0, sigma_w^2))
+        d = metadata["d"].to(device)
+        s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))
+        tau = self._get_tau(metadata, s_sq, device)
 
-        # Background KL
+        f_mu = metadata["f_mu"].to(device)
+        f_sigma = metadata["f_sigma"].to(device)
+
+        sigma_w_sq = 1.0 / (2.0 * tau.clamp(min=1e-12))
+        sigma_sq = f_sigma.pow(2)
+
+        kl_i = 0.5 * (
+            sigma_sq / sigma_w_sq
+            + f_mu.pow(2) / sigma_w_sq
+            - 1.0
+            - torch.log(sigma_sq / sigma_w_sq + 1e-12)
+        ) * self.pi_weight
+        kl = kl + kl_i
+
+        # Background KL (inherited)
         if self.bg_prior is not None:
             x_px = metadata["xyzcal.px.0"].to(device)
             y_px = metadata["xyzcal.px.1"].to(device)
@@ -82,9 +111,7 @@ class RefinementLoss(MonochromaticWilsonLoss):
         # NLL: Poisson or NegativeBinomial (inherited from WilsonLoss)
         mu = rate.clamp(min=1e-12)
         if self.raw_dispersion is not None:
-            import torch.nn.functional as Fn
-
-            r = Fn.softplus(self.raw_dispersion)
+            r = torch.nn.functional.softplus(self.raw_dispersion)
             probs = mu / (mu + r)
             ll = NegativeBinomial(
                 total_count=r, probs=probs
@@ -101,6 +128,6 @@ class RefinementLoss(MonochromaticWilsonLoss):
             "neg_ll_mean": neg_ll.mean(),
             "kl_mean": kl.mean(),
             "kl_prf_mean": kl_prf.mean(),
-            "kl_i_mean": kl_i,
+            "kl_i_mean": kl_i.mean(),
             "kl_bg_mean": kl_bg.mean(),
         }

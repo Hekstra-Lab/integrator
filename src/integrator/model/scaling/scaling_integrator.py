@@ -3,6 +3,7 @@ from typing import Any, Literal
 import torch
 import torch.nn as nn
 from torch import Tensor
+from torch.distributions import Gamma
 
 from integrator import configs
 from integrator.model.integrators.base_integrator import (
@@ -22,7 +23,7 @@ from integrator.model.scaling.chebyshev_scale import (
     ChebyshevScale,
     SpatialChebyshevScale,
 )
-from integrator.model.scaling.hkl_table import HKLLookupTable
+from integrator.model.scaling.hkl_table import HKLAmplitudeTable, HKLLookupTable
 
 
 class ScalingIntegrator(BaseIntegrator):
@@ -69,13 +70,23 @@ class ScalingIntegrator(BaseIntegrator):
                 "ScalingIntegrator requires n_hkl in config."
             )
 
-        self.hkl_table = HKLLookupTable(
-            n_hkl=cfg.n_hkl,
-            init_mu=cfg.scaling_init_mu,
-            init_fano=cfg.scaling_init_fano,
-            eps=cfg.scaling_eps,
-            k_min=cfg.scaling_k_min,
-        )
+        self._amplitude_mode = cfg.scaling_amplitude != "gamma"
+        if self._amplitude_mode:
+            self.hkl_table = HKLAmplitudeTable(
+                n_hkl=cfg.n_hkl,
+                amplitude_type=cfg.scaling_amplitude,
+                init_mu=cfg.scaling_init_mu,
+                init_sigma=cfg.scaling_init_sigma,
+                eps=cfg.scaling_eps,
+            )
+        else:
+            self.hkl_table = HKLLookupTable(
+                n_hkl=cfg.n_hkl,
+                init_mu=cfg.scaling_init_mu,
+                init_fano=cfg.scaling_init_fano,
+                eps=cfg.scaling_eps,
+                k_min=cfg.scaling_k_min,
+            )
         if cfg.scale_spatial:
             self.scale_fn = SpatialChebyshevScale(
                 degree_frame=cfg.scale_degree,
@@ -136,9 +147,21 @@ class ScalingIntegrator(BaseIntegrator):
 
         # Structure factor from HKL table
         asu_ids = metadata["asu_id"].long().to(shoebox.device)
-        qi, F_sq = self.hkl_table(asu_ids, self.mc_samples)
-        # F_sq: (S, B) -> (B, S, 1)
-        F_sq = F_sq.permute(1, 0).unsqueeze(-1)
+        if self._amplitude_mode:
+            F_sq, f_mu, f_sigma = self.hkl_table(asu_ids, self.mc_samples)
+            # F_sq: (S, B) -> (B, S, 1)
+            F_sq = F_sq.permute(1, 0).unsqueeze(-1)
+            metadata["f_mu"] = f_mu
+            metadata["f_sigma"] = f_sigma
+            # Dummy qi for _assemble_outputs compatibility
+            qi = Gamma(
+                concentration=torch.ones_like(f_mu),
+                rate=torch.ones_like(f_mu),
+            )
+        else:
+            qi, F_sq = self.hkl_table(asu_ids, self.mc_samples)
+            # F_sq: (S, B) -> (B, S, 1)
+            F_sq = F_sq.permute(1, 0).unsqueeze(-1)
 
         # MC samples for profile and background
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)

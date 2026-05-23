@@ -1,3 +1,4 @@
+import logging
 import math
 from typing import Any, Literal
 
@@ -37,6 +38,8 @@ from integrator.model.scaling.refinement_integrator import (
     _build_hasu_lookup,
 )
 
+logger = logging.getLogger(__name__)
+
 EIGHT_PI_SQ = 8.0 * math.pi**2
 
 
@@ -55,6 +58,9 @@ class VariationalRefinementIntegrator(BaseIntegrator):
 
     The isotropic Gaussian KL replaces the ad-hoc L2 geometry restraint:
       KL = sum_j [3 log(s0/s) + (3 s^2 + ||mu-mu0||^2)/(2 s0^2) - 3/2]
+
+    Optional bulk solvent via the flat mask model (Jiang & Brunger 1994):
+      F_total = F_protein + k_sol * exp(-B_sol * s^2) * F_mask
     """
 
     REQUIRED_ENCODERS = {
@@ -116,6 +122,10 @@ class VariationalRefinementIntegrator(BaseIntegrator):
             frame_max=cfg.scale_frame_max,
         )
 
+        self.use_bulk_solvent = cfg.bulk_solvent
+        if self.use_bulk_solvent:
+            self._init_bulk_solvent(cfg)
+
         self._build_hkl_map(cfg)
 
     @property
@@ -125,6 +135,58 @@ class VariationalRefinementIntegrator(BaseIntegrator):
     @property
     def atom_b_iso(self) -> Tensor:
         return EIGHT_PI_SQ * self.atom_sigma.pow(2)
+
+    # ------------------------------------------------------------------
+    # Bulk solvent
+    # ------------------------------------------------------------------
+
+    def _init_bulk_solvent(self, cfg: configs.IntegratorCfg) -> None:
+        """Compute initial solvent mask and set up k_sol / B_sol parameters."""
+        self.sfcalc.calc_fprotein()
+        self.sfcalc.calc_fsolvent()
+
+        self.register_buffer(
+            "F_mask", self.sfcalc.Fmask_asu.detach().clone()
+        )
+
+        d_hkl = torch.from_numpy(self.sfcalc.dHasu).float()
+        s_squared = 1.0 / (4.0 * d_hkl.pow(2))
+        self.register_buffer("s_squared", s_squared)
+
+        self.raw_k_sol = nn.Parameter(
+            _softplus_inverse(torch.tensor(cfg.k_sol_init))
+        )
+        self.raw_B_sol = nn.Parameter(
+            _softplus_inverse(torch.tensor(cfg.B_sol_init))
+        )
+
+        logger.info(
+            "Bulk solvent enabled: solvent_pct=%.1f%%, %d ASU HKLs, "
+            "k_sol_init=%.3f, B_sol_init=%.1f",
+            self.sfcalc.solventpct * 100,
+            len(self.F_mask),
+            cfg.k_sol_init,
+            cfg.B_sol_init,
+        )
+
+    @property
+    def k_sol(self) -> Tensor:
+        return F.softplus(self.raw_k_sol)
+
+    @property
+    def B_sol(self) -> Tensor:
+        return F.softplus(self.raw_B_sol)
+
+    def update_solvent_mask(self) -> None:
+        """Recompute solvent mask from current atomic positions."""
+        with torch.no_grad():
+            self.sfcalc.atom_pos_orth = self.atom_pos_mu.detach()
+            self.sfcalc.atom_b_iso = self.atom_b_iso.detach()
+            self.sfcalc.calc_fprotein()
+            self.sfcalc.calc_fsolvent()
+            self.F_mask.copy_(self.sfcalc.Fmask_asu.detach())
+
+    # ------------------------------------------------------------------
 
     def _build_hkl_map(self, cfg: configs.IntegratorCfg) -> None:
         id_to_hkl = torch.load(
@@ -173,6 +235,12 @@ class VariationalRefinementIntegrator(BaseIntegrator):
         self.sfcalc.atom_pos_orth = self.atom_pos_mu
         self.sfcalc.atom_b_iso = self.atom_b_iso
         Fc = self.sfcalc.calc_fprotein(Return=True)
+
+        if self.use_bulk_solvent:
+            dampening = torch.exp(-self.B_sol * self.s_squared)
+            F_solvent = self.k_sol * dampening * self.F_mask
+            Fc = Fc + F_solvent
+
         return (Fc * Fc.conj()).real
 
     def _atom_position_kl(self) -> Tensor:
@@ -351,6 +419,19 @@ class VariationalRefinementIntegrator(BaseIntegrator):
                 on_step=False,
                 on_epoch=True,
             )
+            if self.use_bulk_solvent:
+                self.log(
+                    f"{step} k_sol",
+                    self.k_sol,
+                    on_step=False,
+                    on_epoch=True,
+                )
+                self.log(
+                    f"{step} B_sol",
+                    self.B_sol,
+                    on_step=False,
+                    on_epoch=True,
+                )
 
         return {
             "loss": total_loss,

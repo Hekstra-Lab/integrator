@@ -25,6 +25,7 @@ from integrator.model.scaling import (
     VariationalRefinementIntegrator,
 )
 from integrator.model.loss import (
+    AmplitudeWilsonLoss,
     MonochromaticWilsonLoss,
     PolychromaticWilsonLoss,
     RefinementLoss,
@@ -37,6 +38,7 @@ REGISTRY = {
     },
     "loss": {
         "monochromatic_wilson": MonochromaticWilsonLoss,
+        "amplitude_wilson": AmplitudeWilsonLoss,
         "polychromatic_wilson": PolychromaticWilsonLoss,
         "refinement": RefinementLoss,
     },

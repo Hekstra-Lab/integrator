@@ -5,7 +5,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from torch.distributions import Distribution, Gamma, Poisson, kl_divergence
+from torch.distributions import (
+    Distribution,
+    Gamma,
+    NegativeBinomial,
+    Poisson,
+    kl_divergence,
+)
 
 from integrator.model.distributions.profile_surrogates import (
     ProfileSurrogateOutput,
@@ -58,9 +64,17 @@ class WilsonLoss(nn.Module):
         pprf_weight: float = 1.0,
         pbg_weight: float = 1.0,
         pi_weight: float = 1.0,
+        # Likelihood: Poisson (default) or NegativeBinomial (robust)
+        init_dispersion: float | None = None,
     ):
         super().__init__()
         self.mc_samples = mc_samples
+        if init_dispersion is not None:
+            self.raw_dispersion = nn.Parameter(
+                torch.tensor(math.log(math.expm1(init_dispersion)))
+            )
+        else:
+            self.raw_dispersion = None
         self.eps = eps
         self.b_min = b_min
         self.bg_rate = bg_rate
@@ -201,8 +215,16 @@ class WilsonLoss(nn.Module):
         kl_bg = kl_divergence(qbg, p_bg) * self.pbg_weight
         kl = kl + kl_bg
 
-        # Poisson NLL
-        ll = Poisson(rate.clamp(min=1e-12)).log_prob(counts.unsqueeze(1))
+        # NLL: Poisson or NegativeBinomial
+        mu = rate.clamp(min=1e-12)
+        if self.raw_dispersion is not None:
+            r = F.softplus(self.raw_dispersion)
+            probs = mu / (mu + r)
+            ll = NegativeBinomial(
+                total_count=r, probs=probs
+            ).log_prob(counts.unsqueeze(1))
+        else:
+            ll = Poisson(mu).log_prob(counts.unsqueeze(1))
         ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
         neg_ll = (-ll_mean).sum(1)
 

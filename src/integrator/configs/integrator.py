@@ -28,6 +28,9 @@ class IntegratorCfg:
     scaling_eps: float = 1e-6
     scaling_k_min: float = 0.1
     scaling_lr: float | None = None
+    # Amplitude parameterization: "gamma" (default), "normal", or "folded_normal"
+    scaling_amplitude: str = "gamma"
+    scaling_init_sigma: float = 0.5
 
     # Scaling model: Chebyshev scale s(frame) or s(frame, radius)
     scale_degree: int = 5
@@ -56,6 +59,11 @@ class IntegratorCfg:
     # Variational refinement: isotropic Gaussian position posteriors
     atom_sigma_prior: float | None = None
     kl_atom_weight: float = 1.0
+
+    # Bulk solvent model: F_total = F_protein + k_sol * exp(-B_sol * s^2) * F_mask
+    bulk_solvent: bool = False
+    k_sol_init: float = 0.35
+    B_sol_init: float = 46.0
 
     def __post_init__(self):
         if self.data_dim not in ("2d", "3d"):
