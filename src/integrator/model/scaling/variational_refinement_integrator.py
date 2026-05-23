@@ -32,7 +32,10 @@ from integrator.model.integrators.integrator_utils import (
     IntegratorBaseOutputs,
     _assemble_outputs,
 )
-from integrator.model.scaling.chebyshev_scale import ChebyshevScale
+from integrator.model.scaling.chebyshev_scale import (
+    ChebyshevScale,
+    SpatialChebyshevScale,
+)
 from integrator.model.scaling.refinement_integrator import (
     DeterministicIntensity,
     _build_hasu_lookup,
@@ -116,11 +119,22 @@ class VariationalRefinementIntegrator(BaseIntegrator):
         self.kl_atom_weight = cfg.kl_atom_weight
         self.atom_lr = cfg.atom_lr if cfg.atom_lr is not None else cfg.lr
 
-        self.scale_fn = ChebyshevScale(
-            degree=cfg.scale_degree,
-            frame_min=cfg.scale_frame_min,
-            frame_max=cfg.scale_frame_max,
-        )
+        if cfg.scale_spatial:
+            self.scale_fn = SpatialChebyshevScale(
+                degree_frame=cfg.scale_degree,
+                degree_radius=cfg.scale_degree_radius,
+                frame_min=cfg.scale_frame_min,
+                frame_max=cfg.scale_frame_max,
+                beam_center=cfg.scale_beam_center,
+                r_min=cfg.scale_r_min,
+                r_max=cfg.scale_r_max,
+            )
+        else:
+            self.scale_fn = ChebyshevScale(
+                degree=cfg.scale_degree,
+                frame_min=cfg.scale_frame_min,
+                frame_max=cfg.scale_frame_max,
+            )
 
         self.use_bulk_solvent = cfg.bulk_solvent
         if self.use_bulk_solvent:
@@ -308,7 +322,12 @@ class VariationalRefinementIntegrator(BaseIntegrator):
         zp = _sample_profile(qp, self.mc_samples)
 
         frame = metadata["xyzcal.px.2"].to(device).float()
-        s = self.scale_fn(frame)
+        if isinstance(self.scale_fn, SpatialChebyshevScale):
+            x_det = metadata["xyzcal.px.0"].to(device).float()
+            y_det = metadata["xyzcal.px.1"].to(device).float()
+            s = self.scale_fn(frame, x_det, y_det)
+        else:
+            s = self.scale_fn(frame)
         lp = metadata["lp"].to(device).float().clamp(min=1e-8)
         scale = (s / lp).view(b, 1, 1)
 
