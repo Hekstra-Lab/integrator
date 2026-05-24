@@ -85,7 +85,7 @@ class RefinementLoss(MonochromaticWilsonLoss):
             import torch.nn.functional as Fn
 
             r = Fn.softplus(self.raw_dispersion)
-            probs = mu / (mu + r)
+            probs = (mu / (mu + r)).clamp(max=1.0 - 1e-6)
             ll = NegativeBinomial(
                 total_count=r, probs=probs
             ).log_prob(counts.unsqueeze(1))

@@ -56,9 +56,15 @@ class DeterministicIntensity:
 
 
 def _build_hasu_lookup(
-    Hasu_array: np.ndarray, sg: gemmi.SpaceGroup, anomalous: bool
+    Hasu_array: np.ndarray, sg: gemmi.SpaceGroup, anomalous: bool = True
 ) -> dict[tuple[int, int, int], int]:
-    """Build a hash map from canonical (H,K,L) → index in Hasu_array."""
+    """Build a hash map from canonical (H,K,L) → index in Hasu_array.
+
+    Always includes Friedel mates because SFcalculator's Hasu_array
+    contains only one member per Friedel pair even with anomalous=True.
+    Both F(+) and F(-) map to the same index; the anomalous flag is
+    preserved in the data's asu_id for downstream use.
+    """
     op_list = list(sg.operations())
     lookup: dict[tuple[int, int, int], int] = {}
     for idx in range(len(Hasu_array)):
@@ -66,8 +72,7 @@ def _build_hasu_lookup(
         for op in op_list:
             hkl_rot = op.apply_to_hkl([h, k, l])
             lookup[tuple(hkl_rot)] = idx
-            if not anomalous:
-                lookup[(-hkl_rot[0], -hkl_rot[1], -hkl_rot[2])] = idx
+            lookup[(-hkl_rot[0], -hkl_rot[1], -hkl_rot[2])] = idx
     return lookup
 
 
