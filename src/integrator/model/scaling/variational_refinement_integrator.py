@@ -352,7 +352,8 @@ class VariationalRefinementIntegrator(BaseIntegrator):
         )
         out = _assemble_outputs(out)
         out["asu_id"] = asu_ids
-        _add_group_outputs(out, metadata, self.loss)
+        if "group_label" in metadata:
+            _add_group_outputs(out, metadata, self.loss)
 
         return {
             "forward_out": out,
