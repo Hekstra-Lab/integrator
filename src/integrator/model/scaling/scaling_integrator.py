@@ -76,8 +76,9 @@ class ScalingIntegrator(BaseIntegrator):
                 n_hkl=cfg.n_hkl,
                 amplitude_type=cfg.scaling_amplitude,
                 init_mu=cfg.scaling_init_mu,
-                init_sigma=cfg.scaling_init_sigma,
+                init_sigma_frac=cfg.scaling_init_sigma_frac,
                 eps=cfg.scaling_eps,
+                init_from_wilson=cfg.scaling_init_from_wilson,
             )
         else:
             self.hkl_table = HKLLookupTable(

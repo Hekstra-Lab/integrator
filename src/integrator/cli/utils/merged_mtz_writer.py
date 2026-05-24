@@ -63,12 +63,11 @@ def _extract_amplitude_params(
     Uses exact FoldedNormal moments for F = |X|, X ~ N(mu, sigma).
     """
     from scipy.special import erfc
-    from scipy.stats import norm as sp_norm
 
-    raw_mu = state_dict["hkl_table.raw_mu.weight"].cpu().squeeze(-1).numpy()
+    raw_mu = state_dict["hkl_table.raw_mu.weight"].cpu().squeeze(-1)
     raw_sigma = state_dict["hkl_table.raw_sigma.weight"].cpu().squeeze(-1)
     sigma = (F.softplus(raw_sigma) + 1e-6).numpy()
-    mu = raw_mu
+    mu = torch.exp(raw_mu).numpy()
 
     # FoldedNormal mean: E[|X|] = sigma*sqrt(2/pi)*exp(-mu^2/(2*sigma^2)) + mu*(1 - 2*Phi(-mu/sigma))
     t = mu / np.maximum(sigma, 1e-12)

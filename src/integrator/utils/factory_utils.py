@@ -495,7 +495,7 @@ def construct_integrator(
     # get integrator components — resolve paths before constructing dataclass
     int_raw = dict(cfg["integrator"]["args"])
     data_dir = _get_data_dir(cfg)
-    for path_key in ("pdb_path", "asu_id_to_hkl_path"):
+    for path_key in ("pdb_path", "asu_id_to_hkl_path", "scaling_init_from_wilson"):
         if path_key in int_raw and isinstance(int_raw[path_key], str):
             int_raw[path_key] = _resolve_data_path(int_raw[path_key], data_dir)
     integrator_args = configs.IntegratorCfg(**int_raw)

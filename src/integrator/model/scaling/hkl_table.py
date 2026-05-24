@@ -79,10 +79,12 @@ class HKLAmplitudeTable(nn.Module):
     which induces the Rayleigh distribution on |X| = F.  The KL is
     closed-form Normal-Normal in both cases.
 
-    The ``"normal"`` variant is cheaper (pathwise gradients) but samples
-    can be negative (only X^2 enters the rate, so this is harmless).
-    The ``"folded_normal"`` variant samples are always non-negative but
-    uses implicit reparameterization (more expensive).
+    mu is stored in log-space (mu = exp(raw_mu)) so Adam produces
+    multiplicative updates — matching the factory/abismal convention
+    and handling the orders-of-magnitude range of F values.
+
+    Supports Wilson-mean initialization via ``init_from_wilson`` to
+    start each HKL near its resolution-appropriate expected amplitude.
     """
 
     def __init__(
@@ -90,8 +92,9 @@ class HKLAmplitudeTable(nn.Module):
         n_hkl: int,
         amplitude_type: str = "normal",
         init_mu: float = 1.0,
-        init_sigma: float = 0.5,
+        init_sigma_frac: float = 0.05,
         eps: float = 1e-6,
+        init_from_wilson: str | None = None,
     ):
         super().__init__()
         self.n_hkl = n_hkl
@@ -101,10 +104,38 @@ class HKLAmplitudeTable(nn.Module):
         self.raw_mu = nn.Embedding(n_hkl, 1, sparse=True)
         self.raw_sigma = nn.Embedding(n_hkl, 1, sparse=True)
 
-        nn.init.constant_(self.raw_mu.weight, init_mu)
-        nn.init.constant_(
-            self.raw_sigma.weight, _softplus_inv(init_sigma, eps)
-        )
+        if init_from_wilson is not None:
+            import torch as _torch
+
+            wilson_data = _torch.load(
+                init_from_wilson, weights_only=False, map_location="cpu"
+            )
+            if isinstance(wilson_data, dict):
+                wilson_mu = wilson_data["wilson_F_mean"]
+            else:
+                wilson_mu = wilson_data
+            wilson_mu = wilson_mu.float().clamp(min=1e-6)
+            nn.init.constant_(self.raw_mu.weight, 0.0)
+            with _torch.no_grad():
+                self.raw_mu.weight[:len(wilson_mu)] = (
+                    wilson_mu.log().unsqueeze(-1)
+                )
+            sigma_init = wilson_mu * init_sigma_frac
+            nn.init.constant_(self.raw_sigma.weight, 0.0)
+            with _torch.no_grad():
+                self.raw_sigma.weight[:len(wilson_mu)] = (
+                    _torch.tensor(
+                        [_softplus_inv(float(s), eps) for s in sigma_init]
+                    ).unsqueeze(-1)
+                )
+        else:
+            nn.init.constant_(
+                self.raw_mu.weight, math.log(max(init_mu, 1e-12))
+            )
+            sigma_val = max(init_mu, 1e-12) * init_sigma_frac
+            nn.init.constant_(
+                self.raw_sigma.weight, _softplus_inv(sigma_val, eps)
+            )
 
     def forward(
         self, asu_ids: Tensor, mc_samples: int = 1
@@ -113,10 +144,10 @@ class HKLAmplitudeTable(nn.Module):
 
         Returns:
             F_sq: (S, B) structure factor squared samples.
-            mu: (B,) posterior mean of signed amplitude.
-            sigma: (B,) posterior std of signed amplitude.
+            mu: (B,) posterior loc (always positive via exp).
+            sigma: (B,) posterior scale.
         """
-        mu = self.raw_mu(asu_ids).squeeze(-1)
+        mu = torch.exp(self.raw_mu(asu_ids).squeeze(-1))
         sigma = F.softplus(self.raw_sigma(asu_ids).squeeze(-1)) + self.eps
 
         if self.amplitude_type == "folded_normal":

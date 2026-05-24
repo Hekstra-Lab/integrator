@@ -30,7 +30,8 @@ class IntegratorCfg:
     scaling_lr: float | None = None
     # Amplitude parameterization: "gamma" (default), "normal", or "folded_normal"
     scaling_amplitude: str = "gamma"
-    scaling_init_sigma: float = 0.5
+    scaling_init_sigma_frac: float = 0.05
+    scaling_init_from_wilson: str | None = None
 
     # Scaling model: Chebyshev scale s(frame) or s(frame, radius)
     scale_degree: int = 5
