@@ -78,6 +78,46 @@ class HKLLookupTable(nn.Module):
         return qi, F_sq
 
 
+class HKLLookupTableA(nn.Module):
+    """Per-HKL Gamma variational parameters using GammaA parameterization.
+
+    Directly learns (k, rate) instead of deriving them from (mu, fano).
+    k has a floor via k_min, rate has a floor via eps. No coupling
+    between concentration and rate through a shared mu.
+
+    Gamma mean = k/rate, Gamma variance = k/rate^2.
+    """
+
+    def __init__(
+        self,
+        n_hkl: int,
+        init_k: float = 1.0,
+        init_rate: float = 1.0,
+        eps: float = 1e-6,
+        k_min: float = 0.1,
+    ):
+        super().__init__()
+        self.n_hkl = n_hkl
+        self.eps = eps
+        self.k_min = k_min
+
+        self.raw_k = nn.Embedding(n_hkl, 1, sparse=True)
+        self.raw_rate = nn.Embedding(n_hkl, 1, sparse=True)
+
+        nn.init.constant_(self.raw_k.weight, _softplus_inv(init_k, k_min))
+        nn.init.constant_(self.raw_rate.weight, _softplus_inv(init_rate, eps))
+
+    def forward(
+        self, asu_ids: Tensor, mc_samples: int = 1
+    ) -> tuple[Gamma, Tensor]:
+        k = F.softplus(self.raw_k(asu_ids).squeeze(-1)) + self.k_min
+        rate = F.softplus(self.raw_rate(asu_ids).squeeze(-1)) + self.eps
+
+        qi = Gamma(concentration=k, rate=rate)
+        F_sq = qi.rsample([mc_samples])
+        return qi, F_sq
+
+
 class HKLAmplitudeTable(nn.Module):
     """Per-HKL amplitude variational parameters as an embedding table.
 

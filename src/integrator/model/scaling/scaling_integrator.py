@@ -24,7 +24,11 @@ from integrator.model.scaling.chebyshev_scale import (
     MLPScale,
     SpatialChebyshevScale,
 )
-from integrator.model.scaling.hkl_table import HKLAmplitudeTable, HKLLookupTable
+from integrator.model.scaling.hkl_table import (
+    HKLAmplitudeTable,
+    HKLLookupTable,
+    HKLLookupTableA,
+)
 
 
 class ScalingIntegrator(BaseIntegrator):
@@ -71,7 +75,7 @@ class ScalingIntegrator(BaseIntegrator):
                 "ScalingIntegrator requires n_hkl in config."
             )
 
-        self._amplitude_mode = cfg.scaling_amplitude != "gamma"
+        self._amplitude_mode = cfg.scaling_amplitude not in ("gamma", "gammaA")
         if self._amplitude_mode:
             self.hkl_table = HKLAmplitudeTable(
                 n_hkl=cfg.n_hkl,
@@ -80,6 +84,14 @@ class ScalingIntegrator(BaseIntegrator):
                 init_sigma_frac=cfg.scaling_init_sigma_frac,
                 eps=cfg.scaling_eps,
                 init_from_wilson=cfg.scaling_init_from_wilson,
+            )
+        elif cfg.scaling_amplitude == "gammaA":
+            self.hkl_table = HKLLookupTableA(
+                n_hkl=cfg.n_hkl,
+                init_k=1.0,
+                init_rate=1.0,
+                eps=cfg.scaling_eps,
+                k_min=cfg.scaling_k_min,
             )
         else:
             self.hkl_table = HKLLookupTable(
