@@ -21,26 +21,10 @@ import argparse
 from pathlib import Path
 
 import gemmi
+import numpy as np
 import torch
 
-
-def asu_key(op_list, h, k, l, anomalous=False):
-    """Return the canonical (h, k, l) under space-group symmetry.
-
-    When ``anomalous=False`` (default), Friedel mates are merged:
-    (h,k,l) and (-h,-k,-l) map to the same key.
-
-    When ``anomalous=True``, Friedel mates are kept separate so that
-    F(+) and F(-) get independent variational parameters — preserving
-    Bijvoet differences.
-    """
-    candidates = []
-    for op in op_list:
-        hkl_rot = op.apply_to_hkl([h, k, l])
-        candidates.append(tuple(hkl_rot))
-        if not anomalous:
-            candidates.append((-hkl_rot[0], -hkl_rot[1], -hkl_rot[2]))
-    return min(candidates)
+import reciprocalspaceship as rs
 
 
 def main():
@@ -62,28 +46,41 @@ def main():
     args = parser.parse_args()
 
     sg = gemmi.SpaceGroup(args.space_group)
-    op_list = list(sg.operations())
 
     ref_path = args.data_dir / args.ref
     reference = torch.load(ref_path, weights_only=False)
 
-    H = reference["H"].long()
-    K = reference["K"].long()
-    L = reference["L"].long()
+    H = reference["H"].long().numpy()
+    K = reference["K"].long().numpy()
+    L = reference["L"].long().numpy()
     n_obs = len(H)
 
+    hkl_obs = np.stack([H, K, L], axis=1).astype(np.int32)
+
+    # Map to ASU using reciprocalspaceship (same convention as SFcalculator)
+    asu_hkl, isym = rs.utils.hkl_to_asu(hkl_obs, sg)
+
+    if args.anomalous:
+        # ISYM even = Friedel minus; negate to get the anomalous ASU form
+        is_minus = (isym % 2 == 0)
+        canon_hkl = asu_hkl.copy()
+        canon_hkl[is_minus] = -canon_hkl[is_minus]
+    else:
+        canon_hkl = asu_hkl
+
+    # Assign contiguous integer IDs
     canon_to_id: dict[tuple[int, int, int], int] = {}
-    asu_ids = torch.empty(n_obs, dtype=torch.long)
+    asu_ids = np.empty(n_obs, dtype=np.int64)
 
     for i in range(n_obs):
-        canon = asu_key(op_list, int(H[i]), int(K[i]), int(L[i]), args.anomalous)
-        if canon not in canon_to_id:
-            canon_to_id[canon] = len(canon_to_id)
-        asu_ids[i] = canon_to_id[canon]
+        key = (int(canon_hkl[i, 0]), int(canon_hkl[i, 1]), int(canon_hkl[i, 2]))
+        if key not in canon_to_id:
+            canon_to_id[key] = len(canon_to_id)
+        asu_ids[i] = canon_to_id[key]
 
     n_hkl = len(canon_to_id)
 
-    reference["asu_id"] = asu_ids
+    reference["asu_id"] = torch.from_numpy(asu_ids)
     torch.save(reference, ref_path)
 
     meta_path = args.data_dir / "hkl_meta.pt"

@@ -38,7 +38,6 @@ from integrator.model.scaling.chebyshev_scale import (
 )
 from integrator.model.scaling.refinement_integrator import (
     DeterministicIntensity,
-    _build_hasu_lookup_anomalous,
 )
 
 logger = logging.getLogger(__name__)
@@ -203,37 +202,50 @@ class VariationalRefinementIntegrator(BaseIntegrator):
     # ------------------------------------------------------------------
 
     def _build_hkl_map(self, cfg: configs.IntegratorCfg) -> None:
+        """Build asu_id → Hasu_array index mapping.
+
+        Since Hasu_array with anomalous=True already contains both
+        Friedel mates as separate entries, each asu_id should map to
+        exactly one index.  We build a symmetry-only lookup (no Friedel
+        negation) so that plus and minus asu_ids map to their correct,
+        distinct Hasu entries.
+        """
         id_to_hkl = torch.load(
             cfg.asu_id_to_hkl_path, weights_only=False, map_location="cpu"
         )
         n_asu_ids = len(id_to_hkl)
 
-        idx_lookup, is_plus_lookup = _build_hasu_lookup_anomalous(
-            self.sfcalc.Hasu_array, self.sfcalc.space_group
-        )
+        # Build lookup from Hasu_array using ONLY symmetry operations
+        # (no Friedel negation — both mates are already in Hasu_array)
+        op_list = list(self.sfcalc.space_group.operations())
+        hasu_lookup: dict[tuple[int, int, int], int] = {}
+        for idx in range(len(self.sfcalc.Hasu_array)):
+            h, k, l = (
+                int(self.sfcalc.Hasu_array[idx, 0]),
+                int(self.sfcalc.Hasu_array[idx, 1]),
+                int(self.sfcalc.Hasu_array[idx, 2]),
+            )
+            for op in op_list:
+                hkl_rot = op.apply_to_hkl([h, k, l])
+                hasu_lookup[tuple(hkl_rot)] = idx
 
         sfc_idx = torch.full((n_asu_ids,), -1, dtype=torch.long)
-        is_friedel_plus = torch.ones(n_asu_ids, dtype=torch.bool)
-
         for aid in range(n_asu_ids):
             h, k, l = (
                 int(id_to_hkl[aid, 0]),
                 int(id_to_hkl[aid, 1]),
                 int(id_to_hkl[aid, 2]),
             )
-            if (h, k, l) in idx_lookup:
-                sfc_idx[aid] = idx_lookup[(h, k, l)]
-                is_friedel_plus[aid] = is_plus_lookup[(h, k, l)]
+            if (h, k, l) in hasu_lookup:
+                sfc_idx[aid] = hasu_lookup[(h, k, l)]
 
         n_mapped = (sfc_idx >= 0).sum().item()
         n_missing = n_asu_ids - n_mapped
-        n_plus = is_friedel_plus[sfc_idx >= 0].sum().item()
-        n_minus = n_mapped - n_plus
-
         if n_missing > 0:
             logger.warning(
                 "%d of %d asu_ids could not be mapped to SFcalculator HKLs "
-                "(likely beyond dmin=%.1f). These will get F_sq=0.",
+                "(likely beyond dmin=%.1f or canonicalization mismatch). "
+                "These will get F_sq=0.",
                 n_missing,
                 n_asu_ids,
                 cfg.dmin,
@@ -241,38 +253,29 @@ class VariationalRefinementIntegrator(BaseIntegrator):
             sfc_idx[sfc_idx < 0] = 0
 
         logger.info(
-            "Anomalous HKL map: %d F(+), %d F(-), %d unmapped",
-            n_plus, n_minus, n_missing,
+            "HKL map: %d mapped, %d unmapped, %d Hasu entries",
+            n_mapped, n_missing, len(self.sfcalc.Hasu_array),
         )
 
         self.register_buffer("sfc_idx", sfc_idx)
-        self.register_buffer("is_friedel_plus", is_friedel_plus)
 
-    def _compute_F_sq(self) -> tuple[Tensor, Tensor]:
-        """Compute |F|² for both Friedel mates.
+    def _compute_F_sq(self) -> Tensor:
+        """Compute |F|² for all ASU HKLs.
 
-        Returns (F_sq_plus, F_sq_minus) where plus corresponds to
-        Hasu_array HKLs and minus to their negations.
+        With anomalous=True, Hasu_array already contains both Friedel
+        mates as separate entries, so calc_fprotein returns different
+        F values for (h,k,l) and (-h,-k,-l) due to f''.
         """
         self.sfcalc.atom_pos_orth = self.atom_pos_mu
         self.sfcalc.atom_b_iso = self.atom_b_iso
-
-        Fc_plus = self.sfcalc.calc_fprotein(Return=True)
-
-        original_hasu = self.sfcalc.Hasu_array.copy()
-        self.sfcalc.Hasu_array = -original_hasu
-        Fc_minus = self.sfcalc.calc_fprotein(Return=True)
-        self.sfcalc.Hasu_array = original_hasu
+        Fc = self.sfcalc.calc_fprotein(Return=True)
 
         if self.use_bulk_solvent:
             dampening = torch.exp(-self.B_sol * self.s_squared)
             F_solvent = self.k_sol * dampening * self.F_mask
-            Fc_plus = Fc_plus + F_solvent
-            Fc_minus = Fc_minus + F_solvent
+            Fc = Fc + F_solvent
 
-        F_sq_plus = (Fc_plus * Fc_plus.conj()).real
-        F_sq_minus = (Fc_minus * Fc_minus.conj()).real
-        return F_sq_plus, F_sq_minus
+        return (Fc * Fc.conj()).real
 
     def _atom_position_kl(self) -> Tensor:
         """KL(q(x) || p(x)) for isotropic Gaussian position posteriors.
@@ -330,11 +333,9 @@ class VariationalRefinementIntegrator(BaseIntegrator):
             metadata=metadata,
         )
 
-        F_sq_plus, F_sq_minus = self._compute_F_sq()
+        F_sq_all = self._compute_F_sq()
         asu_ids = metadata["asu_id"].long().to(device)
-        idx = self.sfc_idx[asu_ids]
-        is_plus = self.is_friedel_plus[asu_ids]
-        F_sq = torch.where(is_plus, F_sq_plus[idx], F_sq_minus[idx])
+        F_sq = F_sq_all[self.sfc_idx[asu_ids]]
         F_sq = F_sq.view(b, 1, 1)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
