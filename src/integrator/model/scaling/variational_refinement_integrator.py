@@ -139,6 +139,10 @@ class VariationalRefinementIntegrator(BaseIntegrator):
         if self.use_bulk_solvent:
             self._init_bulk_solvent(cfg)
 
+        self.use_geometry_restraints = cfg.geometry_restraints
+        if self.use_geometry_restraints:
+            self._init_geometry_restraints(cfg)
+
         self._build_hkl_map(cfg)
 
     @property
@@ -198,6 +202,108 @@ class VariationalRefinementIntegrator(BaseIntegrator):
             self.sfcalc.calc_fprotein()
             self.sfcalc.calc_fsolvent()
             self.F_mask.copy_(self.sfcalc.Fmask_asu.detach())
+
+    # ------------------------------------------------------------------
+    # Geometry restraints
+    # ------------------------------------------------------------------
+
+    def _init_geometry_restraints(self, cfg: configs.IntegratorCfg) -> None:
+        """Build bond/angle restraint tensors from gemmi topology."""
+        pdb_path = cfg.pdb_path
+        st = gemmi.read_structure(pdb_path)
+        st.setup_entities()
+
+        topo = gemmi.prepare_topology(st, gemmi.MonLib())
+
+        # Build atom → index map (same ordering as SFcalculator)
+        all_atoms = []
+        for model in st:
+            for chain in model:
+                for residue in chain:
+                    for atom in residue:
+                        all_atoms.append(atom)
+        atom_id_to_idx = {id(a): i for i, a in enumerate(all_atoms)}
+
+        # Bonds
+        bond_i, bond_j, bond_ideal, bond_sigma = [], [], [], []
+        for bond in topo.bonds:
+            a1, a2 = bond.atoms
+            i1 = atom_id_to_idx.get(id(a1), -1)
+            i2 = atom_id_to_idx.get(id(a2), -1)
+            if i1 >= 0 and i2 >= 0 and bond.restr.esd > 0:
+                bond_i.append(i1)
+                bond_j.append(i2)
+                bond_ideal.append(bond.restr.value)
+                bond_sigma.append(bond.restr.esd)
+
+        self.register_buffer(
+            "bond_idx",
+            torch.tensor([bond_i, bond_j], dtype=torch.long).T,
+        )
+        self.register_buffer("bond_ideal", torch.tensor(bond_ideal))
+        self.register_buffer("bond_sigma", torch.tensor(bond_sigma))
+        self.geometry_w_bond = cfg.geometry_w_bond
+
+        # Angles
+        ang_i, ang_j, ang_k, ang_ideal, ang_sigma = [], [], [], [], []
+        for angle in topo.angles:
+            a1, a2, a3 = angle.atoms
+            i1 = atom_id_to_idx.get(id(a1), -1)
+            i2 = atom_id_to_idx.get(id(a2), -1)
+            i3 = atom_id_to_idx.get(id(a3), -1)
+            if i1 >= 0 and i2 >= 0 and i3 >= 0 and angle.restr.esd > 0:
+                ang_i.append(i1)
+                ang_j.append(i2)
+                ang_k.append(i3)
+                ang_ideal.append(math.radians(angle.restr.value))
+                ang_sigma.append(math.radians(angle.restr.esd))
+
+        self.register_buffer(
+            "angle_idx",
+            torch.tensor([ang_i, ang_j, ang_k], dtype=torch.long).T,
+        )
+        self.register_buffer("angle_ideal", torch.tensor(ang_ideal))
+        self.register_buffer("angle_sigma", torch.tensor(ang_sigma))
+        self.geometry_w_angle = cfg.geometry_w_angle
+
+        logger.info(
+            "Geometry restraints: %d bonds, %d angles",
+            len(bond_ideal), len(ang_ideal),
+        )
+
+    def _geometry_penalty(self) -> tuple[Tensor, dict[str, Tensor]]:
+        """Compute bond length and angle penalties from monomer library ideals."""
+        pos = self.atom_pos_mu
+        components: dict[str, Tensor] = {}
+
+        # Bond penalty: Σ ((d - d_ideal) / sigma)²
+        p1 = pos[self.bond_idx[:, 0]]
+        p2 = pos[self.bond_idx[:, 1]]
+        d = (p1 - p2).norm(dim=1)
+        bond_z = (d - self.bond_ideal) / self.bond_sigma
+        bond_loss = bond_z.pow(2).mean() * self.geometry_w_bond
+        components["bond_rmsd"] = (d - self.bond_ideal).pow(2).mean().sqrt()
+        components["bond_loss"] = bond_loss.detach()
+
+        # Angle penalty: Σ ((θ - θ_ideal) / sigma)²
+        p1 = pos[self.angle_idx[:, 0]]
+        p2 = pos[self.angle_idx[:, 1]]
+        p3 = pos[self.angle_idx[:, 2]]
+        v1 = p1 - p2
+        v2 = p3 - p2
+        cos_theta = (v1 * v2).sum(dim=1) / (
+            v1.norm(dim=1) * v2.norm(dim=1) + 1e-8
+        )
+        theta = torch.acos(cos_theta.clamp(-1 + 1e-7, 1 - 1e-7))
+        angle_z = (theta - self.angle_ideal) / self.angle_sigma
+        angle_loss = angle_z.pow(2).mean() * self.geometry_w_angle
+        components["angle_rmsd"] = (
+            (theta - self.angle_ideal).pow(2).mean().sqrt()
+            * (180.0 / math.pi)
+        )
+        components["angle_loss"] = angle_loss.detach()
+
+        return bond_loss + angle_loss, components
 
     # ------------------------------------------------------------------
 
@@ -433,6 +539,14 @@ class VariationalRefinementIntegrator(BaseIntegrator):
             f"{step} kl_atoms", kl_atoms.detach(), on_step=False, on_epoch=True
         )
         total_loss = total_loss + kl_atoms
+
+        if self.use_geometry_restraints:
+            geom_penalty, geom_components = self._geometry_penalty()
+            for name, value in geom_components.items():
+                self.log(
+                    f"{step} {name}", value, on_step=False, on_epoch=True
+                )
+            total_loss = total_loss + geom_penalty
 
         # Log derived quantities for monitoring
         with torch.no_grad():

@@ -128,3 +128,69 @@ class SpatialChebyshevScale(nn.Module):
 
         out = (phi_t @ self.c * phi_r).sum(-1)
         return F.softplus(out)
+
+
+class MLPScale(nn.Module):
+    """MLP scale that replaces s/lp with a single learned correction.
+
+    Takes per-observation features (frame, detector x/y, LP, d-spacing)
+    and outputs a positive scale factor. Absorbs LP correction, beam
+    decay, absorption, and detector efficiency in one function.
+
+    rate = scale_mlp(features) × F² × profile + bg
+
+    Features are normalized to [-1, 1] or [0, 1] using registered
+    buffers for stable training.
+    """
+
+    def __init__(
+        self,
+        hidden_dim: int = 64,
+        n_layers: int = 2,
+        frame_min: float = 0.0,
+        frame_max: float = 1000.0,
+        beam_center: list[float] | None = None,
+        r_max: float = 1500.0,
+        d_min: float = 1.0,
+        d_max: float = 60.0,
+    ):
+        super().__init__()
+
+        frame_mid = (frame_min + frame_max) / 2.0
+        frame_half = max((frame_max - frame_min) / 2.0, 1.0)
+        self.register_buffer("frame_mid", torch.tensor(frame_mid))
+        self.register_buffer("frame_half", torch.tensor(frame_half))
+
+        cx, cy = beam_center or [0.0, 0.0]
+        self.register_buffer("beam_cx", torch.tensor(cx))
+        self.register_buffer("beam_cy", torch.tensor(cy))
+        self.register_buffer("r_max", torch.tensor(max(r_max, 1.0)))
+
+        self.register_buffer("d_min", torch.tensor(d_min))
+        self.register_buffer("d_max", torch.tensor(max(d_max, d_min + 1.0)))
+
+        # Input: [frame_norm, radius_norm, d_norm, lp] = 4 features
+        n_input = 4
+        layers = []
+        in_dim = n_input
+        for _ in range(n_layers):
+            layers.append(nn.Linear(in_dim, hidden_dim))
+            layers.append(nn.SiLU())
+            in_dim = hidden_dim
+        layers.append(nn.Linear(in_dim, 1))
+        self.net = nn.Sequential(*layers)
+
+        # Initialize last layer near zero so softplus(0) ≈ 0.69
+        nn.init.zeros_(self.net[-1].weight)
+        nn.init.zeros_(self.net[-1].bias)
+
+    def forward(
+        self, frame: Tensor, x: Tensor, y: Tensor, lp: Tensor, d: Tensor
+    ) -> Tensor:
+        frame_norm = (frame - self.frame_mid) / self.frame_half
+        r = torch.sqrt((x - self.beam_cx).pow(2) + (y - self.beam_cy).pow(2))
+        r_norm = r / self.r_max
+        d_norm = (d - self.d_min) / (self.d_max - self.d_min)
+
+        features = torch.stack([frame_norm, r_norm, d_norm, lp], dim=-1)
+        return F.softplus(self.net(features).squeeze(-1))

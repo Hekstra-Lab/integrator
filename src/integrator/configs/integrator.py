@@ -37,6 +37,9 @@ class IntegratorCfg:
     scale_degree: int = 5
     scale_frame_min: float = 0.0
     scale_frame_max: float = 1000.0
+    scale_mlp: bool = False
+    scale_mlp_hidden: int = 64
+    scale_mlp_layers: int = 2
     scale_spatial: bool = False
     scale_degree_radius: int = 5
     scale_beam_center: list[float] | None = None
@@ -60,6 +63,11 @@ class IntegratorCfg:
     # Variational refinement: isotropic Gaussian position posteriors
     atom_sigma_prior: float | None = None
     kl_atom_weight: float = 1.0
+
+    # Geometry restraints from monomer library (bond lengths, angles)
+    geometry_restraints: bool = False
+    geometry_w_bond: float = 1.0
+    geometry_w_angle: float = 1.0
 
     # Bulk solvent model: F_total = F_protein + k_sol * exp(-B_sol * s^2) * F_mask
     bulk_solvent: bool = False

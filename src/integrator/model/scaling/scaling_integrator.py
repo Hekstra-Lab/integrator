@@ -21,6 +21,7 @@ from integrator.model.integrators.integrator_utils import (
 )
 from integrator.model.scaling.chebyshev_scale import (
     ChebyshevScale,
+    MLPScale,
     SpatialChebyshevScale,
 )
 from integrator.model.scaling.hkl_table import HKLAmplitudeTable, HKLLookupTable
@@ -88,7 +89,18 @@ class ScalingIntegrator(BaseIntegrator):
                 eps=cfg.scaling_eps,
                 k_min=cfg.scaling_k_min,
             )
-        if cfg.scale_spatial:
+        if cfg.scale_mlp:
+            self.scale_fn = MLPScale(
+                hidden_dim=cfg.scale_mlp_hidden,
+                n_layers=cfg.scale_mlp_layers,
+                frame_min=cfg.scale_frame_min,
+                frame_max=cfg.scale_frame_max,
+                beam_center=cfg.scale_beam_center,
+                r_max=cfg.scale_r_max,
+                d_min=getattr(cfg, "dmin", 1.0),
+                d_max=60.0,
+            )
+        elif cfg.scale_spatial:
             self.scale_fn = SpatialChebyshevScale(
                 degree_frame=cfg.scale_degree,
                 degree_radius=cfg.scale_degree_radius,
@@ -168,18 +180,24 @@ class ScalingIntegrator(BaseIntegrator):
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
         zp = _sample_profile(qp, self.mc_samples)
 
-        # Per-observation scale: s(...) / lp
-        # DIALS lp = L/P; I_corrected = I_raw * lp, so I_raw = F² * scale / lp.
+        # Per-observation scale
         device = shoebox.device
         frame = metadata["xyzcal.px.2"].to(device).float()
-        if isinstance(self.scale_fn, SpatialChebyshevScale):
+        lp = metadata["lp"].to(device).float().clamp(min=1e-8)
+
+        if isinstance(self.scale_fn, MLPScale):
+            x_det = metadata["xyzcal.px.0"].to(device).float()
+            y_det = metadata["xyzcal.px.1"].to(device).float()
+            d = metadata["d"].to(device).float()
+            scale = self.scale_fn(frame, x_det, y_det, lp, d).view(b, 1, 1)
+        elif isinstance(self.scale_fn, SpatialChebyshevScale):
             x_det = metadata["xyzcal.px.0"].to(device).float()
             y_det = metadata["xyzcal.px.1"].to(device).float()
             s = self.scale_fn(frame, x_det, y_det)
+            scale = (s / lp).view(b, 1, 1)
         else:
             s = self.scale_fn(frame)
-        lp = metadata["lp"].to(device).float().clamp(min=1e-8)
-        scale = (s / lp).view(b, 1, 1)
+            scale = (s / lp).view(b, 1, 1)
 
         rate = scale * F_sq * zp + zbg
 
@@ -243,6 +261,21 @@ class ScalingIntegrator(BaseIntegrator):
                 if k in ("kl_prf_mean", "kl_i_mean", "kl_bg_mean")
             },
         )
+
+        with torch.no_grad():
+            qi = outputs["qi"]
+            self.log(
+                f"{step} qi_var_mean",
+                qi.variance.mean(),
+                on_step=False,
+                on_epoch=True,
+            )
+            self.log(
+                f"{step} qi_mean_mean",
+                qi.mean.mean(),
+                on_step=False,
+                on_epoch=True,
+            )
 
         penalty, penalty_components = self._profile_basis_penalty()
         for name, value in penalty_components.items():
