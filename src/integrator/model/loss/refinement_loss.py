@@ -94,11 +94,23 @@ class RefinementLoss(MonochromaticWilsonLoss):
         ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
         neg_ll = (-ll_mean).sum(1)
 
-        loss = (neg_ll + kl).mean()
+        # R-free: exclude flagged HKLs from the training loss
+        rfree = metadata.get("rfree_flag") if metadata is not None else None
+        if rfree is not None:
+            rfree = rfree.bool().to(device)
+            work_mask = ~rfree
+            n_work = work_mask.sum().clamp(min=1)
+            n_free = rfree.sum().clamp(min=1)
+            loss = ((neg_ll + kl) * work_mask).sum() / n_work
+            neg_ll_free = (neg_ll * rfree).sum() / n_free
+        else:
+            loss = (neg_ll + kl).mean()
+            neg_ll_free = torch.zeros(1, device=device)
 
         return {
             "loss": loss,
             "neg_ll_mean": neg_ll.mean(),
+            "neg_ll_free": neg_ll_free,
             "kl_mean": kl.mean(),
             "kl_prf_mean": kl_prf.mean(),
             "kl_i_mean": kl_i,
