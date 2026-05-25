@@ -61,7 +61,7 @@ def _extract_gamma_params(
 
 def _extract_encoder_fano_params(
     state_dict: dict,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Extract mu from encoder-fano table. Returns (F_mean, sig_F).
 
     The fano is per-observation (from the encoder) and not stored in the
@@ -228,6 +228,17 @@ def write_merged_mtz_from_checkpoint(
     table_type = _detect_table_type(state_dict)
     if table_type == "amplitude":
         F_mean, sig_F, I_mean, sig_I = _extract_amplitude_params(state_dict)
+    elif table_type == "encoder_fano":
+        F_mean, sig_F, I_mean, sig_I = _extract_encoder_fano_params(state_dict)
+    elif table_type == "gammaA":
+        from scipy.special import gammaln
+
+        I_mean, sig_I, k, rate = _extract_gammaA_params(state_dict)
+        F_mean = np.exp(
+            gammaln(k + 0.5) - gammaln(k)
+        ) / np.sqrt(np.maximum(rate, 1e-12))
+        F_var = np.maximum(I_mean - F_mean ** 2, 0.0)
+        sig_F = np.sqrt(F_var)
     else:
         from scipy.special import gammaln
 
