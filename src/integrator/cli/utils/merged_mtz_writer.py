@@ -59,6 +59,42 @@ def _extract_gamma_params(
     return gamma_mean, gamma_std, k.numpy(), rate.numpy()
 
 
+def _extract_encoder_fano_params(
+    state_dict: dict,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Extract mu from encoder-fano table. Returns (F_mean, sig_F).
+
+    The fano is per-observation (from the encoder) and not stored in the
+    checkpoint.  We use mu as the mean and estimate sigma from sqrt(mu)
+    as a Poisson-like approximation for the uncertainty.
+    """
+    raw_mu = state_dict["hkl_table.raw_mu.weight"].cpu().squeeze(-1)
+    mu = F.softplus(raw_mu) + 1e-6  # softplus is the default constraint
+    I_mean = mu.numpy()
+    F_mean = np.sqrt(np.clip(I_mean, 0, None))
+    sig_F = np.where(F_mean > 0, np.sqrt(I_mean) / (2 * F_mean), 0.0)
+    return F_mean.astype(np.float64), sig_F.astype(np.float64), I_mean.astype(np.float64), sig_F.astype(np.float64)
+
+
+def _extract_gammaA_params(
+    state_dict: dict,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Extract GammaA table params. Returns (I_mean, sig_I, k, rate)."""
+    raw_k = state_dict["hkl_table.raw_k.weight"].cpu().squeeze(-1)
+    raw_rate = state_dict["hkl_table.raw_rate.weight"].cpu().squeeze(-1)
+
+    k_min = 0.1
+    eps = 1e-6
+
+    k = F.softplus(raw_k) + k_min
+    rate = F.softplus(raw_rate) + eps
+
+    gamma_mean = (k / rate).numpy()
+    gamma_std = np.sqrt((k / rate.pow(2)).numpy())
+
+    return gamma_mean, gamma_std, k.numpy(), rate.numpy()
+
+
 def _extract_amplitude_params(
     state_dict: dict,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
