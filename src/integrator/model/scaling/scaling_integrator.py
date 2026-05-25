@@ -26,6 +26,7 @@ from integrator.model.scaling.chebyshev_scale import (
 )
 from integrator.model.scaling.hkl_table import (
     HKLAmplitudeTable,
+    HKLEncoderFanoTable,
     HKLLookupTable,
     HKLLookupTableA,
 )
@@ -75,8 +76,21 @@ class ScalingIntegrator(BaseIntegrator):
                 "ScalingIntegrator requires n_hkl in config."
             )
 
-        self._amplitude_mode = cfg.scaling_amplitude not in ("gamma", "gammaA")
-        if self._amplitude_mode:
+        self._amplitude_mode = cfg.scaling_amplitude not in (
+            "gamma", "gammaA", "gamma_encoder_fano",
+        )
+        self._encoder_fano_mode = cfg.scaling_amplitude == "gamma_encoder_fano"
+
+        if self._encoder_fano_mode:
+            self.hkl_table = HKLEncoderFanoTable(
+                n_hkl=cfg.n_hkl,
+                in_features=cfg.encoder_out,
+                init_mu=cfg.scaling_init_mu,
+                eps=cfg.scaling_eps,
+                k_min=cfg.scaling_k_min,
+                mu_positive_constraint=cfg.scaling_mu_constraint,
+            )
+        elif self._amplitude_mode:
             self.hkl_table = HKLAmplitudeTable(
                 n_hkl=cfg.n_hkl,
                 amplitude_type=cfg.scaling_amplitude,
@@ -174,7 +188,11 @@ class ScalingIntegrator(BaseIntegrator):
 
         # Structure factor from HKL table
         asu_ids = metadata["asu_id"].long().to(shoebox.device)
-        if self._amplitude_mode:
+        if self._encoder_fano_mode:
+            x_fano = self.encoders["k_i"](shoebox_reshaped)
+            qi, F_sq = self.hkl_table(asu_ids, x_fano, self.mc_samples)
+            F_sq = F_sq.permute(1, 0).unsqueeze(-1)
+        elif self._amplitude_mode:
             F_sq, f_mu, f_sigma = self.hkl_table(asu_ids, self.mc_samples)
             # F_sq: (S, B) -> (B, S, 1)
             F_sq = F_sq.permute(1, 0).unsqueeze(-1)

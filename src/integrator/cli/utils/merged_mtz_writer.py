@@ -26,11 +26,15 @@ logger = logging.getLogger(__name__)
 
 
 def _detect_table_type(state_dict: dict) -> str:
-    """Detect whether the checkpoint uses Gamma or amplitude table."""
+    """Detect whether the checkpoint uses Gamma, amplitude, or encoder-fano table."""
     if "hkl_table.raw_fano.weight" in state_dict:
         return "gamma"
     if "hkl_table.raw_sigma.weight" in state_dict:
         return "amplitude"
+    if "hkl_table.linear_fano.weight" in state_dict:
+        return "encoder_fano"
+    if "hkl_table.raw_k.weight" in state_dict:
+        return "gammaA"
     raise KeyError("Cannot detect HKL table type from checkpoint keys.")
 
 

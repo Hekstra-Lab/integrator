@@ -78,6 +78,75 @@ class HKLLookupTable(nn.Module):
         return qi, F_sq
 
 
+class HKLEncoderFanoTable(nn.Module):
+    """Per-HKL mu embedding + encoder-predicted fano.
+
+    Combines the scaling model's per-HKL intensity (free embedding for
+    mu) with the integrator's encoder-bounded uncertainty (fano from
+    a GammaB-style linear head on encoder features).
+
+    mu:   per-HKL embedding → softplus → positive mean intensity
+    fano: encoder(shoebox) → linear → softplus → bounded variance/mean ratio
+    k = mu * rate + k_min,  rate = 1/fano
+    """
+
+    def __init__(
+        self,
+        n_hkl: int,
+        in_features: int = 64,
+        init_mu: float = 1.0,
+        eps: float = 1e-6,
+        k_min: float = 0.1,
+        mu_positive_constraint: str = "softplus",
+    ):
+        super().__init__()
+        self.n_hkl = n_hkl
+        self.eps = eps
+        self.k_min = k_min
+        self.mu_positive_constraint = mu_positive_constraint
+
+        self.raw_mu = nn.Embedding(n_hkl, 1, sparse=True)
+
+        if mu_positive_constraint == "exp":
+            nn.init.constant_(self.raw_mu.weight, math.log(max(init_mu, 1e-12)))
+        else:
+            nn.init.constant_(self.raw_mu.weight, _softplus_inv(init_mu, eps))
+
+        self.linear_fano = nn.Linear(in_features, 1)
+
+    def forward(
+        self,
+        asu_ids: Tensor,
+        encoder_features: Tensor,
+        mc_samples: int = 1,
+    ) -> tuple[Gamma, Tensor]:
+        """Build Gamma from per-HKL mu and encoder-predicted fano.
+
+        Args:
+            asu_ids: (B,) HKL indices.
+            encoder_features: (B, in_features) from the intensity encoder.
+            mc_samples: number of MC samples.
+
+        Returns:
+            qi: Gamma distribution with batch shape (B,).
+            F_sq: (S, B) structure factor squared samples.
+        """
+        raw = self.raw_mu(asu_ids).squeeze(-1)
+        if self.mu_positive_constraint == "exp":
+            mu = torch.exp(raw)
+        else:
+            mu = F.softplus(raw) + self.eps
+
+        fano = F.softplus(self.linear_fano(encoder_features).squeeze(-1)) + self.eps
+
+        rate = 1.0 / fano
+        k = mu * rate + self.k_min
+
+        qi = Gamma(concentration=k, rate=rate)
+        F_sq = qi.rsample([mc_samples])
+        return qi, F_sq
+
+
 class HKLLookupTableA(nn.Module):
     """Per-HKL Gamma variational parameters using GammaA parameterization.
 
