@@ -18,7 +18,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as Fn
 from torch import Tensor
-from torch.distributions import Gamma, Normal
+from torch.distributions import Gamma, Normal, kl_divergence
 
 from integrator import configs
 from integrator.model.integrators.base_integrator import (
@@ -83,12 +83,22 @@ class MergingIntegrator(BaseIntegrator):
         if cfg.n_hkl is None:
             raise ValueError("MergingIntegrator requires n_hkl in config.")
 
-        # Per-HKL F² embedding (softplus for positivity)
-        self.raw_F_sq = nn.Embedding(cfg.n_hkl, 1, sparse=True)
+        # Per-HKL F posterior: FoldedNormal(mu, sigma)
+        # F = |X|, X ~ N(mu, sigma²)
+        # F² = X² → I_pred = scale × F²
+        # Wilson KL: KL(N(mu, sigma²) || N(0, sigma_w²))
+        eps = cfg.scaling_eps
+        init_mu = max(cfg.scaling_init_mu, 1e-6)
+        init_sigma = init_mu * 0.1
+
+        self.raw_F_mu = nn.Embedding(cfg.n_hkl, 1, sparse=True)
+        self.raw_F_log_sigma = nn.Embedding(cfg.n_hkl, 1, sparse=True)
+        nn.init.constant_(self.raw_F_mu.weight, math.log(init_mu))
         nn.init.constant_(
-            self.raw_F_sq.weight,
-            math.log(math.expm1(max(cfg.scaling_init_mu, 1e-6))),
+            self.raw_F_log_sigma.weight,
+            math.log(math.expm1(init_sigma)),
         )
+        self._F_eps = eps
 
         # Scale function
         if cfg.scale_mlp:
@@ -126,8 +136,16 @@ class MergingIntegrator(BaseIntegrator):
         self._clip_val = getattr(cfg, "gradient_clip_val", 1.0)
         self._clip_algo = getattr(cfg, "gradient_clip_algorithm", "norm")
 
-    def _get_F_sq(self, asu_ids: Tensor) -> Tensor:
-        return Fn.softplus(self.raw_F_sq(asu_ids).squeeze(-1))
+    def _get_F_params(self, asu_ids: Tensor) -> tuple[Tensor, Tensor]:
+        """Return (F_mu, F_sigma) for the given asu_ids."""
+        F_mu = torch.exp(self.raw_F_mu(asu_ids).squeeze(-1))
+        F_sigma = Fn.softplus(self.raw_F_log_sigma(asu_ids).squeeze(-1)) + self._F_eps
+        return F_mu, F_sigma
+
+    def _sample_F_sq(self, F_mu: Tensor, F_sigma: Tensor, mc_samples: int = 1) -> Tensor:
+        """Sample F² = X² where X ~ N(F_mu, F_sigma)."""
+        X = Normal(F_mu, F_sigma).rsample([mc_samples])
+        return X.pow(2)
 
     def _get_scale(self, metadata: dict, device: torch.device) -> Tensor:
         frame = metadata["xyzcal.px.2"].to(device).float()
@@ -221,30 +239,67 @@ class MergingIntegrator(BaseIntegrator):
     def _merge_loss(
         self, qi: Gamma, metadata: dict, device: torch.device
     ) -> tuple[Tensor, dict[str, Tensor]]:
-        """Careless-like merge loss: Normal NLL on I_obs vs scale × F²_h."""
+        """Merge loss: distributional match + Wilson KL.
+
+        Matches the encoder's per-observation Gamma posterior (qi) to
+        a Gamma derived from the merge prediction (scale × F²_h).
+
+        F ~ FoldedNormal(mu, sigma): X ~ N(mu, sigma), F² = X².
+        I_pred = scale × F² has known moments:
+            E[I]   = scale × (mu² + sigma²)
+            Var[I] = scale² × (4 mu² sigma² + 2 sigma⁴)
+
+        Fit a Gamma to these moments → Gamma(k_pred, rate_pred).
+        KL(qi || Gamma_pred) measures distributional consistency.
+
+        Wilson KL on F: KL(N(mu, sigma) || N(0, sigma_w)).
+        """
         asu_ids = metadata["asu_id"].long().to(device)
-        F_sq_h = self._get_F_sq(asu_ids)
+        F_mu, F_sigma = self._get_F_params(asu_ids)
         scale = self._get_scale(metadata, device)
 
-        # Predicted intensity for this observation
-        I_pred = scale * F_sq_h
+        # Moments of I = scale × F² where F² = X², X ~ N(mu, sigma)
+        mu_sq = F_mu.pow(2)
+        sig_sq = F_sigma.pow(2)
+        E_F_sq = mu_sq + sig_sq
+        Var_F_sq = 4.0 * mu_sq * sig_sq + 2.0 * sig_sq.pow(2)
 
-        # Observed intensity from encoder (posterior mean)
-        I_obs = qi.mean
+        E_I = scale * E_F_sq
+        Var_I = scale.pow(2) * Var_F_sq
 
-        # Uncertainty from encoder (posterior std)
-        sigma_obs = qi.variance.sqrt().clamp(min=1e-6)
+        # Fit Gamma to moments: k = E²/Var, rate = E/Var
+        k_pred = (E_I.pow(2) / Var_I.clamp(min=1e-12)).clamp(min=0.01)
+        rate_pred = (E_I / Var_I.clamp(min=1e-12)).clamp(min=1e-8)
 
-        # Normal NLL: how well does scale × F²_h explain the encoder's I_obs?
-        merge_nll = -Normal(I_pred, sigma_obs).log_prob(I_obs)
+        p_merge = Gamma(concentration=k_pred, rate=rate_pred)
+
+        # KL(qi || p_merge): encoder posterior should match merge prediction
+        kl_merge = kl_divergence(qi, p_merge)
+
+        # Wilson KL in X-space: KL(N(mu, sigma) || N(0, sigma_w))
+        d = metadata["d"].to(device).float()
+        s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))
+        tau = self.loss._get_tau(metadata, s_sq, device)
+        sigma_w_sq = 1.0 / (2.0 * tau.clamp(min=1e-12))
+
+        kl_F = 0.5 * (
+            sig_sq / sigma_w_sq
+            + mu_sq / sigma_w_sq
+            - 1.0
+            - torch.log(sig_sq / sigma_w_sq + 1e-12)
+        )
 
         components = {
-            "merge_nll": merge_nll.mean().detach(),
-            "F_sq_mean": F_sq_h.mean().detach(),
+            "kl_merge": kl_merge.mean().detach(),
+            "kl_F": kl_F.mean().detach(),
+            "F_mu_mean": F_mu.mean().detach(),
+            "F_sigma_mean": F_sigma.mean().detach(),
             "scale_mean": scale.mean().detach(),
+            "k_pred_mean": k_pred.mean().detach(),
         }
 
-        return merge_nll.mean() * self.merge_weight, components
+        total = (kl_merge.mean() + kl_F.mean()) * self.merge_weight
+        return total, components
 
     def _step(self, batch, step: Literal["train", "val"]):
         counts, shoebox, mask, metadata = batch
@@ -354,7 +409,10 @@ class MergingIntegrator(BaseIntegrator):
         return self._step(batch, step="val")
 
     def configure_optimizers(self):
-        sparse_params = list(self.raw_F_sq.parameters())
+        sparse_params = (
+            list(self.raw_F_mu.parameters())
+            + list(self.raw_F_log_sigma.parameters())
+        )
         sparse_ids = {id(p) for p in sparse_params}
         other_params = [
             p
