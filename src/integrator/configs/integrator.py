@@ -30,6 +30,7 @@ class IntegratorCfg:
     scaling_fano_min: float = 0.0
     scaling_mu_constraint: str = "exp"
     scaling_lr: float | None = None
+    merge_weight: float = 1.0
     # Amplitude parameterization: "gamma" (default), "normal", or "folded_normal"
     scaling_amplitude: str = "gamma"
     scaling_init_sigma_frac: float = 0.05

@@ -1,9 +1,24 @@
+"""Merging integrator: integrator + careless-like merging in one model.
+
+The pixel-level loss trains integration (profile, bg, encoder).
+The merge loss trains merging (F²_h, scale).
+F² never enters the pixel-level rate — clean separation.
+
+    pixels → encoder → I_obs_i ─→ pixel_loss (Poisson NLL)
+                          │
+                          └──→ merge_loss (Normal NLL on I_obs vs scale × F²_h)
+                                  ↑
+                             F²_h embedding
+"""
+
+import math
 from typing import Any, Literal
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as Fn
 from torch import Tensor
-from torch.distributions import Gamma
+from torch.distributions import Gamma, Normal
 
 from integrator import configs
 from integrator.model.integrators.base_integrator import (
@@ -24,39 +39,33 @@ from integrator.model.scaling.chebyshev_scale import (
     MLPScale,
     SpatialChebyshevScale,
 )
-from integrator.model.scaling.hkl_table import (
-    HKLAmplitudeTable,
-    HKLEncoderFanoTable,
-    HKLLookupTable,
-    HKLLookupTableA,
-)
 
 
-class ScalingIntegrator(BaseIntegrator):
-    """Integrator with per-HKL structure factor lookup table.
+class MergingIntegrator(BaseIntegrator):
+    """Joint integration + merging model.
 
-    Replaces the per-observation intensity surrogate (qi) with a shared
-    Gamma q(F^2_hkl) looked up from an embedding table.  All observations
-    of the same Miller index share the same variational distribution for
-    the structure factor.
+    Integration layer (pixel-level):
+        Encoder predicts per-observation qi (Gamma intensity).
+        rate = qi_sample × profile + bg
+        Poisson NLL on pixel counts.
 
-    rate = s(frame) * lp * F^2_hkl * profile + background
+    Merging layer (intensity-level):
+        Per-HKL F² embedding (free parameter per unique reflection).
+        Scale function converts F² to observed intensity scale.
+        Normal NLL: I_obs ~ Normal(scale × F², sigma_obs)
+        Wilson KL prior on F².
 
-    where s(frame) is a smooth Chebyshev scale capturing beam decay and
-    other image-to-image variations, lp is the known Lorentz-polarization
-    correction from metadata, and F^2 has a Wilson prior (no LP — set
-    ``lp_correction: false`` in the loss config).
-
-    Expects ``metadata["asu_id"]`` and ``metadata["lp"]``.
-
-    Uses manual optimization: Adam for encoders/surrogates/loss/scale,
-    SparseAdam for the HKL embedding table.
+    The encoder bridges both: pixel_loss teaches it to extract intensity
+    from pixels; merge_loss teaches it to produce I values consistent
+    with a single F² per HKL.
     """
 
     _MANUAL_OPTIMIZATION = True
 
     REQUIRED_ENCODERS = {
         "profile": configs.ProfileEncoderArgs,
+        "k_i": configs.IntensityEncoderArgs,
+        "r_i": configs.IntensityEncoderArgs,
         "k_bg": configs.IntensityEncoderArgs,
         "r_bg": configs.IntensityEncoderArgs,
     }
@@ -72,51 +81,16 @@ class ScalingIntegrator(BaseIntegrator):
         self.automatic_optimization = False
 
         if cfg.n_hkl is None:
-            raise ValueError(
-                "ScalingIntegrator requires n_hkl in config."
-            )
+            raise ValueError("MergingIntegrator requires n_hkl in config.")
 
-        self._amplitude_mode = cfg.scaling_amplitude not in (
-            "gamma", "gammaA", "gamma_encoder_fano",
+        # Per-HKL F² embedding (softplus for positivity)
+        self.raw_F_sq = nn.Embedding(cfg.n_hkl, 1, sparse=True)
+        nn.init.constant_(
+            self.raw_F_sq.weight,
+            math.log(math.expm1(max(cfg.scaling_init_mu, 1e-6))),
         )
-        self._encoder_fano_mode = cfg.scaling_amplitude == "gamma_encoder_fano"
 
-        if self._encoder_fano_mode:
-            self.hkl_table = HKLEncoderFanoTable(
-                n_hkl=cfg.n_hkl,
-                in_features=cfg.encoder_out,
-                init_mu=cfg.scaling_init_mu,
-                eps=cfg.scaling_eps,
-                k_min=cfg.scaling_k_min,
-                mu_positive_constraint=cfg.scaling_mu_constraint,
-            )
-        elif self._amplitude_mode:
-            self.hkl_table = HKLAmplitudeTable(
-                n_hkl=cfg.n_hkl,
-                amplitude_type=cfg.scaling_amplitude,
-                init_mu=cfg.scaling_init_mu,
-                init_sigma_frac=cfg.scaling_init_sigma_frac,
-                eps=cfg.scaling_eps,
-                init_from_wilson=cfg.scaling_init_from_wilson,
-            )
-        elif cfg.scaling_amplitude == "gammaA":
-            self.hkl_table = HKLLookupTableA(
-                n_hkl=cfg.n_hkl,
-                init_k=1.0,
-                init_rate=1.0,
-                eps=cfg.scaling_eps,
-                k_min=cfg.scaling_k_min,
-            )
-        else:
-            self.hkl_table = HKLLookupTable(
-                n_hkl=cfg.n_hkl,
-                init_mu=cfg.scaling_init_mu,
-                init_fano=cfg.scaling_init_fano,
-                eps=cfg.scaling_eps,
-                k_min=cfg.scaling_k_min,
-                fano_min=cfg.scaling_fano_min,
-                mu_positive_constraint=cfg.scaling_mu_constraint,
-            )
+        # Scale function
         if cfg.scale_mlp:
             self.scale_fn = MLPScale(
                 hidden_dim=cfg.scale_mlp_hidden,
@@ -144,11 +118,32 @@ class ScalingIntegrator(BaseIntegrator):
                 frame_min=cfg.scale_frame_min,
                 frame_max=cfg.scale_frame_max,
             )
+
         self.scaling_lr = (
             cfg.scaling_lr if cfg.scaling_lr is not None else cfg.lr
         )
+        self.merge_weight = getattr(cfg, "merge_weight", 1.0)
         self._clip_val = getattr(cfg, "gradient_clip_val", 1.0)
         self._clip_algo = getattr(cfg, "gradient_clip_algorithm", "norm")
+
+    def _get_F_sq(self, asu_ids: Tensor) -> Tensor:
+        return Fn.softplus(self.raw_F_sq(asu_ids).squeeze(-1))
+
+    def _get_scale(self, metadata: dict, device: torch.device) -> Tensor:
+        frame = metadata["xyzcal.px.2"].to(device).float()
+        lp = metadata["lp"].to(device).float().clamp(min=1e-8)
+
+        if isinstance(self.scale_fn, MLPScale):
+            x_det = metadata["xyzcal.px.0"].to(device).float()
+            y_det = metadata["xyzcal.px.1"].to(device).float()
+            d = metadata["d"].to(device).float()
+            return self.scale_fn(frame, x_det, y_det, lp, d)
+        elif isinstance(self.scale_fn, SpatialChebyshevScale):
+            x_det = metadata["xyzcal.px.0"].to(device).float()
+            y_det = metadata["xyzcal.px.1"].to(device).float()
+            return self.scale_fn(frame, x_det, y_det) / lp
+        else:
+            return self.scale_fn(frame) / lp
 
     def _forward_impl(
         self,
@@ -160,21 +155,24 @@ class ScalingIntegrator(BaseIntegrator):
         counts = torch.clamp(counts, min=0)
 
         b = shoebox.shape[0]
+        device = shoebox.device
         shoebox_masked = shoebox * mask
         shoebox_reshaped = shoebox_masked.reshape(b, 1, *self.shoebox_shape)
 
-        # Profile
-        position = _get_normalized_position(metadata, shoebox.device)
+        # Encoders
+        position = _get_normalized_position(metadata, device)
         x_profile = self.encoders["profile"](
             shoebox_reshaped, position=position
         )
-
-        # Background
+        x_k_i = self.encoders["k_i"](shoebox_reshaped)
+        x_r_i = self.encoders["r_i"](shoebox_reshaped)
         x_k_bg = self.encoders["k_bg"](shoebox_reshaped)
         x_r_bg = self.encoders["r_bg"](shoebox_reshaped)
-        qbg = self.surrogates["qbg"](x_k_bg, x_r_bg)
 
-        # Profile surrogate
+        # Surrogates
+        qbg = self.surrogates["qbg"](x_k_bg, x_r_bg)
+        qi = self.surrogates["qi"](x_k_i, x_r_i)
+
         prf_labels = metadata.get(
             "profile_group_label", metadata.get("group_label")
         )
@@ -186,52 +184,12 @@ class ScalingIntegrator(BaseIntegrator):
             metadata=metadata,
         )
 
-        # Structure factor from HKL table
-        asu_ids = metadata["asu_id"].long().to(shoebox.device)
-        if self._encoder_fano_mode:
-            x_fano = self.encoders["k_i"](shoebox_reshaped)
-            qi, F_sq = self.hkl_table(asu_ids, x_fano, self.mc_samples)
-            F_sq = F_sq.permute(1, 0).unsqueeze(-1)
-        elif self._amplitude_mode:
-            F_sq, f_mu, f_sigma = self.hkl_table(asu_ids, self.mc_samples)
-            # F_sq: (S, B) -> (B, S, 1)
-            F_sq = F_sq.permute(1, 0).unsqueeze(-1)
-            metadata["f_mu"] = f_mu
-            metadata["f_sigma"] = f_sigma
-            # Dummy qi for _assemble_outputs compatibility
-            qi = Gamma(
-                concentration=torch.ones_like(f_mu),
-                rate=torch.ones_like(f_mu),
-            )
-        else:
-            qi, F_sq = self.hkl_table(asu_ids, self.mc_samples)
-            # F_sq: (S, B) -> (B, S, 1)
-            F_sq = F_sq.permute(1, 0).unsqueeze(-1)
-
-        # MC samples for profile and background
+        # Integration: encoder-predicted intensity → pixel rate
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
         zp = _sample_profile(qp, self.mc_samples)
+        zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
-        # Per-observation scale
-        device = shoebox.device
-        frame = metadata["xyzcal.px.2"].to(device).float()
-        lp = metadata["lp"].to(device).float().clamp(min=1e-8)
-
-        if isinstance(self.scale_fn, MLPScale):
-            x_det = metadata["xyzcal.px.0"].to(device).float()
-            y_det = metadata["xyzcal.px.1"].to(device).float()
-            d = metadata["d"].to(device).float()
-            scale = self.scale_fn(frame, x_det, y_det, lp, d).view(b, 1, 1)
-        elif isinstance(self.scale_fn, SpatialChebyshevScale):
-            x_det = metadata["xyzcal.px.0"].to(device).float()
-            y_det = metadata["xyzcal.px.1"].to(device).float()
-            s = self.scale_fn(frame, x_det, y_det)
-            scale = (s / lp).view(b, 1, 1)
-        else:
-            s = self.scale_fn(frame)
-            scale = (s / lp).view(b, 1, 1)
-
-        rate = scale * F_sq * zp + zbg
+        rate = zI * zp + zbg
 
         if "is_coset" in metadata:
             coset = metadata["is_coset"].bool().view(-1, 1, 1)
@@ -249,8 +207,9 @@ class ScalingIntegrator(BaseIntegrator):
             metadata=metadata,
         )
         out = _assemble_outputs(out)
-        out["asu_id"] = asu_ids
-        _add_group_outputs(out, metadata, self.loss)
+        out["asu_id"] = metadata["asu_id"].long().to(device)
+        if "group_label" in metadata:
+            _add_group_outputs(out, metadata, self.loss)
 
         return {
             "forward_out": out,
@@ -259,7 +218,33 @@ class ScalingIntegrator(BaseIntegrator):
             "qbg": qbg,
         }
 
-    # -- Manual optimization: two optimizers per step ----------------
+    def _merge_loss(
+        self, qi: Gamma, metadata: dict, device: torch.device
+    ) -> tuple[Tensor, dict[str, Tensor]]:
+        """Careless-like merge loss: Normal NLL on I_obs vs scale × F²_h."""
+        asu_ids = metadata["asu_id"].long().to(device)
+        F_sq_h = self._get_F_sq(asu_ids)
+        scale = self._get_scale(metadata, device)
+
+        # Predicted intensity for this observation
+        I_pred = scale * F_sq_h
+
+        # Observed intensity from encoder (posterior mean)
+        I_obs = qi.mean
+
+        # Uncertainty from encoder (posterior std)
+        sigma_obs = qi.variance.sqrt().clamp(min=1e-6)
+
+        # Normal NLL: how well does scale × F²_h explain the encoder's I_obs?
+        merge_nll = -Normal(I_pred, sigma_obs).log_prob(I_obs)
+
+        components = {
+            "merge_nll": merge_nll.mean().detach(),
+            "F_sq_mean": F_sq_h.mean().detach(),
+            "scale_mean": scale.mean().detach(),
+        }
+
+        return merge_nll.mean() * self.merge_weight, components
 
     def _step(self, batch, step: Literal["train", "val"]):
         counts, shoebox, mask, metadata = batch
@@ -268,6 +253,7 @@ class ScalingIntegrator(BaseIntegrator):
 
         group_labels = metadata["group_label"].long()
 
+        # Pixel-level loss (integration quality)
         loss_dict = self.loss(
             rate=forward_out["rates"],
             counts=forward_out["counts"],
@@ -294,6 +280,21 @@ class ScalingIntegrator(BaseIntegrator):
             },
         )
 
+        # Profile penalty
+        penalty, penalty_components = self._profile_basis_penalty()
+        for name, value in penalty_components.items():
+            self.log(f"{step} {name}", value, on_step=False, on_epoch=True)
+        total_loss = total_loss + penalty
+
+        # Merge loss (merging quality — separate gradient pathway)
+        merge_loss, merge_components = self._merge_loss(
+            outputs["qi"], metadata, shoebox.device
+        )
+        for name, value in merge_components.items():
+            self.log(f"{step} {name}", value, on_step=False, on_epoch=True)
+        total_loss = total_loss + merge_loss
+
+        # Log qi stats
         with torch.no_grad():
             qi = outputs["qi"]
             self.log(
@@ -308,16 +309,6 @@ class ScalingIntegrator(BaseIntegrator):
                 on_step=False,
                 on_epoch=True,
             )
-
-        penalty, penalty_components = self._profile_basis_penalty()
-        for name, value in penalty_components.items():
-            self.log(
-                f"{step} {name}",
-                value,
-                on_step=False,
-                on_epoch=True,
-            )
-        total_loss = total_loss + penalty
 
         return {
             "loss": total_loss,
@@ -349,7 +340,6 @@ class ScalingIntegrator(BaseIntegrator):
         main_opt.step()
         sparse_opt.step()
 
-        # LR scheduler (if configured)
         schedulers = self.lr_schedulers()
         if schedulers is not None:
             if isinstance(schedulers, list):
@@ -364,36 +354,19 @@ class ScalingIntegrator(BaseIntegrator):
         return self._step(batch, step="val")
 
     def configure_optimizers(self):
-        # Separate sparse embedding params (need SparseAdam) from dense
-        # params (need regular Adam).  HKLEncoderFanoTable has both:
-        # raw_mu (sparse Embedding) and linear_fano (dense Linear).
-        sparse_params = []
-        dense_table_params = []
-        for module in self.hkl_table.modules():
-            if isinstance(module, nn.Embedding) and module.sparse:
-                sparse_params.extend(module.parameters())
-
+        sparse_params = list(self.raw_F_sq.parameters())
         sparse_ids = {id(p) for p in sparse_params}
-        for p in self.hkl_table.parameters():
-            if id(p) not in sparse_ids and p.requires_grad:
-                dense_table_params.append(p)
-
-        all_dense_ids = sparse_ids | {id(p) for p in dense_table_params}
         other_params = [
             p
             for p in self.parameters()
-            if p.requires_grad and id(p) not in all_dense_ids
+            if p.requires_grad and id(p) not in sparse_ids
         ]
 
-        main_groups = [
-            {"params": other_params, "weight_decay": self.weight_decay},
-        ]
-        if dense_table_params:
-            main_groups.append(
-                {"params": dense_table_params, "lr": self.lr, "weight_decay": 0.0},
-            )
-
-        main_opt = torch.optim.Adam(main_groups, lr=self.lr)
+        main_opt = torch.optim.Adam(
+            other_params,
+            lr=self.lr,
+            weight_decay=self.weight_decay,
+        )
         sparse_opt = torch.optim.SparseAdam(
             sparse_params,
             lr=self.scaling_lr,
@@ -404,10 +377,6 @@ class ScalingIntegrator(BaseIntegrator):
 
         if self.lr_schedule == "cosine_warmup":
             max_epochs = self.trainer.max_epochs
-            if max_epochs is None or max_epochs <= 0:
-                raise RuntimeError(
-                    "cosine_warmup requires trainer.max_epochs."
-                )
             scheduler = torch.optim.lr_scheduler.LambdaLR(
                 main_opt,
                 lr_lambda=self._cosine_warmup_lambda(max_epochs),
@@ -416,17 +385,4 @@ class ScalingIntegrator(BaseIntegrator):
                 {"scheduler": scheduler, "interval": "epoch", "frequency": 1}
             ]
 
-        if self.lr_schedule == "step_linear_warmup":
-            if self.warmup_steps <= 0:
-                raise ValueError(
-                    "step_linear_warmup requires warmup_steps > 0."
-                )
-            scheduler = torch.optim.lr_scheduler.LambdaLR(
-                main_opt,
-                lr_lambda=self._step_linear_warmup_lambda(),
-            )
-            return [main_opt, sparse_opt], [
-                {"scheduler": scheduler, "interval": "step", "frequency": 1}
-            ]
-
-        raise ValueError(f"Unknown lr_schedule {self.lr_schedule!r}.")
+        return [main_opt, sparse_opt]
