@@ -27,6 +27,8 @@ class IntegratorCfg:
     scaling_init_fano: float = 1.0
     scaling_eps: float = 1e-6
     scaling_k_min: float = 0.1
+    scaling_fano_min: float = 0.0
+    scaling_mu_constraint: str = "exp"
     scaling_lr: float | None = None
     # Amplitude parameterization: "gamma" (default), "normal", or "folded_normal"
     scaling_amplitude: str = "gamma"

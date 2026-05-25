@@ -35,16 +35,23 @@ class HKLLookupTable(nn.Module):
         init_fano: float = 1.0,
         eps: float = 1e-6,
         k_min: float = 0.1,
+        fano_min: float = 0.0,
+        mu_positive_constraint: str = "exp",
     ):
         super().__init__()
         self.n_hkl = n_hkl
         self.eps = eps
         self.k_min = k_min
+        self.fano_min = fano_min
+        self.mu_positive_constraint = mu_positive_constraint
 
         self.raw_mu = nn.Embedding(n_hkl, 1, sparse=True)
         self.raw_fano = nn.Embedding(n_hkl, 1, sparse=True)
 
-        nn.init.constant_(self.raw_mu.weight, math.log(max(init_mu, 1e-12)))
+        if mu_positive_constraint == "exp":
+            nn.init.constant_(self.raw_mu.weight, math.log(max(init_mu, 1e-12)))
+        else:
+            nn.init.constant_(self.raw_mu.weight, _softplus_inv(init_mu, eps))
         nn.init.constant_(self.raw_fano.weight, _softplus_inv(init_fano, eps))
 
     def forward(
@@ -56,8 +63,12 @@ class HKLLookupTable(nn.Module):
             qi: Gamma distribution with batch shape (B,).
             F_sq: (S, B) structure factor squared samples.
         """
-        mu = torch.exp(self.raw_mu(asu_ids).squeeze(-1))
-        fano = F.softplus(self.raw_fano(asu_ids).squeeze(-1)) + self.eps
+        raw = self.raw_mu(asu_ids).squeeze(-1)
+        if self.mu_positive_constraint == "exp":
+            mu = torch.exp(raw)
+        else:
+            mu = F.softplus(raw) + self.eps
+        fano = F.softplus(self.raw_fano(asu_ids).squeeze(-1)) + self.eps + self.fano_min
 
         rate = 1.0 / fano
         k = mu * rate + self.k_min

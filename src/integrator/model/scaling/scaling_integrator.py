@@ -88,6 +88,8 @@ class ScalingIntegrator(BaseIntegrator):
                 init_fano=cfg.scaling_init_fano,
                 eps=cfg.scaling_eps,
                 k_min=cfg.scaling_k_min,
+                fano_min=cfg.scaling_fano_min,
+                mu_positive_constraint=cfg.scaling_mu_constraint,
             )
         if cfg.scale_mlp:
             self.scale_fn = MLPScale(
