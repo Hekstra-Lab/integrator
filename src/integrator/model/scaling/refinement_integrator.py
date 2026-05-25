@@ -76,6 +76,35 @@ def _build_hasu_lookup(
     return lookup
 
 
+def _build_hasu_lookup_anomalous(
+    Hasu_array: np.ndarray, sg: gemmi.SpaceGroup
+) -> tuple[dict[tuple[int, int, int], int], dict[tuple[int, int, int], bool]]:
+    """Build lookup that distinguishes Friedel mates.
+
+    Returns:
+        idx_lookup: HKL → index in Hasu_array (same as _build_hasu_lookup)
+        is_plus: HKL → True if this HKL matches Hasu_array directly,
+                 False if it matches only via Friedel negation.
+                 F(+) uses Fc_plus[idx], F(-) uses Fc_minus[idx].
+    """
+    op_list = list(sg.operations())
+    idx_lookup: dict[tuple[int, int, int], int] = {}
+    is_plus: dict[tuple[int, int, int], bool] = {}
+    for idx in range(len(Hasu_array)):
+        h, k, l = int(Hasu_array[idx, 0]), int(Hasu_array[idx, 1]), int(Hasu_array[idx, 2])
+        for op in op_list:
+            hkl_rot = op.apply_to_hkl([h, k, l])
+            key_plus = tuple(hkl_rot)
+            key_minus = (-hkl_rot[0], -hkl_rot[1], -hkl_rot[2])
+            if key_plus not in idx_lookup:
+                idx_lookup[key_plus] = idx
+                is_plus[key_plus] = True
+            if key_minus not in idx_lookup:
+                idx_lookup[key_minus] = idx
+                is_plus[key_minus] = False
+    return idx_lookup, is_plus
+
+
 class RefinementIntegrator(BaseIntegrator):
     """End-to-end integrator that refines an atomic model against raw pixel counts.
 

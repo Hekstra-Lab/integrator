@@ -38,7 +38,7 @@ from integrator.model.scaling.chebyshev_scale import (
 )
 from integrator.model.scaling.refinement_integrator import (
     DeterministicIntensity,
-    _build_hasu_lookup,
+    _build_hasu_lookup_anomalous,
 )
 
 logger = logging.getLogger(__name__)
@@ -208,26 +208,30 @@ class VariationalRefinementIntegrator(BaseIntegrator):
         )
         n_asu_ids = len(id_to_hkl)
 
-        hasu_lookup = _build_hasu_lookup(
-            self.sfcalc.Hasu_array, self.sfcalc.space_group, cfg.anomalous
+        idx_lookup, is_plus_lookup = _build_hasu_lookup_anomalous(
+            self.sfcalc.Hasu_array, self.sfcalc.space_group
         )
 
         sfc_idx = torch.full((n_asu_ids,), -1, dtype=torch.long)
+        is_friedel_plus = torch.ones(n_asu_ids, dtype=torch.bool)
+
         for aid in range(n_asu_ids):
             h, k, l = (
                 int(id_to_hkl[aid, 0]),
                 int(id_to_hkl[aid, 1]),
                 int(id_to_hkl[aid, 2]),
             )
-            if (h, k, l) in hasu_lookup:
-                sfc_idx[aid] = hasu_lookup[(h, k, l)]
+            if (h, k, l) in idx_lookup:
+                sfc_idx[aid] = idx_lookup[(h, k, l)]
+                is_friedel_plus[aid] = is_plus_lookup[(h, k, l)]
 
         n_mapped = (sfc_idx >= 0).sum().item()
         n_missing = n_asu_ids - n_mapped
-        if n_missing > 0:
-            import logging
+        n_plus = is_friedel_plus[sfc_idx >= 0].sum().item()
+        n_minus = n_mapped - n_plus
 
-            logging.getLogger(__name__).warning(
+        if n_missing > 0:
+            logger.warning(
                 "%d of %d asu_ids could not be mapped to SFcalculator HKLs "
                 "(likely beyond dmin=%.1f). These will get F_sq=0.",
                 n_missing,
@@ -236,26 +240,39 @@ class VariationalRefinementIntegrator(BaseIntegrator):
             )
             sfc_idx[sfc_idx < 0] = 0
 
-        self.register_buffer("sfc_idx", sfc_idx)
-        self.register_buffer(
-            "sfc_valid",
-            torch.tensor(
-                [1 if s >= 0 else 0 for s in sfc_idx.tolist()],
-                dtype=torch.bool,
-            ),
+        logger.info(
+            "Anomalous HKL map: %d F(+), %d F(-), %d unmapped",
+            n_plus, n_minus, n_missing,
         )
 
-    def _compute_F_sq(self) -> Tensor:
+        self.register_buffer("sfc_idx", sfc_idx)
+        self.register_buffer("is_friedel_plus", is_friedel_plus)
+
+    def _compute_F_sq(self) -> tuple[Tensor, Tensor]:
+        """Compute |F|² for both Friedel mates.
+
+        Returns (F_sq_plus, F_sq_minus) where plus corresponds to
+        Hasu_array HKLs and minus to their negations.
+        """
         self.sfcalc.atom_pos_orth = self.atom_pos_mu
         self.sfcalc.atom_b_iso = self.atom_b_iso
-        Fc = self.sfcalc.calc_fprotein(Return=True)
+
+        Fc_plus = self.sfcalc.calc_fprotein(Return=True)
+
+        original_hasu = self.sfcalc.Hasu_array.copy()
+        self.sfcalc.Hasu_array = -original_hasu
+        Fc_minus = self.sfcalc.calc_fprotein(Return=True)
+        self.sfcalc.Hasu_array = original_hasu
 
         if self.use_bulk_solvent:
             dampening = torch.exp(-self.B_sol * self.s_squared)
             F_solvent = self.k_sol * dampening * self.F_mask
-            Fc = Fc + F_solvent
+            Fc_plus = Fc_plus + F_solvent
+            Fc_minus = Fc_minus + F_solvent
 
-        return (Fc * Fc.conj()).real
+        F_sq_plus = (Fc_plus * Fc_plus.conj()).real
+        F_sq_minus = (Fc_minus * Fc_minus.conj()).real
+        return F_sq_plus, F_sq_minus
 
     def _atom_position_kl(self) -> Tensor:
         """KL(q(x) || p(x)) for isotropic Gaussian position posteriors.
@@ -313,9 +330,11 @@ class VariationalRefinementIntegrator(BaseIntegrator):
             metadata=metadata,
         )
 
-        F_sq_all = self._compute_F_sq()
+        F_sq_plus, F_sq_minus = self._compute_F_sq()
         asu_ids = metadata["asu_id"].long().to(device)
-        F_sq = F_sq_all[self.sfc_idx[asu_ids]]
+        idx = self.sfc_idx[asu_ids]
+        is_plus = self.is_friedel_plus[asu_ids]
+        F_sq = torch.where(is_plus, F_sq_plus[idx], F_sq_minus[idx])
         F_sq = F_sq.view(b, 1, 1)
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
