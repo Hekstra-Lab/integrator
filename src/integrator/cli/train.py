@@ -458,6 +458,11 @@ def main():
         es_cfg.get("mode", "min") if es_cfg else "min",
     )
     ckpt_dir = logdir / "checkpoints"
+    # save_on_train_epoch_end: Lightning defaults this to False when a
+    # val_dataloader exists AND monitor=None — meaning checkpoints would
+    # only fire after a val_epoch_end. With check_val_every_n_epoch > 1
+    # and any pathology that skips val, this means no checkpoints at all.
+    # Force train-epoch-end saves when there's no metric to rank by.
     checkpoint_callback = ModelCheckpoint(
         dirpath=ckpt_dir,
         filename="{epoch:04d}",
@@ -466,6 +471,7 @@ def main():
         save_last="link",
         monitor=ckpt_monitor if save_top_k > 0 else None,
         mode=ckpt_mode if save_top_k > 0 else "min",
+        save_on_train_epoch_end=(ckpt_monitor is None) or None,
     )
     logger.info(
         "Checkpoints: dir=%s save_top_k=%d monitor=%s",
