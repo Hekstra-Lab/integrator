@@ -11,6 +11,8 @@ from torch.utils.data import (
     Subset,
 )
 
+from integrator.data_loaders.grouped_sampler import GroupedAsuIdBatchSampler
+
 logger = logging.getLogger(__name__)
 
 
@@ -206,6 +208,8 @@ class RotationDataModule(pl.LightningDataModule):
         get_dxyz: bool = False,
         anscombe: bool = False,
         transform: str | None = None,
+        group_by_asu_id: bool = False,
+        max_obs_per_hkl: int | None = None,
     ):
         super().__init__()
         self.data_dir = data_dir
@@ -243,6 +247,8 @@ class RotationDataModule(pl.LightningDataModule):
             )
         else:
             self.transform = transform
+        self.group_by_asu_id = group_by_asu_id
+        self.max_obs_per_hkl = max_obs_per_hkl
 
     def setup(self, stage=None):
         counts = _load_shoebox_array(
@@ -357,6 +363,23 @@ class RotationDataModule(pl.LightningDataModule):
         self.train_dataset = Subset(self.full_dataset, train_idx.tolist())
 
     def train_dataloader(self):
+        if self.group_by_asu_id:
+            sampler = GroupedAsuIdBatchSampler(
+                asu_ids=self.full_dataset.reference["asu_id"],
+                indices=torch.tensor(
+                    self.train_dataset.indices, dtype=torch.long
+                ),
+                batch_size=self.batch_size,
+                shuffle=True,
+                drop_last=False,
+                max_obs_per_hkl=self.max_obs_per_hkl,
+            )
+            return DataLoader(
+                self.full_dataset,
+                batch_sampler=sampler,
+                num_workers=self.num_workers,
+                pin_memory=True,
+            )
         return DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
@@ -366,6 +389,23 @@ class RotationDataModule(pl.LightningDataModule):
         )
 
     def val_dataloader(self):
+        if self.group_by_asu_id:
+            sampler = GroupedAsuIdBatchSampler(
+                asu_ids=self.full_dataset.reference["asu_id"],
+                indices=torch.tensor(
+                    self.val_dataset.indices, dtype=torch.long
+                ),
+                batch_size=self.batch_size,
+                shuffle=False,
+                drop_last=False,
+                max_obs_per_hkl=self.max_obs_per_hkl,
+            )
+            return DataLoader(
+                self.full_dataset,
+                batch_sampler=sampler,
+                num_workers=self.num_workers,
+                pin_memory=True,
+            )
         return DataLoader(
             self.val_dataset,
             batch_size=self.batch_size,

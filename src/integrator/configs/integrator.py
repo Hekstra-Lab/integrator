@@ -25,12 +25,19 @@ class IntegratorCfg:
     n_hkl: int | None = None
     scaling_init_mu: float = 1.0
     scaling_init_fano: float = 1.0
+    scaling_init_k: float = 1.0
+    scaling_init_rate: float = 1.0
     scaling_eps: float = 1e-6
     scaling_k_min: float = 0.1
+    scaling_rate_min: float = 0.001
     scaling_fano_min: float = 0.0
     scaling_mu_constraint: str = "exp"
     scaling_lr: float | None = None
     merge_weight: float = 1.0
+    merge_kl_weight: float = 1.0
+    ema_momentum: float = 0.95
+    wilson_alpha: float = 1.0
+    sample_I_h: bool = True
     # Amplitude parameterization: "gamma" (default), "normal", or "folded_normal"
     scaling_amplitude: str = "gamma"
     scaling_init_sigma_frac: float = 0.05
