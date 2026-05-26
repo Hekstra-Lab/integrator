@@ -20,6 +20,7 @@ from integrator.model.integrators import (
     HierarchicalIntegrator3Enc,
 )
 from integrator.model.scaling import (
+    ConjugateIntegrator,
     ConjugateMergingIntegrator,
     DeepSetsMergingIntegrator,
     MergingIntegrator,
@@ -52,6 +53,7 @@ REGISTRY = {
         "merging": MergingIntegrator,
         "deepsets_merging": DeepSetsMergingIntegrator,
         "conjugate_merging": ConjugateMergingIntegrator,
+        "conjugate": ConjugateIntegrator,
         "refinement": RefinementIntegrator,
         "variational_refinement": VariationalRefinementIntegrator,
     },

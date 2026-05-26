@@ -458,6 +458,7 @@ def main():
         es_cfg.get("mode", "min") if es_cfg else "min",
     )
     ckpt_dir = logdir / "checkpoints"
+    every_n_epochs = int(ckpt_cfg.get("every_n_epochs", 1))
     # save_on_train_epoch_end: Lightning defaults this to False when a
     # val_dataloader exists AND monitor=None — meaning checkpoints would
     # only fire after a val_epoch_end. With check_val_every_n_epoch > 1
@@ -466,7 +467,7 @@ def main():
     checkpoint_callback = ModelCheckpoint(
         dirpath=ckpt_dir,
         filename="{epoch:04d}",
-        every_n_epochs=1,
+        every_n_epochs=every_n_epochs,
         save_top_k=save_top_k,
         save_last="link",
         monitor=ckpt_monitor if save_top_k > 0 else None,
@@ -474,10 +475,11 @@ def main():
         save_on_train_epoch_end=(ckpt_monitor is None) or None,
     )
     logger.info(
-        "Checkpoints: dir=%s save_top_k=%d monitor=%s",
+        "Checkpoints: dir=%s save_top_k=%d monitor=%s every_n_epochs=%d",
         ckpt_dir.as_posix(),
         save_top_k,
         ckpt_monitor,
+        every_n_epochs,
     )
 
     callbacks = [

@@ -11,7 +11,10 @@ from torch.utils.data import (
     Subset,
 )
 
-from integrator.data_loaders.grouped_sampler import GroupedAsuIdBatchSampler
+from integrator.data_loaders.grouped_sampler import (
+    GroupedAsuIdBatchSampler,
+    GroupedAsuIdSampler,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -390,19 +393,26 @@ class RotationDataModule(pl.LightningDataModule):
 
     def val_dataloader(self):
         if self.group_by_asu_id:
-            sampler = GroupedAsuIdBatchSampler(
+            # Use the single-index GroupedAsuIdSampler (not BatchSampler) for
+            # val. Lightning's `Trainer.reset_val_dataloader` introspects
+            # dataloader.batch_size and dataloader.sampler — both are None
+            # when `batch_sampler=` is used, which silently breaks the val
+            # cadence after the sanity check. Using sampler= + batch_size=
+            # gives Lightning the standard surface area it expects. Batches
+            # are chunks of `batch_size` from the HKL-sorted index sequence,
+            # so they still contain mostly-complete HKL groups (~1 split per
+            # batch boundary).
+            sampler = GroupedAsuIdSampler(
                 asu_ids=self.full_dataset.reference["asu_id"],
                 indices=torch.tensor(
                     self.val_dataset.indices, dtype=torch.long
                 ),
-                batch_size=self.batch_size,
                 shuffle=False,
-                drop_last=False,
-                max_obs_per_hkl=self.max_obs_per_hkl,
             )
             return DataLoader(
                 self.full_dataset,
-                batch_sampler=sampler,
+                sampler=sampler,
+                batch_size=self.batch_size,
                 num_workers=self.num_workers,
                 pin_memory=True,
             )

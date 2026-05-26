@@ -23,7 +23,7 @@ from collections.abc import Iterator
 
 import numpy as np
 import torch
-from torch.utils.data import BatchSampler
+from torch.utils.data import BatchSampler, Sampler
 
 logger = logging.getLogger(__name__)
 
@@ -140,3 +140,86 @@ class GroupedAsuIdBatchSampler(BatchSampler):
         if not self.drop_last and self._n_hkls % approx_hkls_per_batch:
             n += 1
         return max(1, n)
+
+
+class GroupedAsuIdSampler(Sampler[int]):
+    """Yields single indices in HKL-grouped order.
+
+    Each epoch shuffles HKL order, then yields all observation indices
+    of HKL_0, then all of HKL_1, etc. Used with `DataLoader(..., sampler=...,
+    batch_size=B)` instead of `batch_sampler=`, which gives Lightning the
+    standard `dataloader.sampler` + `dataloader.batch_size` surface area
+    it expects when re-resolving val dataloaders mid-training.
+
+    Consecutive batches of size B from this sampler each contain
+    consecutive HKLs in the shuffle order — mostly complete groups, with
+    at most one HKL split across each batch boundary. For HEWL val
+    (~5 obs/HKL, batch_size=2048), that's ~436 complete HKLs per batch.
+
+    Args:
+        asu_ids: int tensor of length N — HKL id for each observation.
+        indices: subset of dataset indices to draw from. If None, uses all.
+        shuffle: shuffle HKL order each epoch.
+        seed: RNG seed.
+    """
+
+    def __init__(
+        self,
+        asu_ids: torch.Tensor,
+        indices: torch.Tensor | None = None,
+        shuffle: bool = True,
+        seed: int | None = None,
+    ):
+        if indices is None:
+            indices = torch.arange(len(asu_ids), dtype=torch.long)
+        else:
+            indices = torch.as_tensor(indices, dtype=torch.long)
+
+        self.shuffle = shuffle
+        self.seed = seed
+        self._epoch = 0
+
+        sub_asu = asu_ids[indices].long().numpy()
+        idx_np = indices.long().numpy()
+
+        order = np.argsort(sub_asu, kind="stable")
+        sorted_asu = sub_asu[order]
+        sorted_indices = idx_np[order]
+        change = np.concatenate([[True], sorted_asu[1:] != sorted_asu[:-1]])
+        change_idx = np.flatnonzero(change)
+        ends = np.concatenate([change_idx[1:], [len(sorted_asu)]])
+        self._hkl_groups: list[np.ndarray] = [
+            sorted_indices[start:end]
+            for start, end in zip(change_idx, ends, strict=True)
+        ]
+        self._n_hkls = len(self._hkl_groups)
+        self._total_obs = len(sub_asu)
+
+        logger.info(
+            "GroupedAsuIdSampler: %d obs across %d unique HKLs "
+            "(mean obs/HKL = %.1f)",
+            self._total_obs,
+            self._n_hkls,
+            self._total_obs / max(self._n_hkls, 1),
+        )
+
+    def set_epoch(self, epoch: int) -> None:
+        self._epoch = epoch
+
+    def __iter__(self):
+        if self.shuffle:
+            if self.seed is not None:
+                g = torch.Generator()
+                g.manual_seed(self.seed + self._epoch)
+                perm = torch.randperm(self._n_hkls, generator=g).numpy()
+            else:
+                perm = np.random.permutation(self._n_hkls)
+        else:
+            perm = np.arange(self._n_hkls)
+
+        for h in perm:
+            for i in self._hkl_groups[h]:
+                yield int(i)
+
+    def __len__(self) -> int:
+        return self._total_obs

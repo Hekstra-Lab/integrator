@@ -38,6 +38,7 @@ class IntegratorCfg:
     ema_momentum: float = 0.95
     wilson_alpha: float = 1.0
     sample_I_h: bool = True
+    n_em_iters: int = 3
     # Amplitude parameterization: "gamma" (default), "normal", or "folded_normal"
     scaling_amplitude: str = "gamma"
     scaling_init_sigma_frac: float = 0.05
