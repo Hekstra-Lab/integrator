@@ -536,6 +536,8 @@ def construct_data_loader(cfg):
         W=dl_args.W,
         anscombe=dl_args.anscombe,
         transform=dl_args.transform,
+        group_by_asu_id=dl_args.group_by_asu_id,
+        max_obs_per_hkl=dl_args.max_obs_per_hkl,
     )
 
 

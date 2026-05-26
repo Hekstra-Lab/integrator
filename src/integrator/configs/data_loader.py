@@ -53,6 +53,11 @@ class DataLoaderArgs:
     # recipe for skewed-count VAEs), or "none" (mean-subtract+std-divide
     # of raw counts). When omitted, we honor the legacy `anscombe` flag.
     transform: str | None = None
+    # Group batches by HKL (required for ConjugateMergingIntegrator and
+    # DeepSetsMergingIntegrator — each batch contains complete HKL groups
+    # so sufficient statistics / scatter_mean aggregate properly).
+    group_by_asu_id: bool = False
+    max_obs_per_hkl: int | None = None
 
     def __post_init__(self):
         if self.batch_size < 0:
