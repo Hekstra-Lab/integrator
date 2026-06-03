@@ -131,8 +131,13 @@ class ConjugateIntegrator(BaseIntegrator):
 
         # Scale function (optional). With scale_mlp=false and scale_spatial=false,
         # the default ChebyshevScale with degree=0 gives a learnable constant
-        # divided by lp (i.e. just LP correction).
-        if cfg.scale_mlp:
+        # divided by lp (i.e. just LP correction). scale_none disables it
+        # entirely (s=1, no LP): rate = prof*I + bg, so I is the raw integrated
+        # intensity — the right choice for a pure integration model whose
+        # output is scaled/merged downstream.
+        if getattr(cfg, "scale_none", False):
+            self.scale_fn = None
+        elif cfg.scale_mlp:
             self.scale_fn = MLPScale(
                 hidden_dim=cfg.scale_mlp_hidden,
                 n_layers=cfg.scale_mlp_layers,
@@ -162,6 +167,8 @@ class ConjugateIntegrator(BaseIntegrator):
 
     # %%
     def _get_scale(self, metadata: dict, device: torch.device) -> Tensor:
+        if self.scale_fn is None:  # scale_none: rate = prof*I + bg (s=1, no LP)
+            return torch.ones_like(metadata["d"].to(device).float())
         frame = metadata["xyzcal.px.2"].to(device).float()
         lp = metadata["lp"].to(device).float().clamp(min=1e-8)
         if isinstance(self.scale_fn, MLPScale):

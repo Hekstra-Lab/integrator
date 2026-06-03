@@ -11,12 +11,46 @@ import torch
 
 from integrator.utils import load_config
 from integrator.utils.refl_utils import (
+    BOOL_COLS,
     DEFAULT_REFL_COLS,
     unstack_preds,
     write_refl_from_ds,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _read_reference_refl(refl_file):
+    """Read a DIALS .refl, tolerating columns rs cannot parse as extra_cols.
+
+    Some rs versions fail to read 1-byte `bool` columns (e.g. `entering`) via
+    `extra_cols` ("buffer size must be a multiple of element size"). These
+    columns are not needed for the integrator's output, so we degrade
+    gracefully: try the full set, then drop bool columns, then (last resort)
+    probe and drop any individually-unreadable column.
+    """
+    attempts = [
+        list(DEFAULT_REFL_COLS),
+        [c for c in DEFAULT_REFL_COLS if c not in BOOL_COLS],
+    ]
+    for cols in attempts:
+        try:
+            return rs.io.read_dials_stills(refl_file, extra_cols=cols)
+        except Exception as e:  # noqa: BLE001 - rs raises bare ValueError
+            logger.warning(
+                "read_dials_stills failed with %d extra_cols (%s); retrying "
+                "with fewer columns",
+                len(cols),
+                e,
+            )
+    good = []
+    for c in DEFAULT_REFL_COLS:
+        try:
+            rs.io.read_dials_stills(refl_file, extra_cols=[c])
+            good.append(c)
+        except Exception:  # noqa: BLE001
+            logger.warning("Dropping unreadable refl column: %s", c)
+    return rs.io.read_dials_stills(refl_file, extra_cols=good)
 
 
 def _deep_merge(a: dict, b: dict) -> dict:
@@ -141,17 +175,23 @@ def get_pred_files(
     elif filetype == "parquet":
         pred_files = list(ckpt_dir.glob("preds_epoch_*.parquet"))
         lf = pl.scan_parquet(pred_files)
-        refl_ids = lf.select("refl_ids").collect().to_numpy().ravel()
-        qi_mean = lf.select("qi_mean").collect().to_numpy().ravel()
-        qi_var = lf.select("qi_var").collect().to_numpy().ravel()
-        qbg_mean = lf.select("qbg_mean").collect().to_numpy().ravel()
-
-        data = {
-            "refl_ids": refl_ids,
-            "qi_mean": qi_mean,
-            "qi_var": qi_var,
-            "qbg_mean": qbg_mean,
-        }
+        available = set(lf.collect_schema().names())
+        # Required scalar columns + optional ones (calibrated exact posterior,
+        # coset flag) loaded only when present. Array columns like qp_mean are
+        # intentionally excluded (downstream uses pd.DataFrame on this dict).
+        wanted = [
+            "refl_ids",
+            "qi_mean",
+            "qi_var",
+            "qbg_mean",
+            "qi_exact_mean",
+            "qi_exact_var",
+            "qi_exact_std",
+            "is_coset",
+        ]
+        cols = [c for c in wanted if c in available]
+        sel = lf.select(cols).collect()
+        data = {c: sel[c].to_numpy().ravel() for c in cols}
     else:
         raise ValueError(f"Unsupported filetype: {filetype}")
 

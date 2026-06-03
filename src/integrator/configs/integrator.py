@@ -53,6 +53,10 @@ class IntegratorCfg:
     scaling_init_from_wilson: str | None = None
 
     # Scaling model: Chebyshev scale s(frame) or s(frame, radius)
+    # scale_none disables the scale entirely (s=1, no LP) -> rate = prof*I + bg,
+    # so the conjugate intensity I is the raw integrated estimate. Takes
+    # precedence over scale_mlp / scale_spatial.
+    scale_none: bool = False
     scale_degree: int = 5
     scale_frame_min: float = 0.0
     scale_frame_max: float = 1000.0

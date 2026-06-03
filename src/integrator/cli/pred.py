@@ -12,11 +12,15 @@ logger = logging.getLogger(__name__)
 def _match_profile_basis_dim(config: dict, state_dict: dict) -> None:
     """Pin the learned_basis_profile latent_dim to match the checkpoint.
 
-    The surrogate's dim is set by the warmstart basis file at train time. At
-    predict time `skip_warmstart` drops that file, so without an explicit
+    The surrogate's basis dim is set by the warmstart basis file at train time.
+    At predict time `skip_warmstart` drops that file, so without an explicit
     `latent_dim` the dim defaults (e.g. 8) and `load_state_dict` fails with a
-    size mismatch. The checkpoint's own `surrogates.qp.decoder.weight` (output,
-    latent) gives the true dim, so we read it and inject `latent_dim`.
+    size mismatch. The checkpoint's `surrogates.qp.decoder.weight` is
+    (output_dim, latent_dim), so we read latent_dim from it and inject it.
+
+    Only `latent_dim` is touched: `input_dim` (= encoder output width) and
+    `output_dim` come from the config and must stay honest, so a genuine
+    config/encoder mismatch still surfaces as a clear load error.
     """
     qp = config.get("surrogates", {}).get("qp")
     if not isinstance(qp, dict) or qp.get("name") != "learned_basis_profile":
