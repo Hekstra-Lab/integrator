@@ -41,6 +41,19 @@ def parse_args():
         help="Integer value specifying the size of each training batch",
     )
     parser.add_argument(
+        "--epoch",
+        type=int,
+        default=None,
+        help="Process only the checkpoint for this epoch (single-checkpoint mode)",
+    )
+    parser.add_argument(
+        "--ckpt",
+        type=str,
+        default=None,
+        help="Process only this explicit .ckpt path (overrides --epoch and the "
+        "run_metadata checkpoint search)",
+    )
+    parser.add_argument(
         "--save-preds-as",
         type=str,
         default="parquet",
@@ -99,9 +112,26 @@ def main():
     pred_dir = wandb_dir / "predictions"
     pred_dir.mkdir(exist_ok=True)
 
-    # list of .ckpt files
-    checkpoints = sorted(log_dir.glob("**/epoch*.ckpt"))
-    logger.info("Found %d checkpoints", len(checkpoints))
+    epoch_re = re.compile(r"epoch=(\d+)")
+
+    # list of .ckpt files (optionally narrowed to a single checkpoint)
+    if args.ckpt:
+        checkpoints = [Path(args.ckpt)]
+        if not checkpoints[0].exists():
+            raise FileNotFoundError(f"--ckpt not found: {args.ckpt}")
+    else:
+        checkpoints = sorted(log_dir.glob("**/epoch*.ckpt"))
+        if args.epoch is not None:
+            checkpoints = [
+                c
+                for c in checkpoints
+                if (m := epoch_re.search(c.name)) and int(m.group(1)) == args.epoch
+            ]
+            if not checkpoints:
+                raise ValueError(
+                    f"No checkpoint with epoch={args.epoch} found under {log_dir}"
+                )
+    logger.info("Found %d checkpoint(s) to process", len(checkpoints))
 
     # load data
     data_loader = construct_data_loader(config)
@@ -115,7 +145,6 @@ def main():
             "--write-refl requires 'output.refl_file' in the YAML config"
         )
 
-    epoch_re = re.compile(r"epoch=(\d+)")
     for ckpt in checkpoints:
         # Finding checkpoint epoch
         m = epoch_re.search(ckpt.name)
