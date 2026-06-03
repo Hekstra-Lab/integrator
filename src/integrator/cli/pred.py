@@ -9,6 +9,26 @@ from integrator.cli.utils.mtz_writer import write_mtz_from_preds
 logger = logging.getLogger(__name__)
 
 
+def _match_profile_basis_dim(config: dict, state_dict: dict) -> None:
+    """Pin the learned_basis_profile latent_dim to match the checkpoint.
+
+    The surrogate's dim is set by the warmstart basis file at train time. At
+    predict time `skip_warmstart` drops that file, so without an explicit
+    `latent_dim` the dim defaults (e.g. 8) and `load_state_dict` fails with a
+    size mismatch. The checkpoint's own `surrogates.qp.decoder.weight` (output,
+    latent) gives the true dim, so we read it and inject `latent_dim`.
+    """
+    qp = config.get("surrogates", {}).get("qp")
+    if not isinstance(qp, dict) or qp.get("name") != "learned_basis_profile":
+        return
+    w = state_dict.get("surrogates.qp.decoder.weight")
+    if w is None:
+        return
+    latent_dim = int(w.shape[1])
+    qp.setdefault("args", {})["latent_dim"] = latent_dim
+    logger.info("Set qp latent_dim=%d to match checkpoint", latent_dim)
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Predict from a set of pytorch.ckpt files"
@@ -203,6 +223,11 @@ def main():
             )
 
             ckpt_ = torch.load(ckpt.as_posix())
+            # The learned_basis_profile surrogate is sized by the warmstart
+            # basis at train time, but skip_warmstart drops that file here, so
+            # its dim would silently fall back to the default. Pin it from the
+            # checkpoint (its own source of truth) to avoid a size mismatch.
+            _match_profile_basis_dim(config, ckpt_["state_dict"])
             integrator = construct_integrator(config, skip_warmstart=True)
             integrator.load_state_dict(ckpt_["state_dict"])
 

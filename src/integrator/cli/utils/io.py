@@ -1,3 +1,4 @@
+import logging
 from copy import deepcopy
 from pathlib import Path
 from typing import Literal
@@ -14,6 +15,8 @@ from integrator.utils.refl_utils import (
     unstack_preds,
     write_refl_from_ds,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _deep_merge(a: dict, b: dict) -> dict:
@@ -186,11 +189,27 @@ def write_refl_from_preds(
     ds_filtered = ds_filtered.sort_values("refl_ids").reset_index(drop=True)
     pred_df = pred_df.sort_values("refl_ids").reset_index(drop=True)
 
+    # Choose the intensity/uncertainty source
+    if "qi_exact_mean" in pred_df and "qi_exact_var" in pred_df:
+        i_value = pred_df["qi_exact_mean"]
+        i_variance = pred_df["qi_exact_var"]
+        logger.info(
+            "Writing .refl intensities from the calibrated exact posterior "
+            "(qi_exact_mean / qi_exact_var)"
+        )
+    else:
+        i_value = pred_df["qi_mean"]
+        i_variance = pred_df["qi_var"]
+        logger.info(
+            "Writing .refl intensities from the mean-field posterior "
+            "(qi_mean / qi_var); qi_exact_* not found in predictions"
+        )
+
     # Overwriting columns
-    ds_filtered["intensity.prf.value"] = pred_df["qi_mean"]
-    ds_filtered["intensity.prf.variance"] = pred_df["qi_var"]
-    ds_filtered["intensity.sum.value"] = pred_df["qi_mean"]
-    ds_filtered["intensity.sum.variance"] = pred_df["qi_var"]
+    ds_filtered["intensity.prf.value"] = i_value
+    ds_filtered["intensity.prf.variance"] = i_variance
+    ds_filtered["intensity.sum.value"] = i_value
+    ds_filtered["intensity.sum.variance"] = i_variance
     ds_filtered["background.mean"] = pred_df["qbg_mean"]
 
     # Getting identifiers
