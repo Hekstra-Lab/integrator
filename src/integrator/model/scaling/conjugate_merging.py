@@ -350,6 +350,12 @@ class ConjugateMergingIntegrator(BaseIntegrator):
             "unique_asu": unique_asu,
             "pi_mean": pi.mean().detach(),
             "I_h_hat_mean": I_h_hat.mean().detach(),
+            "scale_mean": scale.mean().detach(),
+            "scale_std": scale.std().detach(),
+            "scale_min": scale.min().detach(),
+            "scale_max": scale.max().detach(),
+            "bg_mean": bg_mean.mean().detach(),
+            "profile_max_mean": profile_mean.max(dim=-1).values.mean().detach(),
         }
 
     # ------------------------------------------------------------------
@@ -459,6 +465,17 @@ class ConjugateMergingIntegrator(BaseIntegrator):
                 on_step=False,
                 on_epoch=True,
             )
+            for k in (
+                "scale_mean",
+                "scale_std",
+                "scale_min",
+                "scale_max",
+                "bg_mean",
+                "profile_max_mean",
+            ):
+                self.log(
+                    f"{step} {k}", outputs[k], on_step=False, on_epoch=True
+                )
             self.log(
                 f"{step} n_unique_hkl",
                 torch.tensor(len(outputs["unique_asu"]), dtype=torch.float),

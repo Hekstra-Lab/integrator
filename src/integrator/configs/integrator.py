@@ -38,7 +38,15 @@ class IntegratorCfg:
     ema_momentum: float = 0.95
     wilson_alpha: float = 1.0
     sample_I_h: bool = True
-    n_em_iters: int = 3
+    # Inner EM for ConjugateIntegrator: max responsibility iterations and the
+    # relative-change tolerance for early stopping at the fixed point.
+    n_em_iters: int = 40
+    em_tol: float = 1e-3
+    # Calibrated exact-posterior export (ConjugateIntegrator.predict_step). Only
+    # computed when a `qi_exact_*` key is in predict_keys. n_nuisance<=1 = Fix A
+    # (quadrature at the nuisance means); >1 also propagates q(profile)/q(bg).
+    exact_posterior_n_nuisance: int = 16
+    exact_posterior_n_grid: int = 1024
     # Amplitude parameterization: "gamma" (default), "normal", or "folded_normal"
     scaling_amplitude: str = "gamma"
     scaling_init_sigma_frac: float = 0.05
