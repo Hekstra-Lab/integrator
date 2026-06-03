@@ -47,11 +47,16 @@ def parse_args():
         help="Process only the checkpoint for this epoch (single-checkpoint mode)",
     )
     parser.add_argument(
+        "--last",
+        action="store_true",
+        help="Process only the highest-epoch checkpoint (single-checkpoint mode)",
+    )
+    parser.add_argument(
         "--ckpt",
         type=str,
         default=None,
-        help="Process only this explicit .ckpt path (overrides --epoch and the "
-        "run_metadata checkpoint search)",
+        help="Process only this explicit .ckpt path (overrides --epoch/--last and "
+        "the run_metadata checkpoint search)",
     )
     parser.add_argument(
         "--save-preds-as",
@@ -131,6 +136,15 @@ def main():
                 raise ValueError(
                     f"No checkpoint with epoch={args.epoch} found under {log_dir}"
                 )
+        elif args.last:
+            parsed = [
+                (int(m.group(1)), c)
+                for c in checkpoints
+                if (m := epoch_re.search(c.name))
+            ]
+            if not parsed:
+                raise ValueError(f"No epoch*.ckpt found under {log_dir}")
+            checkpoints = [max(parsed, key=lambda t: t[0])[1]]
     logger.info("Found %d checkpoint(s) to process", len(checkpoints))
 
     # load data
