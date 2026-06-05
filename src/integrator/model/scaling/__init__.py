@@ -1,3 +1,4 @@
+from .amortized_merging import AmortizedMergingIntegrator
 from .chebyshev_scale import ChebyshevScale, MLPScale, SpatialChebyshevScale
 from .conjugate_integrator import ConjugateIntegrator
 from .conjugate_merging import ConjugateMergingIntegrator
@@ -9,6 +10,7 @@ from .scaling_integrator import ScalingIntegrator
 from .variational_refinement_integrator import VariationalRefinementIntegrator
 
 __all__ = [
+    "AmortizedMergingIntegrator",
     "ChebyshevScale",
     "ConjugateIntegrator",
     "ConjugateMergingIntegrator",
