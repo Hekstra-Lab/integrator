@@ -87,6 +87,7 @@ class BaseIntegrator(pl.LightningModule):
         self.warmup_steps = cfg.warmup_steps
         self.lr_min = cfg.lr_min
         self.mc_samples = cfg.mc_samples
+        self.coset_mode = cfg.coset_mode
         if cfg.data_dim == "2d":
             self.shoebox_shape = (cfg.h, cfg.w)
         else:
@@ -140,6 +141,7 @@ class BaseIntegrator(pl.LightningModule):
             mask=forward_out["mask"],
             group_labels=group_labels,
             metadata=metadata,
+            coset_mode=self.coset_mode,
         )
 
         total_loss = loss_dict["loss"]
@@ -156,6 +158,29 @@ class BaseIntegrator(pl.LightningModule):
                 if k in ("kl_prf_mean", "kl_i_mean", "kl_bg_mean")
             },
         )
+
+        # Track predicted intensity on coset (background-only) reflections.
+        # I|coset should sit near the background floor (especially in supervised
+        # mode); the gap to I|lattice is a direct false-positive / background-
+        # calibration readout. Logged in either coset_mode for comparison.
+        if "is_coset" in metadata:
+            with torch.no_grad():
+                qi_mean = outputs["qi"].mean.detach()
+                coset = metadata["is_coset"].bool().to(qi_mean.device)
+                if coset.any():
+                    self.log(
+                        f"{step} I_coset",
+                        qi_mean[coset].mean(),
+                        on_step=False,
+                        on_epoch=True,
+                    )
+                if (~coset).any():
+                    self.log(
+                        f"{step} I_lattice",
+                        qi_mean[~coset].mean(),
+                        on_step=False,
+                        on_epoch=True,
+                    )
 
         # penalties on profile basis
         penalty, penalty_components = self._profile_basis_penalty()

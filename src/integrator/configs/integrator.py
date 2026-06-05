@@ -21,6 +21,16 @@ class IntegratorCfg:
     mc_samples: int = 4
     predict_keys: Literal["default"] | list[str] = "default"
 
+    # Coset (background-only) reflection handling. Two independent behaviors:
+    # whether the rate is forced to background only, and whether the
+    # intensity/profile KL is dropped for cosets (background KL is always kept).
+    #   "override"       - rate -> background only; full KL (legacy default).
+    #   "override_no_kl" - rate -> background only; drop intensity/profile KL.
+    #   "supervised"     - rate stays I*prf + bg (no override) so background-only
+    #                      counts train the intensity head to report ~0; drop
+    #                      intensity/profile KL.
+    coset_mode: Literal["override", "override_no_kl", "supervised"] = "override"
+
     # Scaling model: per-HKL structure factor lookup table
     n_hkl: int | None = None
     scaling_init_mu: float = 1.0
@@ -146,6 +156,12 @@ class IntegratorCfg:
 
         if self.mc_samples < 1:
             raise ValueError(f"mc_samples must be >= 1, got {self.mc_samples}")
+
+        if self.coset_mode not in ("override", "override_no_kl", "supervised"):
+            raise ValueError(
+                "coset_mode must be 'override', 'override_no_kl', or "
+                f"'supervised', got {self.coset_mode!r}"
+            )
 
 
 @dataclass

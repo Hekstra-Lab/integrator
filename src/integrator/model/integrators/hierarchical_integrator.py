@@ -94,7 +94,16 @@ class HierarchicalIntegrator(BaseIntegrator):
 
         rate = zI * zp + zbg
 
-        if "is_coset" in metadata:
+        # Coset handling (see IntegratorCfg.coset_mode). "override" and
+        # "override_no_kl" force the coset rate to background only, so intensity
+        # never enters the likelihood. "supervised" leaves rate = I*prf + bg so
+        # the background-only counts pull coset intensity to the floor and the
+        # shared encoder learns to map background-like shoeboxes to ~0 intensity.
+        # The intensity/profile KL is dropped (in the loss) for both no-KL modes.
+        if (
+            self.coset_mode in ("override", "override_no_kl")
+            and "is_coset" in metadata
+        ):
             coset = metadata["is_coset"].bool().view(-1, 1, 1)
             rate = torch.where(coset, zbg, rate)
 
@@ -169,7 +178,16 @@ class HierarchicalIntegrator3Enc(BaseIntegrator):
 
         rate = zI * zp + zbg
 
-        if "is_coset" in metadata:
+        # Coset handling (see IntegratorCfg.coset_mode). "override" and
+        # "override_no_kl" force the coset rate to background only, so intensity
+        # never enters the likelihood. "supervised" leaves rate = I*prf + bg so
+        # the background-only counts pull coset intensity to the floor and the
+        # shared encoder learns to map background-like shoeboxes to ~0 intensity.
+        # The intensity/profile KL is dropped (in the loss) for both no-KL modes.
+        if (
+            self.coset_mode in ("override", "override_no_kl")
+            and "is_coset" in metadata
+        ):
             coset = metadata["is_coset"].bool().view(-1, 1, 1)
             rate = torch.where(coset, zbg, rate)
 

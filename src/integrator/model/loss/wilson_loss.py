@@ -156,16 +156,26 @@ class WilsonLoss(nn.Module):
         **kwargs,
     ) -> dict[str, Tensor]:
         device = rate.device
-        batch_size = rate.shape[0]
         counts = counts.to(device)
         mask = mask.to(device)
         groups = group_labels.long()
 
-        kl = torch.zeros(batch_size, device=device)
-
         metadata = kwargs.get("metadata")
         if metadata is None or "d" not in metadata:
             raise ValueError("Wilson loss requires metadata['d'].")
+
+        # Coset (background-only) reflections carry no Bragg latent, so in the
+        # "no-KL" modes ("override_no_kl", "supervised") we drop their intensity
+        # and profile KL (toward the Wilson/profile priors) while keeping the
+        # background KL. `lattice` stays None for plain "override", reproducing
+        # the legacy behavior exactly.
+        coset_mode = kwargs.get("coset_mode", "override")
+        lattice = None
+        if (
+            coset_mode in ("override_no_kl", "supervised")
+            and "is_coset" in metadata
+        ):
+            lattice = (~metadata["is_coset"].bool()).to(device).float()
 
         # Profile KL
         if self.profile_prior is not None:
@@ -177,7 +187,6 @@ class WilsonLoss(nn.Module):
         kl_prf = compute_profile_kl(
             qp, prf_prior_scale, self.pprf_weight, device
         )
-        kl = kl + kl_prf
 
         # Wilson intensity KL
         d = metadata["d"].to(device)
@@ -195,7 +204,6 @@ class WilsonLoss(nn.Module):
             p_i = Gamma(concentration=torch.ones_like(tau), rate=tau)
 
         kl_i = kl_divergence(qi, p_i) * self.pi_weight
-        kl = kl + kl_i
 
         # Background KL
         if self.bg_prior is not None:
@@ -213,7 +221,14 @@ class WilsonLoss(nn.Module):
                 ),
             )
         kl_bg = kl_divergence(qbg, p_bg) * self.pbg_weight
-        kl = kl + kl_bg
+
+        # Drop intensity/profile KL for coset reflections (supervised mode);
+        # background KL is always kept since the coset rate is background only.
+        if lattice is not None:
+            kl_i = kl_i * lattice
+            kl_prf = kl_prf * lattice
+
+        kl = kl_prf + kl_i + kl_bg
 
         # NLL: Poisson or NegativeBinomial
         mu = rate.clamp(min=1e-12)
@@ -230,11 +245,21 @@ class WilsonLoss(nn.Module):
 
         loss = (neg_ll + kl).mean()
 
+        # Average intensity/profile KL over contributing (lattice) reflections so
+        # the logged values stay interpretable when cosets are masked out.
+        if lattice is not None:
+            n_lat = lattice.sum().clamp(min=1.0)
+            kl_prf_mean = kl_prf.sum() / n_lat
+            kl_i_mean = kl_i.sum() / n_lat
+        else:
+            kl_prf_mean = kl_prf.mean()
+            kl_i_mean = kl_i.mean()
+
         return {
             "loss": loss,
             "neg_ll_mean": neg_ll.mean(),
             "kl_mean": kl.mean(),
-            "kl_prf_mean": kl_prf.mean(),
-            "kl_i_mean": kl_i.mean(),
+            "kl_prf_mean": kl_prf_mean,
+            "kl_i_mean": kl_i_mean,
             "kl_bg_mean": kl_bg.mean(),
         }
