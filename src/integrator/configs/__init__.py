@@ -27,7 +27,7 @@ from .priors import (
     GammaParams,
     PriorConfig,
 )
-from .trainer import TrainerConfig
+from .trainer import CheckpointConfig, TrainerConfig
 from .yaml_config import YAMLConfig
 
 __all__ = [
@@ -48,6 +48,7 @@ __all__ = [
     "OutputConfig",
     "LoggerConfig",
     "TrainerConfig",
+    "CheckpointConfig",
     "SurrogateArgs",
     "SurrogateConfig",
     "Surrogates",

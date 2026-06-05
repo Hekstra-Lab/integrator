@@ -115,6 +115,10 @@ trainer:
   gradient_clip_val: 1.0
   gradient_clip_algorithm: norm
 
+checkpoint:
+  every_n_epochs: 5   # save once every 5 epochs instead of every epoch
+  save_top_k: -1      # keep all saved checkpoints (set to e.g. 3 to keep only the last few)
+
 logger:
   d: *d
   h: *h

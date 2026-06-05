@@ -34,6 +34,7 @@ encoders:
     conv2_kernel_size: [3, 3, 3]
     conv2_padding: [0, 0, 0]
     norm2_num_groups: 4
+
 - &intensity_enc
   name: intensity_encoder
   args:

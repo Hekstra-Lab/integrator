@@ -280,6 +280,7 @@ def main():
         save_run_artifacts,
     )
     from integrator.utils.factory_utils import _collect_resolved_paths
+    from integrator.configs import CheckpointConfig
 
     torch.set_float32_matmul_precision("high")
 
@@ -445,20 +446,30 @@ def main():
             float(es_cfg.get("min_delta", 0.0)),
         )
 
-    # Checkpoints
-    ckpt_cfg = cfg.get("checkpoint", {}) or {}
+    # Checkpoints — the `checkpoint:` YAML section -> ModelCheckpoint callback.
+    # CheckpointConfig validates keys, so a typo like "every_n" raises here
+    # instead of being silently ignored (which would save a checkpoint every
+    # epoch). None for save_top_k/monitor/mode falls back to the early_stop
+    # config when present, else the legacy default.
+    ckpt_cfg = CheckpointConfig(**(cfg.get("checkpoint", {}) or {}))
     default_top_k = 1 if early_stop_cb else -1
-    save_top_k = int(ckpt_cfg.get("save_top_k", default_top_k))
-    ckpt_monitor = ckpt_cfg.get(
-        "monitor",
-        es_cfg["monitor"] if es_cfg else None,
+    save_top_k = (
+        ckpt_cfg.save_top_k
+        if ckpt_cfg.save_top_k is not None
+        else default_top_k
     )
-    ckpt_mode = ckpt_cfg.get(
-        "mode",
-        es_cfg.get("mode", "min") if es_cfg else "min",
+    ckpt_monitor = (
+        ckpt_cfg.monitor
+        if ckpt_cfg.monitor is not None
+        else (es_cfg["monitor"] if es_cfg else None)
+    )
+    ckpt_mode = (
+        ckpt_cfg.mode
+        if ckpt_cfg.mode is not None
+        else (es_cfg.get("mode", "min") if es_cfg else "min")
     )
     ckpt_dir = logdir / "checkpoints"
-    every_n_epochs = int(ckpt_cfg.get("every_n_epochs", 1))
+    every_n_epochs = ckpt_cfg.every_n_epochs
     # save_on_train_epoch_end: Lightning defaults this to False when a
     # val_dataloader exists AND monitor=None — meaning checkpoints would
     # only fire after a val_epoch_end. With check_val_every_n_epoch > 1
@@ -469,7 +480,7 @@ def main():
         filename="{epoch:04d}",
         every_n_epochs=every_n_epochs,
         save_top_k=save_top_k,
-        save_last="link",
+        save_last=ckpt_cfg.save_last,
         monitor=ckpt_monitor if save_top_k > 0 else None,
         mode=ckpt_mode if save_top_k > 0 else "min",
         save_on_train_epoch_end=(ckpt_monitor is None) or None,
