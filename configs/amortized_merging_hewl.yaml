@@ -1,0 +1,160 @@
+# Amortized merging — sibling of conjugate_merging with a *learned* q(I_h).
+# Per-HKL Gamma intensity is produced by the qi surrogate applied to per-HKL
+# aggregated (k_i, r_i) encoder features (scatter_mean), instead of the
+# closed-form Poisson-Gamma conjugate update. 5-encoder layout.
+# Pair with group_by_asu_id: true so batches hold complete HKL groups.
+integrator:
+  name: amortized_merging
+  args:
+    data_dim: 3d
+    d: &d 3
+    h: &h 21
+    w: &w 21
+    lr: 0.001
+    encoder_out: &encoder_out 64
+    weight_decay: 0.0
+    decoder_weight_decay: 0.0
+    qp_smoothness_weight: 1.0e-3
+    qp_orthogonality_weight: 0.0
+    mc_samples: &mc_samples 100
+    predict_keys:
+      [refl_ids, is_test, qi_mean, qi_var, qbg_mean, qbg_var,
+       intensity.prf.value, intensity.prf.variance, background.mean,
+       d, group_label, qp_mean, qp_loc, qp_scale, asu_id]
+
+    n_hkl: 86402
+    # EMA momentum for the inference-time per-HKL feature buffer.
+    ema_momentum: 0.95
+    # Wilson KL on per-HKL q(I_h) (applied once per HKL — no overcounting).
+    # Exact ELBO scaling is N_HKL / N_obs (~0.04 for HEWL); raise to strengthen
+    # the Wilson prior as a regularizer.
+    merge_kl_weight: 1.0
+
+    # MLP scale (same as deepsets/conjugate merging)
+    scale_mlp: true
+    scale_mlp_hidden: 64
+    scale_mlp_layers: 2
+    scale_frame_min: -2.0
+    scale_frame_max: 1442.0
+    scale_beam_center: [2058.2, 2193.9]
+    scale_r_max: 3022
+
+# 5 encoders: profile, k_i, r_i, k_bg, r_bg (mapped in order).
+encoders:
+- name: profile_encoder
+  args:
+    data_dim: 3d
+    input_shape: [*d, *h, *w]
+    encoder_out: *encoder_out
+    conv1_out_channels: 64
+    conv2_out_channels: 128
+    dropout: 0.2
+- &intensity_enc
+  name: intensity_encoder
+  args:
+    data_dim: 3d
+    encoder_out: *encoder_out
+    conv1_out_channels: 64
+    conv2_out_channels: 128
+    conv3_out_channels: 256
+- *intensity_enc
+- *intensity_enc
+- *intensity_enc
+
+surrogates:
+  qp:
+    name: learned_basis_profile
+    args:
+      warmstart_basis_path: hermite_profile_basis.pt
+      hermite_max_order: 4
+      hermite_basis_sigma: 3.0
+      hermite_sigma_z: 1.0
+      hermite_max_order_z: 1
+      input_dim: *encoder_out
+      output_dim: 1323
+      init_std: 0.5
+  qbg:
+    name: gammaB
+    args:
+      in_features: *encoder_out
+      eps: 1.0e-06
+      k_min: 0.01
+      mu_positive_constraint: softplus
+  # Amortized per-HKL intensity surrogate (gammaA: k_min floor for stability on
+  # the bright merged-intensity tail). Fed per-HKL aggregated (k_i, r_i) feats.
+  qi:
+    name: gammaA
+    args:
+      in_features: *encoder_out
+      eps: 1.0e-06
+      k_min: 0.01
+
+loss:
+  name: monochromatic_wilson
+  args:
+    lp_correction: false
+    mc_samples: *mc_samples
+    eps: 1.0e-06
+    n_bins: 30
+    profile_prior_scale: 3.0
+    # pi_weight=0: the per-obs intensity KL is overcounted; the per-HKL Wilson
+    # KL is applied in the integrator via merge_kl_weight.
+    pi_weight: 0.0
+    pbg_weight: 1.0
+    pprf_weight: 1.0
+
+data_loader:
+  name: rotation_data
+  args:
+    data_dir: &data_dir /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data
+    batch_size: 2048
+    val_split: 0.2
+    test_split: 0.0
+    num_workers: 8
+    include_test: true
+    subset_size: null
+    cutoff: null
+    group_by_asu_id: true
+    max_obs_per_hkl: null
+    shoebox_file_names:
+      data_dir: *data_dir
+      counts: counts.npy
+      masks: masks.npy
+      stats: anscombe_stats.pt
+      reference: metadata.pt
+      standardized_counts: null
+    D: *d
+    H: *h
+    W: *w
+    anscombe: true
+
+trainer:
+  max_epochs: 100
+  accelerator: gpu
+  devices: 1
+  logger: true
+  precision: '32'
+  check_val_every_n_epoch: 5
+  log_every_n_steps: 1
+  deterministic: false
+  enable_checkpointing: true
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+
+checkpoint:
+  every_n_epochs: 5
+  save_top_k: -1
+
+logger:
+  d: *d
+  h: *h
+  w: *w
+
+output:
+  refl_file: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data/reflections_.refl
+  dials_merge_html: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/merged_reference.html
+  phenix_refine_log: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/refine_001.log
+  anomalous_peaks: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/reference_peaks.csv
+  phenix_eff: /n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/reference_data/phenix.eff
+  pdb: /n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/reference_data/9b7c.pdb
+  expt_file: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/dials_2026-05-14/integrated.expt
