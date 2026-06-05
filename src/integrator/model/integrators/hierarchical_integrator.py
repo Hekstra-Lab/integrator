@@ -101,7 +101,7 @@ class HierarchicalIntegrator(BaseIntegrator):
         # shared encoder learns to map background-like shoeboxes to ~0 intensity.
         # The intensity/profile KL is dropped (in the loss) for both no-KL modes.
         if (
-            self.coset_mode in ("override", "override_no_kl")
+            self.coset_mode in ("override", "override_no_kl", "aux")
             and "is_coset" in metadata
         ):
             coset = metadata["is_coset"].bool().view(-1, 1, 1)
@@ -185,7 +185,7 @@ class HierarchicalIntegrator3Enc(BaseIntegrator):
         # shared encoder learns to map background-like shoeboxes to ~0 intensity.
         # The intensity/profile KL is dropped (in the loss) for both no-KL modes.
         if (
-            self.coset_mode in ("override", "override_no_kl")
+            self.coset_mode in ("override", "override_no_kl", "aux")
             and "is_coset" in metadata
         ):
             coset = metadata["is_coset"].bool().view(-1, 1, 1)

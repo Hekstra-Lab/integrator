@@ -64,6 +64,10 @@ class WilsonLoss(nn.Module):
         pprf_weight: float = 1.0,
         pbg_weight: float = 1.0,
         pi_weight: float = 1.0,
+        # Coset auxiliary intensity penalty (used when coset_mode == "aux"):
+        # weight * (log(qi.mean) - log(coset_i_floor))^2 on coset reflections.
+        coset_aux_weight: float = 0.0,
+        coset_i_floor: float = 1.0,
         # Likelihood: Poisson (default) or NegativeBinomial (robust)
         init_dispersion: float | None = None,
     ):
@@ -95,6 +99,8 @@ class WilsonLoss(nn.Module):
         )
         self.pbg_weight = pbg_cfg.weight if pbg_cfg is not None else pbg_weight
         self.pi_weight = pi_cfg.weight if pi_cfg is not None else pi_weight
+        self.coset_aux_weight = coset_aux_weight
+        self.coset_i_floor = coset_i_floor
 
         # Profile prior scale from basis file
         if profile_basis is not None:
@@ -164,18 +170,24 @@ class WilsonLoss(nn.Module):
         if metadata is None or "d" not in metadata:
             raise ValueError("Wilson loss requires metadata['d'].")
 
-        # Coset (background-only) reflections carry no Bragg latent, so in the
-        # "no-KL" modes ("override_no_kl", "supervised") we drop their intensity
-        # and profile KL (toward the Wilson/profile priors) while keeping the
-        # background KL. `lattice` stays None for plain "override", reproducing
-        # the legacy behavior exactly.
+        # Coset (background-only) reflections carry no Bragg latent. In the
+        # "no-KL" modes ("override_no_kl", "supervised", "aux") we drop their
+        # intensity and profile KL (toward the Wilson/profile priors) while
+        # keeping the background KL. `lattice` stays None for plain "override",
+        # reproducing the legacy behavior exactly.
         coset_mode = kwargs.get("coset_mode", "override")
+        coset = (
+            metadata["is_coset"].bool().to(device)
+            if "is_coset" in metadata
+            else None
+        )
         lattice = None
-        if (
-            coset_mode in ("override_no_kl", "supervised")
-            and "is_coset" in metadata
+        if coset is not None and coset_mode in (
+            "override_no_kl",
+            "supervised",
+            "aux",
         ):
-            lattice = (~metadata["is_coset"].bool()).to(device).float()
+            lattice = (~coset).float()
 
         # Profile KL
         if self.profile_prior is not None:
@@ -243,7 +255,21 @@ class WilsonLoss(nn.Module):
         ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
         neg_ll = (-ll_mean).sum(1)
 
-        loss = (neg_ll + kl).mean()
+        # Auxiliary L2 penalty pulling coset intensity toward a small floor
+        # ("aux" mode). Penalized in log-space (toward log I_floor) so the
+        # gradient does not vanish as intensity shrinks — an intensity-space L2
+        # would, via the exp Jacobian. Per-reflection, nonzero only on cosets.
+        aux = torch.zeros_like(neg_ll)
+        if (
+            coset_mode == "aux"
+            and coset is not None
+            and self.coset_aux_weight > 0
+        ):
+            log_mu = torch.log(qi.mean.clamp(min=self.eps))
+            target = math.log(max(self.coset_i_floor, 1e-6))
+            aux = coset.float() * (log_mu - target).pow(2)
+
+        loss = (neg_ll + kl + self.coset_aux_weight * aux).mean()
 
         # Average intensity/profile KL over contributing (lattice) reflections so
         # the logged values stay interpretable when cosets are masked out.
@@ -255,6 +281,12 @@ class WilsonLoss(nn.Module):
             kl_prf_mean = kl_prf.mean()
             kl_i_mean = kl_i.mean()
 
+        if coset is not None:
+            n_coset = coset.float().sum().clamp(min=1.0)
+            coset_aux_mean = (self.coset_aux_weight * aux).sum() / n_coset
+        else:
+            coset_aux_mean = torch.zeros((), device=device)
+
         return {
             "loss": loss,
             "neg_ll_mean": neg_ll.mean(),
@@ -262,4 +294,5 @@ class WilsonLoss(nn.Module):
             "kl_prf_mean": kl_prf_mean,
             "kl_i_mean": kl_i_mean,
             "kl_bg_mean": kl_bg.mean(),
+            "coset_aux_mean": coset_aux_mean,
         }

@@ -29,7 +29,12 @@ class IntegratorCfg:
     #   "supervised"     - rate stays I*prf + bg (no override) so background-only
     #                      counts train the intensity head to report ~0; drop
     #                      intensity/profile KL.
-    coset_mode: Literal["override", "override_no_kl", "supervised"] = "override"
+    #   "aux"            - rate -> background only; drop intensity/profile KL;
+    #                      add a log-space L2 penalty pulling coset intensity to
+    #                      a floor (loss: coset_aux_weight, coset_i_floor).
+    coset_mode: Literal[
+        "override", "override_no_kl", "supervised", "aux"
+    ] = "override"
 
     # Scaling model: per-HKL structure factor lookup table
     n_hkl: int | None = None
@@ -157,10 +162,15 @@ class IntegratorCfg:
         if self.mc_samples < 1:
             raise ValueError(f"mc_samples must be >= 1, got {self.mc_samples}")
 
-        if self.coset_mode not in ("override", "override_no_kl", "supervised"):
+        if self.coset_mode not in (
+            "override",
+            "override_no_kl",
+            "supervised",
+            "aux",
+        ):
             raise ValueError(
-                "coset_mode must be 'override', 'override_no_kl', or "
-                f"'supervised', got {self.coset_mode!r}"
+                "coset_mode must be 'override', 'override_no_kl', "
+                f"'supervised', or 'aux', got {self.coset_mode!r}"
             )
 
 

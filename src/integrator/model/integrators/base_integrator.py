@@ -159,6 +159,14 @@ class BaseIntegrator(pl.LightningModule):
             },
         )
 
+        if "coset_aux_mean" in loss_dict:
+            self.log(
+                f"{step} coset_aux",
+                loss_dict["coset_aux_mean"],
+                on_step=False,
+                on_epoch=True,
+            )
+
         # Track predicted intensity on coset (background-only) reflections.
         # I|coset should sit near the background floor (especially in supervised
         # mode); the gap to I|lattice is a direct false-positive / background-
