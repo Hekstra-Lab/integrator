@@ -249,6 +249,36 @@ def write_merged_mtz_from_checkpoint(
         F_var = np.maximum(I_mean - F_mean ** 2, 0.0)
         sig_F = np.sqrt(F_var)
 
+    return _finalize_merged_mtz(
+        F_mean,
+        sig_F,
+        I_mean,
+        sig_I,
+        seen=None,
+        metadata_path=metadata_path,
+        crystal_yaml_path=crystal_yaml_path,
+        out_path=out_path,
+        asu_id_to_hkl_path=asu_id_to_hkl_path,
+    )
+
+
+def _finalize_merged_mtz(
+    F_mean: np.ndarray,
+    sig_F: np.ndarray,
+    I_mean: np.ndarray,
+    sig_I: np.ndarray,
+    seen: np.ndarray | None,
+    metadata_path: Path,
+    crystal_yaml_path: Path,
+    out_path: Path,
+    asu_id_to_hkl_path: Path | None,
+) -> rs.DataSet:
+    """Map per-asu_id moments to canonical HKL, filter, and write the MTZ.
+
+    `seen` (optional bool array over asu_ids) restricts output to HKLs the
+    model actually observed -- required for the EMA-buffer merging models,
+    whose unseen rows decode to meaningless values.
+    """
     # Load canonical HKL from asu_id_to_hkl.pt (preferred) or fall back
     # to metadata.  The asu_id_to_hkl.pt file stores the true canonical
     # forms from prepare_asu_ids.py that preserve Friedel distinction.
@@ -284,9 +314,13 @@ def write_merged_mtz_from_checkpoint(
     spacegroup = gemmi.SpaceGroup(sg_str)
 
     mask = sig_F > 0
+    if seen is not None:
+        mask = mask & seen
     n_filtered = (~mask).sum()
     if n_filtered > 0:
-        logger.info("Filtered %d reflections with SIGF==0", n_filtered)
+        logger.info(
+            "Filtered %d reflections (SIGF==0 or unseen HKL)", n_filtered
+        )
         hkl = hkl[mask]
         F_mean = F_mean[mask]
         sig_F = sig_F[mask]
@@ -310,6 +344,63 @@ def write_merged_mtz_from_checkpoint(
     )
 
     return ds
+
+
+def write_merged_mtz_from_integrator(
+    integrator,
+    metadata_path: Path,
+    crystal_yaml_path: Path,
+    out_path: Path,
+    asu_id_to_hkl_path: Path | None = None,
+) -> rs.DataSet:
+    """Merged MTZ for the merging integrators (conjugate / deepsets / amortized).
+
+    These have no `hkl_table`; the per-HKL merged Gamma comes from
+    `integrator.get_merged_qi()` (decoded from the EMA buffers). Unseen HKLs
+    are dropped via the integrator's `feat_seen` / `buffer_seen` buffer.
+    """
+    from scipy.special import gammaln
+
+    if not hasattr(integrator, "get_merged_qi"):
+        raise AttributeError(
+            f"{type(integrator).__name__} has no get_merged_qi(); use "
+            "write_merged_mtz_from_checkpoint for hkl_table (scaling) models."
+        )
+
+    integrator.eval()
+    with torch.no_grad():
+        qi = integrator.get_merged_qi()
+        k = qi.concentration.detach().cpu()
+        rate = qi.rate.detach().cpu().clamp(min=1e-12)
+
+    k_np = k.numpy()
+    rate_np = rate.numpy()
+    I_mean = (k / rate).numpy()
+    sig_I = np.sqrt((k / rate.pow(2)).numpy())
+    # E[sqrt(I)] for I~Gamma(k, rate): Gamma(k+1/2)/Gamma(k) / sqrt(rate)
+    F_mean = np.exp(gammaln(k_np + 0.5) - gammaln(k_np)) / np.sqrt(
+        np.maximum(rate_np, 1e-12)
+    )
+    sig_F = np.sqrt(np.maximum(I_mean - F_mean**2, 0.0))
+
+    seen = None
+    for name in ("feat_seen", "buffer_seen"):
+        buf = getattr(integrator, name, None)
+        if buf is not None:
+            seen = buf.detach().cpu().numpy().astype(bool)
+            break
+
+    return _finalize_merged_mtz(
+        F_mean.astype(np.float64),
+        sig_F.astype(np.float64),
+        I_mean.astype(np.float64),
+        sig_I.astype(np.float64),
+        seen=seen,
+        metadata_path=metadata_path,
+        crystal_yaml_path=crystal_yaml_path,
+        out_path=out_path,
+        asu_id_to_hkl_path=asu_id_to_hkl_path,
+    )
 
 
 def _build_asu_hkl_table_fallback(

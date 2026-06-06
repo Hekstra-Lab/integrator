@@ -271,10 +271,6 @@ def main():
             )
 
         if args.write_merged_mtz:
-            from integrator.cli.utils.merged_mtz_writer import (
-                write_merged_mtz_from_checkpoint,
-            )
-
             data_dir = Path(config["data_loader"]["args"]["data_dir"])
             ref_name = (
                 config["data_loader"]["args"]
@@ -284,15 +280,44 @@ def main():
             crystal_yaml = data_dir / "crystal.yaml"
             out_path = ckpt_dir / args.write_merged_mtz
             if not out_path.exists():
-                logger.info(
-                    "Writing merged .mtz for epoch %d", epoch
-                )
-                write_merged_mtz_from_checkpoint(
-                    checkpoint_path=ckpt,
-                    metadata_path=data_dir / ref_name,
-                    crystal_yaml_path=crystal_yaml,
-                    out_path=out_path,
-                )
+                logger.info("Writing merged .mtz for epoch %d", epoch)
+                # The merging models (conjugate/deepsets/amortized) have no
+                # hkl_table; their merged intensities come from get_merged_qi()
+                # (decoded from EMA buffers). The scaling model reads its
+                # lookup table straight from the checkpoint state_dict.
+                merging_models = {
+                    "conjugate_merging",
+                    "deepsets_merging",
+                    "amortized_merging",
+                }
+                if config["integrator"]["name"] in merging_models:
+                    from integrator.cli.utils.merged_mtz_writer import (
+                        write_merged_mtz_from_integrator,
+                    )
+
+                    ckpt_ = torch.load(ckpt.as_posix())
+                    _match_profile_basis_dim(config, ckpt_["state_dict"])
+                    integrator = construct_integrator(
+                        config, skip_warmstart=True
+                    )
+                    integrator.load_state_dict(ckpt_["state_dict"])
+                    write_merged_mtz_from_integrator(
+                        integrator=integrator,
+                        metadata_path=data_dir / ref_name,
+                        crystal_yaml_path=crystal_yaml,
+                        out_path=out_path,
+                    )
+                else:
+                    from integrator.cli.utils.merged_mtz_writer import (
+                        write_merged_mtz_from_checkpoint,
+                    )
+
+                    write_merged_mtz_from_checkpoint(
+                        checkpoint_path=ckpt,
+                        metadata_path=data_dir / ref_name,
+                        crystal_yaml_path=crystal_yaml,
+                        out_path=out_path,
+                    )
             else:
                 logger.info(
                     "Merged .mtz for epoch %d already exists — skipping",

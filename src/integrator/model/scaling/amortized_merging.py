@@ -166,8 +166,6 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         """Per-HKL Gamma posterior from the EMA features (for MTZ output)."""
         return self.surrogates["qi"](self.feat_k_ema, self.feat_r_ema)
 
-    # ------------------------------------------------------------------
-
     def _forward_impl(
         self,
         counts: Tensor,
@@ -216,7 +214,9 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         qi_h = self.surrogates["qi"](z_k_h, z_r_h)  # batch shape (n_unique,)
 
         # Sample intensity once per HKL, broadcast to observations.
-        zI_h = qi_h.rsample([self.mc_samples]).clamp(min=1e-10)  # (S, n_unique)
+        zI_h = qi_h.rsample([self.mc_samples]).clamp(
+            min=1e-10
+        )  # (S, n_unique)
         zI = zI_h[:, inverse]  # (S, B) — shared across obs of same HKL
 
         scale = self._get_scale(metadata, device)  # (B,)
@@ -330,29 +330,40 @@ class AmortizedMergingIntegrator(BaseIntegrator):
 
         with torch.no_grad():
             self.log(
-                f"{step} qi_h_mean", qi_h.mean.mean(),
-                on_step=False, on_epoch=True,
+                f"{step} qi_h_mean",
+                qi_h.mean.mean(),
+                on_step=False,
+                on_epoch=True,
             )
             self.log(
-                f"{step} qi_h_var", qi_h.variance.mean(),
-                on_step=False, on_epoch=True,
+                f"{step} qi_h_var",
+                qi_h.variance.mean(),
+                on_step=False,
+                on_epoch=True,
             )
             self.log(
-                f"{step} qi_h_k", qi_h.concentration.mean(),
-                on_step=False, on_epoch=True,
+                f"{step} qi_h_k",
+                qi_h.concentration.mean(),
+                on_step=False,
+                on_epoch=True,
             )
             self.log(
-                f"{step} qi_h_rate", qi_h.rate.mean(),
-                on_step=False, on_epoch=True,
+                f"{step} qi_h_rate",
+                qi_h.rate.mean(),
+                on_step=False,
+                on_epoch=True,
             )
             self.log(
-                f"{step} buffer_coverage", self.feat_seen.float().mean(),
-                on_step=False, on_epoch=True,
+                f"{step} buffer_coverage",
+                self.feat_seen.float().mean(),
+                on_step=False,
+                on_epoch=True,
             )
             self.log(
                 f"{step} n_unique_hkl",
                 torch.tensor(len(outputs["unique_hkls"]), dtype=torch.float),
-                on_step=False, on_epoch=True,
+                on_step=False,
+                on_epoch=True,
             )
             self.log(
                 f"{step} obs_per_hkl",
@@ -360,7 +371,8 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                     counts.shape[0] / len(outputs["unique_hkls"]),
                     dtype=torch.float,
                 ),
-                on_step=False, on_epoch=True,
+                on_step=False,
+                on_epoch=True,
             )
 
         return {
