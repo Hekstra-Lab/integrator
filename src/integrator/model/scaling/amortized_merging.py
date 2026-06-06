@@ -1,31 +1,3 @@
-"""Amortized merging: per-HKL variational intensity from an amortized encoder.
-
-A sibling of `ConjugateMergingIntegrator`. Same generative model and the same
-scale / profile / background structure, but the per-HKL intensity posterior
-`q(I_h)` is *amortized* — produced by the standard Gamma intensity surrogate
-applied to per-HKL-aggregated encoder features — instead of *derived* in closed
-form via the Poisson-Gamma conjugate update. This gives a controlled
-conjugate-vs-amortized A/B (only the `I_h` mechanism differs).
-
-Architecture (5 encoders, matching the base / hierarchical convention):
-
-    shoebox -> profile encoder           -> qp                 (per obs)
-    shoebox -> k_bg, r_bg encoders       -> qbg                (per obs)
-    shoebox -> k_i, r_i encoders         -> x_k_i, x_r_i       (per obs)
-        scatter_mean by asu_id           -> z_k_h, z_r_h       (per HKL)
-        surrogates["qi"](z_k_h, z_r_h)   -> q(I_h) = Gamma     (per HKL)
-
-All observations of an HKL share `q(I_h)`; the intensity sample is drawn once
-per HKL and broadcast. The Wilson KL is applied per-HKL (counted once, no
-overcounting). Unlike `DeepSetsMergingIntegrator` (one `k_i` encoder + bespoke
-MLP heads), this reuses the 5-encoder layout and the existing `GammaA/B` `qi`
-surrogate, so the only difference from `conjugate_merging` is derived vs learned
-`I_h`.
-
-Pair with `GroupedAsuIdBatchSampler` (`group_by_asu_id: true`) so each batch
-contains complete HKL groups for the aggregation to be meaningful.
-"""
-
 from typing import Any, Literal
 
 import torch
@@ -86,9 +58,6 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         self.n_hkl = cfg.n_hkl
         d = cfg.encoder_out
 
-        # EMA buffer of per-HKL aggregated (k, r) features, used to decode the
-        # merged q(I_h) at inference time (when a batch may not hold every
-        # observation of an HKL).
         self.register_buffer("feat_k_ema", torch.zeros(cfg.n_hkl, d))
         self.register_buffer("feat_r_ema", torch.zeros(cfg.n_hkl, d))
         self.register_buffer(
@@ -96,8 +65,6 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         )
         self.ema_momentum = float(getattr(cfg, "ema_momentum", 0.95))
 
-        # Per-HKL Wilson KL weight. ELBO-consistent scaling is N_HKL/N_obs
-        # (~0.04 for HEWL); raise above for stronger Wilson regularization.
         self.merge_kl_weight = float(getattr(cfg, "merge_kl_weight", 1.0))
 
         # Scale function (identical to the other merging integrators)
@@ -128,8 +95,6 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                 frame_min=cfg.scale_frame_min,
                 frame_max=cfg.scale_frame_max,
             )
-
-    # ------------------------------------------------------------------
 
     def _get_scale(self, metadata: dict, device: torch.device) -> Tensor:
         frame = metadata["xyzcal.px.2"].to(device).float()
@@ -165,6 +130,40 @@ class AmortizedMergingIntegrator(BaseIntegrator):
     def get_merged_qi(self) -> Gamma:
         """Per-HKL Gamma posterior from the EMA features (for MTZ output)."""
         return self.surrogates["qi"](self.feat_k_ema, self.feat_r_ema)
+
+    @torch.no_grad()
+    def finalize_merge(self, dataloader) -> None:
+        """Recompute per-HKL features over the full dataset with the *current*
+        encoder, overwriting the EMA buffers.
+
+        The EMA buffers used by `get_merged_qi()` are a running average of the
+        pooled features across training, so they mix early- and late-epoch
+        encoder versions and lag the converged model. Calling this once after
+        training replaces them with the exact mean over every observation of
+        each HKL, computed by the final encoder -- the correct merged `q(I_h)`.
+        """
+        self.eval()
+        device = self.feat_k_ema.device
+        sum_k = torch.zeros_like(self.feat_k_ema)
+        sum_r = torch.zeros_like(self.feat_r_ema)
+        count = torch.zeros(self.n_hkl, 1, device=device)
+
+        for batch in dataloader:
+            _, shoebox, mask, metadata = batch
+            shoebox = shoebox.to(device)
+            mask = mask.to(device)
+            b = shoebox.shape[0]
+            x = (shoebox * mask).reshape(b, 1, *self.shoebox_shape)
+            asu = metadata["asu_id"].long().to(device)
+            sum_k.index_add_(0, asu, self.encoders["k_i"](x))
+            sum_r.index_add_(0, asu, self.encoders["r_i"](x))
+            count.index_add_(0, asu, torch.ones(b, 1, device=device))
+
+        seen = count.squeeze(-1) > 0
+        denom = count.clamp(min=1.0)
+        self.feat_k_ema[seen] = (sum_k / denom)[seen]
+        self.feat_r_ema[seen] = (sum_r / denom)[seen]
+        self.feat_seen[seen] = True
 
     def _forward_impl(
         self,
@@ -264,8 +263,6 @@ class AmortizedMergingIntegrator(BaseIntegrator):
             "unique_hkls": unique_hkls,
         }
 
-    # ------------------------------------------------------------------
-
     def _wilson_kl_per_hkl(
         self, qi_h: Gamma, inverse: Tensor, metadata: dict
     ) -> Tensor:
@@ -290,9 +287,6 @@ class AmortizedMergingIntegrator(BaseIntegrator):
 
         group_labels = metadata["group_label"].long()
 
-        # Standard loss handles Poisson NLL + profile KL + bg KL.
-        # Set pi_weight=0 in the YAML — the per-obs intensity KL is overcounted;
-        # we apply the per-HKL Wilson KL below instead.
         loss_dict = self.loss(
             rate=forward_out["rates"],
             counts=forward_out["counts"],

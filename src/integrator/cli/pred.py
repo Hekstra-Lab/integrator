@@ -60,6 +60,12 @@ def parse_args():
         help="Write merged MTZ from scaling model checkpoint (e.g. merged.mtz)",
     )
     parser.add_argument(
+        "--no-finalize-merge",
+        action="store_true",
+        help="For merging models, skip the post-training full-dataset merge "
+        "pass and use the (stale) EMA buffers from the checkpoint instead.",
+    )
+    parser.add_argument(
         "--batch-size",
         type=int,
         help="Integer value specifying the size of each training batch",
@@ -301,6 +307,21 @@ def main():
                         config, skip_warmstart=True
                     )
                     integrator.load_state_dict(ckpt_["state_dict"])
+                    # Replace the training-time EMA features with a clean merge
+                    # over the full dataset using the converged encoder, so the
+                    # MTZ reflects the final model (not a stale running average).
+                    if hasattr(integrator, "finalize_merge") and (
+                        not args.no_finalize_merge
+                    ):
+                        if torch.cuda.is_available():
+                            integrator.to(torch.device("cuda"))
+                        logger.info(
+                            "Finalizing merge over the dataset with the "
+                            "converged encoder"
+                        )
+                        integrator.finalize_merge(
+                            data_loader.predict_dataloader()
+                        )
                     write_merged_mtz_from_integrator(
                         integrator=integrator,
                         metadata_path=data_dir / ref_name,
