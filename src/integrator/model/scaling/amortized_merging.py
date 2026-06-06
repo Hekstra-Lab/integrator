@@ -12,7 +12,6 @@ from integrator.model.integrators.base_integrator import (
 )
 from integrator.model.integrators.hierarchical_integrator import (
     _add_group_outputs,
-    _get_normalized_position,
     _sample_profile,
 )
 from integrator.model.integrators.integrator_utils import (
@@ -57,13 +56,6 @@ class AmortizedMergingIntegrator(BaseIntegrator):
 
         self.n_hkl = cfg.n_hkl
         d = cfg.encoder_out
-
-        self.register_buffer("feat_k_ema", torch.zeros(cfg.n_hkl, d))
-        self.register_buffer("feat_r_ema", torch.zeros(cfg.n_hkl, d))
-        self.register_buffer(
-            "feat_seen", torch.zeros(cfg.n_hkl, dtype=torch.bool)
-        )
-        self.ema_momentum = float(getattr(cfg, "ema_momentum", 0.95))
 
         self.merge_kl_weight = float(getattr(cfg, "merge_kl_weight", 1.0))
 
@@ -111,37 +103,9 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         else:
             return self.scale_fn(frame) / lp
 
-    def _update_ema(
-        self, z_k_h: Tensor, z_r_h: Tensor, unique_hkls: Tensor
-    ) -> None:
-        """EMA update of the per-HKL aggregated features for HKLs in this batch."""
-        was_seen = self.feat_seen[unique_hkls].unsqueeze(1)
-        m = self.ema_momentum
-        old_k = self.feat_k_ema[unique_hkls]
-        old_r = self.feat_r_ema[unique_hkls]
-        self.feat_k_ema[unique_hkls] = torch.where(
-            was_seen, m * old_k + (1 - m) * z_k_h, z_k_h
-        )
-        self.feat_r_ema[unique_hkls] = torch.where(
-            was_seen, m * old_r + (1 - m) * z_r_h, z_r_h
-        )
-        self.feat_seen[unique_hkls] = True
-
-    def get_merged_qi(self) -> Gamma:
-        """Per-HKL Gamma posterior from the EMA features (for MTZ output)."""
-        return self.surrogates["qi"](self.feat_k_ema, self.feat_r_ema)
-
     @torch.no_grad()
     def finalize_merge(self, dataloader) -> None:
-        """Recompute per-HKL features over the full dataset with the *current*
-        encoder, overwriting the EMA buffers.
-
-        The EMA buffers used by `get_merged_qi()` are a running average of the
-        pooled features across training, so they mix early- and late-epoch
-        encoder versions and lag the converged model. Calling this once after
-        training replaces them with the exact mean over every observation of
-        each HKL, computed by the final encoder -- the correct merged `q(I_h)`.
-        """
+        """Compute per-HKL features over the full dataset"""
         self.eval()
         device = self.feat_k_ema.device
         sum_k = torch.zeros_like(self.feat_k_ema)
@@ -161,9 +125,6 @@ class AmortizedMergingIntegrator(BaseIntegrator):
 
         seen = count.squeeze(-1) > 0
         denom = count.clamp(min=1.0)
-        self.feat_k_ema[seen] = (sum_k / denom)[seen]
-        self.feat_r_ema[seen] = (sum_r / denom)[seen]
-        self.feat_seen[seen] = True
 
     def _forward_impl(
         self,
@@ -180,12 +141,13 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         shoebox_reshaped = shoebox_masked.reshape(b, 1, *self.shoebox_shape)
 
         # Encoders (5): profile, k_i, r_i, k_bg, r_bg
-        position = _get_normalized_position(metadata, device)
-        x_profile = self.encoders["profile"](
-            shoebox_reshaped, position=position
-        )
+        x_profile = self.encoders["profile"](shoebox_reshaped)
+
+        # intensity representations
         x_k_i = self.encoders["k_i"](shoebox_reshaped)
         x_r_i = self.encoders["r_i"](shoebox_reshaped)
+
+        # bg representations
         x_k_bg = self.encoders["k_bg"](shoebox_reshaped)
         x_r_bg = self.encoders["r_bg"](shoebox_reshaped)
 
@@ -205,10 +167,6 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         asu_ids = metadata["asu_id"].long().to(device)
         z_k_h, inverse, unique_hkls = _scatter_mean_compact(x_k_i, asu_ids)
         z_r_h, _, _ = _scatter_mean_compact(x_r_i, asu_ids)
-
-        if self.training:
-            with torch.no_grad():
-                self._update_ema(z_k_h.detach(), z_r_h.detach(), unique_hkls)
 
         qi_h = self.surrogates["qi"](z_k_h, z_r_h)  # batch shape (n_unique,)
 
@@ -381,3 +339,6 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                 "kl_bg": loss_dict["kl_bg_mean"].detach(),
             },
         }
+
+
+# %%

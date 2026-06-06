@@ -1,50 +1,3 @@
-"""Per-observation conjugate Bayesian integration with a Wilson prior.
-
-Generative model. For shoebox i (HKL h(i)), pixel p:
-
-    counts_{i,p} ~ Poisson(rate_{i,p})
-    rate_{i,p}   = s_i * I_i * profile_{i,p} + bg_i
-    I_i          ~ Gamma(alpha_W, tau_{h(i)})       (Wilson prior)
-
-The per-pixel rate is *affine* in I_i (the +bg_i term shifts it), not
-linear, so the I-likelihood is not Poisson-in-I and the exact posterior on
-I_i is not Gamma. Introducing a per-pixel signal/background split (Poisson
-thinning / data augmentation) makes the model conditionally conjugate, and
-the resulting Gamma is the mean-field (CAVI) variational factor q(I_i)
-given (profile, bg, scale) — *exact only in the bg -> 0 limit*, and an
-excellent approximation when signal and background are well separated:
-
-    pi_{i,p} = s_i * I_i_hat * profile_{i,p} /
-               (s_i * I_i_hat * profile_{i,p} + bg_i)        (responsibility)
-
-    alpha_i = alpha_W + sum_p  pi_{i,p} * c_{i,p}      * mask_{i,p}
-    beta_i  = tau_h   + sum_p  s_i      * profile_{i,p} * mask_{i,p}
-    q(I_i)  = Gamma(alpha_i, beta_i)
-
-beta_i is independent of I_i; only pi (hence alpha_i) depends on it. We
-solve the fixed point I_i_hat = alpha_i / beta_i by iterating the
-responsibility update to convergence (cold start at the Wilson mean
-1 / tau_h) and obtain the training gradient by one-step implicit
-differentiation — see `_conjugate_em`. `n_em_iters` is a max iteration
-count with early stop at `em_tol`; bright, low-background spots converge
-slowest.
-
-What the neural net does:
-    - Encoders predict q(profile_i), q(bg_i) per shoebox.
-    - Scale s_i from physics (LP + optional learnable correction).
-    - I_i is *derived* per shoebox — no encoder for I, no embedding.
-
-The loss supplies the matching Wilson KL(q(I_i) || Gamma(alpha_W, tau_h))
-at pi_weight = 1; __init__ asserts that coupling (pi_weight == 1,
-alpha_W == 1 to match the loss's hard-coded acentric prior shape, and no
-learned concentration prior).
-
-Unlike the merging variant, each observation is processed independently —
-no per-HKL aggregation, no EMA buffer, no grouped sampler required. The
-per-obs q(I_i) is a Bayesian, DIALS-style profile-fitted intensity, not a
-merged crystallographic posterior over the shared I_h.
-"""
-
 from typing import Any, Literal
 
 import torch
@@ -66,15 +19,10 @@ from integrator.model.integrators.integrator_utils import (
     IntegratorBaseOutputs,
     _assemble_outputs,
 )
-from integrator.model.scaling.chebyshev_scale import (
-    ChebyshevScale,
-    MLPScale,
-    SpatialChebyshevScale,
-)
 
 
 class ConjugateIntegrator(BaseIntegrator):
-    """Per-observation conjugate intensity. DIALS-style Bayesian integration."""
+    """Per-observation conjugate intensity"""
 
     REQUIRED_ENCODERS = {
         "profile": configs.ProfileEncoderArgs,
@@ -98,14 +46,6 @@ class ConjugateIntegrator(BaseIntegrator):
         self.exact_posterior_n_nuisance = int(cfg.exact_posterior_n_nuisance)
         self.exact_posterior_n_grid = int(cfg.exact_posterior_n_grid)
 
-        # Consistency guard. The per-obs conjugate posterior
-        # Gamma(alpha_W + ., tau + .) is the exact mean-field minimizer of the
-        # per-obs ELBO only if the loss supplies the matching intensity term
-        # KL(q(I) || Gamma(alpha_W, tau)) at full weight. MonochromaticWilsonLoss
-        # hard-codes the prior shape to alpha = 1 (acentric Wilson) and scales
-        # KL_i by pi_weight, so require pi_weight == 1, alpha_W == 1, and no
-        # learned/continuous concentration prior. (The merging variant builds
-        # its own KL and uses the opposite pi_weight == 0 convention.)
         pi_weight = float(getattr(self.loss, "pi_weight", 1.0))
         if abs(pi_weight - 1.0) > 1e-8:
             raise ValueError(
@@ -119,9 +59,8 @@ class ConjugateIntegrator(BaseIntegrator):
                 "loss hard-codes the intensity prior shape to alpha = 1, so the "
                 f"conjugate update must match it; got alpha_W={self.alpha_W}."
             )
-        if (
-            getattr(self.loss, "concentration_fn", None) is not None
-            or getattr(self.loss, "learn_concentration", False)
+        if getattr(self.loss, "concentration_fn", None) is not None or getattr(
+            self.loss, "learn_concentration", False
         ):
             raise ValueError(
                 "ConjugateIntegrator requires the default fixed Wilson prior "
@@ -129,70 +68,25 @@ class ConjugateIntegrator(BaseIntegrator):
                 "makes the loss KL_i inconsistent with the conjugate update."
             )
 
-        # Scale function (optional). With scale_mlp=false and scale_spatial=false,
-        # the default ChebyshevScale with degree=0 gives a learnable constant
-        # divided by lp (i.e. just LP correction). scale_none disables it
-        # entirely (s=1, no LP): rate = prof*I + bg, so I is the raw integrated
-        # intensity — the right choice for a pure integration model whose
-        # output is scaled/merged downstream.
-        if getattr(cfg, "scale_none", False):
-            self.scale_fn = None
-        elif cfg.scale_mlp:
-            self.scale_fn = MLPScale(
-                hidden_dim=cfg.scale_mlp_hidden,
-                n_layers=cfg.scale_mlp_layers,
-                frame_min=cfg.scale_frame_min,
-                frame_max=cfg.scale_frame_max,
-                beam_center=cfg.scale_beam_center,
-                r_max=cfg.scale_r_max,
-                d_min=getattr(cfg, "dmin", 1.0),
-                d_max=60.0,
-            )
-        elif cfg.scale_spatial:
-            self.scale_fn = SpatialChebyshevScale(
-                degree_frame=cfg.scale_degree,
-                degree_radius=cfg.scale_degree_radius,
-                frame_min=cfg.scale_frame_min,
-                frame_max=cfg.scale_frame_max,
-                beam_center=cfg.scale_beam_center,
-                r_min=cfg.scale_r_min,
-                r_max=cfg.scale_r_max,
-            )
-        else:
-            self.scale_fn = ChebyshevScale(
-                degree=cfg.scale_degree,
-                frame_min=cfg.scale_frame_min,
-                frame_max=cfg.scale_frame_max,
-            )
+    def _wilson_tau(self, metadata: dict, device: torch.device) -> Tensor:
+        """Wilson prior rate tau.
 
-    # %%
-    def _get_scale(self, metadata: dict, device: torch.device) -> Tensor:
-        if self.scale_fn is None:  # scale_none: rate = prof*I + bg (s=1, no LP)
-            return torch.ones_like(metadata["d"].to(device).float())
-        frame = metadata["xyzcal.px.2"].to(device).float()
-        lp = metadata["lp"].to(device).float().clamp(min=1e-8)
-        if isinstance(self.scale_fn, MLPScale):
-            x_det = metadata["xyzcal.px.0"].to(device).float()
-            y_det = metadata["xyzcal.px.1"].to(device).float()
-            d = metadata["d"].to(device).float()
-            return self.scale_fn(frame, x_det, y_det, lp, d)
-        elif isinstance(self.scale_fn, SpatialChebyshevScale):
-            x_det = metadata["xyzcal.px.0"].to(device).float()
-            y_det = metadata["xyzcal.px.1"].to(device).float()
-            return self.scale_fn(frame, x_det, y_det) / lp
-        else:
-            return self.scale_fn(frame) / lp
-
-    def _wilson_tau(self, d: Tensor) -> Tensor:
+        Passes the *full* metadata to the loss so that with lp_correction=True
+        tau is multiplied by the per-observation LP factor -- i.e. the Wilson
+        prior is transformed onto the (scale-free) *observed* intensity scale
+        this integrator infers (rate = I*prf + bg, so I is the observed
+        intensity and the prior must be LP-corrected). Uses the same path as the
+        loss's KL_i, so the EM prior and the KL prior stay consistent.
+        """
+        d = metadata["d"].to(device).float()
         s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))
-        return self.loss._get_tau({"d": d}, s_sq, d.device)
+        return self.loss._get_tau(metadata, s_sq, device)
 
     def _conjugate_em(
         self,
         counts: Tensor,
         profile_mean: Tensor,
         bg_mean: Tensor,
-        scale: Tensor,
         tau: Tensor,
         mask: Tensor,
     ) -> tuple[Tensor, Tensor, Tensor]:
@@ -207,9 +101,8 @@ class ConjugateIntegrator(BaseIntegrator):
         i.e. the GEOMETRIC-mean intensity exp(E[log I]), not the arithmetic
         mean alpha/beta. This is the exact CAVI update for q(I) (Bishop PRML
         10.9; Blei et al. 2017); using alpha/beta instead is an EM/MAP-style
-        approximation that over-weights the signal. Given pi, the Gamma factor
-        is alpha = alpha_W + sum_p pi_p c_p, beta = tau + sum_p s prof_p (beta
-        is independent of I). We solve the fixed point in two phases:
+        approximation that over-weights the signal. We solve the fixed point
+        in two phases:
 
         1. Converge Itil* WITHOUT tracking gradients (an inner inference loop),
            iterating to `em_tol` or `n_em_iters`.
@@ -232,20 +125,21 @@ class ConjugateIntegrator(BaseIntegrator):
         and dalpha/dItil = sum_p c_p pi_p(1-pi_p)/Itil. At a stable fixed point
         0 <= K < 1.
         """
-        s_prof = scale.unsqueeze(-1) * profile_mean  # (B, P), carries gradient
         cm = counts * mask  # (B, P)
         bg = bg_mean.unsqueeze(-1)
 
-        # beta is constant in I and carries gradient through scale / profile.
-        beta = tau + (s_prof * mask).sum(dim=-1)
+        # beta is constant in I and carries gradient through  profile.
+        beta = tau + (profile_mean * mask).sum(dim=-1)
         log_beta = beta.clamp(min=1e-12).log()
 
         def em_map(I_tilde: Tensor) -> tuple[Tensor, Tensor, Tensor]:
             """One CAVI step from geometric-mean intensity I_tilde."""
-            signal_rate = I_tilde.unsqueeze(-1) * s_prof
+            signal_rate = I_tilde.unsqueeze(-1) * profile_mean
             pi = signal_rate / (signal_rate + bg).clamp(min=1e-12)
             alpha = self.alpha_W + (pi * cm).sum(dim=-1)
-            I_tilde_new = torch.exp(torch.digamma(alpha.clamp(min=1e-6)) - log_beta)
+            I_tilde_new = torch.exp(
+                torch.digamma(alpha.clamp(min=1e-6)) - log_beta
+            )
             return alpha, pi, I_tilde_new
 
         # Phase 1: converge the geometric-mean fixed point (no gradient).
@@ -266,21 +160,14 @@ class ConjugateIntegrator(BaseIntegrator):
 
         # Phase 2: implicit-function gradient via a 1/(1-K)-corrected step.
         _, _, f = em_map(I_tilde)  # value ~ Itil*, carries d_theta f
-        I_implicit = I_tilde + (f - I_tilde) / (1.0 - K)  # grad = dItil*/dtheta
+        I_implicit = I_tilde + (f - I_tilde) / (
+            1.0 - K
+        )  # grad = dItil*/dtheta
         alpha, pi, _ = em_map(I_implicit)
         return alpha, beta, pi
 
     # ------------------------------------------------------------------
     # Calibrated intensity posterior (inference/export only).
-    #
-    # The mean-field Gamma from `_conjugate_em` is the cheap, differentiable
-    # training device, but its variance is 2-5x too narrow (worst at high
-    # background) because the data augmentation fixes the per-pixel signal/bg
-    # split and discards the I-z allocation uncertainty (see
-    # docs/conjugate_integrator.md S10). For trustworthy sigma(I) we instead
-    # compute the *exact* collapsed posterior p(I | counts, profile, bg, scale)
-    # by 1-D quadrature (Fix A), and propagate nuisance uncertainty over
-    # q(profile), q(bg) via the law of total variance (Fix B).
     # ------------------------------------------------------------------
 
     def _quad_moments(
@@ -296,7 +183,7 @@ class ConjugateIntegrator(BaseIntegrator):
         """Exact E[I], Var[I] of the collapsed posterior by 1-D quadrature.
 
         Args:
-            e: signal exposure per pixel, scale * profile, shape (B, P).
+            e: signal exposure per pixel, * profile, shape (B, P).
             bg: per-shoebox background rate, shape (B,).
             tau: Wilson prior rate, shape (B,).
             grid: per-shoebox intensity grid, shape (B, G).
@@ -314,13 +201,17 @@ class ConjugateIntegrator(BaseIntegrator):
         for lo in range(0, G, chunk):
             gI = grid[:, lo : lo + chunk]  # (B, g)
             rate = e[:, None, :] * gI[:, :, None] + bg_u  # (B, g, P)
-            dterm = (cm[:, None, :] * torch.log(rate.clamp(min=1e-30))).sum(dim=-1)
+            dterm = (cm[:, None, :] * torch.log(rate.clamp(min=1e-30))).sum(
+                dim=-1
+            )
             log_unnorm[:, lo : lo + chunk] = (
                 (self.alpha_W - 1.0) * torch.log(gI.clamp(min=1e-30))
                 - lin_coef[:, None] * gI
                 + dterm
             )
-        dw = torch.diff(grid, dim=1, prepend=grid[:, :1]).clamp(min=1e-30).log()
+        dw = (
+            torch.diff(grid, dim=1, prepend=grid[:, :1]).clamp(min=1e-30).log()
+        )
         w = torch.softmax(log_unnorm + dw, dim=1)  # (B, G) normalized mass
         m1 = (w * grid).sum(dim=-1)
         m2 = (w * grid.pow(2)).sum(dim=-1)
@@ -353,7 +244,9 @@ class ConjugateIntegrator(BaseIntegrator):
         shoebox_reshaped = (shoebox * mask).reshape(B, 1, *self.shoebox_shape)
 
         position = _get_normalized_position(metadata, device)
-        x_profile = self.encoders["profile"](shoebox_reshaped, position=position)
+        x_profile = self.encoders["profile"](
+            shoebox_reshaped, position=position
+        )
         x_k_bg = self.encoders["k_bg"](shoebox_reshaped)
         x_r_bg = self.encoders["r_bg"](shoebox_reshaped)
         qbg = self.surrogates["qbg"](x_k_bg, x_r_bg)
@@ -368,14 +261,13 @@ class ConjugateIntegrator(BaseIntegrator):
             metadata=metadata,
         )
 
-        scale = self._get_scale(metadata, device)  # (B,)
-        tau = self._wilson_tau(metadata["d"].to(device).float())  # (B,)
+        tau = self._wilson_tau(metadata, device)  # (B,)
         counts = counts.to(device)
         mask = mask.to(device)
 
         # Grid range from a mean-field pass at the posterior means.
         alpha_mf, beta_mf, _ = self._conjugate_em(
-            counts, qp.mean_profile, qbg.mean, scale, tau, mask
+            counts, qp.mean_profile, qbg.mean, tau, mask
         )
         mf_mean = alpha_mf / beta_mf
         mf_std = alpha_mf.sqrt() / beta_mf
@@ -390,12 +282,14 @@ class ConjugateIntegrator(BaseIntegrator):
             prof_samps = qp.mean_profile.unsqueeze(0)  # (1, B, P)
             bg_samps = qbg.mean.unsqueeze(0)  # (1, B)
         else:
-            prof_samps = _sample_profile(qp, n_nuisance).permute(1, 0, 2)  # (S,B,P)
+            prof_samps = _sample_profile(qp, n_nuisance).permute(
+                1, 0, 2
+            )  # (S,B,P)
             bg_samps = qbg.rsample([n_nuisance])  # (S, B)
 
         means, varis = [], []
         for m in range(prof_samps.shape[0]):
-            e = scale.unsqueeze(-1) * prof_samps[m]  # (B, P)
+            e = prof_samps[m]  # (B, P)
             mu, v = self._quad_moments(
                 counts, mask, e, bg_samps[m], tau, grid, grid_chunk
             )
@@ -406,7 +300,9 @@ class ConjugateIntegrator(BaseIntegrator):
 
         # Law of total variance over the nuisance posterior.
         mean = means.mean(dim=0)
-        var = (varis.mean(dim=0) + means.var(dim=0, unbiased=False)).clamp(min=1e-12)
+        var = (varis.mean(dim=0) + means.var(dim=0, unbiased=False)).clamp(
+            min=1e-12
+        )
         return {
             "mean": mean,
             "var": var,
@@ -414,8 +310,6 @@ class ConjugateIntegrator(BaseIntegrator):
             "alpha": mean.pow(2) / var,
             "beta": mean / var,
         }
-
-    # ------------------------------------------------------------------
 
     def _forward_impl(
         self,
@@ -431,35 +325,23 @@ class ConjugateIntegrator(BaseIntegrator):
         shoebox_reshaped = shoebox_masked.reshape(B, 1, *self.shoebox_shape)
 
         # Encoders: profile + bg only
-        position = _get_normalized_position(metadata, device)
-        x_profile = self.encoders["profile"](
-            shoebox_reshaped, position=position
-        )
+        x_profile = self.encoders["profile"](shoebox_reshaped)
         x_k_bg = self.encoders["k_bg"](shoebox_reshaped)
         x_r_bg = self.encoders["r_bg"](shoebox_reshaped)
 
         qbg = self.surrogates["qbg"](x_k_bg, x_r_bg)
-        prf_labels = metadata.get(
-            "profile_group_label", metadata.get("group_label")
-        )
-        prf_labels = prf_labels.long() if prf_labels is not None else None
         qp = self.surrogates["qp"](
             x_profile,
             mc_samples=self.mc_samples,
-            group_labels=prf_labels,
-            metadata=metadata,
         )
 
         profile_mean = qp.mean_profile  # (B, P)
         bg_mean = qbg.mean  # (B,)
 
-        scale = self._get_scale(metadata, device)  # (B,)
-
-        d_per_obs = metadata["d"].to(device).float()
-        tau = self._wilson_tau(d_per_obs)
+        tau = self._wilson_tau(metadata, device)
 
         alpha, beta, pi = self._conjugate_em(
-            counts, profile_mean, bg_mean, scale, tau, mask
+            counts, profile_mean, bg_mean, tau, mask
         )
 
         qi = Gamma(alpha.clamp(min=1e-6), beta.clamp(min=1e-12))
@@ -474,10 +356,9 @@ class ConjugateIntegrator(BaseIntegrator):
         zp = _sample_profile(qp, self.mc_samples)
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
-        zI_scaled = (
-            (scale.unsqueeze(0) * zI).unsqueeze(-1).permute(1, 0, 2)
-        )  # (B, S, 1)
-        rate = zI_scaled * zp + zbg
+        zI = (zI).unsqueeze(-1).permute(1, 0, 2)
+
+        rate = zI * zp + zbg
 
         if "is_coset" in metadata:
             coset = metadata["is_coset"].bool().view(-1, 1, 1)
@@ -509,10 +390,6 @@ class ConjugateIntegrator(BaseIntegrator):
             "beta": beta,
             "tau": tau,
             "pi_mean": pi.mean().detach(),
-            "scale_mean": scale.mean().detach(),
-            "scale_std": scale.std().detach(),
-            "scale_min": scale.min().detach(),
-            "scale_max": scale.max().detach(),
             "bg_mean": bg_mean.mean().detach(),
             "profile_max_mean": profile_mean.max(dim=-1)
             .values.mean()
@@ -527,8 +404,10 @@ class ConjugateIntegrator(BaseIntegrator):
         group_labels = metadata["group_label"].long()
 
         # -ELBO =  Poisson NLL + KL_prf + KL_i + KL_bg.
+
         # KL_i is the closed-form Gamma-Gamma KL between our conjugate
         # posterior and the Wilson prior
+
         loss_dict = self.loss(
             rate=forward_out["rates"],
             counts=forward_out["counts"],
@@ -587,10 +466,6 @@ class ConjugateIntegrator(BaseIntegrator):
                 on_epoch=True,
             )
             for k in (
-                "scale_mean",
-                "scale_std",
-                "scale_min",
-                "scale_max",
                 "bg_mean",
                 "profile_max_mean",
             ):
@@ -611,8 +486,6 @@ class ConjugateIntegrator(BaseIntegrator):
             },
         }
 
-    # Map predict_keys -> exact_intensity_posterior() output fields. Requesting
-    # any of these in predict_keys triggers the calibrated quadrature export.
     _EXACT_KEY_MAP = {
         "qi_exact_mean": "mean",
         "qi_exact_var": "var",

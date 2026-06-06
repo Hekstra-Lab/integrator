@@ -65,10 +65,7 @@ class HierarchicalIntegrator(BaseIntegrator):
         shoebox_masked = shoebox * mask
         shoebox_reshaped = shoebox_masked.reshape(b, 1, *self.shoebox_shape)
 
-        position = _get_normalized_position(metadata, shoebox.device)
-        x_profile = self.encoders["profile"](
-            shoebox_reshaped, position=position
-        )
+        x_profile = self.encoders["profile"](shoebox_reshaped)
         x_k_i = self.encoders["k_i"](shoebox_reshaped)
         x_r_i = self.encoders["r_i"](shoebox_reshaped)
         x_k_bg = self.encoders["k_bg"](shoebox_reshaped)
@@ -94,12 +91,11 @@ class HierarchicalIntegrator(BaseIntegrator):
 
         rate = zI * zp + zbg
 
-        # Coset handling (see IntegratorCfg.coset_mode). "override" and
-        # "override_no_kl" force the coset rate to background only, so intensity
-        # never enters the likelihood. "supervised" leaves rate = I*prf + bg so
-        # the background-only counts pull coset intensity to the floor and the
-        # shared encoder learns to map background-like shoeboxes to ~0 intensity.
-        # The intensity/profile KL is dropped (in the loss) for both no-KL modes.
+        # Coset handling options:
+        # - override: replaces rate with zbg.mean
+        # - override_no_kl: override + masks kl_i and kl_prf
+        # - aux: override + auxilary L2 loss on cosets
+
         if (
             self.coset_mode in ("override", "override_no_kl", "aux")
             and "is_coset" in metadata
