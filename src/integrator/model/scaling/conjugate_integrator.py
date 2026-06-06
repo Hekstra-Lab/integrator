@@ -166,10 +166,6 @@ class ConjugateIntegrator(BaseIntegrator):
         alpha, pi, _ = em_map(I_implicit)
         return alpha, beta, pi
 
-    # ------------------------------------------------------------------
-    # Calibrated intensity posterior (inference/export only).
-    # ------------------------------------------------------------------
-
     def _quad_moments(
         self,
         counts: Tensor,
