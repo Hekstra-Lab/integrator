@@ -436,7 +436,28 @@ class RotationDataModule(pl.LightningDataModule):
         else:
             return None
 
-    def predict_dataloader(self):
+    def predict_dataloader(self, grouped: bool = False):
+        # `grouped=True` packs complete HKL groups per batch (requires
+        # group_by_asu_id), which the merging integrators' finalize_merge needs
+        # when an HKL must be processed as a set (e.g. merge_attention).
+        # max_obs_per_hkl is forced off so the merge sees every observation.
+        if grouped and self.group_by_asu_id:
+            sampler = GroupedAsuIdBatchSampler(
+                asu_ids=self.full_dataset.reference["asu_id"],
+                indices=torch.arange(
+                    len(self.full_dataset), dtype=torch.long
+                ),
+                batch_size=self.batch_size,
+                shuffle=False,
+                drop_last=False,
+                max_obs_per_hkl=None,
+            )
+            return DataLoader(
+                self.full_dataset,
+                batch_sampler=sampler,
+                num_workers=self.num_workers,
+                pin_memory=True,
+            )
         return DataLoader(
             self.full_dataset,
             batch_size=self.batch_size,

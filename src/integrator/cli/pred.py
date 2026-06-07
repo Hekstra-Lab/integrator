@@ -340,9 +340,15 @@ def main():
                             "Finalizing merge over the dataset with the "
                             "converged encoder"
                         )
-                        integrator.finalize_merge(
-                            data_loader.predict_dataloader()
-                        )
+                        # Merging integrators need complete HKL groups per
+                        # batch; use the grouped predict loader when available.
+                        try:
+                            finalize_loader = data_loader.predict_dataloader(
+                                grouped=True
+                            )
+                        except TypeError:
+                            finalize_loader = data_loader.predict_dataloader()
+                        integrator.finalize_merge(finalize_loader)
                     write_merged_mtz_from_integrator(
                         integrator=integrator,
                         metadata_path=data_dir / ref_name,
