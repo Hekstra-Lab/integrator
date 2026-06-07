@@ -109,6 +109,7 @@ class AmortizedMergingIntegrator(BaseIntegrator):
             getattr(cfg, "merge_overdispersion", False)
         )
         d = cfg.encoder_out
+        self.encoder_out = d
 
         if self.merge_aggregation == "mean":
             if "qi" not in self.surrogates:
@@ -144,8 +145,7 @@ class AmortizedMergingIntegrator(BaseIntegrator):
             )
 
         # Final merged per-HKL posterior, populated by `finalize_merge` (a clean
-        # full-dataset pass). Not persisted: it is derived state, recomputed at
-        # inference rather than carried in the checkpoint.
+        # full-dataset pass).
         self.register_buffer(
             "alpha_buffer",
             torch.full((cfg.n_hkl,), self.alpha_W),
@@ -317,9 +317,9 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                 sum_i, _, _ = _scatter_sum_compact(i_obs, asu_ids)
                 sum_i2, _, _ = _scatter_sum_compact(i_obs * i_obs, asu_ids)
                 mean_i = sum_i / cnt.clamp(min=1.0)
-                var_i = (
-                    sum_i2 / cnt.clamp(min=1.0) - mean_i * mean_i
-                ).clamp(min=0.0)
+                var_i = (sum_i2 / cnt.clamp(min=1.0) - mean_i * mean_i).clamp(
+                    min=0.0
+                )
                 cv = (var_i.sqrt() / mean_i.clamp(min=1e-6)).clamp(max=100.0)
                 disp_in = torch.stack(
                     [mean_i.clamp(min=1e-6).log(), cv, cnt.log()], dim=-1
@@ -334,13 +334,64 @@ class AmortizedMergingIntegrator(BaseIntegrator):
 
     @torch.no_grad()
     def finalize_merge(self, dataloader) -> None:
-        """Recompute the per-HKL posterior over the full dataset (clean merge)."""
+        """Recompute the per-HKL posterior over the full dataset (clean merge).
+
+        Accumulates per-HKL sufficient statistics across *all* batches, then
+        forms the posterior once. This is correct even when the loader is NOT
+        grouped by asu_id (e.g. the default predict_dataloader): the
+        sum-of-potentials and the overdispersion spread are additive over
+        observations. A per-batch `_merge` + buffer overwrite (the previous
+        approach) silently produced *partial* per-HKL sums whenever an HKL's
+        observations spanned batches -- catastrophic for sum mode (every HKL
+        reduced to a random fragment), which decoheres the anomalous signal.
+        """
+        if self.merge_attention:
+            raise RuntimeError(
+                "finalize_merge cannot accumulate the attention gate (it needs "
+                "all of an HKL's observations in one batch). Run prediction "
+                "with a group_by_asu_id loader, or disable merge_attention."
+            )
         self.eval()
         device = self.alpha_buffer.device
+        n = self.n_hkl
+        seen = torch.zeros(n, dtype=torch.bool, device=device)
         self.alpha_buffer.fill_(self.alpha_W)
         self.beta_buffer.fill_(1.0)
-        self.buffer_seen.fill_(False)
 
+        if self.merge_aggregation == "mean":
+            sum_k = torch.zeros(n, self.encoder_out, device=device)
+            sum_r = torch.zeros(n, self.encoder_out, device=device)
+            cnt = torch.zeros(n, 1, device=device)
+            for batch in dataloader:
+                _, shoebox, mask, metadata = batch
+                shoebox = shoebox.to(device)
+                mask = mask.to(device)
+                b = shoebox.shape[0]
+                sr = (shoebox * mask).reshape(b, 1, *self.shoebox_shape)
+                x_k_i = self.encoders["k_i"](sr)
+                x_r_i = self.encoders["r_i"](sr)
+                asu = metadata["asu_id"].long().to(device)
+                sum_k.index_add_(0, asu, x_k_i)
+                sum_r.index_add_(0, asu, x_r_i)
+                cnt.index_add_(0, asu, torch.ones(b, 1, device=device))
+                seen[asu] = True
+            denom = cnt.clamp(min=1.0)
+            qi_h = self.surrogates["qi"](
+                (sum_k / denom)[seen], (sum_r / denom)[seen]
+            )
+            self.alpha_buffer[seen] = qi_h.concentration
+            self.beta_buffer[seen] = qi_h.rate
+            self.buffer_seen.copy_(seen)
+            return
+
+        # sum mode: accumulate per-HKL natural-parameter sufficient statistics.
+        # (Per-observation potentials below must match `_merge`'s sum path.)
+        sum_alpha = torch.zeros(n, device=device)
+        sum_beta = torch.zeros(n, device=device)
+        sum_d = torch.zeros(n, device=device)
+        cnt = torch.zeros(n, device=device)
+        sum_i = torch.zeros(n, device=device)
+        sum_i2 = torch.zeros(n, device=device)
         for batch in dataloader:
             _, shoebox, mask, metadata = batch
             shoebox = shoebox.to(device)
@@ -353,18 +404,47 @@ class AmortizedMergingIntegrator(BaseIntegrator):
             asu = metadata["asu_id"].long().to(device)
             d_obs = metadata["d"].to(device).float()
             lp = metadata["lp"].to(device).float()
-            profile_mean = None
-            if self.merge_aggregation == "sum":
-                qp = self.surrogates["qp"](
-                    self.encoders["profile"](sr), mc_samples=1
-                )
-                profile_mean = qp.mean_profile
-            _, alpha_h, beta_h, _, unique, _ = self._merge(
-                x_k_i, x_r_i, scale, profile_mean, mask, asu, d_obs, lp
+            prof = self.surrogates["qp"](
+                self.encoders["profile"](sr), mc_samples=1
+            ).mean_profile
+            cond = torch.stack(
+                [scale.clamp(min=1e-8).log(), lp.clamp(min=1e-8).log(), d_obs],
+                dim=-1,
             )
-            self.alpha_buffer[unique] = alpha_h
-            self.beta_buffer[unique] = beta_h
-            self.buffer_seen[unique] = True
+            feat = torch.cat([x_k_i, x_r_i, cond], dim=-1)
+            delta_alpha = F.softplus(self.alpha_head(feat)).squeeze(-1)
+            delta_beta = scale * (prof * mask).sum(dim=-1)
+            sum_alpha.index_add_(0, asu, delta_alpha)
+            sum_beta.index_add_(0, asu, delta_beta)
+            sum_d.index_add_(0, asu, d_obs)
+            cnt.index_add_(0, asu, torch.ones_like(d_obs))
+            if self.merge_overdispersion:
+                i_obs = delta_alpha / delta_beta.clamp(min=1e-6)
+                sum_i.index_add_(0, asu, i_obs)
+                sum_i2.index_add_(0, asu, i_obs * i_obs)
+            seen[asu] = True
+
+        d_per_hkl = (sum_d / cnt.clamp(min=1.0)).clamp(min=1e-6)
+        tau_h = self._wilson_tau(d_per_hkl)
+        alpha_h = self.alpha_W + sum_alpha
+        beta_h = tau_h + sum_beta
+        if self.merge_overdispersion:
+            mean_i = sum_i / cnt.clamp(min=1.0)
+            var_i = (sum_i2 / cnt.clamp(min=1.0) - mean_i * mean_i).clamp(
+                min=0.0
+            )
+            cv = (var_i.sqrt() / mean_i.clamp(min=1e-6)).clamp(max=100.0)
+            disp_in = torch.stack(
+                [mean_i.clamp(min=1e-6).log(), cv, cnt.clamp(min=1.0).log()],
+                dim=-1,
+            )
+            phi = F.softplus(self.disp_head(disp_in)).squeeze(-1)
+            alpha_h = alpha_h / (1.0 + phi)
+            beta_h = beta_h / (1.0 + phi)
+
+        self.alpha_buffer[seen] = alpha_h[seen]
+        self.beta_buffer[seen] = beta_h[seen]
+        self.buffer_seen.copy_(seen)
 
     def get_merged_qi(self) -> Gamma:
         """Per-HKL Gamma posterior from the merge buffers (for MTZ output)."""
@@ -372,8 +452,6 @@ class AmortizedMergingIntegrator(BaseIntegrator):
             self.alpha_buffer.clamp(min=1e-6),
             self.beta_buffer.clamp(min=1e-12),
         )
-
-    # ------------------------------------------------------------------
 
     def _forward_impl(
         self,
