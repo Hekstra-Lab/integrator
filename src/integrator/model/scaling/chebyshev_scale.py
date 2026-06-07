@@ -9,16 +9,7 @@ from integrator.model.loss.learned_spectrum import ChebyshevSpectrum
 
 
 class ChebyshevScale(nn.Module):
-    """Smooth learnable scale factor s(frame) via Chebyshev polynomials.
-
-    Models per-observation scale as a smooth function of frame number
-    (image index), capturing beam decay and other slow-varying
-    experimental effects.
-
-    s(t) = softplus(sum_k c_k T_k(t))
-
-    where t = (frame - frame_mid) / frame_half is normalized to [-1, 1].
-    """
+    """Smooth learnable scale factor s(frame) via Chebyshev polynomials."""
 
     def __init__(
         self,
@@ -50,9 +41,7 @@ class ChebyshevScale(nn.Module):
             scale: (B,) positive scale factors.
         """
         t = ((frame - self.frame_mid) / self.frame_half).clamp(-1.0, 1.0)
-        phi = torch.stack(
-            ChebyshevSpectrum._chebyshev(t, self.degree), dim=-1
-        )
+        phi = torch.stack(ChebyshevSpectrum._chebyshev(t, self.degree), dim=-1)
         return F.softplus(phi @ self.c)
 
 
@@ -114,9 +103,7 @@ class SpatialChebyshevScale(nn.Module):
             scale: (B,) positive scale factors.
         """
         t = ((frame - self.frame_mid) / self.frame_half).clamp(-1.0, 1.0)
-        r = torch.sqrt(
-            (x - self.beam_cx).pow(2) + (y - self.beam_cy).pow(2)
-        )
+        r = torch.sqrt((x - self.beam_cx).pow(2) + (y - self.beam_cy).pow(2))
         rn = ((r - self.r_mid) / self.r_half).clamp(-1.0, 1.0)
 
         phi_t = torch.stack(
@@ -134,10 +121,9 @@ class MLPScale(nn.Module):
     """MLP scale that replaces s/lp with a single learned correction.
 
     Takes per-observation features (frame, detector x/y, LP, d-spacing)
-    and outputs a positive scale factor. Absorbs LP correction, beam
-    decay, absorption, and detector efficiency in one function.
+    and outputs a positive scale factor.
 
-    rate = scale_mlp(features) × F² × profile + bg
+    rate = scale_mlp(features) × F^2 × profile + bg
 
     Features are normalized to [-1, 1] or [0, 1] using registered
     buffers for stable training.

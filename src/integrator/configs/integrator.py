@@ -51,6 +51,23 @@ class IntegratorCfg:
     merge_weight: float = 1.0
     merge_kl_weight: float = 1.0
     ema_momentum: float = 0.95
+
+    # Amortized merging head (AmortizedMergingIntegrator):
+    #   "mean" - legacy DeepSets mean-pool of features -> qi surrogate.
+    #   "sum"  - amortized conjugate update: per-observation positive potentials
+    #            summed in natural-parameter space (alpha_h = alpha_W + sum dalpha,
+    #            beta_h = tau_h + sum s*prf), scale/geometry-conditioned. Sum (not
+    #            mean) is what makes precision scale with multiplicity, mirroring
+    #            the conjugate sufficient statistics.
+    merge_aggregation: Literal["mean", "sum"] = "mean"
+    # sum-mode refinements (ignored for "mean"):
+    #   merge_attention     - self-attention over an HKL's observations emits a
+    #                         per-obs trust gate (soft outlier rejection).
+    #   merge_overdispersion- learned per-HKL variance inflation from the spread
+    #                         of per-obs intensities (the error model / random
+    #                         effect the conjugate model cannot represent).
+    merge_attention: bool = False
+    merge_overdispersion: bool = False
     wilson_alpha: float = 1.0
     sample_I_h: bool = True
     # Inner EM for ConjugateIntegrator: max responsibility iterations and the
@@ -171,6 +188,12 @@ class IntegratorCfg:
             raise ValueError(
                 "coset_mode must be 'override', 'override_no_kl', "
                 f"'supervised', or 'aux', got {self.coset_mode!r}"
+            )
+
+        if self.merge_aggregation not in ("mean", "sum"):
+            raise ValueError(
+                "merge_aggregation must be 'mean' or 'sum', got "
+                f"{self.merge_aggregation!r}"
             )
 
 

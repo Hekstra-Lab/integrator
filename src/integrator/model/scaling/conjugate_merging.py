@@ -102,6 +102,17 @@ class ConjugateMergingIntegrator(BaseIntegrator):
         if cfg.n_hkl is None:
             raise ValueError("ConjugateMergingIntegrator requires n_hkl.")
 
+        # LP is applied through the scale here (scale = scale_fn / lp), so I_h is
+        # already the LP-corrected intensity. lp_correction would also multiply
+        # the Wilson prior by LP -- a double count -- so forbid the combination.
+        if getattr(self.loss, "_apply_lp", False):
+            raise ValueError(
+                "ConjugateMergingIntegrator applies LP through the scale, so "
+                "I_h is LP-corrected; enabling lp_correction would multiply the "
+                "Wilson prior by LP too and double-count it. Set "
+                "loss.args.lp_correction: false."
+            )
+
         self.n_hkl = cfg.n_hkl
         # Wilson prior shape (alpha_W = 1 → Exponential, the acentric Wilson)
         self.alpha_W = float(getattr(cfg, "wilson_alpha", 1.0))
@@ -172,22 +183,37 @@ class ConjugateMergingIntegrator(BaseIntegrator):
             return self.scale_fn(frame) / lp
 
     def _wilson_tau(self, d: Tensor) -> Tensor:
+        """Wilson prior rate tau from resolution d (per-obs or per-HKL).
+
+        No LP factor enters here: this model applies LP through the scale, so the
+        prior stays on the corrected-intensity scale. lp_correction is forbidden
+        in __init__, so _get_tau never takes its lp branch (and never needs an
+        'lp' key in the metadata it is handed).
+        """
         s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))
         return self.loss._get_tau({"d": d}, s_sq, d.device)
 
     def _get_I_h_for_estep(
         self, asu_ids: Tensor, tau_per_obs: Tensor
     ) -> Tensor:
-        """Detached point estimate of I_h used to compute the E-step pi.
+        """Detached geometric-mean intensity exp(E_q[log I_h]) for the E-step pi.
 
-        Seen HKLs: posterior mean alpha/beta from EMA buffer.
-        Unseen HKLs: Wilson prior mean (1 / tau_h).
+        This is the exact mean-field (CAVI) update (Bishop PRML 10.9; Blei et al.
+        2017): the responsibility uses exp(E[log I]) = exp(psi(alpha) - log beta),
+        NOT the arithmetic mean alpha/beta, which over-weights the signal.
+
+        Seen HKLs: exp(psi(alpha) - log beta) from the EMA buffer.
+        Unseen HKLs: Wilson geometric mean exp(psi(alpha_W) - log tau_h).
         """
-        a = self.alpha_buffer[asu_ids]
+        a = self.alpha_buffer[asu_ids].clamp(min=1e-6)
         b = self.beta_buffer[asu_ids].clamp(min=1e-12)
         seen = self.buffer_seen[asu_ids]
-        wilson_mean = 1.0 / tau_per_obs.clamp(min=1e-12)
-        return torch.where(seen, a / b, wilson_mean).detach()
+        psi_aW = torch.digamma(
+            torch.tensor(self.alpha_W, device=a.device, dtype=a.dtype)
+        )
+        geo_seen = torch.exp(torch.digamma(a) - b.log())
+        geo_cold = torch.exp(psi_aW - tau_per_obs.clamp(min=1e-12).log())
+        return torch.where(seen, geo_seen, geo_cold).detach()
 
     def _update_buffer(
         self, unique_asu: Tensor, alpha_h: Tensor, beta_h: Tensor
@@ -209,6 +235,151 @@ class ConjugateMergingIntegrator(BaseIntegrator):
             self.alpha_buffer.clamp(min=1e-6),
             self.beta_buffer.clamp(min=1e-12),
         )
+
+    @torch.no_grad()
+    def exact_merged_posterior(
+        self,
+        dataloader,
+        *,
+        n_grid: int = 1024,
+        n_nuisance: int = 1,
+        grid_chunk: int = 128,
+    ) -> dict[str, Tensor]:
+        """Calibrated per-HKL intensity posterior via collapsed-posterior quadrature.
+
+        The mean-field Gamma(alpha_h, beta_h) fixes the signal/background
+        allocation to a point and so under-disperses sigma(I_h). This integrates
+        the exact collapsed per-HKL posterior
+
+            log p(I_h|c) = (alpha_W - 1) log I_h
+                           - (tau_h + sum_{i,p} e_{i,p}) I_h
+                           + sum_{i,p} c_{i,p} log(e_{i,p} I_h + bg_i)
+
+        (e_{i,p} = s_i * profile_{i,p}) over a per-HKL grid, aggregating every
+        observation of each HKL across the whole dataset by scatter-add. With
+        n_nuisance <= 1 the profile/background are taken at their q-means (Fix A);
+        n_nuisance > 1 also propagates q(profile)/q(bg) uncertainty by Monte
+        Carlo (law of total variance), at the cost of one extra dataset pass per
+        sample.
+
+        Run after training / `finalize` -- the mean-field buffer sets each HKL's
+        grid range. Returns per-HKL tensors (n_hkl,): mean, var, std, alpha, beta
+        (Gamma moment-matched to mean/var), and a boolean `seen` mask.
+        """
+        self.eval()
+        device = self.alpha_buffer.device
+
+        # Per-HKL grid from the mean-field buffer (the exact posterior is wider,
+        # so the range is padded generously and skewed to the right tail).
+        a_mf = self.alpha_buffer.clamp(min=1e-6)
+        b_mf = self.beta_buffer.clamp(min=1e-12)
+        mf_mean = a_mf / b_mf
+        mf_std = a_mf.sqrt() / b_mf
+        std_eff = 3.0 * mf_std
+        lo = (mf_mean - 8.0 * std_eff).clamp(min=1e-8)
+        hi = torch.maximum(mf_mean + 12.0 * std_eff, lo + 1e-3)
+        steps = torch.linspace(0.0, 1.0, n_grid, device=device)
+        grid = lo[:, None] + steps[None, :] * (hi - lo)[:, None]  # (n_hkl, G)
+        log_grid = grid.clamp(min=1e-30).log()
+        dw = torch.diff(grid, dim=1, prepend=grid[:, :1]).clamp(min=1e-30).log()
+
+        n_samp = max(int(n_nuisance), 1)
+        sum_mean = torch.zeros(self.n_hkl, device=device)
+        sum_mean_sq = torch.zeros(self.n_hkl, device=device)
+        sum_var = torch.zeros(self.n_hkl, device=device)
+        seen = torch.zeros(self.n_hkl, dtype=torch.bool, device=device)
+        d_sum = torch.zeros(self.n_hkl, device=device)
+        d_cnt = torch.zeros(self.n_hkl, device=device)
+
+        for s in range(n_samp):
+            data_term = torch.zeros(self.n_hkl, n_grid, device=device)
+            lin_extra = torch.zeros(self.n_hkl, device=device)  # sum_{i,p} e
+            for batch in dataloader:
+                counts, shoebox, mask, metadata = batch
+                counts = counts.clamp(min=0).to(device)
+                shoebox = shoebox.to(device)
+                mask = mask.to(device)
+                b = shoebox.shape[0]
+                shoebox_reshaped = (shoebox * mask).reshape(
+                    b, 1, *self.shoebox_shape
+                )
+                position = _get_normalized_position(metadata, device)
+                x_profile = self.encoders["profile"](
+                    shoebox_reshaped, position=position
+                )
+                x_k_bg = self.encoders["k_bg"](shoebox_reshaped)
+                x_r_bg = self.encoders["r_bg"](shoebox_reshaped)
+                qbg = self.surrogates["qbg"](x_k_bg, x_r_bg)
+                prf_labels = metadata.get(
+                    "profile_group_label", metadata.get("group_label")
+                )
+                prf_labels = (
+                    prf_labels.long() if prf_labels is not None else None
+                )
+                qp = self.surrogates["qp"](
+                    x_profile,
+                    mc_samples=1,
+                    group_labels=prf_labels,
+                    metadata=metadata,
+                )
+                scale = self._get_scale(metadata, device)  # (B,)
+                asu = metadata["asu_id"].long().to(device)
+
+                if n_nuisance <= 1:
+                    prof = qp.mean_profile  # (B, P)
+                    bg = qbg.mean  # (B,)
+                else:
+                    prof = _sample_profile(qp, 1)[:, 0, :]  # (B, P)
+                    bg = qbg.rsample([1])[0]  # (B,)
+
+                cm = counts * mask  # (B, P)
+                e = scale.unsqueeze(-1) * prof * mask  # (B, P) signal exposure
+                lin_extra.index_add_(0, asu, e.sum(dim=-1))
+
+                g_h = grid[asu]  # (B, G): each obs uses its own HKL's grid
+                bg_u = bg[:, None, None]  # (B, 1, 1)
+                for j in range(0, n_grid, grid_chunk):
+                    gI = g_h[:, j : j + grid_chunk]  # (B, g)
+                    rate = e[:, :, None] * gI[:, None, :] + bg_u  # (B, P, g)
+                    dterm = (
+                        cm[:, :, None] * rate.clamp(min=1e-30).log()
+                    ).sum(dim=1)  # (B, g)
+                    data_term[:, j : j + grid_chunk].index_add_(0, asu, dterm)
+
+                if s == 0:
+                    d_obs = metadata["d"].to(device).float()
+                    d_sum.index_add_(0, asu, d_obs)
+                    d_cnt.index_add_(0, asu, torch.ones_like(d_obs))
+                seen[asu] = True
+
+            d_per_hkl = (d_sum / d_cnt.clamp(min=1.0)).clamp(min=1e-6)
+            lin_coef = self._wilson_tau(d_per_hkl) + lin_extra
+            log_unnorm = (
+                (self.alpha_W - 1.0) * log_grid
+                - lin_coef[:, None] * grid
+                + data_term
+            )
+            w = torch.softmax(log_unnorm + dw, dim=1)  # (n_hkl, G)
+            m1 = (w * grid).sum(dim=-1)
+            m2 = (w * grid.pow(2)).sum(dim=-1)
+            var = (m2 - m1.pow(2)).clamp(min=0.0)
+            sum_mean += m1
+            sum_mean_sq += m1.pow(2)
+            sum_var += var
+
+        mean = sum_mean / n_samp
+        # Law of total variance over the nuisance posterior.
+        var_total = (
+            sum_var / n_samp + (sum_mean_sq / n_samp - mean.pow(2))
+        ).clamp(min=1e-12)
+        return {
+            "mean": mean,
+            "var": var_total,
+            "std": var_total.sqrt(),
+            "alpha": mean.pow(2) / var_total,
+            "beta": mean / var_total,
+            "seen": seen,
+        }
 
     # ------------------------------------------------------------------
 
