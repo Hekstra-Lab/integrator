@@ -33,6 +33,26 @@ def _match_profile_basis_dim(config: dict, state_dict: dict) -> None:
     logger.info("Set qp latent_dim=%d to match checkpoint", latent_dim)
 
 
+def _load_checkpoint_tolerant(integrator, state_dict: dict) -> None:
+    """Load a checkpoint, dropping weights for modules the model no longer has."""
+    model_keys = set(integrator.state_dict().keys())
+    extra = [k for k in state_dict if k not in model_keys]
+    if extra:
+        preview = ", ".join(extra[:6]) + (" ..." if len(extra) > 6 else "")
+        logger.warning(
+            "Dropping %d checkpoint key(s) absent from the model: %s",
+            len(extra),
+            preview,
+        )
+    filtered = {k: v for k, v in state_dict.items() if k in model_keys}
+    result = integrator.load_state_dict(filtered, strict=False)
+    if result.missing_keys:
+        raise RuntimeError(
+            "Checkpoint is missing weights the model requires: "
+            f"{result.missing_keys}"
+        )
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Predict from a set of pytorch.ckpt files"
@@ -160,7 +180,8 @@ def main():
             checkpoints = [
                 c
                 for c in checkpoints
-                if (m := epoch_re.search(c.name)) and int(m.group(1)) == args.epoch
+                if (m := epoch_re.search(c.name))
+                and int(m.group(1)) == args.epoch
             ]
             if not checkpoints:
                 raise ValueError(
@@ -239,7 +260,7 @@ def main():
             # checkpoint (its own source of truth) to avoid a size mismatch.
             _match_profile_basis_dim(config, ckpt_["state_dict"])
             integrator = construct_integrator(config, skip_warmstart=True)
-            integrator.load_state_dict(ckpt_["state_dict"])
+            _load_checkpoint_tolerant(integrator, ckpt_["state_dict"])
 
             if torch.cuda.is_available():
                 integrator.to(torch.device("cuda"))
@@ -306,7 +327,7 @@ def main():
                     integrator = construct_integrator(
                         config, skip_warmstart=True
                     )
-                    integrator.load_state_dict(ckpt_["state_dict"])
+                    _load_checkpoint_tolerant(integrator, ckpt_["state_dict"])
                     # Replace the training-time EMA features with a clean merge
                     # over the full dataset using the converged encoder, so the
                     # MTZ reflects the final model (not a stale running average).
