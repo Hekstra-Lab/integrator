@@ -128,8 +128,9 @@ class ConjugateMergingIntegrator(BaseIntegrator):
         )
         self.ema_momentum = float(getattr(cfg, "ema_momentum", 0.9))
 
-        # Closed-form per-HKL Wilson KL weight. ELBO-consistent scaling is
-        # N_HKL/N_obs (~0.04 for HEWL); raise above for stronger regularization.
+        # Closed-form per-HKL Wilson KL weight. _step scales the per-HKL KL to
+        # the per-observation scale (sum / n_obs), so merge_kl_weight = 1.0 is
+        # ELBO-consistent; raise above 1.0 for stronger Wilson regularization.
         self.merge_kl_weight = float(getattr(cfg, "merge_kl_weight", 1.0))
 
         # If true, sample I_h from q(I_h) for the reconstruction NLL (proper
@@ -565,10 +566,16 @@ class ConjugateMergingIntegrator(BaseIntegrator):
 
         total_loss = loss_dict["loss"]
 
+        # ELBO-consistent weighting. The intensity KL is one term per HKL, but
+        # the NLL / profile / background terms are per observation (the loss
+        # averages over observations). Put the intensity KL on the same
+        # per-observation scale -- sum over HKLs / n_obs, which auto-scales by
+        # obs-per-HKL (~ N_HKL/N_obs). A per-HKL *mean* would over-weight it by
+        # ~N_obs/N_HKL (~22x for HEWL). merge_kl_weight = 1.0 is then the ELBO.
         kl_I_per_hkl = self._kl_I_h(
             outputs["alpha_h"], outputs["beta_h"], outputs["tau_h"]
         )
-        kl_I = kl_I_per_hkl.mean() * self.merge_kl_weight
+        kl_I = kl_I_per_hkl.sum() / counts.shape[0] * self.merge_kl_weight
         total_loss = total_loss + kl_I
 
         _log_loss(

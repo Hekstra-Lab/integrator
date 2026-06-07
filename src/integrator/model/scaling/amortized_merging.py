@@ -135,7 +135,9 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                 self.disp_head = nn.Sequential(
                     nn.Linear(3, 16), nn.ReLU(), nn.Linear(16, 1)
                 )
-                nn.init.constant_(self.disp_head[-1].bias, -5.0)  # phi ~ 0 init
+                nn.init.constant_(
+                    self.disp_head[-1].bias, -5.0
+                )  # phi ~ 0 init
         else:
             raise ValueError(
                 f"unknown merge_aggregation {self.merge_aggregation!r}"
@@ -209,9 +211,7 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))
         return self.loss._get_tau({"d": d}, s_sq, d.device)
 
-    def _attend(
-        self, feat: Tensor, asu_ids: Tensor
-    ) -> tuple[Tensor, Tensor]:
+    def _attend(self, feat: Tensor, asu_ids: Tensor) -> tuple[Tensor, Tensor]:
         """Self-attention over each HKL's observations -> (context, trust gate).
 
         Pads observations into (n_groups, max_obs, F) by HKL, runs masked
@@ -230,7 +230,9 @@ class AmortizedMergingIntegrator(BaseIntegrator):
 
         # Position of each observation within its (sorted-by-group) group.
         order = torch.argsort(inverse, stable=True)
-        offsets = torch.cumsum(counts, 0) - counts  # group start in sorted order
+        offsets = (
+            torch.cumsum(counts, 0) - counts
+        )  # group start in sorted order
         pos = torch.empty_like(inverse)
         pos[order] = torch.arange(b, device=device) - offsets[inverse[order]]
 
@@ -292,7 +294,9 @@ class AmortizedMergingIntegrator(BaseIntegrator):
             feat, gate = self._attend(feat, asu_ids)
 
         delta_alpha = F.softplus(self.alpha_head(feat)).squeeze(-1)  # (B,)
-        delta_beta = scale * (profile_mean * mask).sum(dim=-1)  # analytic exposure
+        delta_beta = scale * (profile_mean * mask).sum(
+            dim=-1
+        )  # analytic exposure
         if gate is not None:
             delta_alpha = delta_alpha * gate
             delta_beta = delta_beta * gate
@@ -303,11 +307,15 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         beta_h = tau_h + beta_sum
 
         if self.merge_overdispersion:
-            i_obs = delta_alpha / delta_beta.clamp(min=1e-8)  # per-obs intensity
+            i_obs = delta_alpha / delta_beta.clamp(
+                min=1e-8
+            )  # per-obs intensity
             sum_i, _, _ = _scatter_sum_compact(i_obs, asu_ids)
             sum_i2, _, _ = _scatter_sum_compact(i_obs * i_obs, asu_ids)
             mean_i = sum_i / cnt.clamp(min=1.0)
-            var_i = (sum_i2 / cnt.clamp(min=1.0) - mean_i * mean_i).clamp(min=0.0)
+            var_i = (sum_i2 / cnt.clamp(min=1.0) - mean_i * mean_i).clamp(
+                min=0.0
+            )
             cv = var_i.sqrt() / mean_i.clamp(min=1e-8)
             disp_in = torch.stack(
                 [mean_i.clamp(min=1e-8).log(), cv, cnt.log()], dim=-1
@@ -322,13 +330,7 @@ class AmortizedMergingIntegrator(BaseIntegrator):
 
     @torch.no_grad()
     def finalize_merge(self, dataloader) -> None:
-        """Recompute the per-HKL posterior over the full dataset (clean merge).
-
-        Replaces the old EMA buffers: a single pass that runs the same `_merge`
-        per batch and stores `(alpha_h, beta_h)` into the (non-persistent)
-        buffers read by `get_merged_qi`. Requires complete HKL groups per batch
-        (`group_by_asu_id: true`).
-        """
+        """Recompute the per-HKL posterior over the full dataset (clean merge)."""
         self.eval()
         device = self.alpha_buffer.device
         self.alpha_buffer.fill_(self.alpha_W)
@@ -403,7 +405,9 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         )
 
         # Sample I_h once per HKL, broadcast to its observations.
-        zI_h = qi_h.rsample([self.mc_samples]).clamp(min=1e-10)  # (S, n_unique)
+        zI_h = qi_h.rsample([self.mc_samples]).clamp(
+            min=1e-10
+        )  # (S, n_unique)
         zI = zI_h[:, inverse]  # (S, B)
         zI_scaled = (scale.unsqueeze(0) * zI).unsqueeze(-1).permute(1, 0, 2)
 
@@ -477,8 +481,9 @@ class AmortizedMergingIntegrator(BaseIntegrator):
 
         total_loss = loss_dict["loss"]
 
+        # ELBO-consistent weighting
         kl_i_per_hkl = self._wilson_kl_per_hkl(qi_h, outputs["tau_h"])
-        kl_i = kl_i_per_hkl.mean() * self.merge_kl_weight
+        kl_i = kl_i_per_hkl.sum() / counts.shape[0] * self.merge_kl_weight
         total_loss = total_loss + kl_i
 
         _log_loss(
@@ -501,9 +506,7 @@ class AmortizedMergingIntegrator(BaseIntegrator):
 
         with torch.no_grad():
             self.log(f"{step} qi_h_mean", qi_h.mean.mean(), on_epoch=True)
-            self.log(
-                f"{step} qi_h_var", qi_h.variance.mean(), on_epoch=True
-            )
+            self.log(f"{step} qi_h_var", qi_h.variance.mean(), on_epoch=True)
             self.log(
                 f"{step} qi_h_k", qi_h.concentration.mean(), on_epoch=True
             )
