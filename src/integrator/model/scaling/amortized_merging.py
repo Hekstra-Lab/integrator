@@ -307,19 +307,23 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         beta_h = tau_h + beta_sum
 
         if self.merge_overdispersion:
-            i_obs = delta_alpha / delta_beta.clamp(
-                min=1e-8
-            )  # per-obs intensity
-            sum_i, _, _ = _scatter_sum_compact(i_obs, asu_ids)
-            sum_i2, _, _ = _scatter_sum_compact(i_obs * i_obs, asu_ids)
-            mean_i = sum_i / cnt.clamp(min=1.0)
-            var_i = (sum_i2 / cnt.clamp(min=1.0) - mean_i * mean_i).clamp(
-                min=0.0
-            )
-            cv = var_i.sqrt() / mean_i.clamp(min=1e-8)
-            disp_in = torch.stack(
-                [mean_i.clamp(min=1e-8).log(), cv, cnt.log()], dim=-1
-            )
+            # Per-HKL spread of the per-observation intensities -> a *detached*
+            # calibration signal for phi. no_grad because (a) the spread must not
+            # train the encoders to game it, and (b) it sidesteps the sqrt-at-0
+            # gradient when an HKL has a single observation (var == 0), which
+            # would otherwise be inf/NaN and crash the backward pass.
+            with torch.no_grad():
+                i_obs = delta_alpha / delta_beta.clamp(min=1e-6)
+                sum_i, _, _ = _scatter_sum_compact(i_obs, asu_ids)
+                sum_i2, _, _ = _scatter_sum_compact(i_obs * i_obs, asu_ids)
+                mean_i = sum_i / cnt.clamp(min=1.0)
+                var_i = (
+                    sum_i2 / cnt.clamp(min=1.0) - mean_i * mean_i
+                ).clamp(min=0.0)
+                cv = (var_i.sqrt() / mean_i.clamp(min=1e-6)).clamp(max=100.0)
+                disp_in = torch.stack(
+                    [mean_i.clamp(min=1e-6).log(), cv, cnt.log()], dim=-1
+                )
             phi = F.softplus(self.disp_head(disp_in)).squeeze(-1)
             # Preserve the mean (alpha/beta), inflate the variance by (1+phi).
             alpha_h = alpha_h / (1.0 + phi)
