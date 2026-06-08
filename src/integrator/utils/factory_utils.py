@@ -1,3 +1,4 @@
+import logging
 import os
 from dataclasses import asdict
 from importlib.resources import as_file
@@ -15,6 +16,8 @@ from integrator import configs
 from integrator.configs import shallow_dict
 from integrator.model.integrators.base_integrator import BaseIntegrator
 from integrator.registry import REGISTRY
+
+logger = logging.getLogger(__name__)
 
 PRIOR_PARAMS = {
     "gamma": configs.GammaParams,
@@ -495,7 +498,12 @@ def construct_integrator(
     # get integrator components — resolve paths before constructing dataclass
     int_raw = dict(cfg["integrator"]["args"])
     data_dir = _get_data_dir(cfg)
-    for path_key in ("pdb_path", "asu_id_to_hkl_path", "scaling_init_from_wilson"):
+    for path_key in (
+        "pdb_path",
+        "asu_id_to_hkl_path",
+        "scaling_init_from_wilson",
+        "init_from_checkpoint",
+    ):
         if path_key in int_raw and isinstance(int_raw[path_key], str):
             int_raw[path_key] = _resolve_data_path(int_raw[path_key], data_dir)
     integrator_args = configs.IntegratorCfg(**int_raw)
@@ -503,11 +511,61 @@ def construct_integrator(
     surrogates = _get_surrogate_modules(cfg, skip_warmstart=skip_warmstart)
     loss = _get_loss_module(cfg)
 
-    return integrator_cls(
+    integrator = integrator_cls(
         cfg=integrator_args,
         encoders=encoders,
         surrogates=surrogates,
         loss=loss,
+    )
+
+    # Warm-start from a prior checkpoint (skipped under skip_warmstart, where the
+    # full checkpoint is restored right after construction anyway).
+    if integrator_args.init_from_checkpoint and not skip_warmstart:
+        _warmstart_from_checkpoint(
+            integrator, integrator_args.init_from_checkpoint
+        )
+
+    return integrator
+
+
+def _warmstart_from_checkpoint(
+    integrator: BaseIntegrator, checkpoint_path: str
+) -> None:
+    """Partially load matching (shape-checked) tensors from a prior checkpoint.
+
+    Transfers every key whose name and shape match the integrator's state_dict
+    and skips the rest, so it works whether the source is a previous conjugate
+    scaling model (encoders + surrogates + scale field all transfer) or a
+    converged per-obs integrator (encoders + surrogates transfer; the scale
+    field stays at init). Non-persistent buffers (e.g. the merge alpha/beta) are
+    absent from both state_dicts and are repopulated by finalize_merge anyway.
+    """
+    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    state = ckpt.get("state_dict", ckpt) if isinstance(ckpt, dict) else ckpt
+    model_state = integrator.state_dict()
+    compat = {
+        k: v
+        for k, v in state.items()
+        if k in model_state and v.shape == model_state[k].shape
+    }
+    integrator.load_state_dict(compat, strict=False)
+
+    def _top(keys: set[str]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for k in keys:
+            counts[k.split(".")[0]] = counts.get(k.split(".")[0], 0) + 1
+        return counts
+
+    transferred = set(compat)
+    missing = {k for k in model_state if k not in compat}
+    logger.info(
+        "Warm-start from %s: transferred %d/%d tensors %s; %d kept at init %s",
+        checkpoint_path,
+        len(transferred),
+        len(model_state),
+        _top(transferred),
+        len(missing),
+        _top(missing) if missing else {},
     )
 
 

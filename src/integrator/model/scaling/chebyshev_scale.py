@@ -139,6 +139,7 @@ class MLPScale(nn.Module):
         r_max: float = 1500.0,
         d_min: float = 1.0,
         d_max: float = 60.0,
+        head_init_std: float = 0.0,
     ):
         super().__init__()
 
@@ -166,9 +167,15 @@ class MLPScale(nn.Module):
         layers.append(nn.Linear(in_dim, 1))
         self.net = nn.Sequential(*layers)
 
-        # Initialize last layer near zero so softplus(0) ≈ 0.69
-        nn.init.zeros_(self.net[-1].weight)
+        # Bias 0 so softplus(0) ~ 0.69 (flat constant scale) at init. The output
+        # weight is zero by default (legacy: hidden layers get zero gradient on
+        # step 0); a small head_init_std seeds the spatial scale structure so it
+        # develops from the first step without changing the init scale level.
         nn.init.zeros_(self.net[-1].bias)
+        if head_init_std > 0.0:
+            nn.init.normal_(self.net[-1].weight, std=head_init_std)
+        else:
+            nn.init.zeros_(self.net[-1].weight)
 
     def forward(
         self, frame: Tensor, x: Tensor, y: Tensor, lp: Tensor, d: Tensor

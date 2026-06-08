@@ -167,6 +167,10 @@ class ConjugateMergingIntegrator(BaseIntegrator):
         # MC ELBO). If false, use the posterior mean (point estimate, simpler).
         self.sample_I_h = bool(getattr(cfg, "sample_I_h", True))
 
+        # Optional decoupled LR for the (weakly-identified, slow-to-equilibrate)
+        # scale field — its own Adam param group in _build_optimizer. None => lr.
+        self.scaling_lr = getattr(cfg, "scaling_lr", None)
+
         # Scale function
         if cfg.scale_mlp:
             self.scale_fn = MLPScale(
@@ -178,6 +182,7 @@ class ConjugateMergingIntegrator(BaseIntegrator):
                 r_max=cfg.scale_r_max,
                 d_min=getattr(cfg, "dmin", 1.0),
                 d_max=60.0,
+                head_init_std=getattr(cfg, "scale_head_init_std", 0.0),
             )
         elif cfg.scale_spatial:
             self.scale_fn = SpatialChebyshevScale(
@@ -212,6 +217,52 @@ class ConjugateMergingIntegrator(BaseIntegrator):
             return self.scale_fn(frame, x_det, y_det) / lp
         else:
             return self.scale_fn(frame) / lp
+
+    def _build_optimizer(self) -> torch.optim.Optimizer:
+        """Adam; with scaling_lr set, the scale field gets its own param group.
+
+        The per-frame scale is the merging model's slowest-identified field and
+        it gates the anomalous signal, so a decoupled scaling_lr lets it
+        equilibrate without raising the encoder LR. When scaling_lr is None this
+        defers to the base optimizer (byte-identical behavior). The base
+        decoder_weight_decay group is preserved. Any LambdaLR warmup/schedule
+        scales all groups by the same factor, keeping the relative LRs.
+        """
+        if self.scaling_lr is None:
+            return super()._build_optimizer()
+        scale_params: list[nn.Parameter] = []
+        decoder_params: list[nn.Parameter] = []
+        other_params: list[nn.Parameter] = []
+        for name, param in self.named_parameters():
+            if not param.requires_grad:
+                continue
+            if name.startswith("scale_fn."):
+                scale_params.append(param)
+            elif (
+                self.decoder_weight_decay is not None
+                and name.endswith("surrogates.qp.decoder.weight")
+            ):
+                decoder_params.append(param)
+            else:
+                other_params.append(param)
+        groups: list[dict] = [
+            {"params": other_params, "weight_decay": self.weight_decay}
+        ]
+        if decoder_params:
+            groups.append(
+                {
+                    "params": decoder_params,
+                    "weight_decay": self.decoder_weight_decay,
+                }
+            )
+        groups.append(
+            {
+                "params": scale_params,
+                "weight_decay": self.weight_decay,
+                "lr": self.scaling_lr,
+            }
+        )
+        return torch.optim.Adam(groups, lr=self.lr)
 
     def _wilson_tau(self, d: Tensor) -> Tensor:
         """Wilson prior rate tau from resolution d (per-obs or per-HKL).
@@ -270,15 +321,28 @@ class ConjugateMergingIntegrator(BaseIntegrator):
             )
             return alpha_h, pi, i_new
 
-        # Phase 1: converge the geometric-mean fixed point (no gradient).
+        # Phase 1: converge the geometric-mean fixed point (no gradient). The
+        # merge Jacobian K is high (responsibilities summed over ~22 obs per HKL),
+        # so weak/background-dominated HKLs need many iterations. Freeze each HKL
+        # once it converges (PER-HKL early-stop) and break only when ALL have, so
+        # a single worst HKL no longer gates the global torch.all stop while the
+        # rest waste iterations or, at the cap, the worst stay under-iterated.
         with torch.no_grad():
             i_tilde = 1.0 / tau_h.clamp(min=1e-12)  # Wilson-mean cold start
-            for _ in range(self.n_em_iters):
+            converged = torch.zeros(n_unique, dtype=torch.bool, device=device)
+            iters_used = self.n_em_iters
+            for it in range(self.n_em_iters):
                 _, _, i_new = em_map(i_tilde)
                 rel = (i_new - i_tilde).abs() / i_tilde.clamp(min=1e-12)
-                i_tilde = i_new
-                if torch.all(rel < self.em_tol):
+                # adopt the update only for not-yet-converged HKLs, then freeze.
+                i_tilde = torch.where(converged, i_tilde, i_new)
+                converged = converged | (rel < self.em_tol)
+                if bool(converged.all()):
+                    iters_used = it + 1
                     break
+            # Diagnostics (logged in _step): is the cap under-iterating the merge?
+            self._em_iters_used = iters_used
+            self._em_frac_converged = float(converged.float().mean())
             alpha_h, pi, _ = em_map(i_tilde)
             trigamma = torch.special.polygamma(1, alpha_h.clamp(min=1e-6))
             k = (
@@ -772,6 +836,23 @@ class ConjugateMergingIntegrator(BaseIntegrator):
             self.log(
                 f"{step} pi_mean",
                 outputs["pi_mean"],
+                on_step=False,
+                on_epoch=True,
+            )
+            # EM inner-solve diagnostics: if em_iters_used pins at n_em_iters and
+            # frac_converged < 1, the merge fixed point is under-iterated (raise
+            # n_em_iters). Stashed by _conjugate_em_merged on the last forward.
+            self.log(
+                f"{step} em_iters_used",
+                torch.tensor(
+                    float(getattr(self, "_em_iters_used", self.n_em_iters))
+                ),
+                on_step=False,
+                on_epoch=True,
+            )
+            self.log(
+                f"{step} em_frac_converged",
+                torch.tensor(float(getattr(self, "_em_frac_converged", 1.0))),
                 on_step=False,
                 on_epoch=True,
             )

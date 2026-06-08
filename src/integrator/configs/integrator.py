@@ -48,6 +48,12 @@ class IntegratorCfg:
     scaling_fano_min: float = 0.0
     scaling_mu_constraint: str = "exp"
     scaling_lr: float | None = None
+    # Warm-start: path to a checkpoint to partially load (matching, shape-checked
+    # keys) into the integrator before training. Use a previous conjugate scaling
+    # model (every key transfers, incl. the scale field) or a converged per-obs
+    # integrator (encoders + surrogates transfer; scale stays at init). Applied
+    # in construct_integrator and skipped under skip_warmstart (prediction).
+    init_from_checkpoint: str | None = None
     merge_weight: float = 1.0
     merge_kl_weight: float = 1.0
     ema_momentum: float = 0.95
@@ -95,6 +101,11 @@ class IntegratorCfg:
     scale_mlp: bool = False
     scale_mlp_hidden: int = 64
     scale_mlp_layers: int = 2
+    # MLPScale output-layer weight init std. 0.0 (default) keeps the legacy
+    # zero-init (flat constant scale, zero gradient to hidden layers at step 0);
+    # a small value (e.g. 0.05) lets the scale's spatial structure develop from
+    # the first step. Bias is always 0 so softplus(0)~0.69 at init regardless.
+    scale_head_init_std: float = 0.0
     scale_spatial: bool = False
     scale_degree_radius: int = 5
     scale_beam_center: list[float] | None = None
