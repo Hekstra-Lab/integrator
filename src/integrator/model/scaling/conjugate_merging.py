@@ -37,6 +37,7 @@ Pair with `GroupedAsuIdBatchSampler` so every HKL in a batch has all its
 observations present (the fixed point needs complete groups).
 """
 
+import logging
 from typing import Any, Literal
 
 import torch
@@ -63,6 +64,8 @@ from integrator.model.scaling.chebyshev_scale import (
     MLPScale,
     SpatialChebyshevScale,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _scatter_sum_compact(
@@ -320,6 +323,12 @@ class ConjugateMergingIntegrator(BaseIntegrator):
         seen = torch.zeros(self.n_hkl, dtype=torch.bool, device=device)
 
         # Pass 1: per-HKL mean-field EM (the merged estimate + the grid basis).
+        logger.info(
+            "finalize_merge Pass 1: per-HKL mean-field EM over the dataset "
+            "(device=%s)",
+            device,
+        )
+        n_batches = 0
         for batch in dataloader:
             counts, shoebox, mask, metadata = batch
             counts = counts.clamp(min=0).to(device)
@@ -360,10 +369,23 @@ class ConjugateMergingIntegrator(BaseIntegrator):
             self.alpha_buffer[unique] = alpha_h
             self.beta_buffer[unique] = beta_h
             seen[unique] = True
+            n_batches += 1
         self.buffer_seen.copy_(seen)
+        logger.info(
+            "finalize_merge Pass 1 done: %d/%d HKLs populated over %d batches "
+            "(mean-field beta median=%.3g)",
+            int(seen.sum()),
+            self.n_hkl,
+            n_batches,
+            float(self.beta_buffer[seen].median()) if bool(seen.any()) else 0.0,
+        )
 
         # Pass 2: calibrate via the exact collapsed-posterior quadrature.
         if calibrate:
+            logger.info(
+                "finalize_merge Pass 2: calibrated quadrature (n_grid=%d)",
+                self.exact_posterior_n_grid,
+            )
             post = self.exact_merged_posterior(
                 dataloader, n_grid=self.exact_posterior_n_grid, n_nuisance=1
             )
@@ -371,6 +393,9 @@ class ConjugateMergingIntegrator(BaseIntegrator):
             self.alpha_buffer[s] = post["alpha"][s]
             self.beta_buffer[s] = post["beta"][s]
             self.buffer_seen[s] = True
+            logger.info(
+                "finalize_merge Pass 2 done: %d HKLs calibrated", int(s.sum())
+            )
 
     @torch.no_grad()
     def exact_merged_posterior(
