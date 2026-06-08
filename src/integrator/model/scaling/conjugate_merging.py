@@ -11,16 +11,21 @@ With a Gamma prior on `I_h` and Poisson likelihood that is *linear* in
 is Gamma in closed form via data augmentation (signal/background count
 split):
 
-    pi_{i,p} = s_i * I_h_hat * profile_{i,p} /
-               (s_i * I_h_hat * profile_{i,p} + bg_i)
+    pi_{i,p} = s_i * Itil_h * profile_{i,p} /
+               (s_i * Itil_h * profile_{i,p} + bg_i)
 
     alpha_h = alpha_W + sum_{i in h, p} pi_{i,p} * c_{i,p} * mask
     beta_h  = tau_h    + sum_{i in h, p} s_i  * profile_{i,p}  * mask
 
     q(I_h) = Gamma(alpha_h, beta_h)
 
-`I_h_hat` for the E-step comes from an EMA buffer of previous batches'
-posterior means (cold start uses Wilson prior mean 1/tau_h).
+The responsibility uses the geometric-mean intensity Itil_h = exp(E_q[log I_h])
+= exp(psi(alpha_h) - log beta_h) (the exact CAVI update), solved as a per-HKL
+fixed point *within the batch* and differentiated via the implicit-function
+theorem (1/(1-K)) -- the same machinery as `ConjugateIntegrator._conjugate_em`,
+aggregated over each HKL's complete group. (No cross-batch EMA estimate is used
+for the E-step; the EMA buffer only caches the per-HKL posterior for the merged
+MTZ, and `finalize_merge` recomputes it cleanly + calibrates via quadrature.)
 
 What the neural net does:
     1. Encoders predict q(profile_i), q(bg_i) per observation.
@@ -29,7 +34,7 @@ What the neural net does:
        no per-HKL embedding, no learned merging operator.
 
 Pair with `GroupedAsuIdBatchSampler` so every HKL in a batch has all its
-observations present (sufficient statistics need complete groups).
+observations present (the fixed point needs complete groups).
 """
 
 from typing import Any, Literal
@@ -133,6 +138,20 @@ class ConjugateMergingIntegrator(BaseIntegrator):
         # ELBO-consistent; raise above 1.0 for stronger Wilson regularization.
         self.merge_kl_weight = float(getattr(cfg, "merge_kl_weight", 1.0))
 
+        # Calibrated-posterior export. finalize_merge replaces the mean-field EMA
+        # buffer with the exact collapsed-posterior quadrature (the per-HKL
+        # analogue of ConjugateIntegrator.exact_intensity_posterior). n_grid from
+        # cfg; n_nuisance is fixed at 1 (Fix A) because the merging quadrature
+        # already passes the whole dataset.
+        self.exact_posterior_n_grid = int(
+            getattr(cfg, "exact_posterior_n_grid", 1024)
+        )
+
+        # Inner per-HKL CAVI fixed point (ConjugateIntegrator machinery): max
+        # responsibility iterations and the relative-change early-stop tolerance.
+        self.n_em_iters = int(getattr(cfg, "n_em_iters", 40))
+        self.em_tol = float(getattr(cfg, "em_tol", 1e-3))
+
         # If true, sample I_h from q(I_h) for the reconstruction NLL (proper
         # MC ELBO). If false, use the posterior mean (point estimate, simpler).
         self.sample_I_h = bool(getattr(cfg, "sample_I_h", True))
@@ -194,27 +213,72 @@ class ConjugateMergingIntegrator(BaseIntegrator):
         s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))
         return self.loss._get_tau({"d": d}, s_sq, d.device)
 
-    def _get_I_h_for_estep(
-        self, asu_ids: Tensor, tau_per_obs: Tensor
-    ) -> Tensor:
-        """Detached geometric-mean intensity exp(E_q[log I_h]) for the E-step pi.
+    def _conjugate_em_merged(
+        self,
+        counts: Tensor,
+        profile_mean: Tensor,
+        bg_mean: Tensor,
+        scale: Tensor,
+        tau_h: Tensor,
+        mask: Tensor,
+        inverse: Tensor,
+        n_unique: int,
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """Per-HKL geometric-CAVI fixed point with the implicit-function gradient.
 
-        This is the exact mean-field (CAVI) update (Bishop PRML 10.9; Blei et al.
-        2017): the responsibility uses exp(E[log I]) = exp(psi(alpha) - log beta),
-        NOT the arithmetic mean alpha/beta, which over-weights the signal.
-
-        Seen HKLs: exp(psi(alpha) - log beta) from the EMA buffer.
-        Unseen HKLs: Wilson geometric mean exp(psi(alpha_W) - log tau_h).
+        The merging analogue of `ConjugateIntegrator._conjugate_em`: the
+        responsibility uses the geometric-mean intensity exp(E_q[log I_h]) =
+        exp(psi(alpha_h) - log beta_h) (Bishop PRML 10.9), and the converged
+        fixed point is differentiated exactly via 1/(1-K) rather than unrolled.
+        Sufficient statistics are summed over each HKL's observations, so the
+        batch must contain complete HKL groups (group_by_asu_id). This replaces
+        the EMA-buffer E-step: I_h is solved fresh per batch, not carried across
+        batches. Returns (alpha_h, beta_h, pi).
         """
-        a = self.alpha_buffer[asu_ids].clamp(min=1e-6)
-        b = self.beta_buffer[asu_ids].clamp(min=1e-12)
-        seen = self.buffer_seen[asu_ids]
-        psi_aW = torch.digamma(
-            torch.tensor(self.alpha_W, device=a.device, dtype=a.dtype)
-        )
-        geo_seen = torch.exp(torch.digamma(a) - b.log())
-        geo_cold = torch.exp(psi_aW - tau_per_obs.clamp(min=1e-12).log())
-        return torch.where(seen, geo_seen, geo_cold).detach()
+        device = counts.device
+        cm = counts * mask  # (B, P)
+        bg = bg_mean.unsqueeze(-1)  # (B, 1)
+        e = scale.unsqueeze(-1) * profile_mean  # (B, P) signal exposure / pixel
+
+        def scatter(x: Tensor) -> Tensor:  # sum per HKL via precomputed inverse
+            return torch.zeros(
+                n_unique, device=device, dtype=x.dtype
+            ).scatter_add_(0, inverse, x)
+
+        # beta_h = tau_h + sum_{i,p} s_i prf (constant in I_h; carries gradient).
+        beta_h = tau_h + scatter((e * mask).sum(dim=-1))
+        log_beta_h = beta_h.clamp(min=1e-12).log()
+
+        def em_map(I_h_tilde: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+            """One CAVI step from the per-HKL geometric-mean intensity."""
+            signal_rate = e * I_h_tilde[inverse].unsqueeze(-1)  # (B, P)
+            pi = signal_rate / (signal_rate + bg).clamp(min=1e-12)
+            alpha_h = self.alpha_W + scatter((pi * cm).sum(dim=-1))
+            i_new = torch.exp(
+                torch.digamma(alpha_h.clamp(min=1e-6)) - log_beta_h
+            )
+            return alpha_h, pi, i_new
+
+        # Phase 1: converge the geometric-mean fixed point (no gradient).
+        with torch.no_grad():
+            i_tilde = 1.0 / tau_h.clamp(min=1e-12)  # Wilson-mean cold start
+            for _ in range(self.n_em_iters):
+                _, _, i_new = em_map(i_tilde)
+                rel = (i_new - i_tilde).abs() / i_tilde.clamp(min=1e-12)
+                i_tilde = i_new
+                if torch.all(rel < self.em_tol):
+                    break
+            alpha_h, pi, _ = em_map(i_tilde)
+            trigamma = torch.special.polygamma(1, alpha_h.clamp(min=1e-6))
+            k = (
+                trigamma * scatter((cm * pi * (1.0 - pi)).sum(dim=-1))
+            ).clamp(max=1.0 - 1e-3)
+
+        # Phase 2: implicit-function gradient via a 1/(1-K)-corrected step.
+        _, _, f = em_map(i_tilde)  # value ~ i_tilde*, carries d_theta f
+        i_implicit = i_tilde + (f - i_tilde) / (1.0 - k)
+        alpha_h, pi, _ = em_map(i_implicit)
+        return alpha_h, beta_h, pi
 
     def _update_buffer(
         self, unique_asu: Tensor, alpha_h: Tensor, beta_h: Tensor
@@ -231,11 +295,36 @@ class ConjugateMergingIntegrator(BaseIntegrator):
         self.buffer_seen[unique_asu] = True
 
     def get_merged_qi(self) -> Gamma:
-        """Per-HKL Gamma posterior from the EMA buffer (for MTZ output)."""
+        """Per-HKL Gamma posterior from the buffer (for MTZ output).
+
+        After `finalize_merge` this is the calibrated quadrature posterior;
+        before it (or with --no-finalize-merge) it is the training mean-field EMA.
+        """
         return Gamma(
             self.alpha_buffer.clamp(min=1e-6),
             self.beta_buffer.clamp(min=1e-12),
         )
+
+    @torch.no_grad()
+    def finalize_merge(self, dataloader) -> None:
+        """Overwrite the mean-field EMA buffer with the calibrated posterior.
+
+        The training EMA buffer is the mean-field Gamma (counting noise only,
+        under-dispersed). This runs `exact_merged_posterior` -- the per-HKL
+        analogue of `ConjugateIntegrator.exact_intensity_posterior` -- and stores
+        its moment-matched Gamma into the buffers, so `get_merged_qi()` and the
+        merged MTZ report the calibrated mean and sigma. The mean-field buffer is
+        read first (for each HKL's grid range), then overwritten. `cli/pred.py`
+        runs this for merging models by default; `--no-finalize-merge` keeps the
+        mean-field EMA for an A/B.
+        """
+        post = self.exact_merged_posterior(
+            dataloader, n_grid=self.exact_posterior_n_grid, n_nuisance=1
+        )
+        seen = post["seen"]
+        self.alpha_buffer[seen] = post["alpha"][seen]
+        self.beta_buffer[seen] = post["beta"][seen]
+        self.buffer_seen[seen] = True
 
     @torch.no_grad()
     def exact_merged_posterior(
@@ -424,39 +513,30 @@ class ConjugateMergingIntegrator(BaseIntegrator):
 
         asu_ids = metadata["asu_id"].long().to(device)
         d_per_obs = metadata["d"].to(device).float()
-        tau_per_obs = self._wilson_tau(d_per_obs)
 
-        # E-step: detached pi (signal probability per pixel)
-        I_h_hat = self._get_I_h_for_estep(asu_ids, tau_per_obs)  # (B,)
-        signal_rate_for_pi = (
-            scale.unsqueeze(-1) * I_h_hat.unsqueeze(-1) * profile_mean
-        )
-        bg_rate_for_pi = bg_mean.unsqueeze(-1)
-        pi = signal_rate_for_pi / (
-            signal_rate_for_pi + bg_rate_for_pi
-        ).clamp(min=1e-12)  # (B, P)
-
-        # M-step sufficient statistics (with mask)
-        signal_per_pixel = pi * counts * mask
-        beta_term_per_pixel = scale.unsqueeze(-1) * profile_mean * mask
-
-        signal_sum_per_obs = signal_per_pixel.sum(dim=-1)  # (B,)
-        beta_sum_per_obs = beta_term_per_pixel.sum(dim=-1)  # (B,)
-
-        alpha_signal_h, inverse, unique_asu = _scatter_sum_compact(
-            signal_sum_per_obs, asu_ids
-        )
-        beta_sum_h, _, _ = _scatter_sum_compact(beta_sum_per_obs, asu_ids)
-
-        # Per-HKL tau (d is constant per HKL; scatter_mean over d_per_obs)
-        d_sum_h, _, _ = _scatter_sum_compact(d_per_obs, asu_ids)
+        # Per-HKL grouping + tau (d is constant within an HKL).
+        d_sum_h, inverse, unique_asu = _scatter_sum_compact(d_per_obs, asu_ids)
         count_h, _, _ = _scatter_sum_compact(torch.ones_like(d_per_obs), asu_ids)
-        d_per_hkl = d_sum_h / count_h.clamp(min=1)
-        tau_per_hkl = self._wilson_tau(d_per_hkl)
+        tau_per_hkl = self._wilson_tau(d_sum_h / count_h.clamp(min=1))
+        n_unique = unique_asu.shape[0]
 
-        alpha_h = self.alpha_W + alpha_signal_h
-        beta_h = tau_per_hkl + beta_sum_h
+        # Per-HKL conjugate EM: the ConjugateIntegrator's geometric-CAVI fixed
+        # point + implicit-function gradient, aggregated over each HKL's complete
+        # group in the batch (requires group_by_asu_id). Solves I_h fresh per
+        # batch instead of carrying an EMA estimate across batches.
+        alpha_h, beta_h, pi = self._conjugate_em_merged(
+            counts,
+            profile_mean,
+            bg_mean,
+            scale,
+            tau_per_hkl,
+            mask,
+            inverse,
+            n_unique,
+        )
 
+        # EMA buffer tracks the per-HKL posterior for the merged MTZ; finalize_
+        # merge recomputes it cleanly (and calibrates) at inference.
         if self.training:
             with torch.no_grad():
                 self._update_buffer(
@@ -521,7 +601,6 @@ class ConjugateMergingIntegrator(BaseIntegrator):
             "inverse": inverse,
             "unique_asu": unique_asu,
             "pi_mean": pi.mean().detach(),
-            "I_h_hat_mean": I_h_hat.mean().detach(),
             "scale_mean": scale.mean().detach(),
             "scale_std": scale.std().detach(),
             "scale_min": scale.min().detach(),
@@ -628,12 +707,6 @@ class ConjugateMergingIntegrator(BaseIntegrator):
             self.log(
                 f"{step} pi_mean",
                 outputs["pi_mean"],
-                on_step=False,
-                on_epoch=True,
-            )
-            self.log(
-                f"{step} I_h_hat_mean",
-                outputs["I_h_hat_mean"],
                 on_step=False,
                 on_epoch=True,
             )
