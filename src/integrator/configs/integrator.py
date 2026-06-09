@@ -61,6 +61,10 @@ class IntegratorCfg:
     # (DIALS-style internal consistency, data-only), giving the per-obs scale a
     # direct gradient the ELBO under-identifies. 0.0 = off. Start ~0.1-1.0.
     consistency_weight: float = 0.0
+    # HierarchicalScalingIntegrator: freeze the warm-started integration
+    # (encoders + qp/qbg/qi) so only the scale + merge head trains. Use with
+    # init_from_checkpoint pointing at a trained HierarchicalIntegrator.
+    freeze_integration: bool = False
     ema_momentum: float = 0.95
 
     # Amortized merging head (AmortizedMergingIntegrator):
