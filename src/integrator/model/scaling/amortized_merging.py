@@ -110,6 +110,10 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         )
         # Optional decoupled LR for the scale field (its own Adam group); None=lr.
         self.scaling_lr = getattr(cfg, "scaling_lr", None)
+        # Cross-observation scaling-consistency loss weight (0 = off). Mirrors
+        # ConjugateMergingIntegrator: a direct, data-only gradient for the per-obs
+        # scale via internal consistency of symmetry-equivalents.
+        self.consistency_weight = float(getattr(cfg, "consistency_weight", 0.0))
         d = cfg.encoder_out
 
         if self.merge_aggregation == "mean":
@@ -514,6 +518,7 @@ class AmortizedMergingIntegrator(BaseIntegrator):
             "tau_h": tau_h,
             "inverse": inverse,
             "unique_hkls": unique_hkls,
+            "scale": scale,
         }
 
     def _wilson_kl_per_hkl(self, qi_h: Gamma, tau_h: Tensor) -> Tensor:
@@ -522,6 +527,45 @@ class AmortizedMergingIntegrator(BaseIntegrator):
             self.alpha_W * torch.ones_like(tau_h), tau_h.clamp(min=1e-12)
         )
         return kl_divergence(qi_h, p_i)
+
+    def _consistency_loss(
+        self,
+        counts: Tensor,
+        mask: Tensor,
+        bg: Tensor,
+        scale: Tensor,
+        inverse: Tensor,
+        n_unique: int,
+    ) -> Tensor:
+        """Cross-observation scaling consistency (DIALS-style, data-only).
+
+        Identical to ConjugateMergingIntegrator._consistency_loss: symmetry-
+        equivalent observations of an HKL must agree after scaling. With the
+        measured intensity J_i = sum_p (counts - bg) (data, no I_h) and the
+        per-obs scale s_i, the closed-form WLS merge is
+        I_hat_h = sum_i w_i J_i s_i / sum_i w_i s_i^2 (w_i = 1/var(J_i)), and the
+        loss penalizes the weighted residual (J_i - s_i I_hat_h)^2. Only s_i
+        carries gradient (J, w, I_hat detached) -> a clean per-obs scale signal
+        that bypasses the learned I_h. Gauge-invariant; singleton HKLs give 0.
+        Group by the anomalous asu_id (inverse) so it tightens the within-mate
+        scale the anomalous signal needs.
+        """
+        device = scale.device
+        cm = counts.clamp(min=0).to(device) * mask.to(device)
+        J = (cm - bg.unsqueeze(-1) * mask.to(device)).sum(dim=-1).detach()
+        var = cm.sum(dim=-1).clamp(min=1.0)
+        w = (1.0 / var).detach()
+
+        def scatter(x: Tensor) -> Tensor:
+            return torch.zeros(
+                n_unique, device=device, dtype=x.dtype
+            ).scatter_add_(0, inverse, x)
+
+        num = scatter(w * J * scale)
+        den = scatter(w * scale * scale).clamp(min=1e-12)
+        i_hat = (num / den).detach()
+        resid = J - scale * i_hat[inverse]
+        return (w * resid.pow(2)).sum() / max(scale.shape[0], 1)
 
     def _step(self, batch, step: Literal["train", "val"]):
         counts, shoebox, mask, metadata = batch
@@ -548,6 +592,25 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         kl_i_per_hkl = self._wilson_kl_per_hkl(qi_h, outputs["tau_h"])
         kl_i = kl_i_per_hkl.sum() / counts.shape[0] * self.merge_kl_weight
         total_loss = total_loss + kl_i
+
+        # Scaling-consistency loss: a direct, data-only gradient for the per-obs
+        # scale (grouped by the anomalous asu_id via `inverse`).
+        if self.consistency_weight > 0.0:
+            consist = self._consistency_loss(
+                forward_out["counts"],
+                forward_out["mask"],
+                outputs["qbg"].mean,
+                outputs["scale"],
+                outputs["inverse"],
+                outputs["unique_hkls"].shape[0],
+            )
+            total_loss = total_loss + self.consistency_weight * consist
+            self.log(
+                f"{step} consistency",
+                consist.detach(),
+                on_step=False,
+                on_epoch=True,
+            )
 
         _log_loss(
             self,
