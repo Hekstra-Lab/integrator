@@ -108,6 +108,8 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         self.merge_overdispersion = bool(
             getattr(cfg, "merge_overdispersion", False)
         )
+        # Optional decoupled LR for the scale field (its own Adam group); None=lr.
+        self.scaling_lr = getattr(cfg, "scaling_lr", None)
         d = cfg.encoder_out
 
         if self.merge_aggregation == "mean":
@@ -170,6 +172,7 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                 r_max=cfg.scale_r_max,
                 d_min=getattr(cfg, "dmin", 1.0),
                 d_max=60.0,
+                head_init_std=getattr(cfg, "scale_head_init_std", 0.0),
             )
         elif cfg.scale_spatial:
             self.scale_fn = SpatialChebyshevScale(
@@ -187,6 +190,51 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                 frame_min=cfg.scale_frame_min,
                 frame_max=cfg.scale_frame_max,
             )
+
+    def _build_optimizer(self) -> torch.optim.Optimizer:
+        """Adam; with scaling_lr set, the scale field gets its own param group.
+
+        Mirrors ConjugateMergingIntegrator: the per-frame scale is the slowest-
+        identified field, so a decoupled scaling_lr lets it equilibrate without
+        raising the encoder LR. scaling_lr=None defers to the base optimizer
+        (byte-identical). Preserves the decoder_weight_decay group; any LambdaLR
+        warmup scales all groups uniformly.
+        """
+        if self.scaling_lr is None:
+            return super()._build_optimizer()
+        scale_params: list[nn.Parameter] = []
+        decoder_params: list[nn.Parameter] = []
+        other_params: list[nn.Parameter] = []
+        for name, param in self.named_parameters():
+            if not param.requires_grad:
+                continue
+            if name.startswith("scale_fn."):
+                scale_params.append(param)
+            elif (
+                self.decoder_weight_decay is not None
+                and name.endswith("surrogates.qp.decoder.weight")
+            ):
+                decoder_params.append(param)
+            else:
+                other_params.append(param)
+        groups: list[dict] = [
+            {"params": other_params, "weight_decay": self.weight_decay}
+        ]
+        if decoder_params:
+            groups.append(
+                {
+                    "params": decoder_params,
+                    "weight_decay": self.decoder_weight_decay,
+                }
+            )
+        groups.append(
+            {
+                "params": scale_params,
+                "weight_decay": self.weight_decay,
+                "lr": self.scaling_lr,
+            }
+        )
+        return torch.optim.Adam(groups, lr=self.lr)
 
     # ------------------------------------------------------------------
 
