@@ -148,6 +148,11 @@ class ConjugateMergingIntegrator(BaseIntegrator):
         # ELBO-consistent; raise above 1.0 for stronger Wilson regularization.
         self.merge_kl_weight = float(getattr(cfg, "merge_kl_weight", 1.0))
 
+        # Cross-observation scaling-consistency loss weight (0 = off). Gives the
+        # per-observation scale a direct gradient via internal consistency of
+        # symmetry-equivalents (DIALS-style, data-only) -- see _consistency_loss.
+        self.consistency_weight = float(getattr(cfg, "consistency_weight", 0.0))
+
         # Calibrated-posterior export. finalize_merge computes the mean-field per
         # HKL (Pass 1) then overwrites it with the exact collapsed-posterior
         # quadrature (Pass 2 -- the per-HKL analogue of
@@ -729,6 +734,7 @@ class ConjugateMergingIntegrator(BaseIntegrator):
             "tau_h": tau_per_hkl,
             "inverse": inverse,
             "unique_asu": unique_asu,
+            "scale": scale,
             "pi_mean": pi.mean().detach(),
             "scale_mean": scale.mean().detach(),
             "scale_std": scale.std().detach(),
@@ -750,6 +756,49 @@ class ConjugateMergingIntegrator(BaseIntegrator):
             tau_h.clamp(min=1e-12),
         )
         return kl_divergence(q, p)
+
+    def _consistency_loss(
+        self,
+        counts: Tensor,
+        mask: Tensor,
+        bg: Tensor,
+        scale: Tensor,
+        inverse: Tensor,
+        n_unique: int,
+    ) -> Tensor:
+        """Cross-observation scaling consistency (DIALS-style, data-only).
+
+        Symmetry-equivalent observations of an HKL must agree after scaling.
+        With the per-observation measured intensity J_i = sum_p (counts - bg)
+        (data, no profile / no I_h) and the model's per-obs scale s_i, the
+        best merged value is the closed-form weighted least squares estimate
+            I_hat_h = sum_i w_i J_i s_i / sum_i w_i s_i^2,   w_i = 1/var(J_i),
+        and the loss penalizes the weighted residual (J_i - s_i I_hat_h)^2.
+
+        Only s_i carries gradient (J, w, and I_hat are detached), so this is a
+        clean per-observation scale signal that bypasses the trainable I_h --
+        the term the ELBO under-identifies because I_h absorbs scale errors. It
+        is gauge-invariant (s_i -> c s_i, I_hat -> I_hat/c leaves s_i*I_hat
+        fixed). Singleton HKLs contribute exactly 0 (nothing to be consistent
+        with). Group by the anomalous asu_id (Friedel mates separate) so it
+        tightens the within-mate scale the anomalous signal needs.
+        """
+        device = scale.device
+        cm = counts.clamp(min=0).to(device) * mask.to(device)
+        J = (cm - bg.unsqueeze(-1) * mask.to(device)).sum(dim=-1).detach()
+        var = cm.sum(dim=-1).clamp(min=1.0)
+        w = (1.0 / var).detach()
+
+        def scatter(x: Tensor) -> Tensor:
+            return torch.zeros(
+                n_unique, device=device, dtype=x.dtype
+            ).scatter_add_(0, inverse, x)
+
+        num = scatter(w * J * scale)
+        den = scatter(w * scale * scale).clamp(min=1e-12)
+        i_hat = (num / den).detach()  # stop-grad WLS target per HKL
+        resid = J - scale * i_hat[inverse]
+        return (w * resid.pow(2)).sum() / max(scale.shape[0], 1)
 
     def _step(self, batch, step: Literal["train", "val"]):
         counts, shoebox, mask, metadata = batch
@@ -785,6 +834,26 @@ class ConjugateMergingIntegrator(BaseIntegrator):
         )
         kl_I = kl_I_per_hkl.sum() / counts.shape[0] * self.merge_kl_weight
         total_loss = total_loss + kl_I
+
+        # Scaling-consistency loss: a direct, data-only gradient for the per-obs
+        # scale (the ELBO under-identifies it). Grouped by the anomalous asu_id
+        # (outputs["inverse"]), so it tightens the within-mate scale.
+        if self.consistency_weight > 0.0:
+            consist = self._consistency_loss(
+                forward_out["counts"],
+                forward_out["mask"],
+                outputs["qbg"].mean,
+                outputs["scale"],
+                outputs["inverse"],
+                outputs["unique_asu"].shape[0],
+            )
+            total_loss = total_loss + self.consistency_weight * consist
+            self.log(
+                f"{step} consistency",
+                consist.detach(),
+                on_step=False,
+                on_epoch=True,
+            )
 
         _log_loss(
             self,

@@ -56,6 +56,11 @@ class IntegratorCfg:
     init_from_checkpoint: str | None = None
     merge_weight: float = 1.0
     merge_kl_weight: float = 1.0
+    # Cross-observation scaling-consistency loss weight (ConjugateMergingIntegrator):
+    # penalizes disagreement between symmetry-equivalent observations after scaling
+    # (DIALS-style internal consistency, data-only), giving the per-obs scale a
+    # direct gradient the ELBO under-identifies. 0.0 = off. Start ~0.1-1.0.
+    consistency_weight: float = 0.0
     ema_momentum: float = 0.95
 
     # Amortized merging head (AmortizedMergingIntegrator):
