@@ -31,6 +31,7 @@ holds complete HKL groups; the sufficient-statistic sum is then complete within
 the batch and no cross-batch buffer is needed during training.
 """
 
+import logging
 from typing import Any, Literal
 
 import torch
@@ -55,10 +56,13 @@ from integrator.model.integrators.integrator_utils import (
 from integrator.model.scaling.chebyshev_scale import (
     ChebyshevScale,
     MLPScale,
+    PhysicalScale,
     SpatialChebyshevScale,
 )
 from integrator.model.scaling.conjugate_merging import _scatter_sum_compact
 from integrator.model.scaling.deepsets_merging import _scatter_mean_compact
+
+logger = logging.getLogger(__name__)
 
 _N_COND = 3  # per-observation conditioning: [log scale, log lp, d]
 
@@ -166,7 +170,32 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         )
 
         # Scale function (identical to the other merging integrators)
-        if cfg.scale_mlp:
+        self.scale_restraint_weight = float(
+            getattr(cfg, "scale_absorption_restraint", 0.0)
+        )
+        if getattr(cfg, "scale_physical", False):
+            # DIALS-style: smooth scale(phi) x decay(phi,d) x crystal-frame SH
+            # absorption (precomputed `absorption_sh`, scripts/
+            # extract_crystal_frame_sh.py). scale_sh_lmax MUST match --lmax. Here
+            # the scale lives in the conjugate merge (no warm-start/freeze), so
+            # the surface is the under-identified within-image band the MLP left
+            # at r_detrended~0; restrain it (scale_absorption_restraint).
+            self.scale_fn = PhysicalScale(
+                n_sh=(int(cfg.scale_sh_lmax) + 1) ** 2 - 1,
+                degree_scale=cfg.scale_degree,
+                degree_decay=cfg.scale_degree_decay,
+                frame_min=cfg.scale_frame_min,
+                frame_max=cfg.scale_frame_max,
+                absorption_init_std=cfg.scale_absorption_init_std,
+            )
+            if self.scale_restraint_weight == 0.0:
+                logger.warning(
+                    "scale_physical with scale_absorption_restraint=0: the "
+                    "absorption surface is bounded only by its low dimension. "
+                    "Set scale_absorption_restraint (~1e-2) to oppose run-away "
+                    "and protect the anomalous (odd-l) band."
+                )
+        elif cfg.scale_mlp:
             self.scale_fn = MLPScale(
                 hidden_dim=cfg.scale_mlp_hidden,
                 n_layers=cfg.scale_mlp_layers,
@@ -245,6 +274,16 @@ class AmortizedMergingIntegrator(BaseIntegrator):
     def _get_scale(self, metadata: dict, device: torch.device) -> Tensor:
         frame = metadata["xyzcal.px.2"].to(device).float()
         lp = metadata["lp"].to(device).float().clamp(min=1e-8)
+        if isinstance(self.scale_fn, PhysicalScale):
+            if "absorption_sh" not in metadata:
+                raise KeyError(
+                    "PhysicalScale needs 'absorption_sh' in metadata; run "
+                    "scripts/extract_crystal_frame_sh.py and point the data "
+                    "loader's reference at the augmented metadata file."
+                )
+            d = metadata["d"].to(device).float()
+            a = metadata["absorption_sh"].to(device).float()
+            return self.scale_fn(frame, d, a) / lp
         if isinstance(self.scale_fn, MLPScale):
             x_det = metadata["xyzcal.px.0"].to(device).float()
             y_det = metadata["xyzcal.px.1"].to(device).float()
@@ -630,7 +669,25 @@ class AmortizedMergingIntegrator(BaseIntegrator):
             self.log(f"{step} {name}", value, on_step=False, on_epoch=True)
         total_loss = total_loss + penalty
 
+        # PhysicalScale absorption/decay restraint: opposes the merge/consistency
+        # pulling the surface to absorb the anomalous signal (and run away).
+        if (
+            isinstance(self.scale_fn, PhysicalScale)
+            and self.scale_restraint_weight > 0.0
+        ):
+            restraint = self.scale_restraint_weight * self.scale_fn.restraint_penalty()
+            total_loss = total_loss + restraint
+            self.log(
+                f"{step} scale_restraint", restraint.detach(), on_epoch=True
+            )
+
         with torch.no_grad():
+            if isinstance(self.scale_fn, PhysicalScale):
+                self.log(
+                    f"{step} abs_c_rms",
+                    self.scale_fn.absorption_c.detach().pow(2).mean().sqrt(),
+                    on_epoch=True,
+                )
             self.log(f"{step} qi_h_mean", qi_h.mean.mean(), on_epoch=True)
             self.log(f"{step} qi_h_var", qi_h.variance.mean(), on_epoch=True)
             self.log(
