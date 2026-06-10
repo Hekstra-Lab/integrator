@@ -217,6 +217,7 @@ class RotationDataModule(pl.LightningDataModule):
         transform: str | None = None,
         group_by_asu_id: bool = False,
         max_obs_per_hkl: int | None = None,
+        ice_ring_ranges: list | None = None,
     ):
         super().__init__()
         self.data_dir = data_dir
@@ -256,6 +257,7 @@ class RotationDataModule(pl.LightningDataModule):
             self.transform = transform
         self.group_by_asu_id = group_by_asu_id
         self.max_obs_per_hkl = max_obs_per_hkl
+        self.ice_ring_ranges = ice_ring_ranges
 
     def setup(self, stage=None):
         counts = _load_shoebox_array(
@@ -301,6 +303,24 @@ class RotationDataModule(pl.LightningDataModule):
             counts = counts[selection]
             masks = masks[selection]
             reference = {k: v[selection] for k, v in reference.items()}
+
+        # Exclude resolution bands (e.g. ice rings) so contaminated
+        # observations never enter scale/merge learning.
+        if self.ice_ring_ranges:
+            d = reference["d"]
+            keep = torch.ones_like(d, dtype=torch.bool)
+            for lo, hi in self.ice_ring_ranges:
+                keep &= ~((d >= lo) & (d <= hi))
+            n_ice = int((~keep).sum().item())
+            if n_ice > 0:
+                logger.info(
+                    "Removed %d reflections in ice-ring band(s) %s",
+                    n_ice,
+                    self.ice_ring_ranges,
+                )
+            counts = counts[keep]
+            masks = masks[keep]
+            reference = {k: v[keep] for k, v in reference.items()}
 
         # Standardize counts
         if counts.dim() == 2:

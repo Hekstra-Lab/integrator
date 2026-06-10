@@ -140,6 +140,8 @@ class MLPScale(nn.Module):
         d_min: float = 1.0,
         d_max: float = 60.0,
         head_init_std: float = 0.0,
+        n_abs_sh: int = 0,
+        absorption_even_only: bool = True,
     ):
         super().__init__()
 
@@ -156,8 +158,35 @@ class MLPScale(nn.Module):
         self.register_buffer("d_min", torch.tensor(d_min))
         self.register_buffer("d_max", torch.tensor(max(d_max, d_min + 1.0)))
 
-        # Input: [frame_norm, radius_norm, d_norm, lp] = 4 features
-        n_input = 4
+        # Optional crystal-frame SH absorption features as extra inputs. Keep
+        # even-l harmonics only (Friedel-symmetric -> cannot build the odd-l
+        # anomalous-gating band) unless absorption_even_only is False.
+        self.n_abs_sh = int(n_abs_sh)
+        n_abs_in = 0
+        if self.n_abs_sh > 0:
+            lmax = int(round(math.sqrt(self.n_abs_sh + 1))) - 1
+            if (lmax + 1) ** 2 - 1 != self.n_abs_sh:
+                raise ValueError(
+                    f"n_abs_sh={self.n_abs_sh} is not (lmax+1)^2-1 for integer "
+                    "lmax; pass (scale_sh_lmax+1)^2-1."
+                )
+            l_of_col = torch.tensor(
+                [l for l in range(1, lmax + 1) for _ in range(2 * l + 1)]
+            )
+            keep = (
+                (l_of_col % 2 == 0)
+                if absorption_even_only
+                else torch.ones_like(l_of_col, dtype=torch.bool)
+            )
+            self.register_buffer(
+                "abs_cols",
+                keep.nonzero(as_tuple=False).squeeze(-1),
+                persistent=False,
+            )
+            n_abs_in = int(keep.sum())
+
+        # Input: [frame_norm, radius_norm, d_norm, lp] + selected SH features.
+        n_input = 4 + n_abs_in
         layers = []
         in_dim = n_input
         for _ in range(n_layers):
@@ -178,7 +207,13 @@ class MLPScale(nn.Module):
             nn.init.zeros_(self.net[-1].weight)
 
     def forward(
-        self, frame: Tensor, x: Tensor, y: Tensor, lp: Tensor, d: Tensor
+        self,
+        frame: Tensor,
+        x: Tensor,
+        y: Tensor,
+        lp: Tensor,
+        d: Tensor,
+        absorption_sh: Tensor | None = None,
     ) -> Tensor:
         frame_norm = (frame - self.frame_mid) / self.frame_half
         r = torch.sqrt((x - self.beam_cx).pow(2) + (y - self.beam_cy).pow(2))
@@ -186,6 +221,21 @@ class MLPScale(nn.Module):
         d_norm = (d - self.d_min) / (self.d_max - self.d_min)
 
         features = torch.stack([frame_norm, r_norm, d_norm, lp], dim=-1)
+        if self.n_abs_sh > 0:
+            if absorption_sh is None:
+                raise ValueError(
+                    "MLPScale was built with crystal-frame SH inputs but "
+                    "absorption_sh was not provided; point the data loader's "
+                    "metadata reference at metadata_sh.pt."
+                )
+            if absorption_sh.shape[-1] != self.n_abs_sh:
+                raise ValueError(
+                    f"absorption_sh has {absorption_sh.shape[-1]} harmonics, "
+                    f"expected {self.n_abs_sh} (scale_sh_lmax mismatch)."
+                )
+            features = torch.cat(
+                [features, absorption_sh[:, self.abs_cols]], dim=-1
+            )
         return F.softplus(self.net(features).squeeze(-1))
 
 

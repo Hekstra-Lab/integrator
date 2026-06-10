@@ -58,6 +58,10 @@ class DataLoaderArgs:
     # so sufficient statistics / scatter_mean aggregate properly).
     group_by_asu_id: bool = False
     max_obs_per_hkl: int | None = None
+    # Resolution bands (Angstrom) to exclude, e.g. ice rings: a list of
+    # [d_low, d_high] pairs. Observations with d in any band are dropped at
+    # load time so they never enter scale/merge learning. None = off.
+    ice_ring_ranges: list | None = None
 
     def __post_init__(self):
         if self.batch_size < 0:

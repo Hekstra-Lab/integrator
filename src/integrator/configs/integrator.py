@@ -115,6 +115,16 @@ class IntegratorCfg:
     # a small value (e.g. 0.05) lets the scale's spatial structure develop from
     # the first step. Bias is always 0 so softplus(0)~0.69 at init regardless.
     scale_head_init_std: float = 0.0
+    # Feed the MLP scale the crystal-frame spherical-harmonic absorption features
+    # (`absorption_sh` in metadata; reuses scale_sh_lmax for the basis size) as
+    # extra inputs, so the flexible MLP can fit the crystal-frame absorption
+    # surface it cannot build from lab-frame inputs alone. `even_only` keeps only
+    # even-l harmonics -- Friedel-symmetric (Y_l(-r)=Y_l(r)), so they cannot form
+    # the odd-l anomalous-gating band (safe by construction; the parity diagnostic
+    # showed the true odd content is ~0). Needs the data loader's metadata
+    # reference to be the absorption_sh-augmented file (metadata_sh.pt).
+    scale_mlp_absorption: bool = False
+    scale_mlp_absorption_even_only: bool = True
     scale_spatial: bool = False
     scale_degree_radius: int = 5
     scale_beam_center: list[float] | None = None

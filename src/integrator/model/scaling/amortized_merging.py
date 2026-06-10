@@ -196,6 +196,9 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                     "and protect the anomalous (odd-l) band."
                 )
         elif cfg.scale_mlp:
+            n_abs_sh = 0
+            if getattr(cfg, "scale_mlp_absorption", False):
+                n_abs_sh = (int(cfg.scale_sh_lmax) + 1) ** 2 - 1
             self.scale_fn = MLPScale(
                 hidden_dim=cfg.scale_mlp_hidden,
                 n_layers=cfg.scale_mlp_layers,
@@ -206,6 +209,10 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                 d_min=getattr(cfg, "dmin", 1.0),
                 d_max=60.0,
                 head_init_std=getattr(cfg, "scale_head_init_std", 0.0),
+                n_abs_sh=n_abs_sh,
+                absorption_even_only=getattr(
+                    cfg, "scale_mlp_absorption_even_only", True
+                ),
             )
         elif cfg.scale_spatial:
             self.scale_fn = SpatialChebyshevScale(
@@ -288,7 +295,16 @@ class AmortizedMergingIntegrator(BaseIntegrator):
             x_det = metadata["xyzcal.px.0"].to(device).float()
             y_det = metadata["xyzcal.px.1"].to(device).float()
             d = metadata["d"].to(device).float()
-            return self.scale_fn(frame, x_det, y_det, lp, d)
+            a = None
+            if self.scale_fn.n_abs_sh > 0:
+                if "absorption_sh" not in metadata:
+                    raise KeyError(
+                        "MLPScale with scale_mlp_absorption needs 'absorption_sh' "
+                        "in metadata; run scripts/extract_crystal_frame_sh.py and "
+                        "point the data loader's reference at metadata_sh.pt."
+                    )
+                a = metadata["absorption_sh"].to(device).float()
+            return self.scale_fn(frame, x_det, y_det, lp, d, a)
         elif isinstance(self.scale_fn, SpatialChebyshevScale):
             x_det = metadata["xyzcal.px.0"].to(device).float()
             y_det = metadata["xyzcal.px.1"].to(device).float()
