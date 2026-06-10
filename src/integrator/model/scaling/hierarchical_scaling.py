@@ -38,7 +38,6 @@ from integrator.model.integrators.base_integrator import (
     _log_loss,
 )
 from integrator.model.integrators.hierarchical_integrator import (
-    _add_group_outputs,
     _sample_profile,
 )
 from integrator.model.integrators.integrator_utils import (
@@ -314,7 +313,11 @@ class HierarchicalScalingIntegrator(BaseIntegrator):
             metadata=metadata,
         )
         out = _assemble_outputs(out)
-        _add_group_outputs(out, metadata, self.loss)
+        # NOTE: no _add_group_outputs here -- this model replaces the hierarchical
+        # group prior with the merge + consistency, so it needs no group-level
+        # outputs, and (unlike training batches) the predict loader's metadata may
+        # not carry "group_label". Keeping the forward independent of it lets
+        # finalize_merge / predict run on the grouped predict loader.
 
         return {
             "forward_out": out,
@@ -345,7 +348,14 @@ class HierarchicalScalingIntegrator(BaseIntegrator):
         counts, shoebox, mask, metadata = batch
         outputs = self(counts, shoebox, mask, metadata)
         forward_out = outputs["forward_out"]
-        group_labels = metadata["group_label"].long()
+        gl = metadata.get("group_label")
+        group_labels = (
+            gl.long()
+            if gl is not None
+            else torch.zeros(
+                counts.shape[0], dtype=torch.long, device=forward_out["rates"].device
+            )
+        )
 
         # Standard hierarchical ELBO (NLL + KL_prf + KL_bg; set pi_weight=0 in
         # the loss so the per-obs group-prior KL is skipped -- the coupling below
