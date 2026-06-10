@@ -187,3 +187,132 @@ class MLPScale(nn.Module):
 
         features = torch.stack([frame_norm, r_norm, d_norm, lp], dim=-1)
         return F.softplus(self.net(features).squeeze(-1))
+
+
+class PhysicalScale(nn.Module):
+    """DIALS-style physical scale: smooth scale(phi) x decay(phi,d) x absorption.
+
+    The unconstrained `MLPScale` captures the bulk frame scale but learns noise in
+    the fine, within-image band because it never sees the variable absorption
+    actually depends on -- the diffracted-beam direction in the crystal frame --
+    and is too flexible to be pinned there by the consistency signal alone. That
+    fine band is exactly what gates the anomalous (Bijvoet) signal, so the model's
+    merged anomalous differences come out uncorrelated with the truth.
+
+    This mirrors DIALS's physical scaling model instead, as three multiplicative
+    components that are additive in log-space:
+
+        log s_i = scale_phi(phi_i) + decay(phi_i, d_i) + (a_i . c_lm)
+
+    - `scale_phi(phi)`: smooth multiplicative scale over the rotation (Chebyshev
+      in normalized frame); also carries the gauge constant (l=0 absorption).
+    - `decay(phi, d) = -2 B(phi) s^2`, `s^2 = 1/(4 d^2)`: the resolution-dependent
+      B-factor falloff with `B(phi)` smooth in frame (the only term with a d
+      dependence -- the absorption basis is direction-only).
+    - absorption: linear in the precomputed crystal-frame spherical-harmonic basis
+      `a_i` (see `scripts/extract_crystal_frame_sh.py`); `c_lm` are the only
+      per-harmonic parameters and the fine, anomalous-gating part. Because the
+      basis is smooth and low-dimensional (~(lmax+1)^2-1 coefficients) it cannot
+      interpolate noise the way the MLP did, and because it is a function of the
+      crystal-frame direction it differs between Friedel mates (which sit at
+      different phi / detector positions), letting the merge separate the real
+      Bijvoet signal from geometry.
+
+    At init `c_lm = 0`, `B = 0`, and `scale_phi = log(init_scale)`, so `s = 1`
+    everywhere (the WLS merge starts as an inverse-variance mean). Output is
+    `exp(.)`, strictly positive, no softplus needed. The known LP correction is
+    applied by the caller (`/lp`), as for the Chebyshev scales.
+    """
+
+    def __init__(
+        self,
+        n_sh: int,
+        degree_scale: int = 4,
+        degree_decay: int = 2,
+        frame_min: float = 0.0,
+        frame_max: float = 1000.0,
+        init_scale: float = 1.0,
+        absorption_init_std: float = 0.0,
+    ):
+        super().__init__()
+        if n_sh < 1:
+            raise ValueError(f"n_sh must be >= 1, got {n_sh}")
+        self.n_sh = n_sh
+        self.degree_scale = degree_scale
+        self.degree_decay = degree_decay
+
+        frame_mid = (frame_min + frame_max) / 2.0
+        frame_half = max((frame_max - frame_min) / 2.0, 1.0)
+        self.register_buffer("frame_mid", torch.tensor(frame_mid))
+        self.register_buffer("frame_half", torch.tensor(frame_half))
+
+        sc = torch.zeros(degree_scale + 1)
+        sc[0] = math.log(init_scale)  # log-space constant -> scale starts at init
+        self.scale_c = nn.Parameter(sc)
+        # B(phi) for decay; 0 -> no resolution falloff at init.
+        self.decay_c = nn.Parameter(torch.zeros(degree_decay + 1))
+        # Absorption SH coefficients; 0 -> flat absorption at init. A small
+        # absorption_init_std seeds the surface so it develops from step 0.
+        if absorption_init_std > 0.0:
+            self.absorption_c = nn.Parameter(torch.randn(n_sh) * absorption_init_std)
+        else:
+            self.absorption_c = nn.Parameter(torch.zeros(n_sh))
+
+        # l index of each SH column (basis ordered l=1..lmax, m=-l..l). Used to
+        # weight the restraint by l(l+1) -- the Laplace-Beltrami (smoothness)
+        # energy on the sphere. Non-persistent: a constant derived from n_sh.
+        lmax = int(round(math.sqrt(n_sh + 1))) - 1
+        if (lmax + 1) ** 2 - 1 != n_sh:
+            raise ValueError(
+                f"n_sh={n_sh} is not (lmax+1)^2-1 for an integer lmax "
+                f"(got lmax~{lmax}); pass n_sh from the extractor's --lmax."
+            )
+        self.lmax = lmax
+        l_of_col = [l for l in range(1, lmax + 1) for _ in range(2 * l + 1)]
+        self.register_buffer(
+            "sh_l", torch.tensor(l_of_col, dtype=torch.float32), persistent=False
+        )
+
+    def restraint_penalty(self) -> Tensor:
+        """Smoothness restraint on the absorption (+ decay) coefficients.
+
+        Returns `sum_lm l(l+1) c_lm^2 + sum_k decay_k^2`; the caller weights it
+        and adds it to the loss. The scaling-consistency objective alone has
+        nothing opposing an ever-larger absorption surface -- the unconstrained
+        Beer-Lambert absorption ran away to `f_A ~ 0` at the detector edges -- and
+        the odd-`l` harmonics can absorb the real Bijvoet signal because Friedel
+        mates sit at inverted crystal-frame directions (`Y_lm(-r) = (-1)^l
+        Y_lm(r)`). Weighting by `l(l+1)` damps the rough, high-`l`, anomalous-
+        sensitive band hardest while leaving the low-`l` physical absorption
+        nearly free. Exactly 0 at init (`c = 0`, `decay = 0`).
+        """
+        w = self.sh_l * (self.sh_l + 1.0)
+        return (w * self.absorption_c.pow(2)).sum() + self.decay_c.pow(2).sum()
+
+    def _basis(self, frame: Tensor, degree: int) -> Tensor:
+        t = ((frame - self.frame_mid) / self.frame_half).clamp(-1.0, 1.0)
+        return torch.stack(ChebyshevSpectrum._chebyshev(t, degree), dim=-1)
+
+    def forward(self, frame: Tensor, d: Tensor, absorption_sh: Tensor) -> Tensor:
+        """Evaluate the physical scale.
+
+        Args:
+            frame: (B,) frame numbers (xyzcal.px.2), proxy for rotation angle.
+            d: (B,) resolution in Angstrom (for the B-factor decay term).
+            absorption_sh: (B, n_sh) precomputed crystal-frame real-SH features.
+
+        Returns:
+            scale: (B,) strictly positive scale factors.
+        """
+        if absorption_sh.shape[-1] != self.n_sh:
+            raise ValueError(
+                f"absorption_sh has {absorption_sh.shape[-1]} harmonics, expected "
+                f"{self.n_sh} (lmax mismatch between the config and the extractor)."
+            )
+        log_scale = self._basis(frame, self.degree_scale) @ self.scale_c
+        b_factor = self._basis(frame, self.degree_decay) @ self.decay_c
+        s_sq = 1.0 / (4.0 * d.clamp(min=1e-3).pow(2))
+        log_decay = -2.0 * b_factor * s_sq
+        log_abs = absorption_sh @ self.absorption_c
+        total = (log_scale + log_decay + log_abs).clamp(-15.0, 15.0)
+        return torch.exp(total)

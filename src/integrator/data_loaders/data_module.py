@@ -111,6 +111,10 @@ DEFAULT_DS_COLS = [
     "group_label",
     "profile_group_label",
     "asu_id",
+    # Per-reflection crystal-frame spherical-harmonic absorption basis (B, n_sh),
+    # precomputed by scripts/extract_crystal_frame_sh.py and consumed by
+    # PhysicalScale. Absent unless the reference file was augmented.
+    "absorption_sh",
 ]
 
 

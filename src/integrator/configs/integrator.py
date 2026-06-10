@@ -121,6 +121,24 @@ class IntegratorCfg:
     scale_r_min: float = 0.0
     scale_r_max: float = 1500.0
 
+    # PhysicalScale (DIALS-style): smooth scale(frame) x decay(frame, d) x
+    # crystal-frame spherical-harmonic absorption. Takes precedence over
+    # scale_mlp / scale_spatial. Needs precomputed `absorption_sh` in the
+    # metadata (scripts/extract_crystal_frame_sh.py); scale_sh_lmax MUST match
+    # that script's --lmax (n_sh = (lmax+1)^2 - 1). scale_degree sets the
+    # rotation scale order; scale_degree_decay the B-factor(frame) order.
+    scale_physical: bool = False
+    scale_sh_lmax: int = 4
+    scale_degree_decay: int = 2
+    scale_absorption_init_std: float = 0.0
+    # L2 restraint weight on the PhysicalScale absorption (l(l+1)-weighted) and
+    # decay coefficients, added to the loss. 0.0 = OFF: the surface is then
+    # bounded only by being low-dimensional -- that stops the gross collapse but
+    # not the slow run-away the Beer-Lambert absorption showed. Start ~1e-2 and
+    # tune on the Bijvoet diagnostic: too low re-absorbs the anomalous signal,
+    # too high flattens the real ~4% absorption.
+    scale_absorption_restraint: float = 0.0
+
     # Manual gradient clipping (for manual-optimization integrators)
     gradient_clip_val: float = 1.0
     gradient_clip_algorithm: str = "norm"

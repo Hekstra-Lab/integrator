@@ -1,5 +1,10 @@
 from .amortized_merging import AmortizedMergingIntegrator
-from .chebyshev_scale import ChebyshevScale, MLPScale, SpatialChebyshevScale
+from .chebyshev_scale import (
+    ChebyshevScale,
+    MLPScale,
+    PhysicalScale,
+    SpatialChebyshevScale,
+)
 from .conjugate_integrator import ConjugateIntegrator
 from .conjugate_merging import ConjugateMergingIntegrator
 from .deepsets_merging import DeepSetsMergingIntegrator
@@ -20,6 +25,7 @@ __all__ = [
     "HKLLookupTable",
     "MLPScale",
     "MergingIntegrator",
+    "PhysicalScale",
     "RefinementIntegrator",
     "ScalingIntegrator",
     "SpatialChebyshevScale",

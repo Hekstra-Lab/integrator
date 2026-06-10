@@ -47,6 +47,7 @@ from integrator.model.integrators.integrator_utils import (
 from integrator.model.scaling.chebyshev_scale import (
     ChebyshevScale,
     MLPScale,
+    PhysicalScale,
     SpatialChebyshevScale,
 )
 from integrator.model.scaling.conjugate_merging import _scatter_sum_compact
@@ -91,9 +92,41 @@ class HierarchicalScalingIntegrator(BaseIntegrator):
             getattr(cfg, "merge_overdispersion", True)
         )
         self.freeze_integration = bool(getattr(cfg, "freeze_integration", False))
+        self.scale_restraint_weight = float(
+            getattr(cfg, "scale_absorption_restraint", 0.0)
+        )
+        if self.freeze_integration and not getattr(
+            cfg, "init_from_checkpoint", None
+        ):
+            logger.warning(
+                "freeze_integration=True with no init_from_checkpoint: the "
+                "encoders + qp/qbg/qi are FROZEN AT RANDOM INIT, so the merged "
+                "output is noise. Set init_from_checkpoint to a trained "
+                "hierarchical checkpoint."
+            )
 
         # Scale function (same options as the other merging integrators).
-        if cfg.scale_mlp:
+        if getattr(cfg, "scale_physical", False):
+            # DIALS-style: smooth scale(phi) x decay(phi,d) x SH absorption on the
+            # crystal-frame direction (precomputed `absorption_sh`, see
+            # scripts/extract_crystal_frame_sh.py). scale_sh_lmax MUST match the
+            # extractor's --lmax.
+            self.scale_fn = PhysicalScale(
+                n_sh=(int(cfg.scale_sh_lmax) + 1) ** 2 - 1,
+                degree_scale=cfg.scale_degree,
+                degree_decay=cfg.scale_degree_decay,
+                frame_min=cfg.scale_frame_min,
+                frame_max=cfg.scale_frame_max,
+                absorption_init_std=cfg.scale_absorption_init_std,
+            )
+            if self.scale_restraint_weight == 0.0:
+                logger.warning(
+                    "scale_physical with scale_absorption_restraint=0: the "
+                    "absorption surface is bounded only by its low dimension. "
+                    "Set scale_absorption_restraint (~1e-2) to oppose run-away "
+                    "and protect the anomalous (odd-l) band."
+                )
+        elif cfg.scale_mlp:
             self.scale_fn = MLPScale(
                 hidden_dim=cfg.scale_mlp_hidden,
                 n_layers=cfg.scale_mlp_layers,
@@ -170,6 +203,16 @@ class HierarchicalScalingIntegrator(BaseIntegrator):
     def _get_scale(self, metadata: dict, device: torch.device) -> Tensor:
         frame = metadata["xyzcal.px.2"].to(device).float()
         lp = metadata["lp"].to(device).float().clamp(min=1e-8)
+        if isinstance(self.scale_fn, PhysicalScale):
+            if "absorption_sh" not in metadata:
+                raise KeyError(
+                    "PhysicalScale needs 'absorption_sh' in metadata; run "
+                    "scripts/extract_crystal_frame_sh.py and point the data "
+                    "loader's reference at the augmented metadata file."
+                )
+            d = metadata["d"].to(device).float()
+            a = metadata["absorption_sh"].to(device).float()
+            return self.scale_fn(frame, d, a) / lp
         if isinstance(self.scale_fn, MLPScale):
             x_det = metadata["xyzcal.px.0"].to(device).float()
             y_det = metadata["xyzcal.px.1"].to(device).float()
@@ -413,6 +456,19 @@ class HierarchicalScalingIntegrator(BaseIntegrator):
             self.log(f"{step} {name}", value, on_step=False, on_epoch=True)
         total_loss = total_loss + penalty
 
+        # PhysicalScale absorption/decay restraint: the term that opposes the
+        # consistency objective pulling the surface to absorb the anomalous
+        # signal (and running away, cf. the Beer-Lambert absorption).
+        if (
+            isinstance(self.scale_fn, PhysicalScale)
+            and self.scale_restraint_weight > 0.0
+        ):
+            restraint = self.scale_restraint_weight * self.scale_fn.restraint_penalty()
+            total_loss = total_loss + restraint
+            self.log(
+                f"{step} scale_restraint", restraint.detach(), on_epoch=True
+            )
+
         with torch.no_grad():
             self.log(f"{step} consistency", consist.detach(), on_epoch=True)
             self.log(
@@ -428,6 +484,13 @@ class HierarchicalScalingIntegrator(BaseIntegrator):
                 self.log(
                     f"{step} phi",
                     F.softplus(self.log_phi).detach(),
+                    on_epoch=True,
+                )
+            if isinstance(self.scale_fn, PhysicalScale):
+                # Watch for absorption run-away (climbing rms / scale_std).
+                self.log(
+                    f"{step} abs_c_rms",
+                    self.scale_fn.absorption_c.detach().pow(2).mean().sqrt(),
                     on_epoch=True,
                 )
 
