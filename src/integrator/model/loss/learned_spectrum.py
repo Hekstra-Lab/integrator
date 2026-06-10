@@ -5,7 +5,7 @@ from torch import Tensor
 
 # NOTE: this is not a variational implementation; uses learnable parameters
 class ChebyshevSpectrum(nn.Module):
-    """Continuous log G(λ) via Chebyshev polynomial expansion."""
+    """Continuous log G(lambda) via Chebyshev polynomial expansion."""
 
     def __init__(
         self,

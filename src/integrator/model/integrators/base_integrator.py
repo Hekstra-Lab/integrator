@@ -334,7 +334,7 @@ class BaseIntegrator(pl.LightningModule):
 
         def lr_lambda(epoch: int) -> float:
             if warmup > 0 and epoch < warmup:
-                # Linear ramp 0 → 1 over the first `warmup` epochs. Start at
+                # Linear ramp 0 -> 1 over the first `warmup` epochs. Start at
                 # 1/warmup on epoch 0 (not 0) so the optimizer takes a real
                 # step immediately; stepping at lr=0 is a no-op.
                 return float(epoch + 1) / float(warmup)

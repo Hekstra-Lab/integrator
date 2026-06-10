@@ -217,7 +217,7 @@ def main():
                 )
             else:
                 out_path = pred_dir / "test_preds_all.parquet"
-                logger.info("Aggregating test predictions → %s", out_path)
+                logger.info("Aggregating test predictions -> %s", out_path)
                 (
                     lf.filter(pl.col("is_test") == 1.0)
                     .with_columns(

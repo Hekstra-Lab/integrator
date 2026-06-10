@@ -28,7 +28,7 @@ class ProfileEncoder(nn.Module):
         position_dim: Number of position features to concatenate (0=off,
             2=raw (x,y), or higher for Fourier features).
         position_fourier_order: If > 0, expand (x,y) into sinusoidal
-            Fourier features: [sin(πkx), cos(πkx), ...] for k=1..order.
+            Fourier features: [sin(pi*k*x), cos(pi*k*x), ...] for k=1..order.
             Gives 4*order features. position_dim is ignored when set.
     """
 
@@ -117,7 +117,7 @@ class ProfileEncoder(nn.Module):
             return x.numel()
 
     def _position_features(self, pos: Tensor) -> Tensor:
-        """(B, 2) normalized position → (B, n_pos_features)."""
+        """(B, 2) normalized position -> (B, n_pos_features)."""
         if self.position_fourier_order > 0:
             freqs = torch.arange(
                 1,
@@ -125,7 +125,7 @@ class ProfileEncoder(nn.Module):
                 device=pos.device,
                 dtype=pos.dtype,
             )
-            # pos: (B, 2), freqs: (K,) → angles: (B, 2, K)
+            # pos: (B, 2), freqs: (K,) -> angles: (B, 2, K)
             angles = pos.unsqueeze(-1) * freqs * torch.pi
             return torch.cat([angles.sin(), angles.cos()], dim=-1).flatten(1)
         return pos

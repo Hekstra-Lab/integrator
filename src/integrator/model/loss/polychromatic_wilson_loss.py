@@ -6,11 +6,9 @@ from integrator.model.loss.wilson_loss import WilsonLoss
 
 
 class PolychromaticWilsonLoss(WilsonLoss):
-    """Wilson loss for polychromatic (Laue) data with learned G(λ).
+    """Wilson loss for polychromatic (Laue) data with learned G(lambda).
 
-    Physical corrections (Ren & Moffat, J. Appl. Cryst. 28, 1995):
-      polarization: f_P = 2 / (1 + cos^2(2theta)− τ·cos2φ·sin²2θ)
-      lorentz:      f_L = sin²2θ
+    Physical corrections (Ren & Moffat, J. Appl. Cryst. 28, 1995)
     """
 
     def __init__(
@@ -76,7 +74,7 @@ class PolychromaticWilsonLoss(WilsonLoss):
         """f_P per reflection (Ren & Moffat eq. 11).
 
         Deterministic correction using known beam polarization fraction.
-        φ measured from horizontal (synchrotron polarization plane).
+        phi measured from horizontal (synchrotron polarization plane).
         """
         x = metadata["xyzcal.px.0"].to(device)
         y = metadata["xyzcal.px.1"].to(device)
@@ -92,7 +90,7 @@ class PolychromaticWilsonLoss(WilsonLoss):
 
     @staticmethod
     def _lorentz_factor(two_theta: Tensor) -> Tensor:
-        """f_L = sin²(2θ)  (Ren & Moffat eq. 10)."""
+        """f_L = sin^2(2θ)  (Ren & Moffat eq. 10)."""
         return torch.sin(two_theta).pow(2).clamp(min=1e-8)
 
     def _get_tau(

@@ -38,7 +38,6 @@ class ChebyshevProfilePriorScale(nn.Module):
         self.register_buffer("r_scale", torch.tensor(r_scale))
 
         # c shape: (n_angular, n_radial)
-        # First row is the radial-only component, rest are cos/sin terms
         c = torch.zeros(n_angular, n_radial)
         c[0, 0] = math.log(math.expm1(init_scale))
         self.c = nn.Parameter(c)

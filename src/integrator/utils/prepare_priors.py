@@ -202,9 +202,7 @@ def prepare_profile_basis(
     sigma_ref = float(args.get("hermite_basis_sigma", 3.0))
     sigma_z = float(args.get("hermite_sigma_z", 1.0))
     max_order_z_arg = args.get("hermite_max_order_z")
-    max_order_z = (
-        int(max_order_z_arg) if max_order_z_arg is not None else None
-    )
+    max_order_z = int(max_order_z_arg) if max_order_z_arg is not None else None
 
     dl_args = cfg.get("data_loader", {}).get("args", {})
     D_dim = int(dl_args.get("D", dl_args.get("d", 1)))
@@ -284,8 +282,6 @@ def prepare_per_bin_priors(
     Checks whether the loss config references per-bin files
     (s_squared_per_group, tau_per_group, i_concentration_per_group, etc.)
     and generates any that are missing.
-
-    Idempotent: skips files that already exist unless force=True.
 
     Args:
         cfg: Full YAML config dict.  If `loss.args.n_bins` is set in the
@@ -521,18 +517,11 @@ def prepare_per_bin_priors(
             tau_source,
         )
 
-    # ── qi / qbg mean_init from raw counts ─────────────────────────────
-    # Computes a dataset-level estimate of the typical intensity and bg
-    # rate using the same bg-subtraction logic as _bg_subtract_signal, so
-    # it's fully independent of DIALS. The factory injects these into
-    # GammaB surrogate args at construction time (when mean_init isn't
-    # explicitly set in the YAML), removing the "grow mu from 0.7 over
-    # many epochs" early-training phase.
     if need_init:
         if counts is None or masks is None:
             logger.info(
                 "qi_qbg_mean_init.pt requires counts/masks;  "
-                "layout has none. Skipping — set explicit mean_init values "
+                "layout has none. Skipping; set explicit mean_init values "
                 "in the YAML (or `mean_init: null` to opt out)."
             )
         else:
@@ -607,9 +596,6 @@ def inject_binning_labels(data_loader, cfg: dict) -> None:
     profile_group_label to the dataset without mutating metadata.pt.
     Files are saved by prepare_per_bin_priors() as separate
     n_bins-suffixed .pt files.
-
-    If the files don't exist (e.g. old data without per-bin priors),
-    this is a no-op and existing labels in metadata.pt are used.
     """
 
     loss_args = cfg.get("loss", {}).get("args", {})
@@ -687,7 +673,7 @@ def _try_load_counts_masks(
     counts_path = data_dir / counts_name
     masks_path = data_dir / masks_name
 
-    # Match _load_shoebox_array's resolution: a sibling .npy is acceptable.
+    # Match _load_shoebox_array's resolution
     def _exists(p: Path) -> bool:
         if p.exists():
             return True
@@ -767,13 +753,8 @@ def _compute_crude_intensity(
     n_frames: int,
     n_pixels_per_frame: int,
 ) -> Tensor:
-    """Estimate intensity from raw shoeboxes via quietest-frame bg subtraction.
-
-    For each shoebox, the frame with the lowest total (masked) counts is
-    treated as pure background.  The per-pixel background rate from that
-    frame is subtracted from the total shoebox counts to give a crude
-    intensity estimate.
-
+    """
+    Get crude intensity estimate
     Args:
         counts: Raw shoebox counts, shape `(N, n_frames * n_pixels_per_frame)`.
         masks: Valid-pixel masks, same shape as *counts*.
@@ -841,7 +822,7 @@ def _compute_wavelength_bin_edges(
 
     Returns a 1-D tensor of length `n_lambda_bins + 1` such that consecutive
     edges define a half-open bin `[edges[i], edges[i+1])` (rightmost
-    inclusive). Equal-quantile spacing → roughly equal counts per bin → the
+    inclusive). Equal-quantile spacing -> roughly equal counts per bin -> the
     per-bin G_k posteriors get balanced gradient signal.
     """
     metadata = torch.load(metadata_path, weights_only=True)
@@ -939,12 +920,12 @@ def _fit_dirichlet_per_group(
     masks_f = masks.float()
     counts_masked = counts_clean * masks_f
 
-    # ── Crude background subtraction (quietest frame) ─────────────────────
+    #  Crude background subtraction
     counts_3d = counts_masked.reshape(N, D, n_pixels_per_frame)
     masks_3d = masks_f.reshape(N, D, n_pixels_per_frame)
 
     if D > 1:
-        # Quietest frame = frame with minimum total counts
+        # use frame with minimum total counts
         frame_counts = counts_3d.sum(dim=-1)  # (N, D)
         frame_n_pixels = masks_3d.sum(dim=-1)  # (N, D)
         min_frame_idx = frame_counts.argmin(dim=-1)  # (N,)
@@ -1260,8 +1241,6 @@ def _bg_subtract_signal(
 ) -> Tensor:
     """Background-subtract raw shoebox counts.
 
-    Reuses the same logic as _fit_dirichlet_per_group: quietest-frame
-    for 3D, border-pixel average for 2D.
 
     Returns:
         Non-negative bg-subtracted counts, shape (N, D*H*W).

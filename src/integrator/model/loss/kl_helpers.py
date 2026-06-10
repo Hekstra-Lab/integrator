@@ -30,7 +30,7 @@ def compute_profile_kl(
             When a (B,) tensor, it is broadcast across the latent dimensions.
 
     Supports:
-    - ProfileSurrogateOutput: Normal-Normal KL with N(0, prior_scale² I)
+    - ProfileSurrogateOutput: Normal-Normal KL with N(0, prior_scale^2 I)
     - Dirichlet: KL(q || Dirichlet(1,...,1)) with uniform prior
     """
     if isinstance(qp, ProfileSurrogateOutput):

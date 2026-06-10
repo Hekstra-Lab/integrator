@@ -25,7 +25,7 @@ class WilsonLoss(nn.Module):
     """Base ELBO loss with Wilson intensity prior.
 
     Subclasses implement `_get_tau` to define how the Wilson prior rate
-    is computed (scalar G for monochromatic, G(λ) for polychromatic).
+    is computed (scalar G for monochromatic, G(lambda) for polychromatic).
     """
 
     def __init__(
