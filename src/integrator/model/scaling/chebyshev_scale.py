@@ -239,6 +239,122 @@ class MLPScale(nn.Module):
         return F.softplus(self.net(features).squeeze(-1))
 
 
+class LaueMLPScale(nn.Module):
+    """Wavelength-aware MLP scale for polychromatic (Laue) stills.
+
+    The monochromatic `MLPScale` assumes a rotation series -- a scale smooth in
+    the goniometer angle (`frame`) -- and folds the LP correction in. Laue data
+    here is stills: a stationary crystal in a polychromatic beam, one shot per
+    image, each with its own refined orientation. Two things change. The dominant
+    scale variation is the incident spectrum `G(lambda)`, and there is no rotation
+    axis to be smooth along, so a per-image scale (the standard Laue per-shot
+    factor) replaces `scale(frame)`. This scale models
+
+        log s_i = MLP([lambda, x, y, d]_i) + image_log_scale[image_i]
+
+    learning the full per-observation scale -- incident spectrum, detector
+    geometry, and resolution falloff -- from continuous features, plus an optional
+    per-image log-scale embedding. Output is `exp(.)` (not softplus) so the large
+    dynamic range of `G(lambda)` is easy to represent, and the scale is flat
+    (`s = 1`) at init: the MLP head and the embedding are both zero-initialized.
+
+    Because the MLP owns the whole correction (there is no separate `lp` column
+    for Laue stills), the caller does NOT divide by `lp` -- unlike the rotation
+    scales. `n_images=None` drops the per-image term (a pure continuous MLP).
+    """
+
+    def __init__(
+        self,
+        hidden_dim: int = 64,
+        n_layers: int = 2,
+        lambda_min: float = 0.95,
+        lambda_max: float = 1.25,
+        beam_center: list[float] | None = None,
+        r_max: float = 1500.0,
+        d_min: float = 1.0,
+        d_max: float = 60.0,
+        n_images: int | None = None,
+        head_init_std: float = 0.0,
+    ):
+        super().__init__()
+
+        lam_mid = (lambda_min + lambda_max) / 2.0
+        lam_half = max((lambda_max - lambda_min) / 2.0, 1e-6)
+        self.register_buffer("lam_mid", torch.tensor(lam_mid))
+        self.register_buffer("lam_half", torch.tensor(lam_half))
+
+        cx, cy = beam_center or [0.0, 0.0]
+        self.register_buffer("beam_cx", torch.tensor(cx))
+        self.register_buffer("beam_cy", torch.tensor(cy))
+        self.register_buffer("r_max", torch.tensor(max(r_max, 1.0)))
+        self.register_buffer("d_min", torch.tensor(d_min))
+        self.register_buffer("d_max", torch.tensor(max(d_max, d_min + 1.0)))
+
+        # Input: [lambda_norm, x_norm, y_norm, d_norm].
+        layers = []
+        in_dim = 4
+        for _ in range(n_layers):
+            layers.append(nn.Linear(in_dim, hidden_dim))
+            layers.append(nn.SiLU())
+            in_dim = hidden_dim
+        layers.append(nn.Linear(in_dim, 1))
+        self.net = nn.Sequential(*layers)
+        # Flat at init: bias 0 and (by default) zero output weight -> log s = 0.
+        # A small head_init_std seeds the structure so it develops from step 0.
+        nn.init.zeros_(self.net[-1].bias)
+        if head_init_std > 0.0:
+            nn.init.normal_(self.net[-1].weight, std=head_init_std)
+        else:
+            nn.init.zeros_(self.net[-1].weight)
+
+        # Optional per-image (per-shot) log-scale -- the standard Laue per-image
+        # scale factor. Zero-initialized so it starts as a no-op.
+        self.n_images = int(n_images) if n_images is not None else 0
+        if self.n_images > 0:
+            self.image_log_scale = nn.Embedding(self.n_images, 1)
+            nn.init.zeros_(self.image_log_scale.weight)
+
+    def forward(
+        self,
+        wavelength: Tensor,
+        x: Tensor,
+        y: Tensor,
+        d: Tensor,
+        image_num: Tensor | None = None,
+    ) -> Tensor:
+        """Evaluate the Laue scale.
+
+        Args:
+            wavelength: (B,) per-observation wavelength (Angstrom).
+            x: (B,) detector x positions (xyzcal.px.0).
+            y: (B,) detector y positions (xyzcal.px.1).
+            d: (B,) resolution in Angstrom.
+            image_num: (B,) integer image/shot index; required iff the per-image
+                embedding is enabled (n_images > 0). Indices are clamped into
+                range defensively.
+
+        Returns:
+            scale: (B,) strictly positive scale factors.
+        """
+        lam_norm = (wavelength - self.lam_mid) / self.lam_half
+        x_norm = (x - self.beam_cx) / self.r_max
+        y_norm = (y - self.beam_cy) / self.r_max
+        d_norm = (d - self.d_min) / (self.d_max - self.d_min)
+        features = torch.stack([lam_norm, x_norm, y_norm, d_norm], dim=-1)
+        log_s = self.net(features).squeeze(-1)
+
+        if self.n_images > 0:
+            if image_num is None:
+                raise ValueError(
+                    "LaueMLPScale was built with a per-image embedding "
+                    "(n_images > 0) but image_num was not provided."
+                )
+            idx = image_num.long().clamp(0, self.n_images - 1)
+            log_s = log_s + self.image_log_scale(idx).squeeze(-1)
+
+        return torch.exp(log_s.clamp(-15.0, 15.0))
+
+
 class PhysicalScale(nn.Module):
     """DIALS-style physical scale: smooth scale(phi) x decay(phi,d) x absorption.
 

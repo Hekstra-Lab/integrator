@@ -55,6 +55,7 @@ from integrator.model.integrators.integrator_utils import (
 )
 from integrator.model.scaling.chebyshev_scale import (
     ChebyshevScale,
+    LaueMLPScale,
     MLPScale,
     PhysicalScale,
     SpatialChebyshevScale,
@@ -64,7 +65,7 @@ from integrator.model.scaling.deepsets_merging import _scatter_mean_compact
 
 logger = logging.getLogger(__name__)
 
-_N_COND = 3  # per-observation conditioning: [log scale, log lp, d]
+_N_COND = 3  # per-observation conditioning: [log scale, log lp|wavelength, d]
 
 
 class AmortizedMergingIntegrator(BaseIntegrator):
@@ -189,7 +190,24 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         self.scale_restraint_weight = float(
             getattr(cfg, "scale_absorption_restraint", 0.0)
         )
-        if getattr(cfg, "scale_physical", False):
+        if getattr(cfg, "scale_laue_mlp", False):
+            # Polychromatic (Laue stills): wavelength-aware MLP scale. The MLP
+            # owns the whole correction (incident spectrum G(lambda) + detector
+            # geometry + resolution falloff) plus an optional per-image log-scale;
+            # no /lp by the caller. Takes precedence over the rotation scales.
+            self.scale_fn = LaueMLPScale(
+                hidden_dim=cfg.scale_mlp_hidden,
+                n_layers=cfg.scale_mlp_layers,
+                lambda_min=cfg.scale_lambda_min,
+                lambda_max=cfg.scale_lambda_max,
+                beam_center=cfg.scale_beam_center,
+                r_max=cfg.scale_r_max,
+                d_min=getattr(cfg, "dmin", 1.0),
+                d_max=60.0,
+                n_images=getattr(cfg, "scale_n_images", None),
+                head_init_std=getattr(cfg, "scale_head_init_std", 0.0),
+            )
+        elif getattr(cfg, "scale_physical", False):
             # DIALS-style: smooth scale(phi) x decay(phi,d) x crystal-frame SH
             # absorption (precomputed `absorption_sh`, scripts/
             # extract_crystal_frame_sh.py). scale_sh_lmax MUST match --lmax. Here
@@ -295,6 +313,17 @@ class AmortizedMergingIntegrator(BaseIntegrator):
     # ------------------------------------------------------------------
 
     def _get_scale(self, metadata: dict, device: torch.device) -> Tensor:
+        if isinstance(self.scale_fn, LaueMLPScale):
+            # Polychromatic stills: the MLP owns the whole scale (incl. spectrum
+            # and LP/Lorentz), so no /lp here -- there is no lp column.
+            wavelength = metadata["wavelength"].to(device).float()
+            x_det = metadata["xyzcal.px.0"].to(device).float()
+            y_det = metadata["xyzcal.px.1"].to(device).float()
+            d = metadata["d"].to(device).float()
+            image_num = None
+            if self.scale_fn.n_images > 0:
+                image_num = metadata["image_num"].to(device).long()
+            return self.scale_fn(wavelength, x_det, y_det, d, image_num)
         frame = metadata["xyzcal.px.2"].to(device).float()
         lp = metadata["lp"].to(device).float().clamp(min=1e-8)
         if isinstance(self.scale_fn, PhysicalScale):
@@ -327,6 +356,17 @@ class AmortizedMergingIntegrator(BaseIntegrator):
             return self.scale_fn(frame, x_det, y_det) / lp
         else:
             return self.scale_fn(frame) / lp
+
+    def _cond_mid(self, metadata: dict, device: torch.device) -> Tensor:
+        """Middle per-observation conditioning feature for the merge.
+
+        The LP factor for monochromatic data; the wavelength for polychromatic
+        (Laue) data, which has no `lp` column and whose scale already carries the
+        LP/Lorentz correction.
+        """
+        if isinstance(self.scale_fn, LaueMLPScale):
+            return metadata["wavelength"].to(device).float()
+        return metadata["lp"].to(device).float()
 
     def _wilson_tau(self, d: Tensor) -> Tensor:
         """Wilson prior rate tau from resolution d (lp lives in the scale)."""
@@ -379,13 +419,15 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         mask: Tensor,
         asu_ids: Tensor,
         d_per_obs: Tensor,
-        lp: Tensor,
+        cond_mid: Tensor,
     ) -> tuple[Gamma, Tensor, Tensor, Tensor, Tensor, Tensor]:
         """Merge per-observation features into per-HKL q(I_h).
 
         Returns `(qi_h, alpha_h, beta_h, inverse, unique, tau_h)`, where
         `inverse` maps each observation to its HKL row and `unique` are the HKL
-        ids present.
+        ids present. `cond_mid` is the middle per-observation conditioning
+        feature, logged into `cond`: the LP factor for monochromatic data, the
+        wavelength for polychromatic (Laue) data.
         """
         d_sum, inverse, unique = _scatter_sum_compact(d_per_obs, asu_ids)
         cnt, _, _ = _scatter_sum_compact(torch.ones_like(d_per_obs), asu_ids)
@@ -406,9 +448,13 @@ class AmortizedMergingIntegrator(BaseIntegrator):
 
         # sum mode: per-observation positive potentials, summed.
         cond = torch.stack(
-            [scale.clamp(min=1e-8).log(), lp.clamp(min=1e-8).log(), d_per_obs],
+            [
+                scale.clamp(min=1e-8).log(),
+                cond_mid.clamp(min=1e-8).log(),
+                d_per_obs,
+            ],
             dim=-1,
-        )  # (B, 3)
+        )  # (B, 3): [log scale, log lp|wavelength, d]
         feat = torch.cat([x_k_i, x_r_i, cond], dim=-1)  # (B, 2d+3)
 
         gate = None
@@ -482,14 +528,14 @@ class AmortizedMergingIntegrator(BaseIntegrator):
             scale = self._get_scale(metadata, device)
             asu = metadata["asu_id"].long().to(device)
             d_obs = metadata["d"].to(device).float()
-            lp = metadata["lp"].to(device).float()
+            cond_mid = self._cond_mid(metadata, device)
             profile_mean = None
             if self.merge_aggregation == "sum":
                 profile_mean = self.surrogates["qp"](
                     self.encoders["profile"](sr), mc_samples=1
                 ).mean_profile
             _, alpha_h, beta_h, _, unique, _ = self._merge(
-                x_k_i, x_r_i, scale, profile_mean, mask, asu, d_obs, lp
+                x_k_i, x_r_i, scale, profile_mean, mask, asu, d_obs, cond_mid
             )
             if bool(seen[unique].any()):
                 raise RuntimeError(
@@ -536,10 +582,10 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         scale = self._get_scale(metadata, device)  # (B,)
         asu_ids = metadata["asu_id"].long().to(device)
         d_obs = metadata["d"].to(device).float()
-        lp = metadata["lp"].to(device).float()
+        cond_mid = self._cond_mid(metadata, device)
 
         qi_h, alpha_h, beta_h, inverse, unique_hkls, tau_h = self._merge(
-            x_k_i, x_r_i, scale, profile_mean, mask, asu_ids, d_obs, lp
+            x_k_i, x_r_i, scale, profile_mean, mask, asu_ids, d_obs, cond_mid
         )
 
         # Sample I_h once per HKL, broadcast to its observations.

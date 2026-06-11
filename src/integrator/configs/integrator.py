@@ -167,6 +167,26 @@ class IntegratorCfg:
     scale_r_min: float = 0.0
     scale_r_max: float = 1500.0
 
+    # LaueMLPScale (polychromatic / Laue stills): a wavelength-aware MLP scale.
+    # Replaces the rotation-series scales for stills data --
+    #   log s = MLP([lambda, x, y, d]) + per-image log-scale,  output exp(.)
+    # so the MLP owns the whole correction (incident spectrum G(lambda), detector
+    # geometry, resolution falloff). The caller does NOT divide by lp (there is no
+    # lp column for Laue stills). Reuses scale_mlp_hidden / scale_mlp_layers /
+    # scale_beam_center / scale_r_max / dmin / scale_head_init_std. Takes
+    # precedence over scale_physical / scale_mlp / scale_spatial. Pairs with the
+    # polychromatic_data loader (group_by_asu_id) + monochromatic_wilson loss
+    # (pi_weight 0): the Wilson prior stays resolution-only, the spectrum lives in
+    # the scale (F^2 is wavelength-independent). Needs `wavelength` and (if the
+    # per-image term is on) `image_num` in the batch metadata.
+    scale_laue_mlp: bool = False
+    scale_lambda_min: float = 0.95
+    scale_lambda_max: float = 1.25
+    # Number of distinct images/shots for the optional per-image log-scale (the
+    # standard Laue per-shot scale factor). None = no per-image term (pure MLP).
+    # Must exceed the max image_num in the data (out-of-range indices clamp).
+    scale_n_images: int | None = None
+
     # PhysicalScale (DIALS-style): smooth scale(frame) x decay(frame, d) x
     # crystal-frame spherical-harmonic absorption. Takes precedence over
     # scale_mlp / scale_spatial. Needs precomputed `absorption_sh` in the
