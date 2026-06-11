@@ -61,6 +61,42 @@ class IntegratorCfg:
     # (DIALS-style internal consistency, data-only), giving the per-obs scale a
     # direct gradient the ELBO under-identifies. 0.0 = off. Start ~0.1-1.0.
     consistency_weight: float = 0.0
+    # Compute the consistency-loss WLS target over the Friedel-POOLED group
+    # (`nonanom_id`) instead of the anomalous `asu_id`. The per-obs scale is then
+    # identified against the +/- pooled mean and cannot lower its residual by
+    # splitting the mates, so it stops absorbing the Bijvoet difference; the real
+    # anomalous survives in the merge and is regularized by double_wilson_weight.
+    # Needs `nonanom_id` in metadata (scripts/add_friedel_metadata.py) and a
+    # `group_by_key: nonanom_id` loader so both mates share a batch. Requires
+    # consistency_weight > 0 to have any effect.
+    consistency_pool_friedel: bool = False
+    # Centric anchoring weight (AmortizedMergingIntegrator). Centric reflections
+    # have I(+)==I(-) by symmetry, so any Bijvoet difference the scale makes on
+    # them is pure scale error. The penalty is the mean squared FRACTIONAL
+    # +/- difference of the sign-split data-only WLS intensity on centrics, with
+    # only the per-obs scale carrying gradient -> pins the scale on the
+    # population where the truth is zero. 0.0 = off; the logged `centric_anchor`
+    # is the RMS fake-anomalous-on-centrics, so raise the weight until it drops.
+    # Needs centric/friedel_plus/nonanom_id metadata + a nonanom_id loader.
+    centric_anchor_weight: float = 0.0
+    # Double-Wilson coupling weight (AmortizedMergingIntegrator). Adds the
+    # conditional factor of the double-Wilson prior (Dalton, Greisman & Hekstra,
+    # Nat. Commun. 2024) on top of the per-HKL marginal Wilson KL: a zero-mean
+    # Normal prior on the log-ratio of paired mates' merged means, penalty =
+    # mean_pairs (log E[I_+] - log E[I_-])^2. Shrinks noise-driven Bijvoet
+    # differences toward zero (the likelihood keeps the real signal); weight ~
+    # 1/(2 sigma_anom^2). 0.0 = off. Needs nonanom_id/friedel_plus metadata + a
+    # nonanom_id loader so both mates share a batch. Tune up watching CCanom /
+    # peak count: too high flattens the real anomalous, too low does nothing.
+    double_wilson_weight: float = 0.0
+    # Use the centric Wilson prior for centric reflections (AmortizedMerging-
+    # Integrator). Acentric I is exponential = Gamma(alpha_W, tau) [mean 1/tau];
+    # centric I is chi^2_1 = Gamma(alpha_W/2, alpha_W/2 * tau) -- half the shape
+    # and a rate scaled to keep the same mean, so centrics get the correct
+    # heavier tail (twice the normalized variance) instead of the acentric
+    # exponential. 0.0/False = acentric prior for all (legacy). Needs `centric`
+    # in metadata (scripts/add_friedel_metadata.py).
+    wilson_centric_prior: bool = False
     # HierarchicalScalingIntegrator: freeze the warm-started integration
     # (encoders + qp/qbg/qi) so only the scale + merge head trains. Use with
     # init_from_checkpoint pointing at a trained HierarchicalIntegrator.

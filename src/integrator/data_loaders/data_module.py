@@ -111,6 +111,14 @@ DEFAULT_DS_COLS = [
     "group_label",
     "profile_group_label",
     "asu_id",
+    # Friedel-pair metadata for the anomalous coupling terms, precomputed by
+    # scripts/add_friedel_metadata.py. Absent unless the reference was augmented.
+    #   nonanom_id   - Friedel-POOLED reflection id (mates share an id).
+    #   centric      - bool, centric reflection (I(+)==I(-) by symmetry).
+    #   friedel_plus - bool, the I(+) member of the pair (ISYM odd).
+    "nonanom_id",
+    "centric",
+    "friedel_plus",
     # Per-reflection crystal-frame spherical-harmonic absorption basis (B, n_sh),
     # precomputed by scripts/extract_crystal_frame_sh.py and consumed by
     # PhysicalScale. Absent unless the reference file was augmented.
@@ -216,6 +224,7 @@ class RotationDataModule(pl.LightningDataModule):
         anscombe: bool = False,
         transform: str | None = None,
         group_by_asu_id: bool = False,
+        group_by_key: str = "asu_id",
         max_obs_per_hkl: int | None = None,
         ice_ring_ranges: list | None = None,
     ):
@@ -256,6 +265,7 @@ class RotationDataModule(pl.LightningDataModule):
         else:
             self.transform = transform
         self.group_by_asu_id = group_by_asu_id
+        self.group_by_key = group_by_key
         self.max_obs_per_hkl = max_obs_per_hkl
         self.ice_ring_ranges = ice_ring_ranges
 
@@ -272,6 +282,14 @@ class RotationDataModule(pl.LightningDataModule):
         reference = torch.load(
             os.path.join(self.data_dir, self.shoebox_file_names["reference"])
         )
+
+        if self.group_by_asu_id and self.group_by_key not in reference:
+            raise KeyError(
+                f"group_by_key={self.group_by_key!r} is not in the reference "
+                f"metadata. Available keys include {sorted(reference)[:20]}... "
+                "For 'nonanom_id' run scripts/add_friedel_metadata.py and point "
+                "the loader's reference at the augmented file."
+            )
 
         # Filter out reflections with too few valid pixels
         all_dead = masks.sum(-1) < self.min_valid_pixels
@@ -392,7 +410,7 @@ class RotationDataModule(pl.LightningDataModule):
     def train_dataloader(self):
         if self.group_by_asu_id:
             sampler = GroupedAsuIdBatchSampler(
-                asu_ids=self.full_dataset.reference["asu_id"],
+                asu_ids=self.full_dataset.reference[self.group_by_key],
                 indices=torch.tensor(
                     self.train_dataset.indices, dtype=torch.long
                 ),
@@ -427,7 +445,7 @@ class RotationDataModule(pl.LightningDataModule):
             # so they still contain mostly-complete HKL groups (~1 split per
             # batch boundary).
             sampler = GroupedAsuIdSampler(
-                asu_ids=self.full_dataset.reference["asu_id"],
+                asu_ids=self.full_dataset.reference[self.group_by_key],
                 indices=torch.tensor(
                     self.val_dataset.indices, dtype=torch.long
                 ),
@@ -467,7 +485,7 @@ class RotationDataModule(pl.LightningDataModule):
         # max_obs_per_hkl is forced off so the merge sees every observation.
         if grouped and self.group_by_asu_id:
             sampler = GroupedAsuIdBatchSampler(
-                asu_ids=self.full_dataset.reference["asu_id"],
+                asu_ids=self.full_dataset.reference[self.group_by_key],
                 indices=torch.arange(
                     len(self.full_dataset), dtype=torch.long
                 ),

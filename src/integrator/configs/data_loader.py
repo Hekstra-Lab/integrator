@@ -57,6 +57,15 @@ class DataLoaderArgs:
     # DeepSetsMergingIntegrator — each batch contains complete HKL groups
     # so sufficient statistics / scatter_mean aggregate properly).
     group_by_asu_id: bool = False
+    # Reference column the grouped sampler batches on. "asu_id" (default, the
+    # Friedel-separate anomalous id) keeps each unique reflection's observations
+    # together. "nonanom_id" (the Friedel-POOLED id) additionally co-locates a
+    # reflection's I(+) and I(-) observations in the same batch, which the
+    # centric-anchor / double-Wilson / pooled-consistency terms need. Since each
+    # asu_id is a subset of one nonanom_id, nonanom grouping still gives complete
+    # asu_id groups per batch (finalize_merge stays valid). Needs the column
+    # present (scripts/add_friedel_metadata.py).
+    group_by_key: str = "asu_id"
     max_obs_per_hkl: int | None = None
     # Resolution bands (Angstrom) to exclude, e.g. ice rings: a list of
     # [d_low, d_high] pairs. Observations with d in any band are dropped at

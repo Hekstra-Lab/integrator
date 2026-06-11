@@ -118,6 +118,22 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         # ConjugateMergingIntegrator: a direct, data-only gradient for the per-obs
         # scale via internal consistency of symmetry-equivalents.
         self.consistency_weight = float(getattr(cfg, "consistency_weight", 0.0))
+        # Anomalous-preserving terms (see configs.IntegratorCfg):
+        #   pool_friedel  - consistency WLS target over the Friedel-pooled group.
+        #   centric_anchor- zero-anomalous control on the scale from centrics.
+        #   double_wilson - log-ratio coupling of paired mates' merged means.
+        self.consistency_pool_friedel = bool(
+            getattr(cfg, "consistency_pool_friedel", False)
+        )
+        self.centric_anchor_weight = float(
+            getattr(cfg, "centric_anchor_weight", 0.0)
+        )
+        self.double_wilson_weight = float(
+            getattr(cfg, "double_wilson_weight", 0.0)
+        )
+        self.wilson_centric_prior = bool(
+            getattr(cfg, "wilson_centric_prior", False)
+        )
         d = cfg.encoder_out
 
         if self.merge_aggregation == "mean":
@@ -576,11 +592,24 @@ class AmortizedMergingIntegrator(BaseIntegrator):
             "scale": scale,
         }
 
-    def _wilson_kl_per_hkl(self, qi_h: Gamma, tau_h: Tensor) -> Tensor:
-        """KL(q(I_h) || Gamma(alpha_W, tau_h)), counted once per HKL."""
-        p_i = Gamma(
-            self.alpha_W * torch.ones_like(tau_h), tau_h.clamp(min=1e-12)
-        )
+    def _wilson_kl_per_hkl(
+        self, qi_h: Gamma, tau_h: Tensor, centric: Tensor | None = None
+    ) -> Tensor:
+        """KL(q(I_h) || Wilson prior), counted once per HKL.
+
+        Acentric reflections follow the exponential Wilson distribution
+        Gamma(alpha_W, tau_h) (mean 1/tau_h = Sigma); centric reflections follow
+        the chi^2_1 form Gamma(alpha_W/2, (alpha_W/2)*tau_h) -- half the shape and
+        a rate scaled to hold the same mean, so they get the correct heavier tail
+        (twice the normalized variance) instead of the acentric exponential. The
+        rate is alpha*tau_h (mean-preserving), identical to the legacy
+        `Gamma(alpha_W, tau_h)` at the default alpha_W=1. `centric=None` gives
+        every HKL the acentric prior (legacy behavior).
+        """
+        alpha = self.alpha_W * torch.ones_like(tau_h)
+        if centric is not None:
+            alpha = torch.where(centric, alpha * 0.5, alpha)
+        p_i = Gamma(alpha, (alpha * tau_h).clamp(min=1e-12))
         return kl_divergence(qi_h, p_i)
 
     def _consistency_loss(
@@ -622,6 +651,134 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         resid = J - scale * i_hat[inverse]
         return (w * resid.pow(2)).sum() / max(scale.shape[0], 1)
 
+    def _centric_anchor_loss(
+        self,
+        counts: Tensor,
+        mask: Tensor,
+        bg: Tensor,
+        scale: Tensor,
+        metadata: dict,
+        device: torch.device,
+    ) -> Tensor:
+        """Centric reflections as a zero-anomalous control on the scale.
+
+        Centric reflections have I(+) == I(-) by symmetry, so any Bijvoet
+        difference the scale produces on them is pure scale error. For each
+        centric `nonanom_id` the sign-split data-only WLS merged intensity is
+        I_hat_s = sum_{i in s} w_i J_i s_i / sum_{i in s} w_i s_i^2 for the two
+        signs s in {+, -}, and we penalize the mean squared FRACTIONAL
+        difference `((I_hat_+ - I_hat_-) / mean)^2`. J_i and w_i are detached
+        (data), so only the per-obs `scale` carries gradient: the scale is
+        pushed to reproduce equal mates where the truth is known to be zero. The
+        logged value is the RMS fake-anomalous-on-centrics. Needs both mates of a
+        centric in the batch (`group_by_key: nonanom_id`); single-sign groups are
+        skipped, as is a batch with < 2 centric observations.
+        """
+        if not {"centric", "friedel_plus", "nonanom_id"} <= set(metadata):
+            return scale.new_zeros(())
+        centric = metadata["centric"].bool().to(device)
+        if int(centric.sum()) < 2:
+            return scale.new_zeros(())
+        plus = metadata["friedel_plus"].bool().to(device)
+        nonanom = metadata["nonanom_id"].long().to(device)
+
+        cm = counts.clamp(min=0).to(device) * mask.to(device)
+        J = (cm - bg.unsqueeze(-1) * mask.to(device)).sum(dim=-1).detach()
+        w = (1.0 / cm.sum(dim=-1).clamp(min=1.0)).detach()
+
+        sel = centric
+        s = scale[sel]
+        js, ws = J[sel], w[sel]
+        # (group, sign) key -> sign-split WLS intensity (keeps the scale grad).
+        key = nonanom[sel] * 2 + plus[sel].long()
+        uniq_key, key_inv = torch.unique(key, return_inverse=True)
+        k = uniq_key.numel()
+        num = torch.zeros(k, device=device).scatter_add(0, key_inv, ws * js * s)
+        den = (
+            torch.zeros(k, device=device)
+            .scatter_add(0, key_inv, ws * s * s)
+            .clamp(min=1e-12)
+        )
+        i_hat = num / den  # (K,), differentiable in scale
+
+        grp = uniq_key // 2
+        is_plus = uniq_key % 2 == 1
+        _, g_inv = torch.unique(grp, return_inverse=True)
+        gn = int(g_inv.max().item()) + 1
+
+        def _by_sign(vals: Tensor, m: Tensor) -> Tensor:
+            return torch.zeros(gn, device=device).scatter_add(
+                0, g_inv[m], vals[m]
+            )
+
+        ones = torch.ones_like(i_hat)
+        ihat_p, ihat_m = _by_sign(i_hat, is_plus), _by_sign(i_hat, ~is_plus)
+        cnt_p, cnt_m = _by_sign(ones, is_plus), _by_sign(ones, ~is_plus)
+        valid = (cnt_p > 0) & (cnt_m > 0)
+        if not bool(valid.any()):
+            return scale.new_zeros(())
+        ip, im = ihat_p[valid], ihat_m[valid]
+        denom = (0.5 * (ip + im)).detach().clamp(min=1e-6)
+        return ((ip - im) / denom).pow(2).mean()
+
+    def _double_wilson_coupling(
+        self,
+        qi_h: Gamma,
+        inverse: Tensor,
+        metadata: dict,
+        device: torch.device,
+    ) -> tuple[Tensor, int]:
+        """Double-Wilson coupling of Friedel mates (tractable surrogate).
+
+        The double-Wilson prior (Dalton, Greisman & Hekstra, Nat. Commun. 2024)
+        models F(+) and F(-) as bivariate-normal with correlation r -> 1, so the
+        anomalous difference is small. On top of the per-HKL marginal Wilson KL
+        this adds the conditional factor: a zero-mean Normal prior on the
+        log-ratio of paired mates' posterior means,
+
+            L_couple = sum_pairs (log E[I_+] - log E[I_-])^2,
+
+        a log-normal coupling with anomalous variance sigma^2 = 1 / (2 w). It
+        shrinks noise-driven Bijvoet differences toward zero while the likelihood
+        keeps the real signal. Mates are paired by `nonanom_id`; both share a
+        batch under a `group_by_key: nonanom_id` loader. Returns
+        `(sum_sq_log_ratio, n_pairs)` so the caller can take the mean.
+        """
+        if not {"nonanom_id", "friedel_plus"} <= set(metadata):
+            return qi_h.mean.new_zeros(()), 0
+        n_rows = qi_h.mean.shape[0]
+        nonanom = metadata["nonanom_id"].long().to(device)
+        plus = metadata["friedel_plus"].bool().to(device)
+        # Per-row (asu group) nonanom id and sign are constant within the group,
+        # so an index-assign from its observations is well-defined.
+        row_nonanom = torch.empty(n_rows, dtype=torch.long, device=device)
+        row_nonanom[inverse] = nonanom
+        row_plus = torch.zeros(n_rows, dtype=torch.bool, device=device)
+        row_plus[inverse] = plus
+
+        logmu = qi_h.mean.clamp(min=1e-10).log()
+        _, na_inv = torch.unique(row_nonanom, return_inverse=True)
+        g = int(na_inv.max().item()) + 1
+
+        def _agg(m: Tensor) -> tuple[Tensor, Tensor]:
+            s = torch.zeros(g, device=device).scatter_add(0, na_inv[m], logmu[m])
+            c = torch.zeros(g, device=device).scatter_add(
+                0, na_inv[m], torch.ones_like(logmu[m])
+            )
+            return s, c
+
+        sum_p, cnt_p = _agg(row_plus)
+        sum_m, cnt_m = _agg(~row_plus)
+        valid = (cnt_p > 0) & (cnt_m > 0)
+        if not bool(valid.any()):
+            return qi_h.mean.new_zeros(()), 0
+        # An asu group is purely + or -, so cnt is 0/1; the divide just recovers
+        # the single paired row's log-mean.
+        diff = (sum_p / cnt_p.clamp(min=1.0))[valid] - (
+            sum_m / cnt_m.clamp(min=1.0)
+        )[valid]
+        return diff.pow(2).sum(), int(valid.sum())
+
     def _step(self, batch, step: Literal["train", "val"]):
         counts, shoebox, mask, metadata = batch
         outputs = self(counts, shoebox, mask, metadata)
@@ -643,21 +800,43 @@ class AmortizedMergingIntegrator(BaseIntegrator):
 
         total_loss = loss_dict["loss"]
 
-        # ELBO-consistent weighting
-        kl_i_per_hkl = self._wilson_kl_per_hkl(qi_h, outputs["tau_h"])
+        # ELBO-consistent weighting. With the centric Wilson prior on, reduce the
+        # per-obs `centric` flag to a per-HKL-row flag (constant within an asu
+        # group) so centric reflections get the chi^2_1 prior.
+        row_centric = None
+        if self.wilson_centric_prior and "centric" in metadata:
+            tau_h = outputs["tau_h"]
+            centric_obs = metadata["centric"].bool().to(tau_h.device)
+            row_centric = torch.zeros(
+                tau_h.shape[0], dtype=torch.bool, device=tau_h.device
+            )
+            row_centric[outputs["inverse"]] = centric_obs
+        kl_i_per_hkl = self._wilson_kl_per_hkl(
+            qi_h, outputs["tau_h"], row_centric
+        )
         kl_i = kl_i_per_hkl.sum() / counts.shape[0] * self.merge_kl_weight
         total_loss = total_loss + kl_i
 
         # Scaling-consistency loss: a direct, data-only gradient for the per-obs
-        # scale (grouped by the anomalous asu_id via `inverse`).
+        # scale. Grouped by the anomalous asu_id (`inverse`) by default, or by
+        # the Friedel-POOLED group when consistency_pool_friedel is set, which
+        # identifies the scale against the +/- pooled mean so it cannot absorb
+        # the Bijvoet difference.
+        scale_dev = outputs["scale"].device
         if self.consistency_weight > 0.0:
+            cons_inverse = outputs["inverse"]
+            cons_n = outputs["unique_hkls"].shape[0]
+            if self.consistency_pool_friedel and "nonanom_id" in metadata:
+                nonanom = metadata["nonanom_id"].long().to(scale_dev)
+                _, cons_inverse = torch.unique(nonanom, return_inverse=True)
+                cons_n = int(cons_inverse.max().item()) + 1
             consist = self._consistency_loss(
                 forward_out["counts"],
                 forward_out["mask"],
                 outputs["qbg"].mean,
                 outputs["scale"],
-                outputs["inverse"],
-                outputs["unique_hkls"].shape[0],
+                cons_inverse,
+                cons_n,
             )
             total_loss = total_loss + self.consistency_weight * consist
             self.log(
@@ -666,6 +845,41 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                 on_step=False,
                 on_epoch=True,
             )
+
+        # Centric anchoring (1): pin the per-obs scale on centrics, where the
+        # true anomalous is zero. Logs the RMS fake-anomalous-on-centrics.
+        if self.centric_anchor_weight > 0.0:
+            anchor = self._centric_anchor_loss(
+                forward_out["counts"],
+                forward_out["mask"],
+                outputs["qbg"].mean,
+                outputs["scale"],
+                metadata,
+                scale_dev,
+            )
+            total_loss = total_loss + self.centric_anchor_weight * anchor
+            self.log(
+                f"{step} centric_anchor",
+                anchor.detach(),
+                on_step=False,
+                on_epoch=True,
+            )
+
+        # Double-Wilson coupling (4): shrink the anomalous log-difference of
+        # paired mates. Logs mean (log E[I_+] - log E[I_-])^2 (anomalous spread).
+        if self.double_wilson_weight > 0.0:
+            dw_sum, n_pairs = self._double_wilson_coupling(
+                qi_h, outputs["inverse"], metadata, scale_dev
+            )
+            if n_pairs > 0:
+                dw_mean = dw_sum / n_pairs
+                total_loss = total_loss + self.double_wilson_weight * dw_mean
+                self.log(
+                    f"{step} double_wilson",
+                    dw_mean.detach(),
+                    on_step=False,
+                    on_epoch=True,
+                )
 
         _log_loss(
             self,
