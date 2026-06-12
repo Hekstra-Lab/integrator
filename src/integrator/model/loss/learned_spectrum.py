@@ -28,6 +28,19 @@ class ChebyshevSpectrum(nn.Module):
             saved = torch.load(
                 init_from, map_location="cpu", weights_only=False
             )
+            # Adopt the source spectrum's lambda domain (if saved) so warm-started
+            # coefficients map to the SAME G(lambda) even when this module's
+            # lambda_min/max differ slightly from the source's.
+            if saved.get("lam_mid") is not None:
+                self.lam_mid.copy_(
+                    torch.as_tensor(saved["lam_mid"], dtype=self.lam_mid.dtype)
+                )
+            if saved.get("lam_scale") is not None:
+                self.lam_scale.copy_(
+                    torch.as_tensor(
+                        saved["lam_scale"], dtype=self.lam_scale.dtype
+                    )
+                )
             c_saved = saved["c"]
             if c_saved.shape[0] == self.n_basis:
                 init = c_saved.clone()

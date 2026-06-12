@@ -56,6 +56,7 @@ from integrator.model.integrators.integrator_utils import (
 from integrator.model.scaling.chebyshev_scale import (
     ChebyshevScale,
     LaueMLPScale,
+    LaueSpectralScale,
     MLPScale,
     PhysicalScale,
     SpatialChebyshevScale,
@@ -190,7 +191,34 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         self.scale_restraint_weight = float(
             getattr(cfg, "scale_absorption_restraint", 0.0)
         )
-        if getattr(cfg, "scale_laue_mlp", False):
+        if getattr(cfg, "scale_laue_spectral", False):
+            # Polychromatic (Laue stills): STRUCTURED spectral scale. The incident
+            # spectrum G(lambda) is a low-order ChebyshevSpectrum (the form the
+            # working polychromatic_wilson integrator uses in its prior), warm-
+            # startable from that model's spectrum.c and optionally frozen, plus
+            # optional physical Lorentz/polarization and a learned geometry
+            # residual. Replaces LaueMLPScale, which stalls at a near-constant
+            # scale because a black-box MLP cannot learn G(lambda) against the
+            # merge gauge. Precedence over all other scales.
+            self.scale_fn = LaueSpectralScale(
+                degree=getattr(cfg, "scale_spectrum_degree", 40),
+                lambda_min=cfg.scale_lambda_min,
+                lambda_max=cfg.scale_lambda_max,
+                spectrum_init_from=getattr(cfg, "scale_spectrum_init_from", None),
+                freeze_spectrum=getattr(cfg, "scale_freeze_spectrum", False),
+                lorentz=getattr(cfg, "scale_lorentz", False),
+                polarization=getattr(cfg, "scale_polarization", False),
+                polarization_fraction=getattr(
+                    cfg, "scale_polarization_fraction", 0.99
+                ),
+                beam_center=cfg.scale_beam_center,
+                residual=getattr(cfg, "scale_residual", False),
+                residual_hidden=cfg.scale_mlp_hidden,
+                residual_layers=cfg.scale_mlp_layers,
+                r_max=cfg.scale_r_max,
+                d_min=getattr(cfg, "dmin", 1.0),
+            )
+        elif getattr(cfg, "scale_laue_mlp", False):
             # Polychromatic (Laue stills): wavelength-aware MLP scale. Inputs
             # [lambda, x, y, d] (+ optional crystal-frame SH absorption when
             # scale_mlp_absorption); the MLP owns spectrum + geometry, no /lp by
@@ -328,6 +356,15 @@ class AmortizedMergingIntegrator(BaseIntegrator):
     # ------------------------------------------------------------------
 
     def _get_scale(self, metadata: dict, device: torch.device) -> Tensor:
+        if isinstance(self.scale_fn, LaueSpectralScale):
+            # Structured spectral scale: G(lambda) (Chebyshev) x optional physical
+            # Lorentz/polarization x optional geometry residual. Owns the whole
+            # scale (incl. LP), so no /lp here -- there is no lp column.
+            wavelength = metadata["wavelength"].to(device).float()
+            x_det = metadata["xyzcal.px.0"].to(device).float()
+            y_det = metadata["xyzcal.px.1"].to(device).float()
+            d = metadata["d"].to(device).float()
+            return self.scale_fn(wavelength, x_det, y_det, d)
         if isinstance(self.scale_fn, LaueMLPScale):
             # Polychromatic stills: the MLP owns the whole scale (incl. spectrum
             # and LP/Lorentz), so no /lp here -- there is no lp column.
@@ -391,7 +428,7 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         (Laue) data, which has no `lp` column and whose scale already carries the
         LP/Lorentz correction.
         """
-        if isinstance(self.scale_fn, LaueMLPScale):
+        if isinstance(self.scale_fn, (LaueMLPScale, LaueSpectralScale)):
             return metadata["wavelength"].to(device).float()
         return metadata["lp"].to(device).float()
 

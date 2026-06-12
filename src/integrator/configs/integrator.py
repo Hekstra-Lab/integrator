@@ -193,6 +193,31 @@ class IntegratorCfg:
     # Must exceed the max image_num in the data (out-of-range indices clamp).
     scale_n_images: int | None = None
 
+    # LaueSpectralScale (structured Laue scale). G(lambda) as a low-order
+    # ChebyshevSpectrum (the form the working polychromatic_wilson integrator
+    # uses) in the per-observation scale, plus optional physical Lorentz/
+    # polarization and a learned geometry residual. Replaces the black-box
+    # LaueMLPScale, which stalls at a near-constant scale (cannot learn G(lambda)
+    # against the merge gauge). Takes precedence over scale_laue_mlp. Reuses
+    # scale_lambda_min/max, scale_beam_center, scale_r_max, scale_mlp_hidden/
+    # layers, dmin. Pairs with the polychromatic_data loader + monochromatic_wilson
+    # (resolution-only) prior; F^2 (I_h) is wavelength-independent.
+    scale_laue_spectral: bool = False
+    scale_spectrum_degree: int = 40
+    # Warm-start G(lambda) from a trained polychromatic_wilson model: an ABSOLUTE
+    # path to a file with key 'c' (scripts/extract_spectrum.py from its
+    # checkpoint's loss.spectrum.c). None = zero-init (learned from scratch).
+    scale_spectrum_init_from: str | None = None
+    # Freeze the spectrum (de-risking test: warm-start a correct G(lambda) and
+    # hold it while the merge settles the gauge; unfreeze afterwards to refine).
+    scale_freeze_spectrum: bool = False
+    # Physical corrections folded into the scale (Ren & Moffat); fixed, not learned.
+    scale_lorentz: bool = False
+    scale_polarization: bool = False
+    scale_polarization_fraction: float = 0.99
+    # Optional learned geometry/absorption residual on [x, y, d] (zero-init no-op).
+    scale_residual: bool = False
+
     # PhysicalScale (DIALS-style): smooth scale(frame) x decay(frame, d) x
     # crystal-frame spherical-harmonic absorption. Takes precedence over
     # scale_mlp / scale_spatial. Needs precomputed `absorption_sh` in the

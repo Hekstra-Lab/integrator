@@ -429,6 +429,136 @@ class LaueMLPScale(nn.Module):
         return torch.exp(log_s.clamp(-15.0, 15.0))
 
 
+class LaueSpectralScale(nn.Module):
+    """Structured spectral scale for polychromatic (Laue) merging.
+
+    The Laue per-observation scale is dominated by the incident spectrum
+    `G(lambda)`. A black-box `LaueMLPScale` has to discover that systematic law
+    from continuous features while separating it from `F^2` through the merge's
+    gauge-degenerate consistency, and in practice it stalls near a constant
+    (scale CV ~ 0.08, no spectrum). This mirrors the WORKING `polychromatic_wilson`
+    integrator -- which represents `G(lambda)` as a low-order `ChebyshevSpectrum`
+    in its Wilson prior and fits well -- but places that same structured spectrum
+    in the per-observation SCALE, which is where the amortized merge needs it (the
+    shared per-HKL `I_h` is the wavelength-independent `F^2`):
+
+        log s = log G(lambda)             # ChebyshevSpectrum, warm-startable
+              + [log f_L(2theta)]         # Lorentz (Ren & Moffat eq. 10), optional
+              + [log f_P(2theta, phi)]    # polarization (eq. 11), optional
+              + [residual(x, y, d)]       # learned geometry/absorption, optional
+
+    The spectrum can be warm-started from a trained polychromatic_wilson model
+    (`spectrum_init_from` -> its saved `spectrum.c`) and optionally frozen, so the
+    merge starts from an already-correct `G(lambda)` and only settles the gauge.
+    Output is `exp(.)` (the large `G(lambda)` dynamic range is easy in log-space);
+    `s = 1` at init when the spectrum is zero-init and the residual head is zero.
+    The `image_num`/`absorption_sh` args are accepted (so it is a drop-in for
+    `LaueMLPScale` in the scale dispatch) but unused.
+    """
+
+    def __init__(
+        self,
+        degree: int = 40,
+        lambda_min: float = 0.95,
+        lambda_max: float = 1.25,
+        spectrum_init_from: str | None = None,
+        freeze_spectrum: bool = False,
+        lorentz: bool = False,
+        polarization: bool = False,
+        polarization_fraction: float = 0.99,
+        beam_center: list[float] | None = None,
+        residual: bool = False,
+        residual_hidden: int = 64,
+        residual_layers: int = 2,
+        residual_init_std: float = 0.0,
+        r_max: float = 1500.0,
+        d_min: float = 1.0,
+        d_max: float = 60.0,
+    ):
+        super().__init__()
+        self.spectrum = ChebyshevSpectrum(
+            degree=degree,
+            lambda_min=lambda_min,
+            lambda_max=lambda_max,
+            init_from=spectrum_init_from,
+        )
+        if freeze_spectrum:
+            self.spectrum.c.requires_grad_(False)
+
+        self._apply_lorentz = bool(lorentz)
+        self._apply_polarization = bool(polarization)
+        cx, cy = beam_center or [0.0, 0.0]
+        self.register_buffer("beam_cx", torch.tensor(float(cx)))
+        self.register_buffer("beam_cy", torch.tensor(float(cy)))
+        if self._apply_polarization:
+            self.register_buffer(
+                "tau_pol", torch.tensor(2.0 * polarization_fraction - 1.0)
+            )
+
+        # Optional learned geometry/absorption residual on [x, y, d] (NOT lambda;
+        # the spectrum owns lambda). Zero-initialized -> a no-op at the start.
+        self.residual = None
+        if residual:
+            self.register_buffer("r_max", torch.tensor(max(r_max, 1.0)))
+            self.register_buffer("d_min", torch.tensor(d_min))
+            self.register_buffer(
+                "d_max", torch.tensor(max(d_max, d_min + 1.0))
+            )
+            layers: list[nn.Module] = []
+            in_dim = 3
+            for _ in range(residual_layers):
+                layers += [nn.Linear(in_dim, residual_hidden), nn.SiLU()]
+                in_dim = residual_hidden
+            head = nn.Linear(in_dim, 1)
+            nn.init.zeros_(head.bias)
+            if residual_init_std > 0.0:
+                nn.init.normal_(head.weight, std=residual_init_std)
+            else:
+                nn.init.zeros_(head.weight)
+            layers.append(head)
+            self.residual = nn.Sequential(*layers)
+
+    def _two_theta(self, wavelength: Tensor, d: Tensor) -> Tensor:
+        sin_theta = (wavelength / (2.0 * d.clamp(min=1e-6))).clamp(max=1.0)
+        return 2.0 * torch.arcsin(sin_theta)
+
+    def forward(
+        self,
+        wavelength: Tensor,
+        x: Tensor,
+        y: Tensor,
+        d: Tensor,
+        image_num: Tensor | None = None,
+        absorption_sh: Tensor | None = None,
+    ) -> Tensor:
+        """Evaluate the structured Laue scale. Returns (B,) positive factors."""
+        log_s = self.spectrum.get_log_G(wavelength)
+
+        if self._apply_lorentz or self._apply_polarization:
+            two_theta = self._two_theta(wavelength, d)
+            if self._apply_lorentz:
+                f_L = torch.sin(two_theta).pow(2).clamp(min=1e-8)
+                log_s = log_s + torch.log(f_L)
+            if self._apply_polarization:
+                phi = torch.atan2(y - self.beam_cy, x - self.beam_cx)
+                cos2t, sin2t = torch.cos(two_theta), torch.sin(two_theta)
+                f_P = 2.0 / (
+                    1.0
+                    + cos2t.pow(2)
+                    - self.tau_pol * torch.cos(2.0 * phi) * sin2t.pow(2)
+                ).clamp(min=1e-8)
+                log_s = log_s + torch.log(f_P.clamp(min=1e-8))
+
+        if self.residual is not None:
+            x_norm = (x - self.beam_cx) / self.r_max
+            y_norm = (y - self.beam_cy) / self.r_max
+            d_norm = (d - self.d_min) / (self.d_max - self.d_min)
+            feats = torch.stack([x_norm, y_norm, d_norm], dim=-1)
+            log_s = log_s + self.residual(feats).squeeze(-1)
+
+        return torch.exp(log_s.clamp(-15.0, 15.0))
+
+
 class PhysicalScale(nn.Module):
     """DIALS-style physical scale: smooth scale(phi) x decay(phi,d) x absorption.
 
