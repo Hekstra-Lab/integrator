@@ -61,6 +61,8 @@ from integrator.model.integrators.integrator_utils import (
 )
 from integrator.model.scaling.chebyshev_scale import (
     ChebyshevScale,
+    LaueMLPScale,
+    LaueSpectralScale,
     MLPScale,
     SpatialChebyshevScale,
 )
@@ -177,7 +179,51 @@ class ConjugateMergingIntegrator(BaseIntegrator):
         self.scaling_lr = getattr(cfg, "scaling_lr", None)
 
         # Scale function
-        if cfg.scale_mlp:
+        if getattr(cfg, "scale_laue_spectral", False):
+            # Polychromatic (Laue stills): structured spectral scale. G(lambda) as
+            # a ChebyshevSpectrum (warm-startable from the working polychromatic_
+            # wilson model) x optional physical Lorentz/polarization x optional
+            # geometry residual. The conjugate responsibility split derives I_h, so
+            # the scale only needs to carry the per-observation G(lambda)/geometry.
+            self.scale_fn = LaueSpectralScale(
+                degree=getattr(cfg, "scale_spectrum_degree", 40),
+                lambda_min=cfg.scale_lambda_min,
+                lambda_max=cfg.scale_lambda_max,
+                spectrum_init_from=getattr(cfg, "scale_spectrum_init_from", None),
+                freeze_spectrum=getattr(cfg, "scale_freeze_spectrum", False),
+                lorentz=getattr(cfg, "scale_lorentz", False),
+                polarization=getattr(cfg, "scale_polarization", False),
+                polarization_fraction=getattr(
+                    cfg, "scale_polarization_fraction", 0.99
+                ),
+                beam_center=cfg.scale_beam_center,
+                residual=getattr(cfg, "scale_residual", False),
+                residual_hidden=cfg.scale_mlp_hidden,
+                residual_layers=cfg.scale_mlp_layers,
+                r_max=cfg.scale_r_max,
+                d_min=getattr(cfg, "dmin", 1.0),
+            )
+        elif getattr(cfg, "scale_laue_mlp", False):
+            # Polychromatic black-box MLP scale (A/B baseline for the spectral one).
+            n_abs_sh = 0
+            if getattr(cfg, "scale_mlp_absorption", False):
+                n_abs_sh = (int(cfg.scale_sh_lmax) + 1) ** 2 - 1
+            self.scale_fn = LaueMLPScale(
+                hidden_dim=cfg.scale_mlp_hidden,
+                n_layers=cfg.scale_mlp_layers,
+                lambda_min=cfg.scale_lambda_min,
+                lambda_max=cfg.scale_lambda_max,
+                beam_center=cfg.scale_beam_center,
+                r_max=cfg.scale_r_max,
+                d_min=getattr(cfg, "dmin", 1.0),
+                n_images=getattr(cfg, "scale_n_images", None),
+                head_init_std=getattr(cfg, "scale_head_init_std", 0.0),
+                n_abs_sh=n_abs_sh,
+                absorption_even_only=getattr(
+                    cfg, "scale_mlp_absorption_even_only", True
+                ),
+            )
+        elif cfg.scale_mlp:
             self.scale_fn = MLPScale(
                 hidden_dim=cfg.scale_mlp_hidden,
                 n_layers=cfg.scale_mlp_layers,
@@ -209,6 +255,22 @@ class ConjugateMergingIntegrator(BaseIntegrator):
     # ------------------------------------------------------------------
 
     def _get_scale(self, metadata: dict, device: torch.device) -> Tensor:
+        if isinstance(self.scale_fn, (LaueSpectralScale, LaueMLPScale)):
+            # Laue stills: the scale owns the spectrum + LP/geometry; no frame or
+            # lp column exists. Inputs [lambda, x, y, d] (+ image/SH for the MLP).
+            wavelength = metadata["wavelength"].to(device).float()
+            x_det = metadata["xyzcal.px.0"].to(device).float()
+            y_det = metadata["xyzcal.px.1"].to(device).float()
+            d = metadata["d"].to(device).float()
+            if isinstance(self.scale_fn, LaueSpectralScale):
+                return self.scale_fn(wavelength, x_det, y_det, d)
+            image_num = None
+            if self.scale_fn.n_images > 0:
+                image_num = metadata["image_num"].to(device).long()
+            a = None
+            if self.scale_fn.n_abs_sh > 0:
+                a = metadata["absorption_sh"].to(device).float()
+            return self.scale_fn(wavelength, x_det, y_det, d, image_num, a)
         frame = metadata["xyzcal.px.2"].to(device).float()
         lp = metadata["lp"].to(device).float().clamp(min=1e-8)
         if isinstance(self.scale_fn, MLPScale):
