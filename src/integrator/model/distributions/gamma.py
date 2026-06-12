@@ -129,12 +129,18 @@ class GammaDistributionRepamB(nn.Module):
         # intensity/profile can grab it -- the race the bg_prior KL loses once the
         # intensity has already explained the box (see diagnose_merge_collapse.py).
         if mean_init is not None:
+            mean_init = float(mean_init)
             with torch.no_grad():
                 nn.init.zeros_(self.linear_mu.weight)
                 if self._mu_constraint_name == "softplus":
-                    self.linear_mu.bias.fill_(math.log(math.expm1(mean_init)))
-                else:  # exp (or any monotone log-domain constraint)
-                    self.linear_mu.bias.fill_(math.log(mean_init))
+                    # Guarded inverse-softplus: returns the target directly for
+                    # large means (no expm1 overflow) and clamps non-positive
+                    # means (no log domain error).
+                    self.linear_mu.bias.fill_(
+                        _softplus_inverse_shifted(mean_init, 0.0)
+                    )
+                else:  # exp / log-domain constraint
+                    self.linear_mu.bias.fill_(math.log(max(mean_init, 1e-6)))
 
     def forward(self, x: torch.Tensor, x_: torch.Tensor):
         mu = self._mu_constrain(self.linear_mu(x))
