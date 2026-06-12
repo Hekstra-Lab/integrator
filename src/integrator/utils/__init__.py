@@ -9,6 +9,7 @@ from .factory_utils import (
 from .mtzwriter import mtz_writer
 from .prepare_priors import (
     inject_binning_labels,
+    prepare_bg_prior,
     prepare_global_priors,
     prepare_per_bin_priors,
     prepare_profile_basis,
@@ -23,6 +24,7 @@ __all__ = [
     "dump_yaml_config",
     "save_run_artifacts",
     "inject_binning_labels",
+    "prepare_bg_prior",
     "prepare_global_priors",
     "prepare_per_bin_priors",
     "prepare_profile_basis",

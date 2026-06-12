@@ -271,6 +271,115 @@ def prepare_profile_basis(
         )
 
 
+def prepare_bg_prior(
+    cfg: dict,
+    *,
+    force: bool = False,
+    n_sample: int = 50000,
+    events_out: list[dict] | None = None,
+) -> None:
+    """Auto-generate `bg_prior.pt` (global background Gamma prior) if missing.
+
+    The Wilson losses default the background prior to mean 1.0 count/pixel,
+    which is right for monochromatic data but far too low for the high Laue
+    background -- the background then cannot claim the flat field and the
+    intensity x (uniform/skirted) profile absorbs it, so `scale*I_h` collapses
+    to ~constant (see scripts/diagnose_merge_collapse.py). This fits a Gamma to
+    the empirical per-pixel background (robust per-shoebox median) and writes
+    `bg_prior.pt`, which the loss factory auto-injects as `bg_rate` /
+    `bg_concentration` when they are not set explicitly.
+
+    Skipped when the loss is not a Wilson loss, when the config sets `bg_rate`
+    or `bg_concentration` explicitly (those win), or when `bg_prior.pt` already
+    exists (unless `force`). Idempotent.
+
+    Args:
+        cfg: Full YAML config dict.
+        force: Regenerate even if `bg_prior.pt` already exists.
+        n_sample: Reflections subsampled for the estimate; the global mean/var
+            is stable well below the full set.
+        events_out: Optional list appended with a structured file-action event.
+    """
+    loss_name = cfg.get("loss", {}).get("name", "")
+    if loss_name not in ("monochromatic_wilson", "polychromatic_wilson"):
+        return
+    loss_args = cfg.get("loss", {}).get("args", {}) or {}
+    if "bg_rate" in loss_args or "bg_concentration" in loss_args:
+        return  # explicit config wins; nothing to generate
+
+    data_dir = Path(cfg["data_loader"]["args"]["data_dir"])
+    bg_path = data_dir / "bg_prior.pt"
+    if bg_path.exists() and not force:
+        if events_out is not None:
+            events_out.append(
+                {"file": bg_path.name, "action": "reused", "path": str(bg_path)}
+            )
+        return
+
+    counts, masks = _try_load_counts_masks(data_dir, cfg)
+    if counts is None or masks is None:
+        return  # no counts/masks on disk; leave the loss default
+
+    counts = counts.reshape(counts.shape[0], -1).float()
+    masks = masks.reshape(masks.shape[0], -1).float()
+    n = counts.shape[0]
+    if n > n_sample:
+        idx = torch.randperm(n)[:n_sample]
+        counts, masks = counts[idx], masks[idx]
+
+    # Robust per-shoebox background = median over VALID pixels (the small Bragg
+    # peak does not move the median in a mostly-background box). Masked-out
+    # pixels are pushed to +inf so they sort to the end and the median index
+    # (n_valid-1)//2 lands among the valid entries only.
+    valid = masks > 0
+    filled = torch.where(
+        valid, counts.clamp(min=0), torch.full_like(counts, float("inf"))
+    )
+    n_valid = valid.sum(-1).clamp(min=1).long()
+    sorted_c, _ = filled.sort(dim=-1)
+    med_idx = ((n_valid - 1) // 2).unsqueeze(1)
+    bg_box = sorted_c.gather(1, med_idx).squeeze(1)
+    bg_box = bg_box[torch.isfinite(bg_box) & (bg_box > 0)]
+    if bg_box.numel() < 100:
+        logger.warning(
+            "bg_prior: only %d valid shoeboxes; leaving the loss default",
+            bg_box.numel(),
+        )
+        return
+
+    mean_bg = float(bg_box.mean())
+    var_bg = float(bg_box.var().clamp(min=1e-6))
+    bg_rate = 1.0 / max(mean_bg, 1e-6)
+    # Method-of-moments Gamma shape, clamped so the prior is informative but not
+    # rigid (it must pull the background UP without freezing per-reflection
+    # variation; concentration<=1 would be exponential and prefer bg->0).
+    bg_concentration = float(min(max(mean_bg**2 / var_bg, 1.5), 50.0))
+
+    torch.save(
+        {"bg_rate": bg_rate, "bg_concentration": bg_concentration}, bg_path
+    )
+    logger.info(
+        "Saved %s (empirical per-pixel background mean=%.2f -> bg_rate=%.4f, "
+        "bg_concentration=%.2f; prior mean=%.2f counts/pixel)",
+        bg_path.name,
+        mean_bg,
+        bg_rate,
+        bg_concentration,
+        1.0 / bg_rate,
+    )
+    if events_out is not None:
+        events_out.append(
+            {
+                "file": bg_path.name,
+                "action": "created",
+                "path": str(bg_path),
+                "reason": f"empirical background mean={mean_bg:.2f}/pixel",
+                "bg_rate": bg_rate,
+                "bg_concentration": bg_concentration,
+            }
+        )
+
+
 def prepare_per_bin_priors(
     cfg: dict,
     *,
