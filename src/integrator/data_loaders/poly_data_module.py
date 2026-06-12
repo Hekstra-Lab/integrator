@@ -46,10 +46,14 @@ POLY_DS_COLS = [
     #                  required for grouped merging.
     #   nonanom_id   - Friedel-pooled id; centric / friedel_plus for the
     #                  anomalous-preserving terms (scripts/add_friedel_metadata.py).
+    #   absorption_sh- per-obs crystal-frame real-SH basis for the MLP scale's
+    #                  absorption inputs (a stills variant of
+    #                  scripts/extract_crystal_frame_sh.py).
     "asu_id",
     "nonanom_id",
     "centric",
     "friedel_plus",
+    "absorption_sh",
 ]
 
 
@@ -76,6 +80,8 @@ class PolychromaticDataModule(pl.LightningDataModule):
         group_by_asu_id: bool = False,
         group_by_key: str = "asu_id",
         max_obs_per_hkl: int | None = None,
+        extra_columns: list[str] | None = None,
+        ice_ring_ranges: list | None = None,
     ):
         super().__init__()
         self.data_dir = str(data_dir)
@@ -95,6 +101,12 @@ class PolychromaticDataModule(pl.LightningDataModule):
         self.group_by_asu_id = group_by_asu_id
         self.group_by_key = group_by_key
         self.max_obs_per_hkl = max_obs_per_hkl
+        # Extra metadata keys to expose in the batch beyond POLY_DS_COLS (e.g. a
+        # custom grouping id, or scale inputs). Included only when present in the
+        # reference file, so listing an absent key is harmless.
+        self.column_names = POLY_DS_COLS + list(extra_columns or [])
+        # Drop resolution bands (e.g. ice rings) at load time.
+        self.ice_ring_ranges = ice_ring_ranges
 
         self.shoebox_file_names = shoebox_file_names or {
             "counts": "counts.npy",
@@ -176,6 +188,24 @@ class PolychromaticDataModule(pl.LightningDataModule):
             masks = masks[selection]
             reference = {k: v[selection] for k, v in reference.items()}
 
+        # Exclude resolution bands (e.g. ice rings) so contaminated observations
+        # never enter scale/merge learning.
+        if self.ice_ring_ranges and "d" in reference:
+            d = reference["d"]
+            keep = torch.ones_like(d, dtype=torch.bool)
+            for lo, hi in self.ice_ring_ranges:
+                keep &= ~((d >= lo) & (d <= hi))
+            n_ice = int((~keep).sum().item())
+            if n_ice > 0:
+                logger.info(
+                    "Removed %d reflections in ice-ring band(s) %s",
+                    n_ice,
+                    self.ice_ring_ranges,
+                )
+            counts = counts[keep]
+            masks = masks[keep]
+            reference = {k: v[keep] for k, v in reference.items()}
+
         # Standardize counts (2D path — counts is always (N, H*W) for stills)
         if self.transform == "anscombe":
             anscombe_transformed = 2 * (counts.clamp(min=0) + 0.375).sqrt()
@@ -194,7 +224,7 @@ class PolychromaticDataModule(pl.LightningDataModule):
             standardized_counts,
             masks,
             reference,
-            column_names=POLY_DS_COLS,
+            column_names=self.column_names,
         )
 
         # Split using is_test if available

@@ -275,6 +275,8 @@ class LaueMLPScale(nn.Module):
         d_max: float = 60.0,
         n_images: int | None = None,
         head_init_std: float = 0.0,
+        n_abs_sh: int = 0,
+        absorption_even_only: bool = True,
         normalize_scale: bool = False,
         norm_momentum: float = 0.02,
     ):
@@ -304,9 +306,37 @@ class LaueMLPScale(nn.Module):
         self.register_buffer("d_min", torch.tensor(d_min))
         self.register_buffer("d_max", torch.tensor(max(d_max, d_min + 1.0)))
 
-        # Input: [lambda_norm, x_norm, y_norm, d_norm].
+        # Optional crystal-frame SH absorption features as extra MLP inputs (same
+        # mechanism as the mono MLPScale). Even-l only by default: Friedel-
+        # symmetric (Y_l(-r)=Y_l(r)), so they cannot form the odd-l anomalous-
+        # eating band. Needs `absorption_sh` (extract_crystal_frame_sh.py).
+        self.n_abs_sh = int(n_abs_sh)
+        n_abs_in = 0
+        if self.n_abs_sh > 0:
+            lmax = int(round(math.sqrt(self.n_abs_sh + 1))) - 1
+            if (lmax + 1) ** 2 - 1 != self.n_abs_sh:
+                raise ValueError(
+                    f"n_abs_sh={self.n_abs_sh} is not (lmax+1)^2-1 for an integer "
+                    "lmax; pass (scale_sh_lmax+1)^2-1."
+                )
+            l_of_col = torch.tensor(
+                [l for l in range(1, lmax + 1) for _ in range(2 * l + 1)]
+            )
+            keep = (
+                (l_of_col % 2 == 0)
+                if absorption_even_only
+                else torch.ones_like(l_of_col, dtype=torch.bool)
+            )
+            self.register_buffer(
+                "abs_cols",
+                keep.nonzero(as_tuple=False).squeeze(-1),
+                persistent=False,
+            )
+            n_abs_in = int(keep.sum())
+
+        # Input: [lambda_norm, x_norm, y_norm, d_norm] + selected SH features.
         layers = []
-        in_dim = 4
+        in_dim = 4 + n_abs_in
         for _ in range(n_layers):
             layers.append(nn.Linear(in_dim, hidden_dim))
             layers.append(nn.SiLU())
@@ -335,6 +365,7 @@ class LaueMLPScale(nn.Module):
         y: Tensor,
         d: Tensor,
         image_num: Tensor | None = None,
+        absorption_sh: Tensor | None = None,
     ) -> Tensor:
         """Evaluate the Laue scale.
 
@@ -346,6 +377,8 @@ class LaueMLPScale(nn.Module):
             image_num: (B,) integer image/shot index; required iff the per-image
                 embedding is enabled (n_images > 0). Indices are clamped into
                 range defensively.
+            absorption_sh: (B, n_sh) crystal-frame real-SH features; required iff
+                the SH absorption inputs are enabled (n_abs_sh > 0).
 
         Returns:
             scale: (B,) strictly positive scale factors.
@@ -355,6 +388,20 @@ class LaueMLPScale(nn.Module):
         y_norm = (y - self.beam_cy) / self.r_max
         d_norm = (d - self.d_min) / (self.d_max - self.d_min)
         features = torch.stack([lam_norm, x_norm, y_norm, d_norm], dim=-1)
+        if self.n_abs_sh > 0:
+            if absorption_sh is None:
+                raise ValueError(
+                    "LaueMLPScale was built with crystal-frame SH inputs "
+                    "(n_abs_sh > 0) but absorption_sh was not provided."
+                )
+            if absorption_sh.shape[-1] != self.n_abs_sh:
+                raise ValueError(
+                    f"absorption_sh has {absorption_sh.shape[-1]} harmonics, "
+                    f"expected {self.n_abs_sh} (scale_sh_lmax mismatch)."
+                )
+            features = torch.cat(
+                [features, absorption_sh[:, self.abs_cols]], dim=-1
+            )
         log_s = self.net(features).squeeze(-1)
 
         if self.n_images > 0:

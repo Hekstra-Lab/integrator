@@ -191,10 +191,14 @@ class AmortizedMergingIntegrator(BaseIntegrator):
             getattr(cfg, "scale_absorption_restraint", 0.0)
         )
         if getattr(cfg, "scale_laue_mlp", False):
-            # Polychromatic (Laue stills): wavelength-aware MLP scale. The MLP
-            # owns the whole correction (incident spectrum G(lambda) + detector
-            # geometry + resolution falloff) plus an optional per-image log-scale;
-            # no /lp by the caller. Takes precedence over the rotation scales.
+            # Polychromatic (Laue stills): wavelength-aware MLP scale. Inputs
+            # [lambda, x, y, d] (+ optional crystal-frame SH absorption when
+            # scale_mlp_absorption); the MLP owns spectrum + geometry, no /lp by
+            # the caller. Optional per-image log-scale. Precedence over rotation
+            # scales.
+            n_abs_sh = 0
+            if getattr(cfg, "scale_mlp_absorption", False):
+                n_abs_sh = (int(cfg.scale_sh_lmax) + 1) ** 2 - 1
             self.scale_fn = LaueMLPScale(
                 hidden_dim=cfg.scale_mlp_hidden,
                 n_layers=cfg.scale_mlp_layers,
@@ -206,6 +210,10 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                 d_max=60.0,
                 n_images=getattr(cfg, "scale_n_images", None),
                 head_init_std=getattr(cfg, "scale_head_init_std", 0.0),
+                n_abs_sh=n_abs_sh,
+                absorption_even_only=getattr(
+                    cfg, "scale_mlp_absorption_even_only", True
+                ),
             )
         elif getattr(cfg, "scale_physical", False):
             # DIALS-style: smooth scale(phi) x decay(phi,d) x crystal-frame SH
@@ -330,7 +338,19 @@ class AmortizedMergingIntegrator(BaseIntegrator):
             image_num = None
             if self.scale_fn.n_images > 0:
                 image_num = metadata["image_num"].to(device).long()
-            return self.scale_fn(wavelength, x_det, y_det, d, image_num)
+            a = None
+            if self.scale_fn.n_abs_sh > 0:
+                if "absorption_sh" not in metadata:
+                    raise KeyError(
+                        "LaueMLPScale with scale_mlp_absorption needs "
+                        "'absorption_sh' in metadata; run a stills variant of "
+                        "scripts/extract_crystal_frame_sh.py and point the "
+                        "loader's reference at the augmented metadata file."
+                    )
+                a = metadata["absorption_sh"].to(device).float()
+            return self.scale_fn(
+                wavelength, x_det, y_det, d, image_num, a
+            )
         frame = metadata["xyzcal.px.2"].to(device).float()
         lp = metadata["lp"].to(device).float().clamp(min=1e-8)
         if isinstance(self.scale_fn, PhysicalScale):
