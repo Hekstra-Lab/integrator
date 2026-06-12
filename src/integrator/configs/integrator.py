@@ -54,6 +54,12 @@ class IntegratorCfg:
     # integrator (encoders + surrogates transfer; scale stays at init). Applied
     # in construct_integrator and skipped under skip_warmstart (prediction).
     init_from_checkpoint: str | None = None
+    # Transplant the background modules (k_bg/r_bg encoders + qbg surrogate) from
+    # another run's checkpoint (architectures must match), then freeze them. Takes
+    # the background -- the field the merging models keep collapsing -- out of the
+    # optimization, using a proven bg from a good integration run. ABSOLUTE path.
+    bg_init_from_checkpoint: str | None = None
+    bg_freeze: bool = True
     merge_weight: float = 1.0
     merge_kl_weight: float = 1.0
     # Cross-observation scaling-consistency loss weight (ConjugateMergingIntegrator):

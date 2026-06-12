@@ -309,12 +309,10 @@ def prepare_bg_prior(
 
     data_dir = Path(cfg["data_loader"]["args"]["data_dir"])
     bg_path = data_dir / "bg_prior.pt"
-    if bg_path.exists() and not force:
-        if events_out is not None:
-            events_out.append(
-                {"file": bg_path.name, "action": "reused", "path": str(bg_path)}
-            )
-        return
+    # NOTE: existence is checked AFTER the empirical mean is computed below, so a
+    # stale bg_prior.pt whose mean disagrees with the data is regenerated rather
+    # than silently reused (a wrong bg prior pulls the background to the wrong
+    # level and collapses the merge).
 
     counts, masks = _try_load_counts_masks(data_dir, cfg)
     if counts is None or masks is None:
@@ -354,6 +352,37 @@ def prepare_bg_prior(
     # rigid (it must pull the background UP without freezing per-reflection
     # variation; concentration<=1 would be exponential and prefer bg->0).
     bg_concentration = float(min(max(mean_bg**2 / var_bg, 1.5), 50.0))
+
+    # Self-heal: reuse an existing bg_prior.pt ONLY if its prior mean (1/bg_rate)
+    # agrees with the empirical background to within 2x; otherwise it is stale or
+    # was computed on different data and would silently mis-anchor the background.
+    if bg_path.exists() and not force:
+        try:
+            saved = torch.load(
+                bg_path, weights_only=False, map_location="cpu"
+            )
+            saved_mean = 1.0 / max(float(saved.get("bg_rate", 1.0)), 1e-12)
+        except Exception:
+            saved_mean = None
+        if saved_mean is not None and 0.5 <= saved_mean / mean_bg <= 2.0:
+            logger.info(
+                "Reusing %s (prior mean %.2f/px agrees with empirical %.2f/px)",
+                bg_path.name,
+                saved_mean,
+                mean_bg,
+            )
+            if events_out is not None:
+                events_out.append(
+                    {"file": bg_path.name, "action": "reused", "path": str(bg_path)}
+                )
+            return
+        logger.warning(
+            "%s has prior mean %s/px but the data's empirical background is "
+            "%.2f/px -- regenerating (stale or computed on other data).",
+            bg_path.name,
+            f"{saved_mean:.2f}" if saved_mean is not None else "unreadable",
+            mean_bg,
+        )
 
     torch.save(
         {"bg_rate": bg_rate, "bg_concentration": bg_concentration}, bg_path

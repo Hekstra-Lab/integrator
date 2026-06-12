@@ -1,3 +1,4 @@
+import logging
 import math
 from abc import abstractmethod
 from typing import Any, Literal
@@ -8,6 +9,8 @@ import torch.nn as nn
 from torch import Tensor
 
 from integrator.configs import IntegratorCfg
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_PREDICT_KEYS = [
     "refl_ids",
@@ -105,6 +108,82 @@ class BaseIntegrator(pl.LightningModule):
         self.loss = loss
 
         self.automatic_optimization = True
+
+        # Optional: transplant (and freeze) the background modules from another
+        # run's checkpoint. The background is the field the merging models keep
+        # collapsing (it loses the race to the intensity); freezing a proven bg
+        # from a good integration run removes it from the optimization so the
+        # merge can only fit the peak.
+        self._frozen_eval_modules: list[nn.Module] = []
+        bg_ckpt = getattr(cfg, "bg_init_from_checkpoint", None)
+        if bg_ckpt:
+            self._init_bg_from_checkpoint(
+                bg_ckpt, freeze=getattr(cfg, "bg_freeze", True)
+            )
+
+    def _init_bg_from_checkpoint(
+        self, ckpt_path: str, freeze: bool = True
+    ) -> None:
+        """Load (and optionally freeze) the background modules from a checkpoint.
+
+        Copies the `k_bg`/`r_bg` background encoders and the `qbg` surrogate from
+        another run's checkpoint (their architectures must match this model's).
+        When `freeze`, their parameters are frozen and the modules are kept in
+        eval mode (no dropout) even while the rest of the model trains -- see the
+        `train` override. Raises if a targeted module is absent from the
+        checkpoint (a silent partial load would be worse than failing).
+        """
+        from pathlib import Path
+
+        if not Path(ckpt_path).exists():
+            # At prediction the bg comes from the loaded checkpoint anyway, so a
+            # missing source is non-fatal -- warn and skip.
+            logger.warning(
+                "bg_init_from_checkpoint: %s not found; skipping bg transplant.",
+                ckpt_path,
+            )
+            return
+        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        sd = ckpt.get("state_dict", ckpt)
+        targets = [
+            ("encoders.k_bg", self.encoders["k_bg"] if "k_bg" in self.encoders else None),
+            ("encoders.r_bg", self.encoders["r_bg"] if "r_bg" in self.encoders else None),
+            ("surrogates.qbg", self.surrogates["qbg"] if "qbg" in self.surrogates else None),
+        ]
+        loaded = []
+        for name, module in targets:
+            if module is None:
+                continue
+            prefix = name + "."
+            sub = {
+                k[len(prefix):]: v for k, v in sd.items() if k.startswith(prefix)
+            }
+            if not sub:
+                raise KeyError(
+                    f"bg_init_from_checkpoint: no '{name}.*' params in "
+                    f"{ckpt_path} -- architecture/name mismatch."
+                )
+            module.load_state_dict(sub, strict=True)
+            loaded.append(name)
+            if freeze:
+                for p in module.parameters():
+                    p.requires_grad_(False)
+                module.eval()
+                self._frozen_eval_modules.append(module)
+        logger.info(
+            "bg_init_from_checkpoint: loaded %s from %s (freeze=%s)",
+            loaded,
+            ckpt_path,
+            freeze,
+        )
+
+    def train(self, mode: bool = True):
+        """Keep frozen background modules in eval mode (no dropout) when the rest
+        of the model is switched to train."""
+        super().train(mode)
+        for module in getattr(self, "_frozen_eval_modules", []):
+            module.eval()
+        return self
 
     def forward(
         self,
