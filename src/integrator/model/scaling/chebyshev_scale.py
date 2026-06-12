@@ -275,15 +275,19 @@ class LaueMLPScale(nn.Module):
         d_max: float = 60.0,
         n_images: int | None = None,
         head_init_std: float = 0.0,
-        normalize_scale: bool = True,
+        normalize_scale: bool = False,
         norm_momentum: float = 0.02,
     ):
         super().__init__()
 
-        # Pin the scale*I_h gauge: keep the scale a RELATIVE correction (geometric
-        # mean 1) so I_h carries the absolute photon scale. Without this the scale
-        # runs away to the exp clamp and blows up alpha_h/beta_h. Batch mean in
-        # train, EMA running mean in eval (so train/finalize stay consistent).
+        # Optional gauge pin: center the scale to geometric mean 1 so I_h carries
+        # the absolute photon scale. OFF by default -- it fights the Wilson prior
+        # (whose global G is in normalized units, E[I_h]~0.3), forcing I_h to
+        # photon units and collapsing the rate -> the NLL roughly doubles. The
+        # natural gauge (I_h ~ prior, magnitude in the scale) fits far better; the
+        # large alpha_h/beta_h that result are an over-concentration cosmetic, not
+        # an NLL problem. Kept here behind the flag for experiments with a
+        # photon-scale Wilson G init.
         self.normalize_scale = normalize_scale
         self.norm_momentum = norm_momentum
         self.register_buffer("running_log_mean", torch.zeros(()))
@@ -375,7 +379,7 @@ class LaueMLPScale(nn.Module):
                 m = self.running_log_mean
             log_s = log_s - m
 
-        return torch.exp(log_s.clamp(-8.0, 8.0))
+        return torch.exp(log_s.clamp(-15.0, 15.0))
 
 
 class PhysicalScale(nn.Module):
