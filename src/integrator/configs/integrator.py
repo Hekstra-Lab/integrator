@@ -97,6 +97,12 @@ class IntegratorCfg:
     # exponential. 0.0/False = acentric prior for all (legacy). Needs `centric`
     # in metadata (scripts/add_friedel_metadata.py).
     wilson_centric_prior: bool = False
+    # End-of-train-epoch scatter of the model's per-observation intensity
+    # (scale * I_h) vs the DIALS intensity (`intensity.sum.value` in metadata),
+    # log-log, with the log-space correlation. A per-epoch merge-quality readout;
+    # logged to wandb (`intensity_vs_dials`) and saved under the run's
+    # `intensity_scatter/`. Off by default.
+    log_intensity_scatter: bool = False
     # HierarchicalScalingIntegrator: freeze the warm-started integration
     # (encoders + qp/qbg/qi) so only the scale + merge head trains. Use with
     # init_from_checkpoint pointing at a trained HierarchicalIntegrator.

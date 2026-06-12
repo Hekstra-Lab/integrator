@@ -275,8 +275,18 @@ class LaueMLPScale(nn.Module):
         d_max: float = 60.0,
         n_images: int | None = None,
         head_init_std: float = 0.0,
+        normalize_scale: bool = True,
+        norm_momentum: float = 0.02,
     ):
         super().__init__()
+
+        # Pin the scale*I_h gauge: keep the scale a RELATIVE correction (geometric
+        # mean 1) so I_h carries the absolute photon scale. Without this the scale
+        # runs away to the exp clamp and blows up alpha_h/beta_h. Batch mean in
+        # train, EMA running mean in eval (so train/finalize stay consistent).
+        self.normalize_scale = normalize_scale
+        self.norm_momentum = norm_momentum
+        self.register_buffer("running_log_mean", torch.zeros(()))
 
         lam_mid = (lambda_min + lambda_max) / 2.0
         lam_half = max((lambda_max - lambda_min) / 2.0, 1e-6)
@@ -352,7 +362,20 @@ class LaueMLPScale(nn.Module):
             idx = image_num.long().clamp(0, self.n_images - 1)
             log_s = log_s + self.image_log_scale(idx).squeeze(-1)
 
-        return torch.exp(log_s.clamp(-15.0, 15.0))
+        # Center to geometric mean 1 (gauge fix): the offset is detached, so it
+        # only fixes the absolute level -- the spectrum/geometry shape and its
+        # gradients are untouched.
+        if self.normalize_scale:
+            if self.training:
+                m = log_s.mean().detach()
+                self.running_log_mean.mul_(1 - self.norm_momentum).add_(
+                    self.norm_momentum * m
+                )
+            else:
+                m = self.running_log_mean
+            log_s = log_s - m
+
+        return torch.exp(log_s.clamp(-8.0, 8.0))
 
 
 class PhysicalScale(nn.Module):
