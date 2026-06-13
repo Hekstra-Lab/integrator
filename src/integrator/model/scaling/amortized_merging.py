@@ -51,7 +51,6 @@ from integrator.model.integrators.hierarchical_integrator import (
 )
 from integrator.model.integrators.integrator_utils import (
     IntegratorBaseOutputs,
-    IntensityScatterMixin,
     _assemble_outputs,
 )
 from integrator.model.scaling.chebyshev_scale import (
@@ -70,7 +69,7 @@ logger = logging.getLogger(__name__)
 _N_COND = 3  # per-observation conditioning: [log scale, log lp|wavelength, d]
 
 
-class AmortizedMergingIntegrator(IntensityScatterMixin, BaseIntegrator):
+class AmortizedMergingIntegrator(BaseIntegrator):
     """Per-HKL amortized variational intensity (sibling of conjugate merging).
 
     See the module docstring for the `mean` vs `sum` aggregation modes. Best
@@ -302,9 +301,6 @@ class AmortizedMergingIntegrator(IntensityScatterMixin, BaseIntegrator):
                 frame_max=cfg.scale_frame_max,
             )
 
-        # End-of-epoch model-vs-DIALS intensity scatter (merge-quality readout;
-        # IntensityScatterMixin provides _collect/_plot/on_train_epoch_end).
-        self._init_intensity_scatter(cfg)
 
     def _build_optimizer(self) -> torch.optim.Optimizer:
         """Adam; with scaling_lr set, the scale field gets its own param group.
@@ -1044,12 +1040,8 @@ class AmortizedMergingIntegrator(IntensityScatterMixin, BaseIntegrator):
                 on_epoch=True,
             )
 
-        if (
-            step == "train"
-            and self.log_intensity_scatter
-            and "intensity.sum.value" in metadata
-        ):
-            self._collect_intensity_scatter(outputs, metadata)
+        if step == "train":
+            self._collect_scatters(outputs, metadata, mask)
 
         return {
             "loss": total_loss,

@@ -9,6 +9,7 @@ import torch.nn as nn
 from torch import Tensor
 
 from integrator.configs import IntegratorCfg
+from integrator.model.integrators.integrator_utils import ScatterLoggerMixin
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ def _log_loss(
             )
 
 
-class BaseIntegrator(pl.LightningModule):
+class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
     REQUIRED_ENCODERS: dict[str, type] = {}
     ARGS: type
 
@@ -108,6 +109,10 @@ class BaseIntegrator(pl.LightningModule):
         self.loss = loss
 
         self.automatic_optimization = True
+
+        # End-of-epoch model-vs-DIALS scatters (intensity + background), available
+        # to every integrator and gated by the log_*_scatter cfg flags.
+        self._init_scatter_logger(cfg)
 
         # Optional: transplant (and freeze) the background modules from another
         # run's checkpoint. The background is the field the merging models keep
@@ -279,6 +284,9 @@ class BaseIntegrator(pl.LightningModule):
                 on_epoch=True,
             )
         total_loss = total_loss + penalty
+
+        if step == "train":
+            self._collect_scatters(outputs, metadata, mask)
 
         return {
             "loss": total_loss,

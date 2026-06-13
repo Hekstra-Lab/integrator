@@ -109,6 +109,9 @@ class IntegratorCfg:
     # logged to wandb (`intensity_vs_dials`) and saved under the run's
     # `intensity_scatter/`. Off by default.
     log_intensity_scatter: bool = False
+    # Per-epoch model background (qbg.mean * n_pixels) vs DIALS background.sum.value
+    # log-log scatter (`background_vs_dials` / `background_scatter/`). Off by default.
+    log_background_scatter: bool = False
     # HierarchicalScalingIntegrator: freeze the warm-started integration
     # (encoders + qp/qbg/qi) so only the scale + merge head trains. Use with
     # init_from_checkpoint pointing at a trained HierarchicalIntegrator.

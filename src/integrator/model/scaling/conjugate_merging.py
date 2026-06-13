@@ -57,7 +57,6 @@ from integrator.model.integrators.hierarchical_integrator import (
 )
 from integrator.model.integrators.integrator_utils import (
     IntegratorBaseOutputs,
-    IntensityScatterMixin,
     _assemble_outputs,
 )
 from integrator.model.scaling.chebyshev_scale import (
@@ -88,7 +87,7 @@ def _scatter_sum_compact(
     return out, inverse, unique_idx
 
 
-class ConjugateMergingIntegrator(IntensityScatterMixin, BaseIntegrator):
+class ConjugateMergingIntegrator(BaseIntegrator):
     """Per-HKL Gamma intensity via Poisson-Gamma conjugate update.
 
     Best paired with GroupedAsuIdBatchSampler (`group_by_asu_id: true` in
@@ -253,9 +252,6 @@ class ConjugateMergingIntegrator(IntensityScatterMixin, BaseIntegrator):
                 frame_max=cfg.scale_frame_max,
             )
 
-        # End-of-epoch model-vs-DIALS intensity scatter (merge-quality readout;
-        # IntensityScatterMixin provides _collect/_plot/on_train_epoch_end).
-        self._init_intensity_scatter(cfg)
 
     # ------------------------------------------------------------------
 
@@ -1019,12 +1015,8 @@ class ConjugateMergingIntegrator(IntensityScatterMixin, BaseIntegrator):
                 on_epoch=True,
             )
 
-        if (
-            step == "train"
-            and self.log_intensity_scatter
-            and "intensity.sum.value" in metadata
-        ):
-            self._collect_intensity_scatter(outputs, metadata)
+        if step == "train":
+            self._collect_scatters(outputs, metadata, mask)
 
         return {
             "loss": total_loss,
