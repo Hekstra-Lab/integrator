@@ -47,7 +47,6 @@ MODEL_OUT_KEYS = [
 ]
 
 # Default columns from rs.io.read_dials_stills
-# out will contain the following
 FLOAT_COLS = [
     "zeta",
     "xyzobs.px.variance.0",
@@ -169,7 +168,6 @@ VECTOR_COLUMNS = {
 def _unstack_preds(
     preds: dict[str, list[np.ndarray]],
 ) -> dict:
-    # combine epochs into a single array
     for k, v in preds.items():
         preds[k] = np.concatenate(v)
     return preds
@@ -198,7 +196,6 @@ def _cast_for_dials(
 def _dict_to_refl_columns(preds):
     columns = {}
 
-    # vector columns
     for key, (dtype_name, n) in VECTOR_COLUMNS.items():
         if key == "miller_index":
             arr = _extract_miller_index(preds)
@@ -206,7 +203,6 @@ def _dict_to_refl_columns(preds):
             arr = _extract_vector(preds, key, n)
         columns[key] = (_cast_for_dials(arr, dtype_name), dtype_name)
 
-    # scalar columns
     for key, dtype_name in SCALAR_DTYPES.items():
         arr = np.asarray(preds[key])
         columns[key] = (_cast_for_dials(arr, dtype_name), dtype_name)

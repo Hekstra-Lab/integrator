@@ -120,7 +120,6 @@ class PolychromaticDataModule(pl.LightningDataModule):
                     self.beam_center_px[1],
                 )
 
-        # Filter reflections with too few valid pixels
         all_dead = masks.sum(-1) < self.min_valid_pixels
         n_dead = all_dead.sum().item()
         if n_dead > 0:
@@ -133,7 +132,6 @@ class PolychromaticDataModule(pl.LightningDataModule):
         masks = masks[~all_dead]
         reference = {k: v[~all_dead] for k, v in reference.items()}
 
-        # Resolution cutoff
         if self.cutoff is not None and "d" in reference:
             selection = reference["d"] < self.cutoff
             n_cut = (~selection).sum().item()
@@ -166,7 +164,6 @@ class PolychromaticDataModule(pl.LightningDataModule):
             column_names=POLY_DS_COLS,
         )
 
-        # Split using is_test if available
         is_test = reference.get("is_test")
         all_indices = torch.arange(len(self.full_dataset))
 

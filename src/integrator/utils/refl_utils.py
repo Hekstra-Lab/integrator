@@ -39,7 +39,6 @@ DTYPE_TO_NUMPY = {
 }
 
 # Default columns from rs.io.read_dials_stills
-# out will contain the following
 FLOAT_COLS = [
     "zeta",
     "xyzobs.px.variance.0",
@@ -151,10 +150,8 @@ ALL_COLS = FLOAT_COLS + INT_COLS + BOOL_COLS
 def unstack_preds(
     preds: dict[str, list[np.ndarray]],
 ) -> dict:
-    # out dictionary structure
     out: dict[str, np.ndarray] = {}
 
-    # combine epochs into a single array
     for k, v in preds.items():
         out[k] = np.concatenate(v)
 
@@ -193,7 +190,6 @@ def _check_bytes(key: str, dtype_name: str, nrows: int, raw: bytes):
 def dict_to_refl_columns(preds):
     columns = {}
 
-    # vector columns
     for key, (dtype_name, n) in VECTOR_COLUMNS.items():
         if key == "miller_index":
             arr = _extract_miller_index(preds)
@@ -201,7 +197,6 @@ def dict_to_refl_columns(preds):
             arr = _extract_vector(preds, key, n)
         columns[key] = (_cast_for_dials(arr, dtype_name), dtype_name)
 
-    # scalar columns
     for key, dtype_name in SCALAR_DTYPES.items():
         arr = np.asarray(preds[key])
         columns[key] = (_cast_for_dials(arr, dtype_name), dtype_name)
@@ -222,7 +217,6 @@ def _extract_vector(
 def _dataset_to_refl_columns(ds):
     columns = {}
 
-    # vector columns
     for key, val in VECTOR_COLUMNS.items():
         dtype, n = val
         if key == "miller_index":
@@ -231,12 +225,11 @@ def _dataset_to_refl_columns(ds):
             arr = _extract_vector(ds, key, n)
         columns[key] = (arr, dtype)
 
-    # scalar columns
     for key, dtype in SCALAR_DTYPES.items():
         arr = ds[key].to_numpy()
         columns[key] = (arr, dtype)
 
-    # id column (from BATCH)
+    # id column derived from BATCH
     if "BATCH" in ds.columns:
         columns["id"] = (ds["BATCH"].to_numpy().astype(np.int32), "int")
 

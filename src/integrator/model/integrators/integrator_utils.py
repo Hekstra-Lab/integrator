@@ -58,7 +58,6 @@ def _assemble_outputs(
     if out.metadata is None:
         return base
 
-    # Storing the surrogate distribution parameters
     distribution_params = {
         "qbg_params": {
             name: getattr(out.qbg, name) for name in out.qbg.arg_constraints
@@ -68,7 +67,6 @@ def _assemble_outputs(
         },
     }
 
-    # Update base dictionary
     base.update(out.metadata)
     base.update(distribution_params)
 

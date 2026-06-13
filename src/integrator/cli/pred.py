@@ -69,35 +69,28 @@ def main():
         load_config,
     )
 
-    # Get args
     args = parse_args()
 
-    # setup logger
     setup_logging(args.verbose)
 
     logger.info("Run directory: %s", args.run_dir)
     logger.info("CUDA available: %s", torch.cuda.is_available())
     logger.info("Starting Predictions")
 
-    # run dir
     run_dir = Path(args.run_dir)
 
-    # Reading in pred.yaml
     meta = yaml.safe_load((run_dir / "run_metadata.yaml").read_text())
     config = load_config(meta["config"])
-    wandb_info = meta["wandb"]
 
-    # writing prediction directories
-    log_dir = Path(wandb_info["log_dir"])
-    wandb_dir = log_dir.parent
-    pred_dir = wandb_dir / "predictions"
+    # log_dir is recorded for every run; fall back to the wandb block for runs
+    # logged before that key existed.
+    log_dir = Path(meta.get("log_dir") or meta["wandb"]["log_dir"])
+    pred_dir = log_dir.parent / "predictions"
     pred_dir.mkdir(exist_ok=True)
 
-    # list of .ckpt files
     checkpoints = sorted(log_dir.glob("**/epoch*.ckpt"))
     logger.info("Found %d checkpoints", len(checkpoints))
 
-    # load data
     data_loader = construct_data_loader(config)
     data_loader.setup()
     inject_binning_labels(data_loader, config)
@@ -111,18 +104,15 @@ def main():
 
     epoch_re = re.compile(r"epoch=(\d+)")
     for ckpt in checkpoints:
-        # Finding checkpoint epoch
         m = epoch_re.search(ckpt.name)
         if not m:
             raise ValueError(f"Could not parse epoch from {ckpt.name}")
         epoch = int(m.group(1))
 
-        # logger
         logger.info("Processing checkpoint: %s", ckpt.name)
         logger.debug("Checkpoint path: %s", ckpt)
         logger.info("Epoch: %d", epoch)
 
-        # Writing epoch prediction dir
         ckpt_dir = pred_dir / f"epoch_{epoch:04d}"
 
         ckpt_dir.mkdir(parents=True, exist_ok=True)

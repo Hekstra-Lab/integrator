@@ -1,0 +1,42 @@
+# Development environment for the integrator project (CPU + dev tooling).
+
+# environment.yml plus the test/lint/notebook stack and the package installed
+# with its dev extras (`-e .[dev]` -> pytest, ruff, mypy, wandb). Local dev is
+# CPU; for GPU debugging start from environment-cuda.yml and add the dev pip
+# block below.
+
+# Instructions:
+#   micromamba env create -f environment-dev.yml
+#   micromamba activate integrator-dev
+
+name: integrator-dev
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - dials=3.26
+  # PyTorch stack from conda-forge (CPU build).
+  - pytorch=2.9
+  - torchvision=0.24
+  - pytorch-lightning>=2.2
+  # additional dependencies
+  - numpy>=2.3
+  - scipy>=1.11
+  - pandas>=2.3
+  - h5py>=3.15
+  - matplotlib-base>=3.5
+  - polars>=1.6
+  - pyarrow>=22
+  - rich>=14
+  - pip
+  - pip:
+      - laue-dials
+      - "reciprocalspaceship @ git+https://github.com/rs-station/reciprocalspaceship"
+      - rs_distributions>=0.0.3
+      # The integrator package with dev extras (pytest, ruff, mypy, wandb).
+      - "-e .[dev]"
+      # extra dev tooling not in the [dev] pip extra
+      - ipython
+      - plotly
+      - pytest-cov

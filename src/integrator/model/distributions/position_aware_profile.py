@@ -79,8 +79,7 @@ class PositionAwareProfileSurrogate(LearnedBasisProfileSurrogate):
         dy = ycal - self.beam_cy
         r = torch.sqrt(dx**2 + dy**2).clamp(min=1.0)
 
-        # Unit radial vector
-        ux = dx / r  # (B,)
+        ux = dx / r  # (B,) unit radial vector
         uy = dy / r  # (B,)
 
         # Radial and tangential sigmas (linear in r, softplus for positivity)
@@ -100,7 +99,6 @@ class PositionAwareProfileSurrogate(LearnedBasisProfileSurrogate):
         )
 
         # Project each pixel onto radial and tangential axes
-        # radial component: pixel dot radial_unit
         px = self.pixel_x.unsqueeze(0)  # (1, K)
         py = self.pixel_y.unsqueeze(0)  # (1, K)
         proj_r = px * ux.unsqueeze(1) + py * uy.unsqueeze(1)  # (B, K)
@@ -124,7 +122,6 @@ class PositionAwareProfileSurrogate(LearnedBasisProfileSurrogate):
         loc = self.loc_head(x)  # (B, d)
         scale = F.softplus(self.scale_head(x))  # (B, d)
 
-        # Position-dependent bias
         if metadata is not None and "xyzcal.px.0" in metadata:
             xcal = metadata["xyzcal.px.0"]
             ycal = metadata["xyzcal.px.1"]

@@ -82,7 +82,6 @@ class WilsonLoss(nn.Module):
         self.pbg_weight = pbg_cfg.weight if pbg_cfg is not None else pbg_weight
         self.pi_weight = pi_cfg.weight if pi_cfg is not None else pi_weight
 
-        # Profile prior scale from basis file
         if profile_basis is not None:
             basis = torch.load(profile_basis, weights_only=False)
             self.profile_prior_scale = float(
@@ -153,7 +152,6 @@ class WilsonLoss(nn.Module):
         if metadata is None or "d" not in metadata:
             raise ValueError("Wilson loss requires metadata['d'].")
 
-        # Profile KL
         if self.profile_prior is not None:
             x_px = metadata["xyzcal.px.0"].to(device)
             y_px = metadata["xyzcal.px.1"].to(device)
@@ -183,7 +181,6 @@ class WilsonLoss(nn.Module):
         kl_i = kl_divergence(qi, p_i) * self.pi_weight
         kl = kl + kl_i
 
-        # Background KL
         if self.bg_prior is not None:
             x_px = metadata["xyzcal.px.0"].to(device)
             y_px = metadata["xyzcal.px.1"].to(device)

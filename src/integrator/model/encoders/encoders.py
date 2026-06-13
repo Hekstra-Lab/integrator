@@ -99,7 +99,6 @@ class ProfileEncoder(nn.Module):
             num_channels=conv2_out_channels,
         )
 
-        # Dynamically calculate flattened size
         self.flattened_size = self._infer_flattened_size(
             input_shape=input_shape,
             in_channels=effective_in_channels,
@@ -186,14 +185,12 @@ class IntensityEncoder(nn.Module):
             num_channels=conv1_out_channels,
         )
 
-        # self.pool = nn.MaxPool2d(
         self.pool = OPERATIONS[data_dim]["max_pool"](
             kernel_size=pool_kernel_size,
             stride=pool_stride,
             ceil_mode=True,
         )
 
-        # self.conv2 = nn.Conv2d(
         self.conv2 = OPERATIONS[data_dim]["conv"](
             in_channels=conv1_out_channels,
             out_channels=conv2_out_channels,

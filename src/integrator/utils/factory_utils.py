@@ -303,7 +303,6 @@ def _get_prior_cfgs(
     pbg_cfg: str = "pbg_cfg",
     pi_cfg: str = "pi_cfg",
 ) -> dict[str, configs.PriorConfig | None]:
-    # Building loss class
     priors = {}
     prior_cfgs = dict(cfg)
     data_dir = _get_data_dir(cfg)
@@ -342,7 +341,6 @@ def _get_encoder_modules(
     model = cfg_["integrator"]["name"]
     required_encoders = REGISTRY["integrator"][model].REQUIRED_ENCODERS
 
-    # Verify config has the correct number of encoders for specified model
     if len(required_encoders) != len(cfg_["encoders"]):
         raise ValueError(
             f"""
@@ -350,7 +348,6 @@ def _get_encoder_modules(
             encoders, but {len(cfg_["encoders"])} were passed
             """
         )
-    # loading encoder arguments in corresponding dataclasses
     encoders = {}
     for items, encoder_cfg in zip(
         required_encoders.items(), cfg_["encoders"], strict=False
@@ -368,11 +365,8 @@ def _get_encoder_modules(
 def _get_loss_module(
     cfg: dict,
 ) -> nn.Module:
-    # get loss cls
     loss_cls = _get_loss_cls(cfg["loss"]["name"])
-    # construct priors
     prior_configs = _get_prior_cfgs(cfg)
-    # construct loss args
     loss_args = _get_loss_args(
         cfg=cfg,
         prior_configs=prior_configs,
@@ -489,10 +483,8 @@ def construct_integrator(
     """
     _validate_registry_names(cfg)
 
-    # integrator class
     integrator_cls = _get_integrator_cls(cfg["integrator"]["name"])
 
-    # get integrator components
     integrator_args = configs.IntegratorCfg(**cfg["integrator"]["args"])
     encoders = _get_encoder_modules(cfg)
     surrogates = _get_surrogate_modules(cfg, skip_warmstart=skip_warmstart)
@@ -601,7 +593,6 @@ def _collect_resolved_paths(cfg: dict) -> dict:
     if dl_paths:
         report["data_loader"] = dl_paths
 
-    # Surrogates
     surr_paths: dict = {}
     for key, surrogate_cfg in cfg.get("surrogates", {}).items():
         args = surrogate_cfg.get("args", {}) or {}
@@ -617,7 +608,6 @@ def _collect_resolved_paths(cfg: dict) -> dict:
     if surr_paths:
         report["surrogates"] = surr_paths
 
-    # Loss buffers
     loss_args = cfg.get("loss", {}).get("args", {}) or {}
     loss_paths: dict = {}
     for pt_key in (
@@ -672,7 +662,7 @@ def save_run_artifacts(
     loss_module = integrator.loss
     artifacts = {}
 
-    # Dirichlet prior concentration (rescaled)
+    # Dirichlet prior concentration, rescaled
     pprf_params = getattr(loss_module, "pprf_params", None)
     if pprf_params is not None and "concentration" in pprf_params:
         conc = pprf_params["concentration"]
@@ -685,7 +675,6 @@ def save_run_artifacts(
             "mean": float(conc.mean()),
         }
 
-    # Prior configs
     prior_summary = {}
     for attr, label in [
         ("pprf_cfg", "profile"),
@@ -707,14 +696,12 @@ def save_run_artifacts(
     if prior_summary:
         artifacts["priors"] = prior_summary
 
-    # Loss settings
     artifacts["loss"] = {
         "name": cfg["loss"]["name"],
         "mc_samples": getattr(loss_module, "mc_samples", None),
         "eps": getattr(loss_module, "eps", None),
     }
 
-    # Model parameter counts
     param_counts = {}
     for name, module in integrator.named_children():
         if isinstance(module, nn.ModuleDict):
@@ -727,10 +714,8 @@ def save_run_artifacts(
     param_counts["total"] = sum(p.numel() for p in integrator.parameters())
     artifacts["param_counts"] = param_counts
 
-    # Resolved absolute paths for every file the factory loaded,
     artifacts["resolved_paths"] = _collect_resolved_paths(cfg)
 
-    # Write summary YAML
     with open(artifacts_dir / "run_artifacts.yaml", "w") as f:
         yaml.safe_dump(artifacts, f, sort_keys=False, default_flow_style=False)
 

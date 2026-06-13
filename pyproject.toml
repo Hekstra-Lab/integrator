@@ -34,6 +34,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ['pytest','ruff','mypy','wandb>=0.17']
+# laue-DIALS is pip-installable on top of a conda-forge DIALS (see environment.yml). 
+# DIALS/dxtbx/cctbx themselves are conda-forge only.
+laue = ['laue-dials']
 
 [project.scripts]
 "integrator.train" = "integrator.cli.train:main"
@@ -47,8 +50,6 @@ Repository = "https://github.com/Hekstra-Lab/integrator"
 # Point hatchling at the package folder.
 [tool.hatch.build.targets.wheel]
 packages = ["src/integrator"]
-
-#include = []
 
 # Source distribution
 [tool.hatch.build.targets.sdist]
@@ -104,12 +105,15 @@ testpaths = ["tests"]
 torch = [
     { index = "pytorch-cu124" }
 ]
+# Upstream main carries the corrected .refl msgpack dtype table (includes
+# bool); the released PyPI/conda-forge build does not yet, so it fails to read
+# some columns from a DIALS .refl files.
+reciprocalspaceship = { git = "https://github.com/rs-station/reciprocalspaceship" }
 
 [[tool.uv.index]]
 name = "pytorch-cu124"
 url = "https://download.pytorch.org/whl/cu124"
 explicit = true
-
 
 [dependency-groups]
 docs = [

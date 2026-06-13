@@ -5,10 +5,9 @@ from rich.logging import RichHandler
 
 
 def setup_logging(verbosity: int = 0):
-    """
-    verbosity = 0 -> WARNING
-    verbosity = 1 -> INFO
-    verbosity >= 2 -> DEBUG
+    """Configure root logging from a verbosity level.
+
+    verbosity = 0 -> WARNING, 1 -> INFO, >= 2 -> DEBUG.
     """
     level = logging.WARNING
     if verbosity == 1:

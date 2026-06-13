@@ -90,7 +90,6 @@ def prepare_global_priors(
 ) -> None:
     """Generate global prior .pt files for the default Loss if needed.
 
-
     Args:
         cfg: Full YAML config dict.
         force: Regenerate even if file already exists.
@@ -107,7 +106,6 @@ def prepare_global_priors(
     params = pprf_cfg.get("params", {})
     conc_value = params.get("concentration")
     if not isinstance(conc_value, str):
-        # Scalar concentration, nothing to generate
         return
 
     data_dir = Path(cfg["data_loader"]["args"]["data_dir"])
@@ -135,7 +133,6 @@ def prepare_global_priors(
     concentration = _fit_dirichlet_per_group(
         counts, masks, all_one_bin, 1, D=D_dim, H=H_dim, W=W_dim
     )
-    # Squeeze from (1, D*H*W) to (D*H*W,)
     concentration = concentration.squeeze(0)
 
     torch.save(concentration, conc_path)
@@ -303,7 +300,6 @@ def prepare_per_bin_priors(
     data_dir = Path(cfg["data_loader"]["args"]["data_dir"])
     loss_args = cfg["loss"].get("args", {})
 
-    # Read n_bins from config, fall back to 20
     if n_bins <= 0:
         n_bins = int(loss_args.get("n_bins", 20))
 
@@ -457,7 +453,6 @@ def prepare_per_bin_priors(
     torch.save(group_labels, gl_path)
     logger.info("Saved %s (%d bins)", gl_path.name, n_bins)
 
-    # Generate each missing file
     if "s_squared_per_group" in needed:
         s_squared = _compute_s_squared_per_group(d, group_labels, n_bins)
         torch.save(s_squared, needed["s_squared_per_group"])
@@ -753,8 +748,8 @@ def _compute_crude_intensity(
     n_frames: int,
     n_pixels_per_frame: int,
 ) -> Tensor:
-    """
-    Get crude intensity estimate
+    """Crude per-reflection intensity via quietest-frame background subtraction.
+
     Args:
         counts: Raw shoebox counts, shape `(N, n_frames * n_pixels_per_frame)`.
         masks: Valid-pixel masks, same shape as *counts*.
@@ -771,17 +766,13 @@ def _compute_crude_intensity(
     counts_clean = counts.float().clamp(min=0)
     masks_f = masks.float()
 
-    # Reshape to (N, n_frames, n_pixels_per_frame)
     counts_3d = (counts_clean * masks_f).reshape(
         N, n_frames, n_pixels_per_frame
     )
     masks_3d = masks_f.reshape(N, n_frames, n_pixels_per_frame)
 
-    # Total masked counts per frame: (N, n_frames)
-    frame_counts = counts_3d.sum(dim=-1)
-
-    # Number of valid pixels per frame: (N, n_frames)
-    frame_n_pixels = masks_3d.sum(dim=-1)
+    frame_counts = counts_3d.sum(dim=-1)  # (N, n_frames)
+    frame_n_pixels = masks_3d.sum(dim=-1)  # (N, n_frames)
 
     # Quietest frame = frame with minimum total counts
     min_frame_idx = frame_counts.argmin(dim=-1)  # (N,)
@@ -792,10 +783,8 @@ def _compute_crude_intensity(
         1, min_frame_idx.unsqueeze(-1)
     ).squeeze(-1)
 
-    # Background rate per pixel from quietest frame
     bg_per_pixel = bg_frame_counts / bg_frame_n_pixels.clamp(min=1)
 
-    # Total counts and total valid pixels across all frames
     total_counts = counts_3d.sum(dim=(1, 2))
     total_n_pixels = masks_3d.sum(dim=(1, 2))
 
@@ -920,7 +909,6 @@ def _fit_dirichlet_per_group(
     masks_f = masks.float()
     counts_masked = counts_clean * masks_f
 
-    #  Crude background subtraction
     counts_3d = counts_masked.reshape(N, D, n_pixels_per_frame)
     masks_3d = masks_f.reshape(N, D, n_pixels_per_frame)
 
@@ -961,7 +949,6 @@ def _fit_dirichlet_per_group(
         totals = sel.sum(dim=1, keepdim=True).clamp(min=1)
         sel_norm = sel / totals  # (n_refl, n_pixels)
 
-        # Mean profile
         p_bar = sel_norm.mean(dim=0)  # (n_pixels,)
 
         # Estimate kappa (Dirichlet precision) via MOM
@@ -1240,7 +1227,6 @@ def _bg_subtract_signal(
     W: int,
 ) -> Tensor:
     """Background-subtract raw shoebox counts.
-
 
     Returns:
         Non-negative bg-subtracted counts, shape (N, D*H*W).

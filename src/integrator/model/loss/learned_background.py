@@ -69,7 +69,6 @@ class ChebyshevProfilePriorScale(nn.Module):
 class ChebyshevConcentration(nn.Module):
     """Learned intensity prior concentration α(s²) as a smooth function of
     resolution, parameterized via Chebyshev polynomials.
-
     """
 
     def __init__(

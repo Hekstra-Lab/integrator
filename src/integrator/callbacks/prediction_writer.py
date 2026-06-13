@@ -67,7 +67,6 @@ class EpochPredWriter(BasePredictionWriter):
                     merged_predictions[key] = []
                 merged_predictions[key].append(value)
 
-        # Save the merged predictions as a single .pt file
         preds_fname = self.output_dir / "preds.pt"
         torch.save(merged_predictions, preds_fname)
 

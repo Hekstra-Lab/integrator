@@ -291,7 +291,7 @@ def main():
 
     logger.info("Starting Training")
 
-    # Auto-generate prior files if needed by the loss
+    # Auto-generate prior distribution files if needed by the loss
     prior_events: list[dict] = []
     prepare_profile_basis(cfg, events_out=prior_events)
     prepare_per_bin_priors(cfg, events_out=prior_events)
@@ -306,19 +306,16 @@ def main():
                 f"Prior file {action}: {event['file']} — {event['reason']}"
             )
 
-    # Load data
     data_loader = construct_data_loader(cfg)
     data_loader.setup()
     inject_binning_labels(data_loader, cfg)
 
-    # Tags for identification
     tags = [
         cfg["integrator"]["name"],
         cfg["integrator"]["args"]["data_dim"],
         cfg["surrogates"]["qi"]["name"],
     ]
 
-    # Logger (W&B or CSV)
     save_dir = args.save_dir
     pl_logger = _make_logger(args, tags, save_dir)
     _log_git_info(pl_logger)
@@ -337,22 +334,19 @@ def main():
     logger.info(f"Logging directory: {logdir.as_posix()}")
     logger.info(f"Run directory: {run_dir}")
 
-    # Write a copy of the config
     config_copy = run_dir / "config_copy.yaml"
     cfg_json = deepcopy(cfg)
     with open(config_copy, "w") as f:
         yaml.safe_dump(cfg_json, f, sort_keys=False)
 
-    # Log hyperparameters
     if hasattr(pl_logger, "log_hyperparams"):
         pl_logger.log_hyperparams(cfg_json)
 
-    # Resolve every file the factory will load
     resolved_paths = _collect_resolved_paths(cfg)
 
-    # Run metadata
     metadata = {
         "config": config_copy.as_posix(),
+        "log_dir": logdir.as_posix(),
         "slurm": {
             "job_id": os.environ.get("SLURM_JOB_ID"),
         },
@@ -374,11 +368,9 @@ def main():
 
     assign_labels(dataset=data_loader, save_dir=logdir.as_posix())
 
-    # Create integrator
     integrator = construct_integrator(cfg)
     save_run_artifacts(integrator, cfg, logdir)
 
-    # Echo resolved file paths
     logger.info(f"data_dir: {resolved_paths.get('data_dir')}")
     logger.info(f"n_bins: {resolved_paths.get('n_bins')}")
     for section in ("data_loader", "surrogates", "loss"):
@@ -390,7 +382,6 @@ def main():
             status = "" if info.get("exists") else "  [MISSING]"
             logger.info(f"  {k} -> {info['path']}{status}")
 
-    # Callbacks
     keys = [
         "refl_ids",
         "qi_mean",
@@ -423,7 +414,6 @@ def main():
         out_dir=logdir / "loss_traces",
     )
 
-    # Early-stopping (optional)
     early_stop_cb = None
     es_cfg = cfg.get("early_stop")
     if es_cfg:
@@ -443,7 +433,6 @@ def main():
             float(es_cfg.get("min_delta", 0.0)),
         )
 
-    # Checkpoints
     ckpt_cfg = cfg.get("checkpoint", {}) or {}
     default_top_k = 1 if early_stop_cb else -1
     save_top_k = int(ckpt_cfg.get("save_top_k", default_top_k))
@@ -481,14 +470,12 @@ def main():
     if early_stop_cb is not None:
         callbacks.append(early_stop_cb)
 
-    # Trainer
     trainer = construct_trainer(
         cfg,
         callbacks=callbacks,
         logger=pl_logger,
     )
 
-    # Fit
     trainer.fit(
         integrator,
         train_dataloaders=data_loader.train_dataloader(),

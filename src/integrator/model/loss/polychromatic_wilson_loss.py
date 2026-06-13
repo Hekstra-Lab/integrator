@@ -19,7 +19,6 @@ class PolychromaticWilsonLoss(WilsonLoss):
         lambda_max: float = 1.25,
         spectrum_init_from: str | None = None,
         freeze_prior: bool = False,
-        # Physical corrections
         beam_center: list[float] | None = None,
         polarization: bool = False,
         polarization_fraction: float = 0.99,

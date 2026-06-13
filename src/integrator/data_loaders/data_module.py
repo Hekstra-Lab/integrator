@@ -161,29 +161,10 @@ def _remove_flagged_variance(
 
 
 class RotationDataModule(pl.LightningDataModule):
-    """
+    """LightningDataModule for rotation-geometry shoebox data.
 
     Attributes:
-        data_dir:
-        batch_size:
-        val_split:
-        test_split:
-        include_test:
-        subset_size:
-        single_sample_index:
-        num_workers:
-        cutoff:
-        min_valid_pixels:
-        full_dataset:
-
-        shoebox_file_names:
-        H:
-        W:
-        D:
-        standardized_counts:
-        get_dxyz:
-        anscombe: Boolean indicating whether to use Anscombe transformation
-        full_dataset:
+        anscombe: Whether to use the Anscombe transformation.
     """
 
     def __init__(
@@ -217,7 +198,7 @@ class RotationDataModule(pl.LightningDataModule):
         self.num_workers = num_workers
         self.cutoff = cutoff
         self.min_valid_pixels = min_valid_pixels
-        self.full_dataset = None  # Will store the full dataset
+        self.full_dataset = None
         if shoebox_file_names is None:
             shoebox_file_names = {
                 "counts": "counts.pt",
@@ -288,7 +269,6 @@ class RotationDataModule(pl.LightningDataModule):
             masks = masks[selection]
             reference = {k: v[selection] for k, v in reference.items()}
 
-        # Standardize counts
         if counts.dim() == 2:
             if self.transform == "anscombe":
                 anscombe_transformed = 2 * (counts.clamp(min=0) + 0.375).sqrt()
@@ -307,7 +287,6 @@ class RotationDataModule(pl.LightningDataModule):
             standardized_counts = (
                 (counts[..., -1] * masks) - stats[0]
             ) / stats[1].sqrt()
-            # Normalize first three channels of counts
             if counts.dim() >= 3 and counts.size(-1) >= 3:
                 counts[:, :, 0] = (
                     2 * (counts[:, :, 0] / (counts[:, :, 0].max() + 1e-8)) - 1
@@ -396,29 +375,10 @@ class RotationDataModule(pl.LightningDataModule):
 
 
 class SimulatedShoeboxLoader(pl.LightningDataModule):
-    """
+    """LightningDataModule for simulated shoebox data.
 
     Attributes:
-        data_dir:
-        batch_size:
-        val_split:
-        test_split:
-        include_test:
-        subset_size:
-        single_sample_index:
-        num_workers:
-        cutoff:
-        min_valid_pixels:
-        full_dataset:
-
-        shoebox_file_names:
-        H:
-        W:
-        D:
-        standardized_counts:
-        get_dxyz:
-        anscombe: Boolean indicating whether to use Anscombe transformation
-        full_dataset:
+        anscombe: Whether to use the Anscombe transformation.
     """
 
     def __init__(
@@ -452,7 +412,7 @@ class SimulatedShoeboxLoader(pl.LightningDataModule):
         self.num_workers = num_workers
         self.cutoff = cutoff
         self.min_valid_pixels = min_valid_pixels
-        self.full_dataset = None  # Will store the full dataset
+        self.full_dataset = None
         if shoebox_file_names is None:
             shoebox_file_names = {
                 "counts": "counts.pt",

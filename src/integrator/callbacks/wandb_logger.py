@@ -9,12 +9,11 @@ import numpy as np
 import pandas as pd
 import polars as pl
 import torch
-import wandb
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from pytorch_lightning.callbacks import Callback
 from torch import Tensor
 
-## The callbacks assume a W&B logger with logger.experiment.dir
+from .run_logger import get_run_logger
 
 
 def to_cpu(x) -> torch.Tensor:
@@ -50,27 +49,21 @@ def create_comparison_grid(
     pred_dict,
     cmap="cividis",
 ):
-    """
+    """Plot a 3-row grid (counts, profile, rate) per tracked shoebox.
 
     Args:
         n_profiles (int): number of shoeboxes to plot
         refl_ids (list): list of tracked shoebox ids
         pred_dict (dict): dictionary of tracked shoeboxes
-        cmap (str): string name of color map
+        cmap (str): name of the color map
 
-    Returns: a matplotlib figure
-
+    Returns:
+        A matplotlib figure.
     """
-    # if not refl_ids:
-    #     return None
-
-    # Create figure with proper subplot layout
     fig, axes = plt.subplots(3, n_profiles, figsize=(5 * n_profiles, 8))
 
-    # Plot each column
     for i, refl_id in enumerate(refl_ids):
         id_str = str(refl_id)
-        # Get data for this column
         counts_data = pred_dict[id_str]["counts"]
         profile_data = pred_dict[id_str]["profile"]
         rates_data = pred_dict[id_str]["rates"]
@@ -78,7 +71,6 @@ def create_comparison_grid(
         vmin_13 = min(counts_data.min().item(), rates_data.min().item())
         vmax_13 = max(counts_data.max().item(), rates_data.max().item())
 
-        # Row 1: Input counts
         im0 = axes[0, i].imshow(
             counts_data, cmap=cmap, vmin=vmin_13, vmax=vmax_13
         )
@@ -90,7 +82,6 @@ def create_comparison_grid(
         )
         axes[0, i].set_ylabel("raw image", labelpad=5)
 
-        # Turn off axes but keep the labels
         axes[0, i].tick_params(
             left=False,
             bottom=False,
@@ -98,7 +89,6 @@ def create_comparison_grid(
             labelbottom=False,
         )
 
-        # row 2: predicted profile
         im1 = axes[1, i].imshow(profile_data.detach(), cmap=cmap)
         axes[1, i].set_title(
             f"xyzcal.px.0: {pred_dict[id_str]['xyzcal.px.0']:.2f}\n"
@@ -138,8 +128,7 @@ def create_comparison_grid(
             labelbottom=False,
         )
 
-        # Add colorbars
-        # First row colorbar (same as third row)
+        # First row colorbar (same scale as third row)
         divider0 = make_axes_locatable(axes[0, i])
         cax0 = divider0.append_axes("right", size="5%", pad=0.05)
         cbar0 = plt.colorbar(im0, cax=cax0)
@@ -248,142 +237,6 @@ def _get_agg_df(bin_labels):
     )
 
 
-# class LogFano(Callback):
-#     def __init__(self):
-#         super().__init__()
-#
-#         edges = [0, 10, 25, 50, 100, 300, 600, 1000, 1500, 2500, 5000, 10000]
-# bin_edges = zip(edges[:-1], edges[1:], strict=False)
-#
-# bin_labels = []
-# for a, b in bin_edges:
-#     bin_labels.append(f"{a} - {b}")
-#
-#         # add end conditions
-# bin_labels.insert(0, f"<{bin_labels[0].split()[0]}")
-# bin_labels.append(f">{bin_labels[-1].split()[1]}")
-
-# self.bin_edges = edges
-# self.bin_labels = bin_labels
-#
-#         # dataframe to merge and get all intensity bins
-#         self.base_df = pl.DataFrame(
-#             {"intensity_bin": bin_labels},
-#             schema={"intensity_bin": pl.Categorical},
-#         )
-#
-#         # columns to aggregate
-#         self.numeric_cols = ["fano_sum", "n", "isigi_sum", "cv_sum"]
-#
-#         # initialize an empty dataframe to aggregate data across steps
-#         self.agg_df = _get_agg_df(self.bin_labels)
-#
-#     def on_train_batch_end(
-#         self,
-#         trainer: Trainer,
-#         pl_module,
-#         outputs,
-#         batch,
-#         batch_idx,
-#     ):
-#         # do nothing if outputs is None
-#         if outputs is None:
-#             return
-#
-#         if not isinstance(outputs, Mapping):
-#             raise TypeError("Outputs should be a dictionary type")
-#
-#         if "forward_out" not in outputs:
-#             raise KeyError(
-#                 "outputs dictionary should contain a 'forward_out' key"
-#             )
-#
-#         out = outputs["forward_out"]
-#         fano = to_cpu(_fano(out, "qi_mean", "qi_var"))
-#         cv = to_cpu(_cv(out, "qi_mean", "qi_var"))
-#
-#         # aggregate
-#         df = pl.DataFrame(
-#             {
-#                 "refl_ids": to_cpu(out["refl_ids"]),
-#                 "qi_mean": to_cpu(out["qi_mean"]),
-#                 "qi_var": to_cpu(out["qi_var"]),
-#                 "fano": fano,
-#                 "cv": cv,
-#             }
-#         )
-#
-#         # bin by intensity
-#         df = df.with_columns(
-#             pl.col("qi_mean")
-#             .cut(self.bin_edges, labels=self.bin_labels)
-#             .alias("intensity_bin")
-#         )
-#
-#         # signal-to-noise expression
-#         isigi = pl.col("qi_mean") / pl.col("qi_var").sqrt()
-#
-#         # group by intensity bin and get mean
-#         avg_df = df.group_by(pl.col("intensity_bin")).agg(
-#             fano_sum=pl.col("fano").sum(),
-#             cv_sum=pl.col("cv").sum(),
-#             isigi_sum=isigi.sum(),
-#             n=pl.len(),
-#         )
-#
-#         merged_df = self.base_df.join(
-#             avg_df,
-#             how="left",
-#             on="intensity_bin",
-#         ).fill_null(0)
-#
-#         self.agg_df = self.agg_df.with_columns(
-#             [pl.col(c) + merged_df[c] for c in self.numeric_cols]
-#         )
-#
-#     def on_train_epoch_end(
-#         self,
-#         trainer: Trainer,
-#         pl_module,
-#     ):
-#         # get avg variance/mean ratio per intensity bin
-#         epoch_df = self.agg_df.with_columns(
-#             (pl.col("fano_sum") / pl.col("n")).alias("avg_fano"),
-#             (pl.col("isigi_sum") / pl.col("n")).alias("avg_isigi"),
-#             (pl.col("cv_sum") / pl.col("n")).alias("avg_cv"),
-#         )
-#
-#         # plot average Fano factor
-#         fig = _plot_avg_fano(epoch_df)
-#         wandb.log({"train: avg var/mean": wandb.Image(fig)})
-#         plt.close(fig)
-#
-#         # plot average Coefficient of variation
-#         fig = _plot_avg_cv(epoch_df)
-#         wandb.log({"train: avg CV": wandb.Image(fig)})
-#         plt.close(fig)
-#
-#         # plot average signal-to-noise
-#         fig = _plot_avg_isigi(epoch_df)
-#         wandb.log({"train: avg signal-to-noise": wandb.Image(fig)})
-#         plt.close(fig)
-#
-#         # Getting log direcotory
-#         logger = trainer.logger
-#         if isinstance(logger, WandbLogger):
-#             log_dir = logger.experiment.dir
-#         else:
-#             log_dir = trainer.default_root_dir
-#
-#         csv_fname = (
-#             log_dir + f"/log_fano_csv_epoch_{trainer.current_epoch}.csv"
-#         )
-#         epoch_df.write_csv(csv_fname)
-#
-#         # reset agg_df
-#         self.agg_df = _get_agg_df(self.bin_labels)
-
-
 class LogFano(Callback):
     def __init__(self):
         super().__init__()
@@ -391,7 +244,6 @@ class LogFano(Callback):
         edges = [0, 10, 25, 50, 100, 300, 600, 1000, 1500, 2500, 5000, 10000]
         self.bin_edges = torch.tensor(edges)
 
-        # buffers (GPU tensors)
         self.qi_mean = []
         self.qi_var = []
 
@@ -415,11 +267,10 @@ class LogFano(Callback):
         if not self.qi_mean:
             return
 
-        # concatenate once
         qi = torch.cat(self.qi_mean).cpu()
         qv = torch.cat(self.qi_var).cpu()
 
-        # clear buffers early
+        # clear buffers early to release memory
         self.qi_mean.clear()
         self.qi_var.clear()
 
@@ -427,12 +278,10 @@ class LogFano(Callback):
         isigi = qi / (qv.sqrt() + 1e-8)
         cv = qv.sqrt() / (qi + 1e-8)
 
-        # bin indices
         bin_idx = torch.bucketize(qi, self.bin_edges)
 
         n_bins = len(self.bin_edges) + 1
 
-        # aggregate
         fano_sum = torch.zeros(n_bins)
         cv_sum = torch.zeros(n_bins)
         isigi_sum = torch.zeros(n_bins)
@@ -456,7 +305,8 @@ class LogFano(Callback):
         avg_cv[valid] = cv_sum[valid] / counts[valid]
         avg_isigi[valid] = isigi_sum[valid] / counts[valid]
 
-        wandb.log(
+        rl = get_run_logger(self, trainer)
+        rl.log_scalars(
             {
                 "train/avg_fano": avg_fano[valid].mean().item(),
                 "train/avg_cv": avg_cv[valid].mean().item(),
@@ -464,7 +314,6 @@ class LogFano(Callback):
             }
         )
 
-        # optional: plot once per epoch
         fig = _plot_avg_fano(
             pl.DataFrame(
                 {
@@ -473,8 +322,7 @@ class LogFano(Callback):
                 }
             )
         )
-        wandb.log({"train/fano_vs_bin": wandb.Image(fig)})
-        plt.close(fig)
+        rl.log_figure("train/fano_vs_bin", fig, step=trainer.current_epoch)
 
 
 class PlotterLD(Callback):
@@ -523,7 +371,7 @@ class PlotterLD(Callback):
             profile_images = preds["profile"].reshape(-1, self.h, self.w)
             rate_images = preds["rates"].mean(1).reshape(-1, self.h, self.w)
         else:
-            # 3D shoebox
+            # 3D shoebox: take the central slice along d
             count_images = preds["counts"].reshape(-1, self.d, self.h, self.w)[
                 :, self.d // 2
             ]
@@ -565,10 +413,7 @@ class PlotterLD(Callback):
         self, trainer, pl_module, outputs, batch, batch_idx
     ):
         with torch.no_grad():
-            # get forward outputs
             forward_out = outputs["forward_out"]
-
-            # additional metrics to log
 
             if self.current_epoch % self.plot_every_n_epochs == 0:
                 self.tracked_ids_train, self.tracked_shoeboxes_train = (
@@ -579,7 +424,7 @@ class PlotterLD(Callback):
                     )
                 )
 
-            # Create CPU tensor versions to avoid keeping GPU memory
+            # move to CPU to avoid holding GPU memory across the epoch
             self.preds_train = {}
             for key in [
                 "qi_mean",
@@ -605,7 +450,6 @@ class PlotterLD(Callback):
     def on_train_epoch_end(self, trainer, pl_module):
         if self.preds_train:
             try:
-                # Create data for scatter plots
                 data = []
 
                 i_flat = self.preds_train["qi_mean"].flatten() + 1e-8
@@ -627,7 +471,6 @@ class PlotterLD(Callback):
                 y_c_flat = self.preds_train["y_c"].flatten()
                 z_c_flat = self.preds_train["z_c"].flatten()
 
-                # Create data points with safe log transform
                 for i in range(len(i_flat)):
                     try:
                         data.append(
@@ -662,10 +505,8 @@ class PlotterLD(Callback):
                     ],
                 )
 
-                # Create table
-                table = wandb.Table(dataframe=df)
+                rl = get_run_logger(self, trainer)
 
-                # Calculate correlation coefficients
                 corr_I = (
                     torch.corrcoef(torch.vstack([i_flat, dials_flat]))[0, 1]
                     if len(i_flat) > 1
@@ -680,14 +521,22 @@ class PlotterLD(Callback):
                     else 0
                 )
 
-                # Create log dictionary
+                rl.log_scatter(
+                    "Train: qi vs DIALS I prf",
+                    df,
+                    "mean(qI)",
+                    "DIALS intensity.prf.value",
+                    step=self.current_epoch,
+                )
+                rl.log_scatter(
+                    "Train: Bg vs DIALS bg",
+                    df,
+                    "mean(qbg)",
+                    "DIALS background.mean",
+                    step=self.current_epoch,
+                )
+
                 log_dict = {
-                    "Train: qi vs DIALS I prf": wandb.plot.scatter(
-                        table, "mean(qI)", "DIALS intensity.prf.value"
-                    ),
-                    "Train: Bg vs DIALS bg": wandb.plot.scatter(
-                        table, "mean(qbg)", "DIALS background.mean"
-                    ),
                     "Correlation Coefficient: qi": corr_I,
                     "Correlation Coefficient: bg": corr_bg,
                     "Max mean(I)": torch.max(i_flat),
@@ -707,7 +556,8 @@ class PlotterLD(Callback):
                     self.preds_train["qbg_mean"]
                 )
 
-                # plot every n user-specified epochs
+                rl.log_scalars(log_dict, step=self.current_epoch)
+
                 if self.current_epoch % self.plot_every_n_epochs == 0:
                     comparison_fig = create_comparison_grid(
                         n_profiles=self.n_profiles,
@@ -716,19 +566,18 @@ class PlotterLD(Callback):
                     )
 
                     if comparison_fig is not None:
-                        log_dict["Tracked Profiles"] = wandb.Image(
-                            comparison_fig
+                        rl.log_figure(
+                            "Tracked Profiles",
+                            comparison_fig,
+                            step=self.current_epoch,
                         )
-                        plt.close(comparison_fig)
-
-                # Log metrics
-                wandb.log(log_dict)
 
                 fig = plot_symlog_qi_vs_dials(
                     to_cpu(i_flat).numpy(), dials_flat.cpu().numpy()
                 )
-                wandb.log({"train: qi_vs_dials_symlog": wandb.Image(fig)})
-                plt.close(fig)
+                rl.log_figure(
+                    "train: qi_vs_dials_symlog", fig, step=self.current_epoch
+                )
 
             except Exception as e:
                 print("Caught exception in on_train_epoch_end!")
@@ -738,17 +587,14 @@ class PlotterLD(Callback):
 
             self.preds_train = {}
 
-        # Increment epoch counter
         self.current_epoch += 1
 
     def on_validation_batch_end(
         self, trainer, pl_module, outputs, batch, batch_idx
     ):
         with torch.no_grad():
-            # get forward outputs
             forward_out = outputs["forward_out"]
 
-            # updated tracked shoeboxes
             self.tracked_ids_val, self.tracked_shoeboxes_val = (
                 self.update_tracked_shoeboxes(
                     forward_out,
@@ -805,7 +651,6 @@ class PlotterLD(Callback):
                 y_c_flat = self.preds_validation["y_c"].flatten()
                 z_c_flat = self.preds_validation["z_c"].flatten()
 
-                # Create data points with safe log transform
                 for i in range(len(i_flat)):
                     try:
                         data.append(
@@ -840,10 +685,8 @@ class PlotterLD(Callback):
                     ],
                 )
 
-                # Create table
-                table = wandb.Table(dataframe=df)
+                rl = get_run_logger(self, trainer)
 
-                # Calculate correlation coefficients
                 corr_I = (
                     torch.corrcoef(torch.vstack([i_flat, dials_flat]))[0, 1]
                     if len(i_flat) > 1
@@ -858,16 +701,22 @@ class PlotterLD(Callback):
                     else 0
                 )
 
-                # Create log dictionary
+                rl.log_scatter(
+                    "Validation: qi vs DIALS I prf",
+                    df,
+                    "validation: mean(qI)",
+                    "DIALS intensity.prf.value",
+                    step=self.current_epoch,
+                )
+                rl.log_scatter(
+                    "Validation: Bg vs DIALS bg",
+                    df,
+                    "validation: mean(qbg)",
+                    "DIALS background.mean",
+                    step=self.current_epoch,
+                )
+
                 log_dict = {
-                    "Validation: qi vs DIALS I prf": wandb.plot.scatter(
-                        table,
-                        "validation: mean(qI)",
-                        "DIALS intensity.prf.value",
-                    ),
-                    "Validation: Bg vs DIALS bg": wandb.plot.scatter(
-                        table, "validation: mean(qbg)", "DIALS background.mean"
-                    ),
                     "validation: Correlation Coefficient qi": corr_I,
                     "validation: Correlation Coefficient bg": corr_bg,
                     "validation: Max mean(I)": torch.max(i_flat),
@@ -886,26 +735,28 @@ class PlotterLD(Callback):
                     ),
                 }
 
-                # plot input shoebox and predicted profile
+                rl.log_scalars(log_dict, step=self.current_epoch)
+
                 comparison_fig = create_comparison_grid(
                     n_profiles=self.n_profiles,
                     refl_ids=self.tracked_ids_val,
                     pred_dict=self.tracked_shoeboxes_val,
                 )
 
-                log_dict["validation: Tracked Profiles"] = wandb.Image(
-                    comparison_fig
+                rl.log_figure(
+                    "validation: Tracked Profiles",
+                    comparison_fig,
+                    step=self.current_epoch,
                 )
-                plt.close(comparison_fig)
 
                 fig = plot_symlog_qi_vs_dials(
                     i_flat.cpu().numpy(), dials_flat.cpu().numpy()
                 )
-                wandb.log({"validation: qi_vs_dials_symlog": wandb.Image(fig)})
-                plt.close(fig)
-
-                # Log metrics
-                wandb.log(log_dict)
+                rl.log_figure(
+                    "validation: qi_vs_dials_symlog",
+                    fig,
+                    step=self.current_epoch,
+                )
 
             except Exception as e:
                 print("Caught exception in on_val_epoch_end")
@@ -937,8 +788,6 @@ class LossTraceRecorder(Callback):
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.use_parquet = use_parquet
         self._rows: list[dict[str, float]] = []
-
-    # -- batch hooks --------------------------------------------------------
 
     def on_train_batch_end(
         self, trainer, pl_module, outputs, batch, batch_idx
@@ -980,15 +829,11 @@ class LossTraceRecorder(Callback):
         row["split"] = "val"
         self._rows.append(row)
 
-    # -- epoch hooks --------------------------------------------------------
-
     def on_train_epoch_end(self, trainer, pl_module):
         self._flush(trainer, split="train")
 
     def on_validation_epoch_end(self, trainer, pl_module):
         self._flush(trainer, split="val")
-
-    # -- internals ----------------------------------------------------------
 
     def _flush(self, trainer, split: str):
         if not self._rows:
@@ -1192,7 +1037,6 @@ class Plotter(Callback):
     def on_train_batch_end(
         self, trainer, pl_module, outputs, batch, batch_idx
     ):
-        # do nothing if outputs is None
         if outputs is None:
             return
 
@@ -1205,10 +1049,8 @@ class Plotter(Callback):
             )
 
         with torch.no_grad():
-            # get forward outputs
             forward_out = outputs["forward_out"]
 
-            # Plot every n epochs
             if self.current_epoch % self.plot_every_n_epochs == 0:
                 self.tracked_ids_train, self.tracked_shoeboxes_train = (
                     self.update_tracked_shoeboxes(
@@ -1218,31 +1060,12 @@ class Plotter(Callback):
                     )
                 )
 
-            # Create CPU tensor versions to avoid keeping GPU memory
+            # move to CPU to avoid holding GPU memory across the epoch
             self.preds_train = {k: to_cpu(v) for k, v in forward_out.items()}
-
-            #
-            # for key in [
-            #     "qi_mean",
-            #     "qi_var",
-            #     "intensity.prf.value",
-            #     "intensity.prf.variance",
-            #     "profile",
-            #     "qbg_mean",
-            #     "xyzcal.px.0",
-            #     "xyzcal.px.1",
-            #     "xyzcal.px.2",
-            #     "background.mean",
-            #     "dials_bg_sum_value",
-            #     "d",
-            # ]:
-            #     if key in forward_out:
-            #         self.preds_train[key] = to_cpu(forward_out[key])
 
     def on_train_epoch_end(self, trainer, pl_module):
         if self.preds_train:
             try:
-                # Create data for scatter plots
                 data = []
 
                 i_flat = self.preds_train["qi_mean"].flatten() + self.eps
@@ -1268,7 +1091,6 @@ class Plotter(Callback):
                 d_flat = 1 / self.preds_train["d"].flatten().pow(2)
                 d_ = self.preds_train["d"]
 
-                # Create data points with safe log transform
                 for i in range(len(i_flat)):
                     try:
                         data.append(
@@ -1307,10 +1129,8 @@ class Plotter(Callback):
                     ],
                 )
 
-                # Create table
-                table = wandb.Table(dataframe=df)
+                rl = get_run_logger(self, trainer)
 
-                # Calculate correlation coefficients
                 corr_I = (
                     torch.corrcoef(torch.vstack([i_flat, dials_flat]))[0, 1]
                     if len(i_flat) > 1
@@ -1347,14 +1167,22 @@ class Plotter(Callback):
                     else 0
                 )
 
-                # Create log dictionary
+                rl.log_scatter(
+                    "Train: qi vs DIALS I prf",
+                    df,
+                    "mean(qI)",
+                    "DIALS intensity.prf.value",
+                    step=self.current_epoch,
+                )
+                rl.log_scatter(
+                    "Train: Bg vs DIALS bg",
+                    df,
+                    "mean(qbg)",
+                    "DIALS background.mean",
+                    step=self.current_epoch,
+                )
+
                 log_dict = {
-                    "Train: qi vs DIALS I prf": wandb.plot.scatter(
-                        table, "mean(qI)", "DIALS intensity.prf.value"
-                    ),
-                    "Train: Bg vs DIALS bg": wandb.plot.scatter(
-                        table, "mean(qbg)", "DIALS background.mean"
-                    ),
                     "Train correlation coefficient: qi": corr_I,
                     "Train correlation coefficient: bg": corr_bg,
                     "Train max mean(I)": torch.max(i_flat),
@@ -1374,7 +1202,8 @@ class Plotter(Callback):
                     self.preds_train["qbg_mean"]
                 )
 
-                # plot every n user-specified epochs
+                rl.log_scalars(log_dict, step=self.current_epoch)
+
                 if self.current_epoch % self.plot_every_n_epochs == 0:
                     comparison_fig = create_comparison_grid(
                         n_profiles=self.n_profiles,
@@ -1383,13 +1212,11 @@ class Plotter(Callback):
                     )
 
                     if comparison_fig is not None:
-                        log_dict["Tracked Profiles"] = wandb.Image(
-                            comparison_fig
+                        rl.log_figure(
+                            "Tracked Profiles",
+                            comparison_fig,
+                            step=self.current_epoch,
                         )
-                        plt.close(comparison_fig)
-
-                # Log metrics
-                wandb.log(log_dict)
 
             except Exception as e:
                 print("Caught exception in on_train_epoch_end!")
@@ -1410,10 +1237,8 @@ class Plotter(Callback):
         batch_idx,
     ):
         with torch.no_grad():
-            # get forward outputs
             forward_out = outputs["forward_out"]
 
-            # updated tracked shoeboxes
             self.tracked_ids_val, self.tracked_shoeboxes_val = (
                 self.update_tracked_shoeboxes(
                     forward_out,
@@ -1488,7 +1313,6 @@ class Plotter(Callback):
                 d_flat = 1 / self.preds_validation["d"].flatten().pow(2)
                 d_ = self.preds_validation["d"]
 
-                # Create data points with safe log transform
                 for i in range(len(i_flat)):
                     try:
                         data.append(
@@ -1527,10 +1351,8 @@ class Plotter(Callback):
                     ],
                 )
 
-                # Create table
-                table = wandb.Table(dataframe=df)
+                rl = get_run_logger(self, trainer)
 
-                # Calculate correlation coefficients
                 corr_I = (
                     torch.corrcoef(torch.vstack([i_flat, dials_flat]))[0, 1]
                     if len(i_flat) > 1
@@ -1567,16 +1389,22 @@ class Plotter(Callback):
                     else 0
                 )
 
-                # Create log dictionary
+                rl.log_scatter(
+                    "validation: qi vs DIALS I prf",
+                    df,
+                    "validation: mean(qI)",
+                    "DIALS intensity.prf.value",
+                    step=self.current_epoch,
+                )
+                rl.log_scatter(
+                    "validation: Bg vs DIALS bg",
+                    df,
+                    "validation: mean(qbg)",
+                    "DIALS background.mean",
+                    step=self.current_epoch,
+                )
+
                 log_dict = {
-                    "validation: qi vs DIALS I prf": wandb.plot.scatter(
-                        table,
-                        "validation: mean(qI)",
-                        "DIALS intensity.prf.value",
-                    ),
-                    "validation: Bg vs DIALS bg": wandb.plot.scatter(
-                        table, "validation: mean(qbg)", "DIALS background.mean"
-                    ),
                     "validation: Correlation Coefficient qi": corr_I,
                     "validation: Correlation Coefficient bg": corr_bg,
                     "validation: Max mean(I)": torch.max(i_flat),
@@ -1595,20 +1423,19 @@ class Plotter(Callback):
                     ),
                 }
 
-                # plot input shoebox and predicted profile
+                rl.log_scalars(log_dict, step=self.current_epoch)
+
                 comparison_fig = create_comparison_grid(
                     n_profiles=self.n_profiles,
                     refl_ids=self.tracked_ids_val,
                     pred_dict=self.tracked_shoeboxes_val,
                 )
 
-                log_dict["validation: Tracked Profiles"] = wandb.Image(
-                    comparison_fig
+                rl.log_figure(
+                    "validation: Tracked Profiles",
+                    comparison_fig,
+                    step=self.current_epoch,
                 )
-                plt.close(comparison_fig)
-
-                # Log metrics
-                wandb.log(log_dict)
 
             except Exception as e:
                 print("Caught exception in on_val_epoch_end")

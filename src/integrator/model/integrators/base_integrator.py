@@ -76,7 +76,6 @@ class BaseIntegrator(pl.LightningModule):
         super().__init__()
         self.cfg = cfg
 
-        # hyperparams
         self.lr = cfg.lr
         self.weight_decay = cfg.weight_decay
         self.decoder_weight_decay = cfg.decoder_weight_decay
@@ -92,7 +91,6 @@ class BaseIntegrator(pl.LightningModule):
         else:
             self.shoebox_shape = (cfg.d, cfg.h, cfg.w)
 
-        # predict step keys
         self.predict_keys = (
             DEFAULT_PREDICT_KEYS
             if cfg.predict_keys == "default"
@@ -157,7 +155,6 @@ class BaseIntegrator(pl.LightningModule):
             },
         )
 
-        # penalties on profile basis
         penalty, penalty_components = self._profile_basis_penalty()
         for name, value in penalty_components.items():
             self.log(

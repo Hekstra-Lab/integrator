@@ -1,0 +1,37 @@
+# CPU runtime environment for the integrator project (non-CUDA).
+
+# DIALS, laue-DIALS, and PyTorch coexist in one env. DIALS and PyTorch both
+# come from conda-forge so the env has a single llvm-openmp runtime; a pip
+# torch wheel bundles its own libomp, which crashes when conda DIALS loads one.
+
+# Instructions:
+#   micromamba env create -f environment.yml     # or: conda env create -f environment.yml
+#   micromamba activate integrator
+
+name: integrator
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - dials=3.26
+  # PyTorch stack from conda-forge (CPU build).
+  - pytorch=2.9
+  - torchvision=0.24
+  - pytorch-lightning>=2.2
+  # additional dependencies
+  - numpy>=2.3
+  - scipy>=1.11
+  - pandas>=2.3
+  - h5py>=3.15
+  - matplotlib-base>=3.5
+  - polars>=1.6
+  - pyarrow>=22
+  - rich>=14
+  - pip
+  - pip:
+      - laue-dials
+      - "reciprocalspaceship @ git+https://github.com/rs-station/reciprocalspaceship"
+      - rs_distributions>=0.0.3
+      # The integrator package (editable).
+      - "-e ."

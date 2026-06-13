@@ -61,7 +61,6 @@ class ProfileSurrogateOutput:
     scale: Tensor
 
 
-# %%
 class FixedBasisProfileSurrogate(nn.Module):
     """Profile surrogate with a fixed basis (Hermite basis).
 
@@ -114,7 +113,6 @@ class FixedBasisProfileSurrogate(nn.Module):
         )
 
 
-# %%
 class LearnedBasisProfileSurrogate(nn.Module):
     """Profile surrogate with a learned linear decoder.
 

@@ -46,7 +46,6 @@ def _apply_cli_overrides(
     def _loss_args(k, v):
         updates.setdefault("loss", {}).setdefault("args", {})[k] = v
 
-    # Training
     if getattr(args, "max_epochs", None) is not None:
         _trainer("max_epochs", args.max_epochs)
     if getattr(args, "gradient_clip_val", None) is not None:
@@ -60,7 +59,6 @@ def _apply_cli_overrides(
     if getattr(args, "check_val_every_n_epoch", None) is not None:
         _trainer("check_val_every_n_epoch", args.check_val_every_n_epoch)
 
-    # Data loader
     if getattr(args, "batch_size", None) is not None:
         _dl_args("batch_size", args.batch_size)
     if getattr(args, "data_path", None) is not None:
@@ -72,7 +70,6 @@ def _apply_cli_overrides(
     if getattr(args, "subset_size", None) is not None:
         _dl_args("subset_size", args.subset_size)
 
-    # Integrator
     if getattr(args, "integrator_name", None) is not None:
         updates.setdefault("integrator", {})["name"] = args.integrator_name
     if getattr(args, "lr", None) is not None:
@@ -82,7 +79,6 @@ def _apply_cli_overrides(
     if getattr(args, "mc_samples", None) is not None:
         _integrator_args("mc_samples", args.mc_samples)
 
-    # Surrogates
     if getattr(args, "qi", None) is not None:
         updates.setdefault("surrogates", {}).setdefault("qi", {})["name"] = (
             args.qi
@@ -92,7 +88,6 @@ def _apply_cli_overrides(
             args.qbg
         )
 
-    # Loss weights
     if getattr(args, "pprf_weight", None) is not None:
         _loss_args("pprf_weight", args.pprf_weight)
     if getattr(args, "pbg_weight", None) is not None:
@@ -173,10 +168,8 @@ def write_refl_from_preds(
         lattice_mask = ~is_coset
         data = {k: v[lattice_mask] for k, v in data.items()}
 
-    # filename of output .refl file
     fname = ckpt_dir / f"preds_epoch_{epoch:04d}.refl"
 
-    # Read .refl file with rs
     ds = rs.io.read_dials_stills(refl_file, extra_cols=DEFAULT_REFL_COLS)
 
     id_filter = ds["refl_ids"].isin(data["refl_ids"])
@@ -186,14 +179,12 @@ def write_refl_from_preds(
     ds_filtered = ds_filtered.sort_values("refl_ids").reset_index(drop=True)
     pred_df = pred_df.sort_values("refl_ids").reset_index(drop=True)
 
-    # Overwriting columns
     ds_filtered["intensity.prf.value"] = pred_df["qi_mean"]
     ds_filtered["intensity.prf.variance"] = pred_df["qi_var"]
     ds_filtered["intensity.sum.value"] = pred_df["qi_mean"]
     ds_filtered["intensity.sum.variance"] = pred_df["qi_var"]
     ds_filtered["background.mean"] = pred_df["qbg_mean"]
 
-    # Getting identifiers
     identifiers_path = (
         Path(config["data_loader"]["args"]["data_dir"]) / "identifiers.yaml"
     )
