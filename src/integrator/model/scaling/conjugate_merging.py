@@ -1016,7 +1016,7 @@ class ConjugateMergingIntegrator(BaseIntegrator):
             )
 
         if step == "train":
-            self._collect_scatters(outputs, metadata, mask)
+            self._collect_scatters(outputs, metadata, mask, counts)
 
         return {
             "loss": total_loss,

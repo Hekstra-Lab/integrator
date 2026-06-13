@@ -286,7 +286,7 @@ class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
         total_loss = total_loss + penalty
 
         if step == "train":
-            self._collect_scatters(outputs, metadata, mask)
+            self._collect_scatters(outputs, metadata, mask, counts)
 
         return {
             "loss": total_loss,

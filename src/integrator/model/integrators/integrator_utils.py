@@ -151,34 +151,59 @@ class ScatterLoggerMixin:
         )
 
     def _collect_background_scatter(
-        self, outputs: dict, metadata: dict, mask: Tensor, max_per_batch: int = 64
+        self,
+        outputs: dict,
+        metadata: dict,
+        mask: Tensor,
+        counts: Tensor,
+        max_per_batch: int = 64,
     ) -> None:
-        """Stash (model total background, DIALS background.sum.value).
+        """Stash (model per-pixel bg, data per-pixel bg) -- a per-pixel comparison.
 
-        The model background is the per-pixel rate `qbg.mean` times the number of
-        valid pixels, to match the DIALS integrated `background.sum.value`.
+        The model `qbg.mean` is a per-pixel background rate, so the reference is a
+        per-pixel background from the data: the robust per-shoebox median of the
+        masked counts (the small Bragg peak does not move the median in a mostly-
+        background box) -- the same estimator `prepare_bg_prior` uses. DIALS
+        `background.sum.value` is NOT used: it is the background integrated over
+        only the foreground/peak pixels, so it is region-mismatched to the model's
+        whole-box per-pixel rate (and the foreground pixel count is not available).
         """
-        if "background.sum.value" not in metadata or "qbg" not in outputs:
+        if "qbg" not in outputs or counts is None:
             return
-        bg = outputs["qbg"].mean
-        npix = mask.reshape(mask.shape[0], -1).float().sum(-1).to(bg.device)
+        bg = outputs["qbg"].mean.reshape(-1)
+        cm = counts.reshape(counts.shape[0], -1).clamp(min=0).float()
+        mk = mask.reshape(mask.shape[0], -1).float().to(cm.device)
+        valid = mk > 0
+        filled = torch.where(valid, cm, torch.full_like(cm, float("inf")))
+        n_valid = valid.sum(-1).clamp(min=1).long()
+        sorted_c, _ = filled.sort(dim=-1)
+        med_idx = ((n_valid - 1) // 2).unsqueeze(1)
+        data_bg = sorted_c.gather(1, med_idx).squeeze(1)
         self._stash_scatter(
             "background",
-            bg * npix,
-            metadata["background.sum.value"],
-            "DIALS background.sum.value",
-            "model  bg total",
+            bg,
+            data_bg,
+            "data bg/pixel (shoebox median)",
+            "model bg/pixel (qbg.mean)",
             max_per_batch,
         )
 
     def _collect_scatters(
-        self, outputs: dict, metadata: dict, mask: Tensor | None = None
+        self,
+        outputs: dict,
+        metadata: dict,
+        mask: Tensor | None = None,
+        counts: Tensor | None = None,
     ) -> None:
         """Collect every enabled+available scatter. Call in the train `_step`."""
         if getattr(self, "log_intensity_scatter", False):
             self._collect_intensity_scatter(outputs, metadata)
-        if getattr(self, "log_background_scatter", False) and mask is not None:
-            self._collect_background_scatter(outputs, metadata, mask)
+        if (
+            getattr(self, "log_background_scatter", False)
+            and mask is not None
+            and counts is not None
+        ):
+            self._collect_background_scatter(outputs, metadata, mask, counts)
 
     def on_train_epoch_end(self) -> None:
         super().on_train_epoch_end()
