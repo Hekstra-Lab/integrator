@@ -1,0 +1,42 @@
+# CUDA (GPU) development environment for the integrator project.
+
+# environment-cuda.yml (GPU PyTorch) plus dev extras. 
+# Use for developing/debugging on a  Linux GPU machine. 
+
+# Instructions:
+#   micromamba env create -f environment-cuda-dev.yml
+#   micromamba activate integrator-cuda-dev
+#
+# To pin a specific CUDA toolkit (match the cluster driver), add e.g.
+#   - cuda-version=12.4
+# under dependencies. The pytorch-gpu metapackage selects the GPU build.
+
+name: integrator-cuda-dev
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - dials=3.26
+  # GPU PyTorch from conda-forge.
+  - pytorch-gpu=2.9
+  - torchvision=0.24
+  - pytorch-lightning>=2.2
+  # additional dependencies
+  - numpy>=2.3
+  - scipy>=1.11
+  - pandas>=2.3
+  - h5py>=3.15
+  - matplotlib-base>=3.5
+  - polars>=1.6
+  - rich>=14
+  - pip
+  - pip:
+      - laue-dials
+      - "reciprocalspaceship @ git+https://github.com/rs-station/reciprocalspaceship"
+      # The integrator package with dev extras (pytest, ruff, mypy, wandb).
+      - "-e .[dev]"
+      # extra dev tooling not in the [dev] pip extra
+      - ipython
+      - plotly
+      - pytest-cov

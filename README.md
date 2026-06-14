@@ -1,7 +1,6 @@
 # Integrator
 An amortized variational inference model to integrate diffraction data.
 
-
 ## Prerequisites
 
 The installation requires a python environment manager. 
@@ -19,6 +18,7 @@ Pick the environment file that matches your machine:
 | `environment.yml`      | `integrator`      | CPU runtime (local, non-CUDA)          |
 | `environment-cuda.yml` | `integrator-cuda` | CUDA / GPU runtime (cluster, linux-64) |
 | `environment-dev.yml`  | `integrator-dev`  | CPU + test/lint/logging tooling (development)  |
+| `environment-cuda-dev.yml` | `integrator-cuda-dev` | CUDA / GPU + dev tooling (development on GPU) |
 
 ```bash
 # CPU runtime
@@ -29,13 +29,17 @@ micromamba activate integrator
 micromamba env create -f environment-cuda.yml
 micromamba activate integrator-cuda
 
-# Development (tests, ruff, mypy, notebooks)
+# Development (tests, ruff, mypy)
 micromamba env create -f environment-dev.yml
 micromamba activate integrator-dev
+
+# Development on a GPU machine
+micromamba env create -f environment-cuda-dev.yml
+micromamba activate integrator-cuda-dev
 ```
 
 Each installs DIALS, laue-DIALS, PyTorch, the integrator package (editable), and the upstream reciprocalspaceship build required to read DIALS `.refl` files. 
-The three files share the same dependency set and differ only in the PyTorch build and the dev tooling, so keep the shared lines in sync when editing one.
+The four files share the same dependency set and differ only in the PyTorch build and the dev tooling, so keep the shared lines in sync when editing one.
 
 ### Without micromamba
 
