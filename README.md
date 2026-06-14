@@ -10,7 +10,7 @@ Another popular manager is [conda](https://docs.conda.io/projects/conda/en/lates
 ## Installation
 
 The project depends on DIALS and laue-DIALS alongside PyTorch.
-DIALS (and dxtbx/cctbx) and PyTorch must be installed from conda-forge.
+DIALS (and dxtbx/cctbx) and PyTorch are installed from conda-forge.
 Pick the environment file that matches your machine:
 
 | File                   | Env               | For                                    |
@@ -39,16 +39,3 @@ micromamba activate integrator-cuda-dev
 ```
 
 Each installs DIALS, laue-DIALS, PyTorch, the integrator package (editable), and the upstream reciprocalspaceship build required to read DIALS `.refl` files. 
-The four files share the same dependency set and differ only in the PyTorch build and the dev tooling, so keep the shared lines in sync when editing one.
-
-### Without micromamba
-
-If DIALS and laue-DIALS are already provided by your environment, install just the Python package and its remaining dependencies with pip:
-
-```bash
-pip install -e ".[dev]" \
-  "reciprocalspaceship @ git+https://github.com/rs-station/reciprocalspaceship"
-```
-
-The reciprocalspaceship git URL is required because pip would otherwise install the PyPI release, which lacks the DIALS `.refl` fix.
-uv is optional and is not required by this project; if you use it, `uv pip install` works the same way.
