@@ -28,10 +28,11 @@ dependencies = [
   "reciprocalspaceship>=1.0.7",
   "rich>=14.2.0",
   "scipy>=1.11",
+  "rs-booster"
 ]
 
 [project.optional-dependencies]
-dev = ['pytest','ruff','mypy','wandb>=0.17']
+dev = ['pytest','ruff','mypy','wandb>=0.17','pyarrow>=22']
 # laue-DIALS is pip-installable on top of a conda-forge DIALS (see environment.yml). 
 # DIALS/dxtbx/cctbx themselves are conda-forge only.
 laue = ['laue-dials']
@@ -130,3 +131,5 @@ dev = [
     "ruff>=0.12.9",
     "wandb>=0.23.1",
 ]
+# %%
+
