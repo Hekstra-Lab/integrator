@@ -13,6 +13,7 @@ from .hkl_table import HKLLookupTable
 from .merging_integrator import MergingIntegrator
 from .refinement_integrator import RefinementIntegrator
 from .scaling_integrator import ScalingIntegrator
+from .svae_integrator import SVAEIntegrator
 from .variational_refinement_integrator import VariationalRefinementIntegrator
 
 __all__ = [
@@ -27,6 +28,7 @@ __all__ = [
     "MergingIntegrator",
     "PhysicalScale",
     "RefinementIntegrator",
+    "SVAEIntegrator",
     "ScalingIntegrator",
     "SpatialChebyshevScale",
     "VariationalRefinementIntegrator",

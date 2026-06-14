@@ -27,6 +27,7 @@ from integrator.model.scaling import (
     HierarchicalScalingIntegrator,
     MergingIntegrator,
     RefinementIntegrator,
+    SVAEIntegrator,
     ScalingIntegrator,
     VariationalRefinementIntegrator,
 )
@@ -58,6 +59,7 @@ REGISTRY = {
         "conjugate_merging": ConjugateMergingIntegrator,
         "hierarchical_scaling": HierarchicalScalingIntegrator,
         "conjugate": ConjugateIntegrator,
+        "svae": SVAEIntegrator,
         "refinement": RefinementIntegrator,
         "variational_refinement": VariationalRefinementIntegrator,
     },
