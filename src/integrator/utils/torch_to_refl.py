@@ -211,9 +211,7 @@ def _dict_to_refl_columns(preds):
 
 
 def write_refl(filename, data, identifiers=None):
-    """
-    Write a DIALS-compatible .refl file.
-    """
+    """Write a DIALS-compatible .refl file."""
     nrows = None
     data = _unstack_preds(data)
     data = _dict_to_refl_columns(data)

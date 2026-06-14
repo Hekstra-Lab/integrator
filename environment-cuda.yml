@@ -32,13 +32,11 @@ dependencies:
   - h5py>=3.15
   - matplotlib-base>=3.5
   - polars>=1.6
-  - pyarrow>=22
   - rich>=14
   - pip
   - pip:
       - laue-dials
       - "reciprocalspaceship @ git+https://github.com/rs-station/reciprocalspaceship"
-      - rs_distributions>=0.0.3
       # wandb is optional (dev extra only). Runtime logging falls back to a
       # local CSV/PNG backend; install dev tooling for W&B (environment-dev.yml).
       # The integrator package (editable).

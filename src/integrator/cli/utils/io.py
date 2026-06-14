@@ -3,7 +3,6 @@ from pathlib import Path
 from typing import Literal
 
 import h5py
-import pandas as pd
 import polars as pl
 import reciprocalspaceship as rs
 import torch
@@ -174,16 +173,15 @@ def write_refl_from_preds(
 
     id_filter = ds["refl_ids"].isin(data["refl_ids"])
     ds_filtered = ds[id_filter].sort_values(by="refl_ids")
-    pred_df = pd.DataFrame(data).sort_values(by="refl_ids")
+    pred_df = pl.DataFrame(data).sort("refl_ids")
 
     ds_filtered = ds_filtered.sort_values("refl_ids").reset_index(drop=True)
-    pred_df = pred_df.sort_values("refl_ids").reset_index(drop=True)
 
-    ds_filtered["intensity.prf.value"] = pred_df["qi_mean"]
-    ds_filtered["intensity.prf.variance"] = pred_df["qi_var"]
-    ds_filtered["intensity.sum.value"] = pred_df["qi_mean"]
-    ds_filtered["intensity.sum.variance"] = pred_df["qi_var"]
-    ds_filtered["background.mean"] = pred_df["qbg_mean"]
+    ds_filtered["intensity.prf.value"] = pred_df["qi_mean"].to_numpy()
+    ds_filtered["intensity.prf.variance"] = pred_df["qi_var"].to_numpy()
+    ds_filtered["intensity.sum.value"] = pred_df["qi_mean"].to_numpy()
+    ds_filtered["intensity.sum.variance"] = pred_df["qi_var"].to_numpy()
+    ds_filtered["background.mean"] = pred_df["qbg_mean"].to_numpy()
 
     identifiers_path = (
         Path(config["data_loader"]["args"]["data_dir"]) / "identifiers.yaml"

@@ -6,7 +6,6 @@ from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import polars as pl
 import torch
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -450,12 +449,8 @@ class PlotterLD(Callback):
     def on_train_epoch_end(self, trainer, pl_module):
         if self.preds_train:
             try:
-                data = []
-
                 i_flat = self.preds_train["qi_mean"].flatten() + 1e-8
-
                 i_var_flat = self.preds_train["qi_var"].flatten() + 1e-8
-
                 dials_flat = (
                     self.preds_train["dials_I_prf_value"].flatten() + 1e-8
                 )
@@ -471,38 +466,19 @@ class PlotterLD(Callback):
                 y_c_flat = self.preds_train["y_c"].flatten()
                 z_c_flat = self.preds_train["z_c"].flatten()
 
-                for i in range(len(i_flat)):
-                    try:
-                        data.append(
-                            [
-                                i_flat[i],
-                                i_var_flat[i],
-                                dials_flat[i],
-                                dials_var_flat[i],
-                                dials_bg_flat[i],
-                                qbg_flat[i],
-                                x_c_flat[i],
-                                y_c_flat[i],
-                            ]
-                        )
-                    except Exception as e:
-                        print("Caught exception in on_train_epoch_end!")
-                        print("Type of exception:", type(e))
-                        print("Exception object:", e)
-                        traceback.print_exc(file=sys.stdout)
-
-                df = pd.DataFrame(
-                    data,
-                    columns=[
-                        "mean(qI)",
-                        "var(qI)",
-                        "DIALS intensity.prf.value",
-                        "DIALS intensity.prf.variance",
-                        "DIALS background.mean",
-                        "mean(qbg)",
-                        "x_c",
-                        "y_c",
-                    ],
+                df = pl.DataFrame(
+                    {
+                        "mean(qI)": i_flat.cpu().numpy(),
+                        "var(qI)": i_var_flat.cpu().numpy(),
+                        "DIALS intensity.prf.value": dials_flat.cpu().numpy(),
+                        "DIALS intensity.prf.variance": (
+                            dials_var_flat.cpu().numpy()
+                        ),
+                        "DIALS background.mean": dials_bg_flat.cpu().numpy(),
+                        "mean(qbg)": qbg_flat.cpu().numpy(),
+                        "x_c": x_c_flat.cpu().numpy(),
+                        "y_c": y_c_flat.cpu().numpy(),
+                    }
                 )
 
                 rl = get_run_logger(self, trainer)
@@ -630,12 +606,8 @@ class PlotterLD(Callback):
     def on_validation_epoch_end(self, trainer, pl_module):
         if self.preds_validation:
             try:
-                data = []
-
                 i_flat = self.preds_validation["qi_mean"].flatten() + 1e-8
-
                 i_var_flat = self.preds_validation["qi_var"].flatten() + 1e-8
-
                 dials_flat = (
                     self.preds_validation["dials_I_prf_value"].flatten() + 1e-8
                 )
@@ -651,38 +623,19 @@ class PlotterLD(Callback):
                 y_c_flat = self.preds_validation["y_c"].flatten()
                 z_c_flat = self.preds_validation["z_c"].flatten()
 
-                for i in range(len(i_flat)):
-                    try:
-                        data.append(
-                            [
-                                i_flat[i],
-                                i_var_flat[i],
-                                dials_flat[i],
-                                dials_var_flat[i],
-                                dials_bg_flat[i],
-                                qbg_flat[i],
-                                x_c_flat[i],
-                                y_c_flat[i],
-                            ]
-                        )
-                    except Exception as e:
-                        print("Caught exception in on_train_epoch_end!")
-                        print("Type of exception:", type(e))
-                        print("Exception object:", e)
-                        traceback.print_exc(file=sys.stdout)
-
-                df = pd.DataFrame(
-                    data,
-                    columns=[
-                        "validation: mean(qI)",
-                        "validation: var(qI)",
-                        "DIALS intensity.prf.value",
-                        "DIALS intensity.prf.variance",
-                        "DIALS background.mean",
-                        "validation: mean(qbg)",
-                        "x_c",
-                        "y_c",
-                    ],
+                df = pl.DataFrame(
+                    {
+                        "validation: mean(qI)": i_flat.cpu().numpy(),
+                        "validation: var(qI)": i_var_flat.cpu().numpy(),
+                        "DIALS intensity.prf.value": dials_flat.cpu().numpy(),
+                        "DIALS intensity.prf.variance": (
+                            dials_var_flat.cpu().numpy()
+                        ),
+                        "DIALS background.mean": dials_bg_flat.cpu().numpy(),
+                        "validation: mean(qbg)": qbg_flat.cpu().numpy(),
+                        "x_c": x_c_flat.cpu().numpy(),
+                        "y_c": y_c_flat.cpu().numpy(),
+                    }
                 )
 
                 rl = get_run_logger(self, trainer)
@@ -843,11 +796,11 @@ class LossTraceRecorder(Callback):
         suffix = "parquet" if self.use_parquet else "csv"
         fname = self.out_dir / f"loss_trace_{split}_epoch_{epoch:04d}.{suffix}"
 
-        df = pd.DataFrame(self._rows)
+        df = pl.DataFrame(self._rows)
         if self.use_parquet:
-            df.to_parquet(fname, index=False)
+            df.write_parquet(fname)
         else:
-            df.to_csv(fname, index=False)
+            df.write_csv(fname)
 
         self._rows.clear()
 
@@ -928,16 +881,17 @@ class EpochMetricRecorder(Callback):
 
             data[key] = x.cpu().numpy()
 
-        df = pd.DataFrame(data)
-        df.insert(0, "epoch", epoch)
+        df = pl.DataFrame(data).select(
+            pl.lit(epoch).alias("epoch"), pl.all()
+        )
 
         suffix = "parquet" if self.use_parquet else "csv"
         fname = f"{self.out_dir}/{self.split}_epoch_{epoch:04d}.{suffix}"
 
         if self.use_parquet:
-            df.to_parquet(fname, index=False)
+            df.write_parquet(fname)
         else:
-            df.to_csv(fname, index=False)
+            df.write_csv(fname)
 
         print(f"[Recorder] wrote {fname}")
 
@@ -1066,8 +1020,6 @@ class Plotter(Callback):
     def on_train_epoch_end(self, trainer, pl_module):
         if self.preds_train:
             try:
-                data = []
-
                 i_flat = self.preds_train["qi_mean"].flatten() + self.eps
                 i_var_flat = self.preds_train["qi_var"].flatten() + self.eps
 
@@ -1091,42 +1043,21 @@ class Plotter(Callback):
                 d_flat = 1 / self.preds_train["d"].flatten().pow(2)
                 d_ = self.preds_train["d"]
 
-                for i in range(len(i_flat)):
-                    try:
-                        data.append(
-                            [
-                                float(i_flat[i]),
-                                float(i_var_flat[i]),
-                                float(dials_flat[i]),
-                                float(dials_var_flat[i]),
-                                dials_bg_flat[i],
-                                qbg_flat[i],
-                                x_c_flat[i],
-                                y_c_flat[i],
-                                d_flat[i],
-                                d_[i],
-                            ]
-                        )
-                    except Exception as e:
-                        print("Caught exception in on_train_epoch_end!")
-                        print("Type of exception:", type(e))
-                        print("Exception object:", e)
-                        traceback.print_exc(file=sys.stdout)
-
-                df = pd.DataFrame(
-                    data,
-                    columns=[
-                        "mean(qI)",
-                        "var(qI)",
-                        "DIALS intensity.prf.value",
-                        "DIALS intensity.prf.variance",
-                        "DIALS background.mean",
-                        "mean(qbg)",
-                        "xyzcal.px.0",
-                        "xyzcal.px.1",
-                        "d",
-                        "d_",
-                    ],
+                df = pl.DataFrame(
+                    {
+                        "mean(qI)": i_flat.cpu().numpy(),
+                        "var(qI)": i_var_flat.cpu().numpy(),
+                        "DIALS intensity.prf.value": dials_flat.cpu().numpy(),
+                        "DIALS intensity.prf.variance": (
+                            dials_var_flat.cpu().numpy()
+                        ),
+                        "DIALS background.mean": dials_bg_flat.cpu().numpy(),
+                        "mean(qbg)": qbg_flat.cpu().numpy(),
+                        "xyzcal.px.0": x_c_flat.cpu().numpy(),
+                        "xyzcal.px.1": y_c_flat.cpu().numpy(),
+                        "d": d_flat.cpu().numpy(),
+                        "d_": d_.flatten().cpu().numpy(),
+                    }
                 )
 
                 rl = get_run_logger(self, trainer)
@@ -1283,10 +1214,7 @@ class Plotter(Callback):
     ):
         if self.preds_validation:
             try:
-                data = []
-
                 i_flat = self.preds_validation["qi_mean"].flatten() + self.eps
-
                 i_var_flat = (
                     self.preds_validation["qi_var"].flatten() + self.eps
                 )
@@ -1313,42 +1241,21 @@ class Plotter(Callback):
                 d_flat = 1 / self.preds_validation["d"].flatten().pow(2)
                 d_ = self.preds_validation["d"]
 
-                for i in range(len(i_flat)):
-                    try:
-                        data.append(
-                            [
-                                float(i_flat[i]),
-                                float(i_var_flat[i]),
-                                float(dials_flat[i]),
-                                float(dials_var_flat[i]),
-                                dials_bg_flat[i],
-                                qbg_flat[i],
-                                x_c_flat[i],
-                                y_c_flat[i],
-                                d_flat[i],
-                                d_[i],
-                            ]
-                        )
-                    except Exception as e:
-                        print("Caught exception in on_train_epoch_end!")
-                        print("Type of exception:", type(e))
-                        print("Exception object:", e)
-                        traceback.print_exc(file=sys.stdout)
-
-                df = pd.DataFrame(
-                    data,
-                    columns=[
-                        "validation: mean(qI)",
-                        "validation: var(qI)",
-                        "DIALS intensity.prf.value",
-                        "DIALS intensity.prf.variance",
-                        "DIALS background.mean",
-                        "validation: mean(qbg)",
-                        "xyzcal.px.0",
-                        "xyzcal.px.1",
-                        "d",
-                        "d_",
-                    ],
+                df = pl.DataFrame(
+                    {
+                        "validation: mean(qI)": i_flat.cpu().numpy(),
+                        "validation: var(qI)": i_var_flat.cpu().numpy(),
+                        "DIALS intensity.prf.value": dials_flat.cpu().numpy(),
+                        "DIALS intensity.prf.variance": (
+                            dials_var_flat.cpu().numpy()
+                        ),
+                        "DIALS background.mean": dials_bg_flat.cpu().numpy(),
+                        "validation: mean(qbg)": qbg_flat.cpu().numpy(),
+                        "xyzcal.px.0": x_c_flat.cpu().numpy(),
+                        "xyzcal.px.1": y_c_flat.cpu().numpy(),
+                        "d": d_flat.cpu().numpy(),
+                        "d_": d_.flatten().cpu().numpy(),
+                    }
                 )
 
                 rl = get_run_logger(self, trainer)

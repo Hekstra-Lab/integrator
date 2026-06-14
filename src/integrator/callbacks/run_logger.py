@@ -1,6 +1,6 @@
 """Run-logging backend: Weights & Biases when active, else local files.
 
-The plot callbacks build matplotlib figures and pandas DataFrames, then log
+The plot callbacks build matplotlib figures and polars DataFrames, then log
 them through this interface. When a W&B run is active the calls forward to
 wandb; otherwise (the default when wandb is not installed) figures are written
 as PNG, tables and scatter data as CSV, and scalars are appended to a JSONL
@@ -83,7 +83,9 @@ class RunLogger:
         with open(self.out_dir / "metrics.jsonl", "a") as fh:
             fh.write(json.dumps({"step": step, **clean}, default=str) + "\n")
 
-    def log_figure(self, name: str, fig, step=None, close: bool = True) -> None:
+    def log_figure(
+        self, name: str, fig, step=None, close: bool = True
+    ) -> None:
         if self.use_wandb:
             wandb.log({name: wandb.Image(fig)})
         else:
@@ -98,38 +100,33 @@ class RunLogger:
 
     def log_table(self, name: str, df, step=None) -> None:
         if self.use_wandb:
-            wandb.log({name: wandb.Table(dataframe=df)})
+            table = wandb.Table(data=df.rows(), columns=df.columns)
+            wandb.log({name: table})
         else:
-            df.to_csv(
-                self.out_dir / f"{_slug(name)}{self._suffix(step)}.csv",
-                index=False,
+            df.write_csv(
+                self.out_dir / f"{_slug(name)}{self._suffix(step)}.csv"
             )
 
     def log_scatter(self, name: str, df, x: str, y: str, step=None) -> None:
+        sub = df.select([x, y])
         if self.use_wandb:
-            wandb.log(
-                {
-                    name: wandb.plot.scatter(
-                        wandb.Table(dataframe=df), x, y, title=name
-                    )
-                }
-            )
+            table = wandb.Table(data=sub.rows(), columns=[x, y])
+            wandb.log({name: wandb.plot.scatter(table, x, y, title=name)})
             return
         import matplotlib.pyplot as plt
 
         fig, ax = plt.subplots()
-        ax.scatter(df[x], df[y], s=4, alpha=0.5)
+        ax.scatter(df[x].to_numpy(), df[y].to_numpy(), s=4, alpha=0.5)
         ax.set_xlabel(x)
         ax.set_ylabel(y)
         ax.set_title(name)
         slug = _slug(name)
         fig.savefig(
-            self.out_dir / f"{slug}{self._suffix(step)}.png", bbox_inches="tight"
+            self.out_dir / f"{slug}{self._suffix(step)}.png",
+            bbox_inches="tight",
         )
         plt.close(fig)
-        df[[x, y]].to_csv(
-            self.out_dir / f"{slug}{self._suffix(step)}.csv", index=False
-        )
+        sub.write_csv(self.out_dir / f"{slug}{self._suffix(step)}.csv")
 
 
 def get_run_logger(obj, trainer) -> RunLogger:

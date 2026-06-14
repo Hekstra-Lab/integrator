@@ -2,8 +2,9 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-
 # NOTE: this is not a variational implementation; uses learnable parameters
+
+
 class ChebyshevSpectrum(nn.Module):
     """Continuous log G(lambda) via Chebyshev polynomial expansion."""
 
