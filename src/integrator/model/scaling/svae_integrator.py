@@ -292,6 +292,12 @@ class SVAEIntegrator(BaseIntegrator):
                     f"{step} {k}", outputs[k], on_step=False, on_epoch=True
                 )
 
+        # End-of-epoch model-vs-DIALS intensity/background scatters (no-op unless
+        # the log_*_scatter flags are set). No scale here, so the intensity
+        # scatter compares qi.mean directly to DIALS intensity.sum.value.
+        if step == "train":
+            self._collect_scatters(outputs, metadata, mask, counts)
+
         return {
             "loss": total_loss,
             "forward_out": forward_out,
