@@ -111,10 +111,13 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         )
         if self.nu_per_bin:
             # 1/(4 d^2) equal-volume shell edges (matches _wilson_tau's s_sq).
+            # Config-derived (deterministic) -> non-persistent.
             s2_min = 1.0 / (4.0 * float(getattr(cfg, "nu_d_max", 60.0)) ** 2)
             s2_max = 1.0 / (4.0 * float(getattr(cfg, "nu_d_min", 1.0)) ** 2)
             self.register_buffer(
-                "nu_s2_edges", torch.linspace(s2_min, s2_max, self.nu_n_bins + 1)
+                "nu_s2_edges",
+                torch.linspace(s2_min, s2_max, self.nu_n_bins + 1),
+                persistent=False,
             )
         nu_target = self.nu_init if self.learn_nu else float(cfg.link_nu)
         if nu_target <= self.nu_floor:
@@ -129,7 +132,11 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         if self.learn_nu:
             self.nu_raw = nn.Parameter(nu_raw0)
         else:
-            self.register_buffer("nu_raw", nu_raw0)
+            # Fixed nu: nu_raw is deterministic from link_nu, so make it
+            # NON-persistent -- it is reconstructed at construction and absent
+            # from the checkpoint, so a pre-learnable-nu checkpoint loads without
+            # a spurious "missing nu_raw" error.
+            self.register_buffer("nu_raw", nu_raw0, persistent=False)
 
         # Per-HKL merged posterior for MTZ export, populated by finalize_merge over
         # a clean grouped pass. The GIG q(I_h) is moment-matched to a Gamma here so
