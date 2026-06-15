@@ -189,6 +189,12 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         self.obs_level_potential = bool(
             getattr(cfg, "obs_level_potential", False)
         )
+        self.obs_potential_free = bool(getattr(cfg, "obs_potential_free", False))
+        if self.obs_potential_free and not self.obs_level_potential:
+            raise ValueError(
+                "obs_potential_free requires obs_level_potential=True (it only "
+                "selects gated vs free for the obs-level signal count)."
+            )
         resp_out = 1 if self.obs_level_potential else self.n_pixels
         self.resp_head = nn.Linear(cfg.encoder_out, resp_out)
         nn.init.zeros_(self.resp_head.weight)
@@ -442,18 +448,23 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         asu_ids = metadata["asu_id"].long().to(device)
         d_obs = metadata["d"].to(device).float()
 
-        # Per-observation potentials (SVAE): signal counts + scaled exposure.
-        # PIXEL mode: a responsibility per pixel, sum_p g_{i,p} c_{i,p}.
-        # OBS mode: one responsibility per obs applied to the total counts,
-        # g_i * sum_p c_{i,p} -- the obs-level potential (photon-conserving since
-        # g in (0,1)). Both give sigma_i <= total counts; only the granularity of
-        # the signal/background attribution differs.
-        g = torch.sigmoid(self.resp_head(x_profile))  # (B, P) or (B, 1)
+        # Per-observation signal count sigma_i (a_i = nu_i + sigma_i below; the
+        # nu prior and the b_i = nu*E[1/I_h] + exposure coupling to I_h are formed
+        # downstream, so the full hierarchical model is identical for all three).
+        #   PIXEL:     sigma_i = sum_p sigmoid(head)_p c_{i,p}   (per-pixel gate)
+        #   OBS gated: sigma_i = sigmoid(head) * sum_p c_{i,p}   (per-obs gate)
+        #   OBS free:  sigma_i = softplus(head)                  (free, untied)
+        raw = self.resp_head(x_profile)  # (B, P) pixel, else (B, 1)
         masked_counts = counts * mask
         if self.obs_level_potential:
-            sigma_i = g.squeeze(-1) * masked_counts.sum(dim=-1)
+            raw = raw.squeeze(-1)  # (B,)
+            if self.obs_potential_free:
+                sigma_i = torch.nn.functional.softplus(raw)
+            else:
+                sigma_i = torch.sigmoid(raw) * masked_counts.sum(dim=-1)
         else:
-            sigma_i = (g * masked_counts).sum(dim=-1)  # signal counts
+            sigma_i = (torch.sigmoid(raw) * masked_counts).sum(dim=-1)
+        g = torch.sigmoid(raw)  # diagnostic (g_mean); gate value in gated modes
         e_i = scale * (profile_mean * mask).sum(dim=-1)  # scaled exposure
 
         # Per-HKL Wilson rate and GIG order/scale.

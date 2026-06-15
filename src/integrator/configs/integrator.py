@@ -155,6 +155,16 @@ class IntegratorCfg:
     #          and exposure are unchanged. Switches resp_head's output dim, so it
     #          is checkpoint-incompatible with the pixel-level mode.
     obs_level_potential: bool = False
+    # Only when obs_level_potential: how the per-obs signal count is formed.
+    #   False (default) - GATED: sigma_i = sigmoid(head) * sum_p c_p, a per-obs
+    #          responsibility in (0,1) on the total counts (photon-conserving,
+    #          sigma_i <= total counts).
+    #   True  - FREE: sigma_i = softplus(head), the head emits the signal count
+    #          directly, untied from the photon total (the "just output the
+    #          variational parameter" analogue of the standalone integrator; can
+    #          exceed the counts). The random-effect prior (nu) and the I_h
+    #          coupling (b_i = nu*E[1/I_h] + exposure) are UNCHANGED either way.
+    obs_potential_free: bool = False
     # HierarchicalSVAEIntegrator merge inference:
     #   True  (default) - FULLY AMORTIZED single pass. A learned per-obs merge
     #          head emits the GIG natural parameter b directly (anchored on the
