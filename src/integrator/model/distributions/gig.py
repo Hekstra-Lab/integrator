@@ -222,18 +222,42 @@ def gig_mean_var(
 ) -> tuple[Tensor, Tensor]:
     """E[I] and Var[I] of GIG(p, a, b) -- for merged-intensity export.
 
-    Var[I] = E[I^2] - E[I]^2 with E[I^2] = (b/a) K_{p+2}(w)/K_p(w), expanded via
-    the recurrence K_{p+2}/K_p = 1 + 2(p+1)(K_{p+1}/K_p)/w. Reuses the single
-    ratio r = K_{p-1}/K_p (and r_plus = K_{p+1}/K_p = r + 2p/w), so no extra
-    Bessel evaluation beyond gig_moments.
+    Var[I] = (b/a) * s * (t - s) with the two ADJACENT Bessel ratios
+    s = K_{p+1}(w)/K_p(w) and t = K_{p+2}(w)/K_{p+1}(w), each evaluated DIRECTLY
+    from overflow-safe log K (not via the recurrence). This is the only stable
+    form at the large |p| = nu*N_h the merge reaches: the recurrence route both
+    forms r_plus = K_{p-1}/K_p + 2p/w (a ~50 - 50 cancellation at p ~ -2500) and
+    then Var = (b/a)(1 + 2(p+1)r_plus/w - r_plus^2) whose true value is ~1e4x
+    smaller than its terms -- the two cancellations stack and zero Var, giving a
+    delta-spike moment-matched Gamma (sigma(I) ~ 1e-6, the over-confident SIGF
+    that wrecks downstream refinement). Here only `t - s` subtracts (~4 digits).
+    p, p+1, p+2 share ONE branch (exact only if all three `kve` are finite) so the
+    ~1e-3 uniform-asymptotic error cancels in the differences (the same seam fix
+    as `_d_p_log_besselk`). Export-only: NOT differentiable (no autograd needed in
+    finalize_merge). Validated to <=2e-5 relerr vs mpmath for p in [-5000, -49].
     """
     a = a.clamp(min=eps)
     b = b.clamp(min=eps)
     omega = (a * b).clamp(min=eps).sqrt()
-    r, _ = _kv_ratio_logk(omega, p)
-    r_plus = r + 2.0 * p / omega  # K_{p+1}/K_p
-    b_a = b / a
-    e_i = b_a.sqrt() * r_plus
-    e_i2 = b_a * (1.0 + 2.0 * (p + 1.0) * r_plus / omega)  # (b/a) K_{p+2}/K_p
-    var_i = (e_i2 - e_i.pow(2)).clamp(min=0.0)
+    p_b, omega_b, b_a = torch.broadcast_tensors(p, omega, b / a)
+    pn = p_b.detach().cpu().numpy().astype(np.float64)
+    wn = omega_b.detach().cpu().numpy().astype(np.float64)
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        kv0, kv1, kv2 = kve(pn, wn), kve(pn + 1.0, wn), kve(pn + 2.0, wn)
+    use_exact = (
+        np.isfinite(kv0) & (kv0 > 0.0)
+        & np.isfinite(kv1) & (kv1 > 0.0)
+        & np.isfinite(kv2) & (kv2 > 0.0)
+    )
+    log_kp = _log_besselk_on(pn, wn, use_exact, kv0)
+    log_kp1 = _log_besselk_on(pn + 1.0, wn, use_exact, kv1)
+    log_kp2 = _log_besselk_on(pn + 2.0, wn, use_exact, kv2)
+    s = torch.as_tensor(  # K_{p+1}/K_p
+        np.exp(log_kp1 - log_kp), dtype=b_a.dtype, device=b_a.device
+    )
+    t = torch.as_tensor(  # K_{p+2}/K_{p+1}
+        np.exp(log_kp2 - log_kp1), dtype=b_a.dtype, device=b_a.device
+    )
+    e_i = b_a.sqrt() * s
+    var_i = (b_a * s * (t - s)).clamp(min=0.0)
     return e_i, var_i
