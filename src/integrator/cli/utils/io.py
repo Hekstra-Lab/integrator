@@ -188,6 +188,7 @@ def get_pred_files(
             "qi_exact_var",
             "qi_exact_std",
             "is_coset",
+            "scale",
         ]
         cols = [c for c in wanted if c in available]
         sel = lf.select(cols).collect()
@@ -243,6 +244,21 @@ def write_refl_from_preds(
         logger.info(
             "Writing .refl intensities from the mean-field posterior "
             "(qi_mean / qi_var); qi_exact_* not found in predictions"
+        )
+
+    # If the model emitted a per-observation scale, the posterior intensity is
+    # DE-scaled (q over the latent I, rate = s*I*prof + bg). Downstream scaling
+    # (dials.scale) expects the RAW OBSERVED intensity, so multiply the scale
+    # back in: I_obs = s * E[I], Var_obs = s^2 * Var[I]. (No-op for scale_none
+    # models, where s = 1.) Other integrators do not emit `scale`, so this leaves
+    # them unchanged.
+    if "scale" in pred_df:
+        scale = pred_df["scale"]
+        i_value = i_value * scale
+        i_variance = i_variance * (scale**2)
+        logger.info(
+            "Applying per-obs scale: writing OBSERVED intensities "
+            "(s * E[I], s^2 * Var[I]) so dials.scale sees un-scaled data."
         )
 
     # Overwriting columns

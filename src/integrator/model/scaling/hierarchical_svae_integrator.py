@@ -500,6 +500,7 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         out = _assemble_outputs(out)
         out["asu_id"] = asu_ids
         out["I_h_mean"] = e_i_h[inverse]  # merged estimate, broadcast to obs
+        out["scale"] = scale  # per-obs s_i; observed intensity = scale * qi_mean
         if "group_label" in metadata:
             _add_group_outputs(out, metadata, self.loss)
 
