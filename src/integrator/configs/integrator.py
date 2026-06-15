@@ -145,6 +145,16 @@ class IntegratorCfg:
     # coupling); a handful suffices once the fixed point is near.
     link_nu: float = 1.0
     n_cavi_iters: int = 8
+    # Where the per-observation signal potential lives:
+    #   False (default) - PIXEL level: a per-pixel responsibility gate g_{i,p},
+    #          signal count = sum_p g_{i,p} c_{i,p} (full SVAE; pixel conjugacy).
+    #   True  - OBSERVATION level: a single per-obs responsibility g_i, signal
+    #          count = g_i * sum_p c_{i,p}. Mirrors the winning amortized merger /
+    #          standalone integrator (potentials at the obs level, encoder still
+    #          reads pixels), photon-conserving (g_i in (0,1)). The merge (GIG)
+    #          and exposure are unchanged. Switches resp_head's output dim, so it
+    #          is checkpoint-incompatible with the pixel-level mode.
+    obs_level_potential: bool = False
     # HierarchicalSVAEIntegrator merge inference:
     #   True  (default) - FULLY AMORTIZED single pass. A learned per-obs merge
     #          head emits the GIG natural parameter b directly (anchored on the

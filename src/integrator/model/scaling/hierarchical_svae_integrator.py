@@ -180,10 +180,17 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
                 "lp_correction would double-count it. Set lp_correction: false."
             )
 
-        # Per-pixel signal attribution head (SVAE), shared with the profile
-        # encoder; zero-init -> g = 0.5 at start (neutral), learns from the ELBO.
+        # Signal attribution head, shared with the profile encoder; zero-init ->
+        # g = 0.5 at start (neutral), learns from the ELBO. PIXEL mode emits a
+        # responsibility per pixel (n_pixels outputs); OBS mode emits a single
+        # per-observation responsibility (1 output) -- the obs-level potential
+        # that mirrors the amortized merger / standalone integrator.
         self.n_pixels = int(math.prod(self.shoebox_shape))
-        self.resp_head = nn.Linear(cfg.encoder_out, self.n_pixels)
+        self.obs_level_potential = bool(
+            getattr(cfg, "obs_level_potential", False)
+        )
+        resp_out = 1 if self.obs_level_potential else self.n_pixels
+        self.resp_head = nn.Linear(cfg.encoder_out, resp_out)
         nn.init.zeros_(self.resp_head.weight)
         nn.init.zeros_(self.resp_head.bias)
 
@@ -436,8 +443,17 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         d_obs = metadata["d"].to(device).float()
 
         # Per-observation potentials (SVAE): signal counts + scaled exposure.
-        g = torch.sigmoid(self.resp_head(x_profile))  # (B, P)
-        sigma_i = (g * counts * mask).sum(dim=-1)  # signal counts
+        # PIXEL mode: a responsibility per pixel, sum_p g_{i,p} c_{i,p}.
+        # OBS mode: one responsibility per obs applied to the total counts,
+        # g_i * sum_p c_{i,p} -- the obs-level potential (photon-conserving since
+        # g in (0,1)). Both give sigma_i <= total counts; only the granularity of
+        # the signal/background attribution differs.
+        g = torch.sigmoid(self.resp_head(x_profile))  # (B, P) or (B, 1)
+        masked_counts = counts * mask
+        if self.obs_level_potential:
+            sigma_i = g.squeeze(-1) * masked_counts.sum(dim=-1)
+        else:
+            sigma_i = (g * masked_counts).sum(dim=-1)  # signal counts
         e_i = scale * (profile_mean * mask).sum(dim=-1)  # scaled exposure
 
         # Per-HKL Wilson rate and GIG order/scale.
