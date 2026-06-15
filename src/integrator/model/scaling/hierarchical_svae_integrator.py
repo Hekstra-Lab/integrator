@@ -205,7 +205,7 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         a_h: Tensor,
         inverse: Tensor,
         asu_ids: Tensor,
-    ) -> tuple[Tensor, Tensor, Tensor]:
+    ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
         """Single-pass amortized merge. Returns (b_i, b_h, E_I_h).
 
         A learned per-observation correction forms the GIG natural parameter
@@ -231,7 +231,35 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         b_h = 2.0 * self.nu * ej_sum
         e_i_h, e_inv_Ih = gig_moments(p_h, a_h, b_h)
         b_i = self.nu * e_inv_Ih[inverse] + e_i
-        return b_i, b_h, e_i_h
+        i_block = self._i_block_elbo(p_h, a_h, b_h, a_i, b_i, e_inv_Ih, asu_ids)
+        return b_i, b_h, e_i_h, i_block
+
+    def _i_block_elbo(
+        self,
+        p_h: Tensor,
+        a_h: Tensor,
+        b_h: Tensor,
+        a_i: Tensor,
+        b_i: Tensor,
+        e_inv_Ih: Tensor,
+        asu_ids: Tensor,
+    ) -> Tensor:
+        """Per-HKL I_h ELBO contribution (exact for any b_h).
+
+        The conjugate cancellation `log(2 K_p) - (p/2) log(a/b)` is the I-block
+        ONLY when b_h equals the CAVI value 2*nu*sum_i E[J_i] (then the E[1/I_h]
+        coefficient is zero). With an amortized b_h that differs, the E[1/I_h]
+        term survives and must be added back:
+
+            L_I = log-partition + (b_h/2 - nu * sum_i E[J_i]) * E[1/I_h],
+
+        E[J_i] = a_i/b_i under q(J_i). The correction needs only E[1/I_h] (a
+        Bessel ratio, no order-derivative) and is identically zero in CAVI mode.
+        Without it `kl_intensity` is not a valid KL and can go negative.
+        """
+        ej_sum, _, _ = _scatter_sum_compact(a_i / b_i, asu_ids)
+        correction = (0.5 * b_h - self.nu * ej_sum) * e_inv_Ih
+        return gig_intensity_elbo(p_h, a_h, b_h) + correction
 
     def _cavi(
         self,
@@ -242,7 +270,7 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         a_h: Tensor,
         inverse: Tensor,
         asu_ids: Tensor,
-    ) -> tuple[Tensor, Tensor, Tensor]:
+    ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
         """Two-level CAVI fixed point (derived/purist). Returns (b_i, b_h, E_I_h).
 
         Unrolled with gradients (a short loop; with nu fixed the GIG order p_h is
@@ -258,7 +286,10 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
             ej_sum, _, _ = _scatter_sum_compact(e_j, asu_ids)
             b_h = 2.0 * self.nu * ej_sum
             e_i_h, e_inv_Ih = gig_moments(p_h, a_h, b_h)
-        return b_i, b_h, e_i_h
+        # i_block correction is identically zero here (b_h = 2 nu sum E[J_i]),
+        # but compute it the same way for a single code path.
+        i_block = self._i_block_elbo(p_h, a_h, b_h, a_i, b_i, e_inv_Ih, asu_ids)
+        return b_i, b_h, e_i_h, i_block
 
     def _j_block(self, a: Tensor, b: Tensor) -> Tensor:
         """Per-observation ELBO term E_q[log p(J|I)]_{J-only} - E_q[log q(J)].
@@ -318,11 +349,11 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
 
         a_i = self.nu + sigma_i  # q(J) shape: random-effect prior + signal counts
         if self.amortize_merge:
-            b_i, b_h, e_i_h = self._amortized_merge(
+            b_i, b_h, e_i_h, i_block = self._amortized_merge(
                 a_i, e_i, scale, d_obs, p_h, a_h, inverse, asu_ids
             )
         else:
-            b_i, b_h, e_i_h = self._cavi(
+            b_i, b_h, e_i_h, i_block = self._cavi(
                 a_i, e_i, tau_hkl, p_h, a_h, inverse, asu_ids
             )
 
@@ -371,6 +402,7 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
             "a_h": a_h,
             "b_h": b_h,
             "E_I_h": e_i_h,
+            "i_block": i_block,
             "scale": scale,
             "n_hkl": len(unique),
             "g_mean": g.mean().detach(),
@@ -396,14 +428,14 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         )
         total_loss = loss_dict["loss"]
 
-        # Intensity ELBO = sum_obs J-block + sum_HKL GIG-block; the loss is its
-        # negation, summed and put on the per-observation scale (matches the
-        # merging integrators' per-HKL KL normalization).
+        # Intensity ELBO = sum_obs J-block + sum_HKL I-block; the loss is its
+        # negation (a valid KL >= 0), summed and put on the per-observation scale
+        # (matches the merging integrators' per-HKL KL normalization). The I-block
+        # carries the amortized-b correction (_i_block_elbo), without which this
+        # is not a true KL and can go negative.
         j_block = self._j_block(outputs["a_i"], outputs["b_i"]).sum()
-        gig_block = gig_intensity_elbo(
-            outputs["p_h"], outputs["a_h"], outputs["b_h"]
-        ).sum()
-        intensity_nelbo = -(j_block + gig_block) / B
+        i_block = outputs["i_block"].sum()
+        intensity_nelbo = -(j_block + i_block) / B
         total_loss = total_loss + self.merge_kl_weight * intensity_nelbo
 
         penalty, penalty_components = self._profile_basis_penalty()
