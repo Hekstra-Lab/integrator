@@ -48,6 +48,7 @@ from torch.distributions import Gamma
 from integrator import configs
 from integrator.model.distributions.gig import (
     gig_intensity_elbo,
+    gig_mean_var,
     gig_moments,
 )
 from integrator.model.integrators.base_integrator import (
@@ -85,14 +86,72 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         super().__init__(cfg, loss, encoders, surrogates)
 
         self.alpha_W = float(cfg.wilson_alpha)
-        self.nu = float(cfg.link_nu)
         self.n_cavi_iters = int(cfg.n_cavi_iters)
         self.amortize_merge = bool(getattr(cfg, "amortize_merge", True))
         self.merge_kl_weight = float(getattr(cfg, "merge_kl_weight", 1.0))
         self.sample_I = bool(cfg.sample_I_h)
 
-        if self.nu <= 0:
-            raise ValueError(f"link_nu (nu) must be > 0, got {self.nu}")
+        # Random-effect dispersion nu. Stored as an unconstrained raw parameter
+        # with a positive link nu = softplus(nu_raw) + nu_floor (clamped to
+        # nu_max); a learnable nn.Parameter when learn_nu, else a registered
+        # buffer (still a tensor, so the same code path -- incl. torch.lgamma(nu)
+        # in _j_block -- runs in both modes). Learning nu makes the GIG order
+        # p = alpha_W - nu*N_h nu-dependent, exercising the Bessel order-derivative
+        # in gig.py. See nu_value().
+        self.learn_nu = bool(getattr(cfg, "learn_nu", False))
+        self.nu_per_bin = bool(getattr(cfg, "nu_per_bin", False))
+        self.nu_floor = float(getattr(cfg, "nu_floor", 1.0e-3))
+        self.nu_max = float(getattr(cfg, "nu_max", 200.0))
+        self.nu_init = float(getattr(cfg, "nu_init", 50.0))
+        self.nu_n_bins = int(getattr(cfg, "nu_n_bins", 10))
+        self.nu_warmup_epochs = int(getattr(cfg, "nu_warmup_epochs", 0))
+        self.nu_restraint_weight = float(getattr(cfg, "nu_restraint_weight", 0.0))
+        self.nu_restraint_log_sigma = float(
+            getattr(cfg, "nu_restraint_log_sigma", 0.5)
+        )
+        if self.nu_per_bin:
+            # 1/(4 d^2) equal-volume shell edges (matches _wilson_tau's s_sq).
+            s2_min = 1.0 / (4.0 * float(getattr(cfg, "nu_d_max", 60.0)) ** 2)
+            s2_max = 1.0 / (4.0 * float(getattr(cfg, "nu_d_min", 1.0)) ** 2)
+            self.register_buffer(
+                "nu_s2_edges", torch.linspace(s2_min, s2_max, self.nu_n_bins + 1)
+            )
+        nu_target = self.nu_init if self.learn_nu else float(cfg.link_nu)
+        if nu_target <= self.nu_floor:
+            raise ValueError(
+                f"nu target ({nu_target}) must exceed nu_floor ({self.nu_floor})"
+            )
+        nu_raw_init = torch.expm1(
+            torch.tensor(nu_target - self.nu_floor)
+        ).log()  # invert softplus + floor at the target
+        shape = (self.nu_n_bins,) if self.nu_per_bin else ()
+        nu_raw0 = nu_raw_init.expand(shape).clone()
+        if self.learn_nu:
+            self.nu_raw = nn.Parameter(nu_raw0)
+        else:
+            self.register_buffer("nu_raw", nu_raw0)
+
+        # Per-HKL merged posterior for MTZ export, populated by finalize_merge over
+        # a clean grouped pass. The GIG q(I_h) is moment-matched to a Gamma here so
+        # the standard merged_mtz_writer (which reads .concentration/.rate) works
+        # unchanged. Non-persistent: recomputed at inference, not in the checkpoint.
+        # Requires n_hkl (the asu_id count); absent it, merged export is disabled.
+        self.n_hkl = cfg.n_hkl
+        if self.n_hkl is not None:
+            self.register_buffer(
+                "alpha_buffer",
+                torch.full((self.n_hkl,), self.alpha_W),
+                persistent=False,
+            )
+            self.register_buffer(
+                "beta_buffer", torch.ones(self.n_hkl), persistent=False
+            )
+            self.register_buffer(
+                "buffer_seen",
+                torch.zeros(self.n_hkl, dtype=torch.bool),
+                persistent=False,
+            )
+
         if abs(self.alpha_W - 1.0) > 1e-8:
             raise ValueError(
                 "HierarchicalSVAEIntegrator requires wilson_alpha == 1.0 (the "
@@ -167,6 +226,30 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
                 frame_max=cfg.scale_frame_max,
             )
 
+    def nu_value(self, d: Tensor | None = None) -> Tensor:
+        """Positive dispersion nu = softplus(nu_raw) + floor, clamped to nu_max.
+
+        Scalar in global mode. In per-bin mode, with `d` given it returns
+        per-observation nu by gathering the resolution bin of each d (equal-volume
+        1/(4 d^2) shells); with d=None it returns the full per-bin vector. During
+        nu-warmup the value is detached so nu_raw receives no gradient and stays
+        frozen at nu_init (without touching the optimizer state).
+        """
+        nu = nn.functional.softplus(self.nu_raw) + self.nu_floor
+        nu = nu.clamp(max=self.nu_max)
+        if (
+            self.learn_nu
+            and self.training
+            and self.current_epoch < self.nu_warmup_epochs
+        ):
+            nu = nu.detach()
+        if not self.nu_per_bin or d is None:
+            return nu
+        s2 = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))  # matches edge construction
+        idx = torch.bucketize(s2, self.nu_s2_edges[1:-1].to(s2.device))
+        idx = idx.clamp(0, self.nu_n_bins - 1)
+        return nu[idx]
+
     def _get_scale(self, metadata: dict, device: torch.device) -> Tensor:
         b = metadata["d"].shape[0]
         if self.scale_fn is None:
@@ -203,6 +286,8 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         d_obs: Tensor,
         p_h: Tensor,
         a_h: Tensor,
+        nu_i: Tensor,
+        nu_h: Tensor,
         inverse: Tensor,
         asu_ids: Tensor,
     ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
@@ -228,10 +313,12 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         corr = self.delta_head(feat).squeeze(-1).clamp(-10.0, 10.0)
         delta_i = mle * torch.exp(corr)  # ~ E[J_i] (shrunk MLE)
         ej_sum, _, _ = _scatter_sum_compact(delta_i, asu_ids)
-        b_h = 2.0 * self.nu * ej_sum
+        b_h = 2.0 * nu_h * ej_sum  # nu-differentiable
         e_i_h, e_inv_Ih = gig_moments(p_h, a_h, b_h)
-        b_i = self.nu * e_inv_Ih[inverse] + e_i
-        i_block = self._i_block_elbo(p_h, a_h, b_h, a_i, b_i, e_inv_Ih, asu_ids)
+        b_i = nu_i * e_inv_Ih[inverse] + e_i  # per-obs nu (fix: not nu_h[inverse])
+        i_block = self._i_block_elbo(
+            p_h, a_h, b_h, a_i, b_i, e_inv_Ih, nu_h, asu_ids
+        )
         return b_i, b_h, e_i_h, i_block
 
     def _i_block_elbo(
@@ -242,6 +329,7 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         a_i: Tensor,
         b_i: Tensor,
         e_inv_Ih: Tensor,
+        nu_h: Tensor,
         asu_ids: Tensor,
     ) -> Tensor:
         """Per-HKL I_h ELBO contribution (exact for any b_h).
@@ -258,7 +346,7 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         Without it `kl_intensity` is not a valid KL and can go negative.
         """
         ej_sum, _, _ = _scatter_sum_compact(a_i / b_i, asu_ids)
-        correction = (0.5 * b_h - self.nu * ej_sum) * e_inv_Ih
+        correction = (0.5 * b_h - nu_h * ej_sum) * e_inv_Ih
         return gig_intensity_elbo(p_h, a_h, b_h) + correction
 
     def _cavi(
@@ -268,42 +356,47 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         tau_hkl: Tensor,
         p_h: Tensor,
         a_h: Tensor,
+        nu_i: Tensor,
+        nu_h: Tensor,
         inverse: Tensor,
         asu_ids: Tensor,
     ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
         """Two-level CAVI fixed point (derived/purist). Returns (b_i, b_h, E_I_h).
 
-        Unrolled with gradients (a short loop; with nu fixed the GIG order p_h is
-        constant). At the fixed point q(J_i)=Gamma(a_i,b_i) and q(I_h)=GIG(p_h,
-        a_h,b_h) are mutually consistent; we return the pair from the final
-        iteration (same E[1/I_h]).
+        Unrolled with gradients (a short loop). At the fixed point q(J_i)=Gamma(
+        a_i,b_i) and q(I_h)=GIG(p_h,a_h,b_h) are mutually consistent; we return the
+        pair from the final iteration.
         """
         e_inv_Ih = tau_hkl  # init E[1/I_h] at the Wilson scale (per HKL)
         b_i = b_h = e_i_h = None
         for _ in range(self.n_cavi_iters):
-            b_i = self.nu * e_inv_Ih[inverse] + e_i  # q(J) rate
+            b_i = nu_i * e_inv_Ih[inverse] + e_i  # q(J) rate (per-obs nu)
             e_j = a_i / b_i  # E[J_i]
             ej_sum, _, _ = _scatter_sum_compact(e_j, asu_ids)
-            b_h = 2.0 * self.nu * ej_sum
+            b_h = 2.0 * nu_h * ej_sum
             e_i_h, e_inv_Ih = gig_moments(p_h, a_h, b_h)
-        # i_block correction is identically zero here (b_h = 2 nu sum E[J_i]),
-        # but compute it the same way for a single code path.
-        i_block = self._i_block_elbo(p_h, a_h, b_h, a_i, b_i, e_inv_Ih, asu_ids)
+        # The I-block correction is exactly zero in the derived path (b_h = 2 nu
+        # sum E[J_i] by construction), so use the bare log-partition. Computing
+        # _i_block_elbo here would leave a numerically-zero correction whose
+        # nu-GRADIENT is spurious (b_h carries the unrolled-loop nu-history while a
+        # recomputed sum E[J_i] does not), injecting a wrong nu-gradient.
+        i_block = gig_intensity_elbo(p_h, a_h, b_h)
         return b_i, b_h, e_i_h, i_block
 
-    def _j_block(self, a: Tensor, b: Tensor) -> Tensor:
+    def _j_block(self, a: Tensor, b: Tensor, nu: Tensor) -> Tensor:
         """Per-observation ELBO term E_q[log p(J|I)]_{J-only} - E_q[log q(J)].
 
         = nu log nu - lgamma(nu) + lgamma(a) - a log b + a + (nu - a)(psi(a) - log b)
         The I_h-coupling part of log p(J|I) is folded into the GIG log-partition
         (the exact conjugate cancellation), so only the J-only remainder is here.
+        `nu` is the per-observation dispersion (a tensor, so this is differentiable
+        wrt nu and broadcasts against a/b).
         """
-        nu = self.nu
         log_b = b.clamp(min=1e-12).log()
         psi_a = torch.digamma(a.clamp(min=1e-6))
         return (
-            nu * math.log(nu)
-            - math.lgamma(nu)
+            nu * torch.log(nu)
+            - torch.lgamma(nu)
             + torch.lgamma(a.clamp(min=1e-6))
             - a * log_b
             + a
@@ -339,22 +432,34 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         sigma_i = (g * counts * mask).sum(dim=-1)  # signal counts
         e_i = scale * (profile_mean * mask).sum(dim=-1)  # scaled exposure
 
-        # Per-HKL Wilson rate and GIG order/scale (constant in the network).
+        # Per-HKL Wilson rate and GIG order/scale.
         tau_obs = self._wilson_tau(d_obs)
         tau_sum, inverse, unique = _scatter_sum_compact(tau_obs, asu_ids)
         cnt, _, _ = _scatter_sum_compact(torch.ones_like(tau_obs), asu_ids)
         tau_hkl = tau_sum / cnt.clamp(min=1.0)  # (n_unique,)
-        p_h = self.alpha_W - self.nu * cnt  # GIG order (fixed)
         a_h = 2.0 * tau_hkl  # GIG 'a'
 
-        a_i = self.nu + sigma_i  # q(J) shape: random-effect prior + signal counts
+        # Random-effect dispersion: per-obs nu_i, per-HKL nu_h (in global mode the
+        # two are the same scalar). p_h = alpha_W - nu_h*N_h carries the nu (hence
+        # Bessel order-) gradient when learn_nu.
+        if self.nu_per_bin:
+            d_sum, _, _ = _scatter_sum_compact(d_obs, asu_ids)
+            d_hkl = d_sum / cnt.clamp(min=1.0)
+            nu_h = self.nu_value(d_hkl)  # (n_unique,)
+            nu_i = self.nu_value(d_obs)  # (B,)
+        else:
+            nu_h = self.nu_value()  # scalar
+            nu_i = nu_h
+        p_h = self.alpha_W - nu_h * cnt  # GIG order (nu-differentiable)
+
+        a_i = nu_i + sigma_i  # q(J) shape: random-effect prior + signal counts
         if self.amortize_merge:
             b_i, b_h, e_i_h, i_block = self._amortized_merge(
-                a_i, e_i, scale, d_obs, p_h, a_h, inverse, asu_ids
+                a_i, e_i, scale, d_obs, p_h, a_h, nu_i, nu_h, inverse, asu_ids
             )
         else:
             b_i, b_h, e_i_h, i_block = self._cavi(
-                a_i, e_i, tau_hkl, p_h, a_h, inverse, asu_ids
+                a_i, e_i, tau_hkl, p_h, a_h, nu_i, nu_h, inverse, asu_ids
             )
 
         qJ = Gamma(a_i.clamp(min=1e-6), b_i.clamp(min=1e-12))
@@ -403,6 +508,7 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
             "b_h": b_h,
             "E_I_h": e_i_h,
             "i_block": i_block,
+            "nu_i": nu_i,
             "scale": scale,
             "n_hkl": len(unique),
             "g_mean": g.mean().detach(),
@@ -433,7 +539,9 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         # (matches the merging integrators' per-HKL KL normalization). The I-block
         # carries the amortized-b correction (_i_block_elbo), without which this
         # is not a true KL and can go negative.
-        j_block = self._j_block(outputs["a_i"], outputs["b_i"]).sum()
+        j_block = self._j_block(
+            outputs["a_i"], outputs["b_i"], outputs["nu_i"]
+        ).sum()
         i_block = outputs["i_block"].sum()
         intensity_nelbo = -(j_block + i_block) / B
         total_loss = total_loss + self.merge_kl_weight * intensity_nelbo
@@ -442,6 +550,21 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         for name, value in penalty_components.items():
             self.log(f"{step} {name}", value, on_step=False, on_epoch=True)
         total_loss = total_loss + penalty
+
+        # Weak log-Normal restraint pinning nu near nu_init (careless-style
+        # regularized error model); keeps nu off the floor/ceiling and limits the
+        # nu-vs-scale confound. Skipped during warmup (nu is frozen there anyway).
+        if self.learn_nu and self.nu_restraint_weight > 0.0:
+            warming = self.current_epoch < self.nu_warmup_epochs
+            if not warming:
+                log_ratio = (self.nu_value() / self.nu_init).log()
+                restraint = self.nu_restraint_weight * (
+                    (log_ratio / self.nu_restraint_log_sigma) ** 2
+                ).sum()
+                total_loss = total_loss + restraint
+                self.log(
+                    f"{step} nu_restraint", restraint.detach(), on_epoch=True
+                )
 
         _log_loss(
             self,
@@ -469,6 +592,11 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
                 torch.tensor(float(outputs["n_hkl"])),
                 on_epoch=True,
             )
+            nu_val = self.nu_value()
+            self.log(f"{step} nu_mean", nu_val.mean(), on_epoch=True)
+            if self.nu_per_bin:
+                for k in range(self.nu_n_bins):
+                    self.log(f"{step} nu_bin{k}", nu_val[k], on_epoch=True)
 
         # End-of-epoch model-vs-DIALS scatters (no-op unless log_*_scatter set).
         # The intensity scatter uses scale * E[J_i] (outputs["scale"] present)
@@ -488,3 +616,101 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
                 "kl_bg": loss_dict["kl_bg_mean"].detach(),
             },
         }
+
+    @torch.no_grad()
+    def _merge_params(
+        self, counts: Tensor, shoebox: Tensor, mask: Tensor, metadata: dict
+    ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+        """Per-HKL GIG natural params (p_h, a_h, b_h) and the HKL ids `unique`.
+
+        The intensity path of the forward (profile + responsibility + scale +
+        merge), without the reconstruction/background, for merged-MTZ export.
+        """
+        device = shoebox.device
+        counts = counts.clamp(min=0)
+        B = shoebox.shape[0]
+        sr = (shoebox * mask).reshape(B, 1, *self.shoebox_shape)
+        x_profile = self.encoders["profile"](sr)
+        profile_mean = self.surrogates["qp"](x_profile, mc_samples=1).mean_profile
+        scale = self._get_scale(metadata, device)
+        asu_ids = metadata["asu_id"].long().to(device)
+        d_obs = metadata["d"].to(device).float()
+
+        g = torch.sigmoid(self.resp_head(x_profile))
+        sigma_i = (g * counts * mask).sum(dim=-1)
+        e_i = scale * (profile_mean * mask).sum(dim=-1)
+
+        tau_obs = self._wilson_tau(d_obs)
+        tau_sum, inverse, unique = _scatter_sum_compact(tau_obs, asu_ids)
+        cnt, _, _ = _scatter_sum_compact(torch.ones_like(tau_obs), asu_ids)
+        tau_hkl = tau_sum / cnt.clamp(min=1.0)
+        a_h = 2.0 * tau_hkl
+        if self.nu_per_bin:
+            d_sum, _, _ = _scatter_sum_compact(d_obs, asu_ids)
+            nu_h = self.nu_value(d_sum / cnt.clamp(min=1.0))
+            nu_i = self.nu_value(d_obs)
+        else:
+            nu_h = self.nu_value()
+            nu_i = nu_h
+        p_h = self.alpha_W - nu_h * cnt
+        a_i = nu_i + sigma_i
+        if self.amortize_merge:
+            _, b_h, _, _ = self._amortized_merge(
+                a_i, e_i, scale, d_obs, p_h, a_h, nu_i, nu_h, inverse, asu_ids
+            )
+        else:
+            _, b_h, _, _ = self._cavi(
+                a_i, e_i, tau_hkl, p_h, a_h, nu_i, nu_h, inverse, asu_ids
+            )
+        return p_h, a_h, b_h, unique
+
+    @torch.no_grad()
+    def finalize_merge(self, dataloader) -> None:
+        """Compute the per-HKL merged posterior over the full dataset.
+
+        Requires a loader yielding COMPLETE HKL groups per batch (a
+        `group_by_asu_id` loader, e.g. `predict_dataloader(grouped=True)`); then
+        each batch's per-HKL GIG is exact. The GIG q(I_h) is moment-matched to a
+        Gamma(alpha_h, beta_h) preserving E[I_h] and Var[I_h], so the standard MTZ
+        writer reads the right I and sigma(I). Raises if an HKL spans batches.
+        """
+        if self.n_hkl is None:
+            raise RuntimeError(
+                "finalize_merge needs n_hkl (the asu_id count) set in the "
+                "config to size the per-HKL merge buffers."
+            )
+        self.eval()
+        device = self.alpha_buffer.device
+        seen = torch.zeros(self.n_hkl, dtype=torch.bool, device=device)
+        self.alpha_buffer.fill_(self.alpha_W)
+        self.beta_buffer.fill_(1.0)
+        for batch in dataloader:
+            counts, shoebox, mask, metadata = batch
+            p_h, a_h, b_h, unique = self._merge_params(
+                counts.to(device), shoebox.to(device), mask.to(device), metadata
+            )
+            if bool(seen[unique].any()):
+                raise RuntimeError(
+                    "finalize_merge requires a grouped (group_by_asu_id) loader "
+                    "so each HKL is complete in one batch; found an HKL spanning "
+                    "batches. Use predict_dataloader(grouped=True)."
+                )
+            e_i_h, var_i_h = gig_mean_var(p_h, a_h, b_h)
+            var_i_h = var_i_h.clamp(min=1e-12)
+            # Moment-match a Gamma to (E[I_h], Var[I_h]).
+            self.alpha_buffer[unique] = (e_i_h.pow(2) / var_i_h).clamp(min=1e-6)
+            self.beta_buffer[unique] = (e_i_h / var_i_h).clamp(min=1e-12)
+            seen[unique] = True
+        self.buffer_seen.copy_(seen)
+
+    def get_merged_qi(self) -> Gamma:
+        """Per-HKL merged posterior (GIG moment-matched to a Gamma) for MTZ
+        output. Run `finalize_merge` first to populate the buffers."""
+        if self.n_hkl is None:
+            raise RuntimeError(
+                "get_merged_qi needs n_hkl set; merged export is disabled."
+            )
+        return Gamma(
+            self.alpha_buffer.clamp(min=1e-6),
+            self.beta_buffer.clamp(min=1e-12),
+        )

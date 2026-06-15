@@ -316,6 +316,7 @@ def main():
                     "conjugate_merging",
                     "deepsets_merging",
                     "amortized_merging",
+                    "hierarchical_svae",
                 }
                 if config["integrator"]["name"] in merging_models:
                     from integrator.cli.utils.merged_mtz_writer import (

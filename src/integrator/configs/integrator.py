@@ -153,6 +153,31 @@ class IntegratorCfg:
     #   False - the derived two-level CAVI fixed point (n_cavi_iters), the
     #          "purist" conjugate inference; slower (a Bessel call per iter).
     amortize_merge: bool = True
+    # Learn the random-effect dispersion nu instead of fixing it at link_nu.
+    # nu = softplus(nu_raw) + nu_floor, clamped to nu_max. The J_i|I_h link has
+    # CV = 1/sqrt(nu); nu_init ~ 50 gives CV ~14% (recommended). The old
+    # link_nu=1.0 is a 100%-CV over-dispersed link that lets J_i float off I_h and
+    # absorb scale/background error. Learning nu makes the GIG order p = alpha_W -
+    # nu*N_h depend on nu, so the Bessel order-derivative is now needed (supplied
+    # by gig._d_p_log_besselk). nu_per_bin models resolution-dependent merge error
+    # (AIMLESS/careless error model) on equal-volume 1/d^2 shells. A weak
+    # log-Normal restraint pins nu near nu_init so it cannot drift to absorb
+    # mis-scaling; nu_warmup_epochs holds nu frozen at nu_init (detached in the
+    # forward) while scale/background converge first. link_nu is kept as the fixed
+    # value when learn_nu=False (full back-compat).
+    learn_nu: bool = False
+    nu_init: float = 50.0
+    nu_per_bin: bool = False
+    nu_n_bins: int = 10
+    nu_floor: float = 1.0e-3
+    nu_max: float = 200.0
+    nu_restraint_weight: float = 0.0
+    nu_restraint_log_sigma: float = 0.5
+    nu_warmup_epochs: int = 0
+    # Resolution range for nu(d) binning (1/(4 d^2) equal-volume shells); only
+    # used when nu_per_bin.
+    nu_d_min: float = 1.0
+    nu_d_max: float = 60.0
     # Inner EM for ConjugateIntegrator: max responsibility iterations and the
     # relative-change tolerance for early stopping at the fixed point.
     n_em_iters: int = 40
@@ -356,6 +381,38 @@ class IntegratorCfg:
                 "merge_aggregation must be 'mean' or 'sum', got "
                 f"{self.merge_aggregation!r}"
             )
+
+        if self.learn_nu or self.nu_per_bin:
+            if self.nu_init <= 0:
+                raise ValueError(f"nu_init must be > 0, got {self.nu_init}")
+            if self.nu_n_bins < 1:
+                raise ValueError(f"nu_n_bins must be >= 1, got {self.nu_n_bins}")
+            if self.nu_floor <= 0:
+                raise ValueError(f"nu_floor must be > 0, got {self.nu_floor}")
+            if self.nu_max <= self.nu_init:
+                raise ValueError(
+                    f"nu_max ({self.nu_max}) must be > nu_init ({self.nu_init})"
+                )
+            if self.nu_restraint_weight < 0:
+                raise ValueError(
+                    "nu_restraint_weight must be >= 0, got "
+                    f"{self.nu_restraint_weight}"
+                )
+            if self.nu_restraint_log_sigma <= 0:
+                raise ValueError(
+                    "nu_restraint_log_sigma must be > 0, got "
+                    f"{self.nu_restraint_log_sigma}"
+                )
+            if self.nu_warmup_epochs < 0:
+                raise ValueError(
+                    "nu_warmup_epochs must be >= 0, got "
+                    f"{self.nu_warmup_epochs}"
+                )
+            if self.nu_d_max <= self.nu_d_min:
+                raise ValueError(
+                    f"nu_d_max ({self.nu_d_max}) must be > nu_d_min "
+                    f"({self.nu_d_min})"
+                )
 
 
 @dataclass
