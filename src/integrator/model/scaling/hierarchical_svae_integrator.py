@@ -87,6 +87,7 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         self.alpha_W = float(cfg.wilson_alpha)
         self.nu = float(cfg.link_nu)
         self.n_cavi_iters = int(cfg.n_cavi_iters)
+        self.amortize_merge = bool(getattr(cfg, "amortize_merge", True))
         self.merge_kl_weight = float(getattr(cfg, "merge_kl_weight", 1.0))
         self.sample_I = bool(cfg.sample_I_h)
 
@@ -119,11 +120,31 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         nn.init.zeros_(self.resp_head.weight)
         nn.init.zeros_(self.resp_head.bias)
 
+        # Amortized merge head: a learned multiplicative correction to the
+        # prior-free MLE that forms the GIG natural parameter b in one pass (no
+        # CAVI fixed point). Inputs are per-observation [log a_i, log e_i, log
+        # s_i, d]; the final layer is zero-init so the correction starts at 1 and
+        # b begins exactly at the MLE-based merge `2 nu * sum_i (a_i/e_i)`.
+        if self.amortize_merge:
+            self.delta_head = nn.Sequential(
+                nn.Linear(4, 32), nn.ReLU(), nn.Linear(32, 1)
+            )
+            nn.init.zeros_(self.delta_head[-1].weight)
+            nn.init.zeros_(self.delta_head[-1].bias)
+
         # Per-observation scale s_i (LP lives here). Minimal selection; extend as
         # the other merging integrators do if richer scales are needed.
         if getattr(cfg, "scale_none", False):
             self.scale_fn = None
         elif cfg.scale_mlp:
+            # `frame` here is the ROTATION frame (xyzcal.px.2), a lab-frame
+            # input. Optionally also feed the CRYSTAL-frame spherical-harmonic
+            # absorption (`absorption_sh`) -- the direction the anomalous-safe
+            # absorption surface needs and which lab-frame inputs cannot build;
+            # `even_only` keeps only Friedel-symmetric (even-l) harmonics.
+            n_abs_sh = 0
+            if getattr(cfg, "scale_mlp_absorption", False):
+                n_abs_sh = (int(cfg.scale_sh_lmax) + 1) ** 2 - 1
             self.scale_fn = MLPScale(
                 hidden_dim=cfg.scale_mlp_hidden,
                 n_layers=cfg.scale_mlp_layers,
@@ -134,6 +155,10 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
                 d_min=getattr(cfg, "dmin", 1.0),
                 d_max=60.0,
                 head_init_std=getattr(cfg, "scale_head_init_std", 0.0),
+                n_abs_sh=n_abs_sh,
+                absorption_even_only=getattr(
+                    cfg, "scale_mlp_absorption_even_only", True
+                ),
             )
         else:
             self.scale_fn = ChebyshevScale(
@@ -152,7 +177,17 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
             x_det = metadata["xyzcal.px.0"].to(device).float()
             y_det = metadata["xyzcal.px.1"].to(device).float()
             d = metadata["d"].to(device).float()
-            return self.scale_fn(frame, x_det, y_det, lp, d, None)
+            a = None
+            if self.scale_fn.n_abs_sh > 0:
+                if "absorption_sh" not in metadata:
+                    raise KeyError(
+                        "MLPScale with scale_mlp_absorption needs 'absorption_sh' "
+                        "in metadata; run scripts/extract_crystal_frame_sh.py "
+                        "(--lmax = scale_sh_lmax) and point the data loader's "
+                        "reference at the augmented metadata_sh.pt."
+                    )
+                a = metadata["absorption_sh"].to(device).float()
+            return self.scale_fn(frame, x_det, y_det, lp, d, a)
         return self.scale_fn(frame) / lp
 
     def _wilson_tau(self, d: Tensor) -> Tensor:
@@ -160,24 +195,61 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))
         return self.loss._get_tau({"d": d}, s_sq, d.device)
 
+    def _amortized_merge(
+        self,
+        a_i: Tensor,
+        e_i: Tensor,
+        scale: Tensor,
+        d_obs: Tensor,
+        p_h: Tensor,
+        a_h: Tensor,
+        inverse: Tensor,
+        asu_ids: Tensor,
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """Single-pass amortized merge. Returns (b_i, b_h, E_I_h).
+
+        A learned per-observation correction forms the GIG natural parameter
+        b = 2 nu sum_i delta_i directly, with delta_i anchored on the prior-free
+        MLE a_i/e_i (which carries no I_h dependence, so the whole pass is a
+        feed-forward DAG -- no fixed point). q(I_h)=GIG(p_h,a_h,b_h) is still
+        exact; only how b is determined is amortized. Recovers the CAVI fixed
+        point when the correction learns the prior shrinkage e_i/b_i.
+        """
+        mle = a_i / e_i.clamp(min=1e-12)  # prior-free per-obs intensity
+        feat = torch.stack(
+            [
+                a_i.clamp(min=1e-6).log(),
+                e_i.clamp(min=1e-6).log(),
+                scale.clamp(min=1e-8).log(),
+                d_obs,
+            ],
+            dim=-1,
+        )  # (B, 4)
+        corr = self.delta_head(feat).squeeze(-1).clamp(-10.0, 10.0)
+        delta_i = mle * torch.exp(corr)  # ~ E[J_i] (shrunk MLE)
+        ej_sum, _, _ = _scatter_sum_compact(delta_i, asu_ids)
+        b_h = 2.0 * self.nu * ej_sum
+        e_i_h, e_inv_Ih = gig_moments(p_h, a_h, b_h)
+        b_i = self.nu * e_inv_Ih[inverse] + e_i
+        return b_i, b_h, e_i_h
+
     def _cavi(
         self,
-        sigma_i: Tensor,
+        a_i: Tensor,
         e_i: Tensor,
         tau_hkl: Tensor,
         p_h: Tensor,
         a_h: Tensor,
         inverse: Tensor,
         asu_ids: Tensor,
-    ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
-        """Two-level CAVI fixed point. Returns (a_i, b_i, b_h, E_I_h).
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """Two-level CAVI fixed point (derived/purist). Returns (b_i, b_h, E_I_h).
 
         Unrolled with gradients (a short loop; with nu fixed the GIG order p_h is
         constant). At the fixed point q(J_i)=Gamma(a_i,b_i) and q(I_h)=GIG(p_h,
         a_h,b_h) are mutually consistent; we return the pair from the final
         iteration (same E[1/I_h]).
         """
-        a_i = self.nu + sigma_i  # q(J) shape: random-effect prior + signal counts
         e_inv_Ih = tau_hkl  # init E[1/I_h] at the Wilson scale (per HKL)
         b_i = b_h = e_i_h = None
         for _ in range(self.n_cavi_iters):
@@ -186,7 +258,7 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
             ej_sum, _, _ = _scatter_sum_compact(e_j, asu_ids)
             b_h = 2.0 * self.nu * ej_sum
             e_i_h, e_inv_Ih = gig_moments(p_h, a_h, b_h)
-        return a_i, b_i, b_h, e_i_h
+        return b_i, b_h, e_i_h
 
     def _j_block(self, a: Tensor, b: Tensor) -> Tensor:
         """Per-observation ELBO term E_q[log p(J|I)]_{J-only} - E_q[log q(J)].
@@ -244,9 +316,15 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         p_h = self.alpha_W - self.nu * cnt  # GIG order (fixed)
         a_h = 2.0 * tau_hkl  # GIG 'a'
 
-        a_i, b_i, b_h, e_i_h = self._cavi(
-            sigma_i, e_i, tau_hkl, p_h, a_h, inverse, asu_ids
-        )
+        a_i = self.nu + sigma_i  # q(J) shape: random-effect prior + signal counts
+        if self.amortize_merge:
+            b_i, b_h, e_i_h = self._amortized_merge(
+                a_i, e_i, scale, d_obs, p_h, a_h, inverse, asu_ids
+            )
+        else:
+            b_i, b_h, e_i_h = self._cavi(
+                a_i, e_i, tau_hkl, p_h, a_h, inverse, asu_ids
+            )
 
         qJ = Gamma(a_i.clamp(min=1e-6), b_i.clamp(min=1e-12))
 
@@ -293,6 +371,7 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
             "a_h": a_h,
             "b_h": b_h,
             "E_I_h": e_i_h,
+            "scale": scale,
             "n_hkl": len(unique),
             "g_mean": g.mean().detach(),
         }
@@ -358,6 +437,12 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
                 torch.tensor(float(outputs["n_hkl"])),
                 on_epoch=True,
             )
+
+        # End-of-epoch model-vs-DIALS scatters (no-op unless log_*_scatter set).
+        # The intensity scatter uses scale * E[J_i] (outputs["scale"] present)
+        # against DIALS intensity.sum.value -- the predicted observed intensity.
+        if step == "train":
+            self._collect_scatters(outputs, metadata, mask, counts)
 
         return {
             "loss": total_loss,

@@ -145,6 +145,14 @@ class IntegratorCfg:
     # coupling); a handful suffices once the fixed point is near.
     link_nu: float = 1.0
     n_cavi_iters: int = 8
+    # HierarchicalSVAEIntegrator merge inference:
+    #   True  (default) - FULLY AMORTIZED single pass. A learned per-obs merge
+    #          head emits the GIG natural parameter b directly (anchored on the
+    #          prior-free MLE), so q(I_h) is still GIG-exact but the J_i<->I_h
+    #          coupling is amortized (one Bessel call, no fixed-point loop).
+    #   False - the derived two-level CAVI fixed point (n_cavi_iters), the
+    #          "purist" conjugate inference; slower (a Bessel call per iter).
+    amortize_merge: bool = True
     # Inner EM for ConjugateIntegrator: max responsibility iterations and the
     # relative-change tolerance for early stopping at the fixed point.
     n_em_iters: int = 40
