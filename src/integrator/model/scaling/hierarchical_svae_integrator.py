@@ -600,9 +600,17 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
                 torch.tensor(float(outputs["n_hkl"])),
                 on_epoch=True,
             )
-            nu_val = self.nu_value()
-            self.log(f"{step} nu_mean", nu_val.mean(), on_epoch=True)
+            # Dispersion nu of the random effect (the merge error model). Logged
+            # as the value, the implied per-observation CV = 1/sqrt(nu) (the
+            # crystallographer-facing number: ~0.1-0.2 is realistic, 1.0 = the
+            # over-dispersed nu=1 limit), and the range across resolution bins.
+            nu_val = self.nu_value().detach()
+            nu_mean = nu_val.mean()
+            self.log(f"{step} nu_mean", nu_mean, on_epoch=True)
+            self.log(f"{step} nu_cv", nu_mean.clamp(min=1e-6).rsqrt(), on_epoch=True)
             if self.nu_per_bin:
+                self.log(f"{step} nu_min", nu_val.min(), on_epoch=True)
+                self.log(f"{step} nu_max", nu_val.max(), on_epoch=True)
                 for k in range(self.nu_n_bins):
                     self.log(f"{step} nu_bin{k}", nu_val[k], on_epoch=True)
 
@@ -624,6 +632,21 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
                 "kl_bg": loss_dict["kl_bg_mean"].detach(),
             },
         }
+
+    def on_after_backward(self) -> None:
+        """Base grad-norm logging + the nu gradient (confirms nu is learning)."""
+        super().on_after_backward()
+        if (
+            self.learn_nu
+            and isinstance(self.nu_raw, nn.Parameter)
+            and self.nu_raw.grad is not None
+        ):
+            self.log(
+                "grad/nu_raw",
+                self.nu_raw.grad.abs().mean(),
+                on_step=False,
+                on_epoch=True,
+            )
 
     @torch.no_grad()
     def _merge_params(

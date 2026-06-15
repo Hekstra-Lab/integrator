@@ -131,22 +131,60 @@ class ScatterLoggerMixin:
             buf[0].append(mi[:n][idx])
             buf[1].append(ri[:n][idx])
 
+    def _scaled_model_intensity(self, outputs: dict) -> Tensor:
+        """Model observed intensity = scale * qi.mean (qi.mean if no scale)."""
+        model_i = outputs["qi"].mean
+        scale = outputs.get("scale")
+        return scale * model_i if scale is not None else model_i
+
     def _collect_intensity_scatter(
         self, outputs: dict, metadata: dict, max_per_batch: int = 64
     ) -> None:
-        """Stash (model scale*I_h, DIALS intensity). Uses qi.mean if no scale."""
+        """Stash (model scale*I, DIALS intensity.sum.value). Model on x."""
         if "intensity.sum.value" not in metadata or "qi" not in outputs:
             return
-        model_i = outputs["qi"].mean
-        scale = outputs.get("scale")
-        if scale is not None:
-            model_i = scale * model_i
         self._stash_scatter(
             "intensity",
-            model_i,
+            self._scaled_model_intensity(outputs),
             metadata["intensity.sum.value"],
+            r"model  scale $\cdot$ $I$",
             "DIALS intensity.sum.value",
-            r"model  scale $\cdot$ $I_h$",
+            max_per_batch,
+        )
+
+    def _collect_intensity_prf_scatter(
+        self, outputs: dict, metadata: dict, max_per_batch: int = 64
+    ) -> None:
+        """Stash (model scale*I, DIALS intensity.prf.value) -- vs the profile-fit
+        intensity (DIALS' primary value), model on x."""
+        if "intensity.prf.value" not in metadata or "qi" not in outputs:
+            return
+        self._stash_scatter(
+            "intensity_prf",
+            self._scaled_model_intensity(outputs),
+            metadata["intensity.prf.value"],
+            r"model  scale $\cdot$ $I$",
+            "DIALS intensity.prf.value",
+            max_per_batch,
+        )
+
+    def _collect_variance_scatter(
+        self, outputs: dict, metadata: dict, max_per_batch: int = 64
+    ) -> None:
+        """Stash (model scale^2 * Var[I], DIALS intensity.prf.variance) -- a
+        sigma(I) calibration check (Var[s*I] = s^2 Var[I]), model on x."""
+        if "intensity.prf.variance" not in metadata or "qi" not in outputs:
+            return
+        model_v = outputs["qi"].variance
+        scale = outputs.get("scale")
+        if scale is not None:
+            model_v = scale.pow(2) * model_v
+        self._stash_scatter(
+            "intensity_var",
+            model_v,
+            metadata["intensity.prf.variance"],
+            r"model  $s^2\,\mathrm{Var}[I]$",
+            "DIALS intensity.prf.variance",
             max_per_batch,
         )
 
@@ -183,8 +221,8 @@ class ScatterLoggerMixin:
             "background",
             bg,
             data_bg,
-            "data bg/pixel (shoebox median)",
             "model bg/pixel (qbg.mean)",
+            "data bg/pixel (shoebox median)",
             max_per_batch,
         )
 
@@ -198,6 +236,8 @@ class ScatterLoggerMixin:
         """Collect every enabled+available scatter. Call in the train `_step`."""
         if getattr(self, "log_intensity_scatter", False):
             self._collect_intensity_scatter(outputs, metadata)
+            self._collect_intensity_prf_scatter(outputs, metadata)
+            self._collect_variance_scatter(outputs, metadata)
         if (
             getattr(self, "log_background_scatter", False)
             and mask is not None
@@ -225,7 +265,7 @@ class ScatterLoggerMixin:
     def _plot_scatter(
         self, name: str, model_i, ref_i, xlabel: str, ylabel: str
     ) -> None:
-        """Log-log scatter of a model quantity vs its DIALS reference."""
+        """Log-log scatter of a model quantity (x) vs its DIALS reference (y)."""
         try:
             import matplotlib
 
@@ -247,7 +287,7 @@ class ScatterLoggerMixin:
         log_cc = float(np.corrcoef(np.log(mi), np.log(di))[0, 1])
 
         fig, ax = plt.subplots(figsize=(5, 5))
-        ax.scatter(di, mi, s=4, alpha=0.3, edgecolors="none")
+        ax.scatter(mi, di, s=4, alpha=0.3, edgecolors="none")  # model x, DIALS y
         lo, hi = float(min(di.min(), mi.min())), float(max(di.max(), mi.max()))
         ax.plot([lo, hi], [lo, hi], "r--", lw=1, label="y = x")
         ax.set_xscale("log")
