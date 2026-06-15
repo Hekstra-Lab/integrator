@@ -173,6 +173,16 @@ class IntegratorCfg:
     # Set with obs_potential_free for the full "emit both parameters" model; the
     # nu prior and I_h coupling are still conjugate-added.
     obs_exposure_free: bool = False
+    # Parameterization of the fully-free (gammaB-like) emission. Requires
+    # obs_level_potential + obs_potential_free + obs_exposure_free.
+    #   "shape_rate" (default) - heads emit the potentials directly:
+    #          sigma_i = softplus(head_a), e_i = scale*softplus(head_b).
+    #   "fano" - heads emit the OBSERVED (mean m, Fano phi); the de-scaled
+    #          likelihood Gamma(sigma_i, e_i) is recovered as sigma_i = m/phi,
+    #          e_i = scale/phi (FanoGamma reparam, scale kept so J stays de-scaled
+    #          for the merge). Same graphical model + I_h coupling; only the head
+    #          parameterization (and its gradient Jacobian) changes.
+    potential_param: str = "shape_rate"
     # HierarchicalSVAEIntegrator merge inference:
     #   True  (default) - FULLY AMORTIZED single pass. A learned per-obs merge
     #          head emits the GIG natural parameter b directly (anchored on the

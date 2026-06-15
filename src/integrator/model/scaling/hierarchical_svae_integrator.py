@@ -67,11 +67,24 @@ from integrator.model.scaling.chebyshev_scale import ChebyshevScale, MLPScale
 from integrator.model.scaling.conjugate_merging import _scatter_sum_compact
 
 
+def _exp_pos(x: Tensor) -> Tensor:
+    """Positive transform via exp (log-parameterization), clamped against
+    overflow: exp(30) ~ 1e13 is far above any photon count, so the clamp is a
+    no-op for real intensities but blocks inf during training spikes."""
+    return torch.exp(x.clamp(max=30.0))
+
+
 class HierarchicalSVAEIntegrator(BaseIntegrator):
     """Two-level hierarchical SVAE: per-obs J_i (Gamma) + per-HKL I_h (GIG)."""
 
+    # One encoder per potential, mirroring the standalone integrator's layout:
+    #   profile -> qp;  k_i -> signal-count head;  r_i -> exposure head (used only
+    #   when obs_exposure_free);  k_bg, r_bg -> qbg. The signal/exposure heads no
+    #   longer share the profile encoder.
     REQUIRED_ENCODERS = {
         "profile": configs.ProfileEncoderArgs,
+        "k_i": configs.IntensityEncoderArgs,
+        "r_i": configs.IntensityEncoderArgs,
         "k_bg": configs.IntensityEncoderArgs,
         "r_bg": configs.IntensityEncoderArgs,
     }
@@ -199,19 +212,33 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
                 "obs_level_potential=True (they select how the obs-level signal "
                 "count / exposure are emitted)."
             )
+        self.potential_param = str(getattr(cfg, "potential_param", "shape_rate"))
+        if self.potential_param not in ("shape_rate", "fano"):
+            raise ValueError(
+                "potential_param must be 'shape_rate' or 'fano', got "
+                f"{self.potential_param!r}."
+            )
+        if self.potential_param == "fano" and not (
+            self.obs_level_potential
+            and self.obs_potential_free
+            and self.obs_exposure_free
+        ):
+            raise ValueError(
+                "potential_param='fano' is the FanoGamma reparam of the fully-"
+                "free gammaB emission; it requires obs_level_potential, "
+                "obs_potential_free and obs_exposure_free all True."
+            )
         resp_out = 1 if self.obs_level_potential else self.n_pixels
         self.resp_head = nn.Linear(cfg.encoder_out, resp_out)
         nn.init.zeros_(self.resp_head.weight)
         nn.init.zeros_(self.resp_head.bias)
-        # Free exposure head (fully gammaB-like): e_i = scale * softplus(head).
-        # Bias warm-started so softplus(bias) = 1 (sum prof ~ 1 for a contained
-        # peak), i.e. e_i ~ scale at init -- matches the analytic exposure start.
+        # Free exposure head (fully gammaB-like). e_i = scale * exp(head) [or, in
+        # fano mode, phi = exp(head)]. Zero-init -> exp(0) = 1, so e_i ~ scale at
+        # init (sum prof ~ 1 for a contained peak), matching the analytic start.
         if self.obs_exposure_free:
             self.exposure_head = nn.Linear(cfg.encoder_out, 1)
             nn.init.zeros_(self.exposure_head.weight)
-            nn.init.constant_(
-                self.exposure_head.bias, math.log(math.expm1(1.0))
-            )
+            nn.init.zeros_(self.exposure_head.bias)
 
         # Amortized merge head: a learned multiplicative correction to the
         # prior-free MLE that forms the GIG natural parameter b in one pass (no
@@ -450,6 +477,11 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         shoebox_reshaped = (shoebox * mask).reshape(B, 1, *self.shoebox_shape)
 
         x_profile = self.encoders["profile"](shoebox_reshaped)
+        x_k_i = self.encoders["k_i"](shoebox_reshaped)
+        x_r_i = (
+            self.encoders["r_i"](shoebox_reshaped)
+            if self.obs_exposure_free else None
+        )
         x_k_bg = self.encoders["k_bg"](shoebox_reshaped)
         x_r_bg = self.encoders["r_bg"](shoebox_reshaped)
 
@@ -461,32 +493,9 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         asu_ids = metadata["asu_id"].long().to(device)
         d_obs = metadata["d"].to(device).float()
 
-        # Per-observation signal count sigma_i (a_i = nu_i + sigma_i below; the
-        # nu prior and the b_i = nu*E[1/I_h] + exposure coupling to I_h are formed
-        # downstream, so the full hierarchical model is identical for all three).
-        #   PIXEL:     sigma_i = sum_p sigmoid(head)_p c_{i,p}   (per-pixel gate)
-        #   OBS gated: sigma_i = sigmoid(head) * sum_p c_{i,p}   (per-obs gate)
-        #   OBS free:  sigma_i = softplus(head)                  (free, untied)
-        raw = self.resp_head(x_profile)  # (B, P) pixel, else (B, 1)
-        masked_counts = counts * mask
-        if self.obs_level_potential:
-            raw = raw.squeeze(-1)  # (B,)
-            if self.obs_potential_free:
-                sigma_i = torch.nn.functional.softplus(raw)
-            else:
-                sigma_i = torch.sigmoid(raw) * masked_counts.sum(dim=-1)
-        else:
-            sigma_i = (torch.sigmoid(raw) * masked_counts).sum(dim=-1)
-        g = torch.sigmoid(raw)  # diagnostic (g_mean); gate value in gated modes
-        # Exposure (b_i data term). Analytic = scale * sum prof (ties intensity to
-        # the profile). FREE = scale * softplus(head) (fully gammaB-like: encoder
-        # emits both potentials); the scale stays so J = a/b is de-scaled.
-        if self.obs_exposure_free:
-            e_i = scale * torch.nn.functional.softplus(
-                self.exposure_head(x_profile)
-            ).squeeze(-1)
-        else:
-            e_i = scale * (profile_mean * mask).sum(dim=-1)
+        sigma_i, e_i, g = self._signal_and_exposure(
+            x_k_i, x_r_i, counts, mask, profile_mean, scale
+        )
 
         # Per-HKL Wilson rate and GIG order/scale.
         tau_obs = self._wilson_tau(d_obs)
@@ -738,6 +747,41 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         )
         return torch.optim.Adam(groups, lr=self.lr)
 
+    def _signal_and_exposure(
+        self, x_k_i, x_r_i, counts, mask, profile_mean, scale
+    ):
+        """Per-obs signal count sigma_i (a-side) and exposure e_i (b-side).
+
+        Shared by the forward and the merge export so both honor the
+        obs_level_potential / *_free / potential_param modes identically. Free
+        emissions use an exp (log) positivity constraint. Returns (sigma_i, e_i, g)
+        where g is the gate activation (diagnostic).
+          FANO:      heads emit observed (mean m=exp(head_a), Fano phi=exp(head_b));
+                     sigma_i = m/phi, e_i = scale/phi (scale kept -> J de-scaled).
+          sigma_i:   PIXEL = sum_p sigmoid(resp_head)_p c_p; OBS gated =
+                     sigmoid(resp_head)*sum_p c_p; OBS free = exp(resp_head).
+          e_i:       analytic scale*sum prof, or FREE scale*exp(exposure_head).
+        """
+        raw = self.resp_head(x_k_i)  # (B, P) pixel, else (B, 1)
+        masked_counts = counts * mask
+        if self.potential_param == "fano":
+            m = _exp_pos(raw).squeeze(-1)  # observed intensity mean
+            phi = _exp_pos(self.exposure_head(x_r_i)).squeeze(-1) + 1e-6  # Fano
+            return m / phi, scale / phi, torch.sigmoid(raw)
+        if self.obs_level_potential:
+            raw = raw.squeeze(-1)
+            if self.obs_potential_free:
+                sigma_i = _exp_pos(raw)
+            else:
+                sigma_i = torch.sigmoid(raw) * masked_counts.sum(dim=-1)
+        else:
+            sigma_i = (torch.sigmoid(raw) * masked_counts).sum(dim=-1)
+        if self.obs_exposure_free:
+            e_i = scale * _exp_pos(self.exposure_head(x_r_i)).squeeze(-1)
+        else:
+            e_i = scale * (profile_mean * mask).sum(dim=-1)
+        return sigma_i, e_i, torch.sigmoid(raw)
+
     @torch.no_grad()
     def _merge_params(
         self, counts: Tensor, shoebox: Tensor, mask: Tensor, metadata: dict
@@ -752,14 +796,16 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         B = shoebox.shape[0]
         sr = (shoebox * mask).reshape(B, 1, *self.shoebox_shape)
         x_profile = self.encoders["profile"](sr)
+        x_k_i = self.encoders["k_i"](sr)
+        x_r_i = self.encoders["r_i"](sr) if self.obs_exposure_free else None
         profile_mean = self.surrogates["qp"](x_profile, mc_samples=1).mean_profile
         scale = self._get_scale(metadata, device)
         asu_ids = metadata["asu_id"].long().to(device)
         d_obs = metadata["d"].to(device).float()
 
-        g = torch.sigmoid(self.resp_head(x_profile))
-        sigma_i = (g * counts * mask).sum(dim=-1)
-        e_i = scale * (profile_mean * mask).sum(dim=-1)
+        sigma_i, e_i, _ = self._signal_and_exposure(
+            x_k_i, x_r_i, counts, mask, profile_mean, scale
+        )
 
         tau_obs = self._wilson_tau(d_obs)
         tau_sum, inverse, unique = _scatter_sum_compact(tau_obs, asu_ids)
