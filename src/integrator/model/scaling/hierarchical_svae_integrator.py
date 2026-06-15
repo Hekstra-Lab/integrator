@@ -190,15 +190,28 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
             getattr(cfg, "obs_level_potential", False)
         )
         self.obs_potential_free = bool(getattr(cfg, "obs_potential_free", False))
-        if self.obs_potential_free and not self.obs_level_potential:
+        self.obs_exposure_free = bool(getattr(cfg, "obs_exposure_free", False))
+        if (self.obs_potential_free or self.obs_exposure_free) and not (
+            self.obs_level_potential
+        ):
             raise ValueError(
-                "obs_potential_free requires obs_level_potential=True (it only "
-                "selects gated vs free for the obs-level signal count)."
+                "obs_potential_free / obs_exposure_free require "
+                "obs_level_potential=True (they select how the obs-level signal "
+                "count / exposure are emitted)."
             )
         resp_out = 1 if self.obs_level_potential else self.n_pixels
         self.resp_head = nn.Linear(cfg.encoder_out, resp_out)
         nn.init.zeros_(self.resp_head.weight)
         nn.init.zeros_(self.resp_head.bias)
+        # Free exposure head (fully gammaB-like): e_i = scale * softplus(head).
+        # Bias warm-started so softplus(bias) = 1 (sum prof ~ 1 for a contained
+        # peak), i.e. e_i ~ scale at init -- matches the analytic exposure start.
+        if self.obs_exposure_free:
+            self.exposure_head = nn.Linear(cfg.encoder_out, 1)
+            nn.init.zeros_(self.exposure_head.weight)
+            nn.init.constant_(
+                self.exposure_head.bias, math.log(math.expm1(1.0))
+            )
 
         # Amortized merge head: a learned multiplicative correction to the
         # prior-free MLE that forms the GIG natural parameter b in one pass (no
@@ -465,7 +478,15 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         else:
             sigma_i = (torch.sigmoid(raw) * masked_counts).sum(dim=-1)
         g = torch.sigmoid(raw)  # diagnostic (g_mean); gate value in gated modes
-        e_i = scale * (profile_mean * mask).sum(dim=-1)  # scaled exposure
+        # Exposure (b_i data term). Analytic = scale * sum prof (ties intensity to
+        # the profile). FREE = scale * softplus(head) (fully gammaB-like: encoder
+        # emits both potentials); the scale stays so J = a/b is de-scaled.
+        if self.obs_exposure_free:
+            e_i = scale * torch.nn.functional.softplus(
+                self.exposure_head(x_profile)
+            ).squeeze(-1)
+        else:
+            e_i = scale * (profile_mean * mask).sum(dim=-1)
 
         # Per-HKL Wilson rate and GIG order/scale.
         tau_obs = self._wilson_tau(d_obs)

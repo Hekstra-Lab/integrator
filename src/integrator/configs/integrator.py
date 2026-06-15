@@ -165,6 +165,14 @@ class IntegratorCfg:
     #          exceed the counts). The random-effect prior (nu) and the I_h
     #          coupling (b_i = nu*E[1/I_h] + exposure) are UNCHANGED either way.
     obs_potential_free: bool = False
+    # Only when obs_level_potential: also emit the EXPOSURE freely (fully
+    # gammaB-like -- the encoder controls BOTH Gamma potentials). The exposure
+    # keeps the scale explicit, e_i = scale * softplus(head), so J stays de-scaled
+    # for the merge (a fully scale-free exposure would either break the merge or
+    # relearn the scale field). False (default) = analytic e_i = scale * sum prof.
+    # Set with obs_potential_free for the full "emit both parameters" model; the
+    # nu prior and I_h coupling are still conjugate-added.
+    obs_exposure_free: bool = False
     # HierarchicalSVAEIntegrator merge inference:
     #   True  (default) - FULLY AMORTIZED single pass. A learned per-obs merge
     #          head emits the GIG natural parameter b directly (anchored on the
