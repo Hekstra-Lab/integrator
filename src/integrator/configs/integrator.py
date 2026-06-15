@@ -167,6 +167,12 @@ class IntegratorCfg:
     # value when learn_nu=False (full back-compat).
     learn_nu: bool = False
     nu_init: float = 50.0
+    # Dedicated LR for nu_raw (its own Adam group), like scaling_lr for the
+    # scale. nu is ONE scalar: at the base lr under global gradient clipping (the
+    # conv encoders dominate the norm) its effective step is tiny and it barely
+    # moves. A larger nu_lr (~0.05-0.5) lets it actually equilibrate. None = base
+    # lr (and nu will crawl). Only used when learn_nu.
+    nu_lr: float | None = None
     nu_per_bin: bool = False
     nu_n_bins: int = 10
     nu_floor: float = 1.0e-3

@@ -99,6 +99,7 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         # p = alpha_W - nu*N_h nu-dependent, exercising the Bessel order-derivative
         # in gig.py. See nu_value().
         self.learn_nu = bool(getattr(cfg, "learn_nu", False))
+        self.nu_lr = getattr(cfg, "nu_lr", None)
         self.nu_per_bin = bool(getattr(cfg, "nu_per_bin", False))
         self.nu_floor = float(getattr(cfg, "nu_floor", 1.0e-3))
         self.nu_max = float(getattr(cfg, "nu_max", 200.0))
@@ -647,6 +648,47 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
                 on_step=False,
                 on_epoch=True,
             )
+
+    def _build_optimizer(self) -> torch.optim.Optimizer:
+        """Adam; with nu_lr set, nu_raw gets its own param group.
+
+        nu is ONE scalar; at the base lr under global gradient clipping (the conv
+        encoders dominate the norm) its effective step is tiny and it barely
+        moves. A dedicated nu_lr lets it equilibrate -- mirrors scaling_lr for the
+        scale. nu_raw uses weight_decay=0 (decaying a single positive scalar
+        toward 0 is wrong). nu_lr=None or fixed nu -> base optimizer (unchanged).
+        """
+        if not (self.learn_nu and self.nu_lr is not None):
+            return super()._build_optimizer()
+        nu_params: list[nn.Parameter] = []
+        decoder_params: list[nn.Parameter] = []
+        other_params: list[nn.Parameter] = []
+        for name, param in self.named_parameters():
+            if not param.requires_grad:
+                continue
+            if name == "nu_raw":
+                nu_params.append(param)
+            elif (
+                self.decoder_weight_decay is not None
+                and name.endswith("surrogates.qp.decoder.weight")
+            ):
+                decoder_params.append(param)
+            else:
+                other_params.append(param)
+        groups: list[dict] = [
+            {"params": other_params, "weight_decay": self.weight_decay}
+        ]
+        if decoder_params:
+            groups.append(
+                {
+                    "params": decoder_params,
+                    "weight_decay": self.decoder_weight_decay,
+                }
+            )
+        groups.append(
+            {"params": nu_params, "weight_decay": 0.0, "lr": float(self.nu_lr)}
+        )
+        return torch.optim.Adam(groups, lr=self.lr)
 
     @torch.no_grad()
     def _merge_params(
