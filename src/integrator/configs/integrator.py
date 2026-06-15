@@ -136,6 +136,15 @@ class IntegratorCfg:
     merge_overdispersion: bool = False
     wilson_alpha: float = 1.0
     sample_I_h: bool = True
+    # HierarchicalSVAEIntegrator (Option 3 + 3a, GIG-exact): the Gamma random
+    # effect J_i | I_h ~ Gamma(nu, nu/I_h) linking per-obs intensities to the
+    # per-HKL merged I_h. nu is the dispersion (fixed hyperparameter; larger nu =
+    # tighter around I_h = less over-dispersion). The GIG order p = alpha_W -
+    # nu*N_h stays constant in nu, which keeps the Bessel order-derivative out of
+    # the gradient. n_cavi_iters = unrolled two-level CAVI steps (J_i <-> I_h
+    # coupling); a handful suffices once the fixed point is near.
+    link_nu: float = 1.0
+    n_cavi_iters: int = 8
     # Inner EM for ConjugateIntegrator: max responsibility iterations and the
     # relative-change tolerance for early stopping at the fixed point.
     n_em_iters: int = 40
