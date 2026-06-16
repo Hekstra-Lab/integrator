@@ -7,16 +7,6 @@ from integrator.model.distributions.profile_surrogates import (
 )
 
 
-def _load_buffer(value: list[float] | str) -> Tensor:
-    """Load a tensor from a list of floats or a .pt file path."""
-    if isinstance(value, str):
-        loaded = torch.load(value, weights_only=True)
-        if isinstance(loaded, dict):
-            return next(iter(loaded.values())).float()
-        return loaded.float()
-    return torch.tensor(value, dtype=torch.float32)
-
-
 def compute_profile_kl(
     qp: Distribution | ProfileSurrogateOutput,
     prior_scale: float | Tensor,

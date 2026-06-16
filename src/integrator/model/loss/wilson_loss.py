@@ -10,10 +10,7 @@ from torch.distributions import Distribution, Gamma, Poisson, kl_divergence
 from integrator.model.distributions.profile_surrogates import (
     ProfileSurrogateOutput,
 )
-from integrator.model.loss.kl_helpers import (
-    _load_buffer,
-    compute_profile_kl,
-)
+from integrator.model.loss.kl_helpers import compute_profile_kl
 from integrator.model.loss.learned_background import (
     ChebyshevBackgroundPrior,
     ChebyshevConcentration,
@@ -48,7 +45,6 @@ class WilsonLoss(nn.Module):
         learn_concentration: bool = False,
         init_alpha: float = 1.0,
         n_bins: int = 20,
-        i_concentration_per_group: list[float] | str | None = None,
         concentration_cfg: dict | None = None,
         # Prior configs from yaml
         pi_cfg=None,
@@ -88,13 +84,6 @@ class WilsonLoss(nn.Module):
                 basis.get("sigma_prior", profile_prior_scale)
             )
 
-        # Auto-detect learn_concentration from pi_cfg
-        if (
-            pi_cfg is not None
-            and hasattr(pi_cfg, "name")
-            and pi_cfg.name == "gamma"
-        ):
-            learn_concentration = True
         self.learn_concentration = learn_concentration
 
         # Point-estimate B factor
@@ -107,17 +96,11 @@ class WilsonLoss(nn.Module):
         else:
             self.concentration_fn = None
 
-        # Per-bin learnable concentration (Gamma shape) — legacy
+        # Per-bin learnable concentration (Gamma shape)
         if self.learn_concentration:
-            if i_concentration_per_group is not None:
-                alpha_init = _load_buffer(i_concentration_per_group).clamp(
-                    min=0.1
-                )
-                init_raw = torch.log(torch.expm1(alpha_init))
-            else:
-                init_raw = torch.full(
-                    (n_bins,), math.log(math.expm1(init_alpha))
-                )
+            init_raw = torch.full(
+                (n_bins,), math.log(math.expm1(init_alpha))
+            )
             self.log_alpha_per_group = nn.Parameter(init_raw)
 
     def get_B(self) -> Tensor:

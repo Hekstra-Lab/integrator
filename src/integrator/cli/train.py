@@ -276,7 +276,6 @@ def main():
         construct_trainer,
         inject_binning_labels,
         load_config,
-        prepare_global_priors,
         prepare_per_bin_priors,
         prepare_profile_basis,
         save_run_artifacts,
@@ -297,7 +296,6 @@ def main():
     prior_events: list[dict] = []
     prepare_profile_basis(cfg, events_out=prior_events)
     prepare_per_bin_priors(cfg, events_out=prior_events)
-    prepare_global_priors(cfg)
 
     for event in prior_events:
         action = event["action"]

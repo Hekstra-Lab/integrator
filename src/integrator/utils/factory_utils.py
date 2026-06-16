@@ -225,34 +225,10 @@ def _get_surrogate_modules(
     data_dir = _get_data_dir(cfg)
     n_bins = _get_n_bins(cfg)
 
-    # Load GammaB mean_init stats once (if available). Written by
-    # prepare_per_bin_priors from raw counts (no DIALS).
-    init_stats_path = Path(data_dir) / "qi_qbg_mean_init.pt"
-    init_stats: dict | None = None
-    if init_stats_path.is_file():
-        try:
-            init_stats = torch.load(
-                init_stats_path,
-                weights_only=False,
-                map_location="cpu",
-            )
-        except Exception:
-            init_stats = None
-
     for key, surrogate_cfg in cfg["surrogates"].items():
         surrogate_cls = REGISTRY["surrogates"][surrogate_cfg["name"]]
         args = dict(surrogate_cfg["args"])
 
-        # GammaB: inject mean_init
-        if (
-            surrogate_cfg["name"] == "gammaB"
-            and "mean_init" not in args
-            and init_stats is not None
-            and key in ("qi", "qbg")
-        ):
-            stat_key = "qi_median" if key == "qi" else "qbg_median"
-            if stat_key in init_stats:
-                args["mean_init"] = float(init_stats[stat_key])
         if (
             surrogate_cfg["name"]
             in (
@@ -379,10 +355,7 @@ def _get_loss_module(
 
     data_dir = _get_data_dir(cfg)
     n_bins = _get_n_bins(cfg)
-    for pt_key in (
-        "i_concentration_per_group",
-        "profile_basis",
-    ):
+    for pt_key in ("profile_basis",):
         if pt_key in kwargs and isinstance(kwargs[pt_key], str):
             kwargs[pt_key] = _resolve_data_path(
                 kwargs[pt_key], data_dir, n_bins
@@ -610,10 +583,7 @@ def _collect_resolved_paths(cfg: dict) -> dict:
 
     loss_args = cfg.get("loss", {}).get("args", {}) or {}
     loss_paths: dict = {}
-    for pt_key in (
-        "i_concentration_per_group",
-        "profile_basis",
-    ):
+    for pt_key in ("profile_basis",):
         v = loss_args.get(pt_key)
         if isinstance(v, str):
             loss_paths[pt_key] = _resolved_path_info(
