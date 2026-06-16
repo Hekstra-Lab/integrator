@@ -729,15 +729,3 @@ def load_config(resource: str | Path) -> dict:
             raw = yaml.safe_load(f)
     return raw
 
-
-def dump_yaml_config(
-    cfg: configs.YAMLConfig,
-    path: str,
-):
-    with open(path, "w") as f:
-        yaml.safe_dump(
-            asdict(cfg),
-            f,
-            sort_keys=False,
-            default_flow_style=False,
-        )

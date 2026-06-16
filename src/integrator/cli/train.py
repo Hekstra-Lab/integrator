@@ -12,7 +12,9 @@ logger = logging.getLogger(__name__)
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Train integrator model")
+    parser = argparse.ArgumentParser(
+        prog="integrator.train", description="Train integrator model"
+    )
 
     # Required
     parser.add_argument(

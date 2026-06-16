@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def _load_shoebox_array(path, weights_only=True):
-    """Load counts/masks from either new .npy (refltorch mksbox >= memmap era)
+    """Load counts/masks from either new .npy (integrator.mksbox memmap era)
     or .pt (torch.save). Returns torch.Tensor.
     """
     p = Path(path)
@@ -30,21 +30,6 @@ def _load_shoebox_array(path, weights_only=True):
     except TypeError:
         return torch.load(p)
 
-
-SIMULATED_COLS = [
-    "shoebox_median",
-    "shoebox_var",
-    "shoebox_mean",
-    "shoebox_min",
-    "shoebox_max",
-    "intensity",
-    "background",
-    "refl_ids",
-    "is_test",
-    "group_label",
-    "profile_group_label",
-    "d",
-]
 
 # Default columns from rs.io.read_dials_stills
 DEFAULT_DS_COLS = [
@@ -305,175 +290,6 @@ class RotationDataModule(pl.LightningDataModule):
             standardized_counts,
             masks,
             reference,
-        )
-
-        # Split using is_test if available
-        is_test = reference.get("is_test")
-        all_indices = torch.arange(len(self.full_dataset))
-
-        if self.subset_size is not None and self.subset_size < len(
-            self.full_dataset
-        ):
-            all_indices = all_indices[
-                torch.randperm(len(all_indices))[: self.subset_size]
-            ]
-
-        if is_test is not None and is_test.any():
-            test_mask = is_test[all_indices].bool()
-            test_idx = all_indices[test_mask]
-            train_val_idx = all_indices[~test_mask]
-        else:
-            test_idx = torch.tensor([], dtype=torch.long)
-            train_val_idx = all_indices
-
-        self.test_dataset = Subset(self.full_dataset, test_idx.tolist())
-
-        perm = torch.randperm(len(train_val_idx))
-        val_size = int(len(train_val_idx) * self.val_split)
-        val_idx = train_val_idx[perm[:val_size]]
-        train_idx = train_val_idx[perm[val_size:]]
-
-        self.val_dataset = Subset(self.full_dataset, val_idx.tolist())
-        self.train_dataset = Subset(self.full_dataset, train_idx.tolist())
-
-    def train_dataloader(self):
-        return DataLoader(
-            self.train_dataset,
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=self.num_workers,
-            pin_memory=True,
-        )
-
-    def val_dataloader(self):
-        return DataLoader(
-            self.val_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-            pin_memory=True,
-        )
-
-    def test_dataloader(self):
-        if self.include_test:
-            return DataLoader(
-                self.test_dataset,
-                batch_size=self.batch_size,
-                shuffle=False,
-                num_workers=self.num_workers,
-                pin_memory=True,
-            )
-        else:
-            return None
-
-    def predict_dataloader(self):
-        return DataLoader(
-            self.full_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-            pin_memory=True,
-        )
-
-
-class SimulatedShoeboxLoader(pl.LightningDataModule):
-    """LightningDataModule for simulated shoebox data.
-
-    Attributes:
-        anscombe: Whether to use the Anscombe transformation.
-    """
-
-    def __init__(
-        self,
-        data_dir: Path,
-        batch_size: int = 10,
-        val_split: float = 0.2,
-        test_split: float = 0.1,
-        num_workers: int = 3,
-        include_test: bool = False,
-        subset_size: int | None = None,
-        single_sample_index=None,
-        cutoff: float | None = None,
-        min_valid_pixels: int = 10,
-        shoebox_file_names: dict | None = None,
-        H: int = 21,
-        W: int = 21,
-        D: int = 3,
-        get_dxyz: bool = False,
-        anscombe: bool = False,
-        transform: str | None = None,
-    ):
-        super().__init__()
-        self.data_dir = data_dir
-        self.batch_size = batch_size
-        self.val_split = val_split
-        self.test_split = test_split
-        self.include_test = include_test
-        self.subset_size = subset_size
-        self.single_sample_index = single_sample_index
-        self.num_workers = num_workers
-        self.cutoff = cutoff
-        self.min_valid_pixels = min_valid_pixels
-        self.full_dataset = None
-        if shoebox_file_names is None:
-            shoebox_file_names = {
-                "counts": "counts.pt",
-                "masks": "masks.pt",
-                "stats": "stats.pt",
-                "reference": "reference.pt",
-                "standardized_counts": None,
-            }
-        self.shoebox_file_names = shoebox_file_names
-        self.H = H
-        self.W = W
-        self.D = D
-        self.standardized_counts = shoebox_file_names["standardized_counts"]
-        self.get_dxyz = get_dxyz
-        self.anscombe = anscombe
-
-    def setup(self, stage=None):
-        counts = _load_shoebox_array(
-            os.path.join(self.data_dir, self.shoebox_file_names["counts"]),
-            weights_only=False,
-        ).squeeze(-1)
-        masks = _load_shoebox_array(
-            os.path.join(self.data_dir, self.shoebox_file_names["masks"]),
-            weights_only=False,
-        ).squeeze(-1)
-        stats = torch.load(
-            os.path.join(self.data_dir, self.shoebox_file_names["stats"]),
-            weights_only=False,
-        )
-        from integrator.utils.torch_to_refl import load_metadata
-
-        reference = load_metadata(
-            os.path.join(self.data_dir, self.shoebox_file_names["reference"])
-        )
-
-        # Alias refl_id -> refl_ids for compatibility with callbacks
-        if "refl_id" in reference and "refl_ids" not in reference:
-            reference["refl_ids"] = reference["refl_id"]
-
-        # Alias radial_bin -> group_label for hierarchical model
-        if "radial_bin" in reference and "group_label" not in reference:
-            reference["group_label"] = reference["radial_bin"]
-
-        if self.anscombe:
-            anscombe_transformed = 2 * (counts.clamp(min=0) + 0.375).sqrt()
-            standardized_counts = (
-                (anscombe_transformed - stats[0]) / stats[1].sqrt()
-            ) * masks
-        else:
-            standardized_counts = ((counts * masks) - stats[0]) / stats[
-                1
-            ].sqrt()
-
-        self.full_dataset = IntegratorDataset(
-            counts,
-            standardized_counts,
-            masks,
-            reference,
-            column_names=SIMULATED_COLS,
         )
 
         # Split using is_test if available

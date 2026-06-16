@@ -818,7 +818,7 @@ def _compute_wavelength_bin_edges(
     if "wavelength" not in metadata:
         raise KeyError(
             f"metadata.pt at {metadata_path} has no 'wavelength' column; "
-            "this CLI step requires output from refltorch.mksbox-laue."
+            "this CLI step requires output from integrator.mksbox --laue."
         )
     wavelength = metadata["wavelength"].float()
     if wavelength.numel() == 0:

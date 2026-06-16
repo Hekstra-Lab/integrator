@@ -36,41 +36,6 @@ def assign_labels(
     print(f"val labels saved to {save_dir + '/val_labels.csv'}")
 
 
-class EpochPredWriter(BasePredictionWriter):
-    def __init__(
-        self,
-        output_dir: Path,
-        write_interval,
-    ):
-        super().__init__(write_interval)
-        self.output_dir = output_dir
-
-    def write_on_epoch_end(
-        self,
-        trainer,
-        pl_module,
-        predictions,
-        batch_indices,
-    ):
-        merged_predictions = {}
-
-        for batch_prediction in predictions:
-            batch_cpu = dict()
-            for k, v in batch_prediction.items():
-                if isinstance(v, torch.Tensor):
-                    batch_cpu[k] = v.cpu().numpy()
-                elif isinstance(v, list):
-                    batch_cpu[k] = v
-
-            for key, value in batch_cpu.items():
-                if key not in merged_predictions:
-                    merged_predictions[key] = []
-                merged_predictions[key].append(value)
-
-        preds_fname = self.output_dir / "preds.pt"
-        torch.save(merged_predictions, preds_fname)
-
-
 class BatchPredWriter(BasePredictionWriter):
     def __init__(
         self,

@@ -11,7 +11,8 @@ logger = logging.getLogger(__name__)
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Predict from a set of pytorch.ckpt files"
+        prog="integrator.pred",
+        description="Predict from a set of pytorch.ckpt files",
     )
     parser.add_argument(
         "--run-dir",
