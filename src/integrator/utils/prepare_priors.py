@@ -814,7 +814,9 @@ def _compute_wavelength_bin_edges(
     inclusive). Equal-quantile spacing -> roughly equal counts per bin -> the
     per-bin G_k posteriors get balanced gradient signal.
     """
-    metadata = torch.load(metadata_path, weights_only=True)
+    from integrator.io import load_metadata
+
+    metadata = load_metadata(metadata_path)
     if "wavelength" not in metadata:
         raise KeyError(
             f"metadata.pt at {metadata_path} has no 'wavelength' column; "

@@ -11,7 +11,6 @@ from .prepare_priors import (
     prepare_per_bin_priors,
     prepare_profile_basis,
 )
-from .torch_to_refl import load_metadata, refl_as_pt
 
 __all__ = [
     "construct_data_loader",
@@ -23,6 +22,4 @@ __all__ = [
     "prepare_global_priors",
     "prepare_per_bin_priors",
     "prepare_profile_basis",
-    "refl_as_pt",
-    "load_metadata",
 ]

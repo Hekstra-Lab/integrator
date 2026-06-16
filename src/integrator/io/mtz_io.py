@@ -10,10 +10,11 @@ from pathlib import Path
 
 import gemmi
 import numpy as np
+import reciprocalspaceship as rs
 import torch
 import yaml
 
-import reciprocalspaceship as rs
+from .metadata import load_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ def write_mtz_from_preds(
         crystal_yaml_path: path to crystal.yaml (has cell + spacegroup).
         out_path: where to write the .mtz file.
     """
-    meta = torch.load(metadata_path, weights_only=True, map_location="cpu")
+    meta = load_metadata(metadata_path)
     crystal = yaml.safe_load(crystal_yaml_path.read_text())
 
     refl_ids = pred_data["refl_ids"]

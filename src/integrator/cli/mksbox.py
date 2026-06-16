@@ -40,7 +40,7 @@ import torch
 import yaml
 from numpy.lib.format import open_memmap
 
-from integrator.utils import refl_as_pt
+from integrator.io import refl_as_pt
 
 # re to parse image numbers from laue-dials filenames
 _TRAILING_INT_RE = re.compile(r"_(\d+)\.[A-Za-z0-9]+$")
@@ -624,7 +624,7 @@ def run_dials(args):
         )
 
     # metadata.npy (ensure is_test is captured alongside the defaults)
-    from integrator.utils.torch_to_refl import DEFAULT_REFL_COLS
+    from integrator.io import DEFAULT_REFL_COLS
 
     cols = list(DEFAULT_REFL_COLS)
     if "is_test" not in cols:
@@ -1085,7 +1085,7 @@ def run_laue(args):
         )
 
     #  metadata.npy via refl_as_pt
-    from integrator.utils.torch_to_refl import DEFAULT_REFL_COLS
+    from integrator.io import DEFAULT_REFL_COLS
 
     cols = list(DEFAULT_REFL_COLS)
     for must_have in ("wavelength", "d", "image_num", "is_test"):

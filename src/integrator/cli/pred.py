@@ -2,9 +2,9 @@ import argparse
 import logging
 import re
 
-from integrator.cli.utils.io import write_refl_from_preds
+from integrator.io import write_refl_from_preds
 from integrator.cli.utils.logger import setup_logging
-from integrator.cli.utils.mtz_writer import write_mtz_from_preds
+from integrator.io import write_mtz_from_preds
 
 logger = logging.getLogger(__name__)
 
@@ -161,12 +161,11 @@ def main():
                 ckpt_dir=ckpt_dir,
                 refl_file=refl_file,
                 epoch=epoch,
-                config=config,
                 filetype=args.save_preds_as,
             )
 
         if args.write_mtz:
-            from integrator.cli.utils.io import get_pred_files
+            from integrator.io import get_pred_files
 
             logger.info("Writing .mtz output for epoch %d", epoch)
             pred_data = get_pred_files(

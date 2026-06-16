@@ -219,7 +219,7 @@ class RotationDataModule(pl.LightningDataModule):
         stats = torch.load(
             os.path.join(self.data_dir, self.shoebox_file_names["stats"])
         )
-        from integrator.utils.torch_to_refl import load_metadata
+        from integrator.io import load_metadata
 
         reference = load_metadata(
             os.path.join(self.data_dir, self.shoebox_file_names["reference"])
