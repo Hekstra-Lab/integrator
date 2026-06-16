@@ -19,8 +19,6 @@ class PositionAwareProfileSurrogate(LearnedBasisProfileSurrogate):
         latent_dim: int | None = None,
         output_dim: int = 625,
         init_std: float = 0.5,
-        warmstart_basis_path: str | None = None,
-        freeze_bias: bool = False,
         beam_center: list[float] | None = None,
         H: int = 25,
         W: int = 25,
@@ -30,8 +28,6 @@ class PositionAwareProfileSurrogate(LearnedBasisProfileSurrogate):
             latent_dim=latent_dim,
             output_dim=output_dim,
             init_std=init_std,
-            warmstart_basis_path=warmstart_basis_path,
-            freeze_bias=False,
         )
         self.H = H
         self.W = W

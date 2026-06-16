@@ -277,7 +277,6 @@ def main():
         inject_binning_labels,
         load_config,
         prepare_per_bin_priors,
-        prepare_profile_basis,
         save_run_artifacts,
     )
     from integrator.utils.factory_utils import _collect_resolved_paths
@@ -294,7 +293,6 @@ def main():
 
     # Auto-generate prior distribution files if needed by the loss
     prior_events: list[dict] = []
-    prepare_profile_basis(cfg, events_out=prior_events)
     prepare_per_bin_priors(cfg, events_out=prior_events)
 
     for event in prior_events:

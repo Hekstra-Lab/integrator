@@ -35,7 +35,6 @@ class WilsonLoss(nn.Module):
         bg_concentration: float = 1.0,
         bg_prior_cfg: dict | None = None,
         # Profile prior
-        profile_basis: str | None = None,
         profile_prior_scale: float = 3.0,
         profile_prior_cfg: dict | None = None,
         # B factor
@@ -77,12 +76,6 @@ class WilsonLoss(nn.Module):
         )
         self.pbg_weight = pbg_cfg.weight if pbg_cfg is not None else pbg_weight
         self.pi_weight = pi_cfg.weight if pi_cfg is not None else pi_weight
-
-        if profile_basis is not None:
-            basis = torch.load(profile_basis, weights_only=False)
-            self.profile_prior_scale = float(
-                basis.get("sigma_prior", profile_prior_scale)
-            )
 
         self.learn_concentration = learn_concentration
 

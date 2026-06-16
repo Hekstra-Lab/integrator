@@ -16,130 +16,6 @@ def _nbins_path(filename: str, n_bins: int, data_dir: Path) -> Path:
     return data_dir / suffixed
 
 
-def prepare_profile_basis(
-    cfg: dict,
-    *,
-    force: bool = False,
-    events_out: list[dict] | None = None,
-) -> None:
-    """Auto-generate a fixed Hermite profile basis .pt file if missing.
-
-    Triggered when `surrogates.qp.args` references a basis file
-    (`warmstart_basis_path` for `learned_basis_profile` or `basis_path`
-    for `fixed_basis_profile`) that does not exist on disk. The basis is
-    built from the spatial shape in `data_loader.args` and the Hermite
-    knobs in `surrogates.qp.args`:
-
-      - `hermite_max_order` (default 4): max polynomial order in x, y
-      - `hermite_basis_sigma` (default 3.0): reference Gaussian width
-      - `hermite_sigma_z` (default 1.0): Gaussian width along z (3D only)
-      - `hermite_max_order_z` (default `min(1, D-1)`): max order in z
-
-    Idempotent: skips when file already exists unless `force=True`.
-
-    Args:
-        cfg: Full YAML config dict.
-        force: Regenerate even if file already exists.
-        events_out: Optional list appended with a structured event dict
-            describing the file action ("created").
-    """
-    qp_cfg = cfg.get("surrogates", {}).get("qp")
-    if not isinstance(qp_cfg, dict):
-        return
-    name = qp_cfg.get("name")
-    if name not in ("learned_basis_profile", "fixed_basis_profile"):
-        return
-    args = qp_cfg.get("args", {}) or {}
-
-    if name == "learned_basis_profile":
-        path_arg = args.get("warmstart_basis_path")
-    else:
-        path_arg = args.get("basis_path")
-    if not isinstance(path_arg, str):
-        return
-
-    data_dir = Path(cfg["data_loader"]["args"]["data_dir"])
-    n_bins_val = cfg.get("loss", {}).get("args", {}).get("n_bins")
-    if n_bins_val is not None:
-        basis_path = _nbins_path(path_arg, int(n_bins_val), data_dir)
-    else:
-        p = Path(path_arg)
-        basis_path = p if p.is_absolute() else data_dir / p
-
-    if basis_path.exists() and not force:
-        return
-
-    max_order = int(args.get("hermite_max_order", 4))
-    sigma_ref = float(args.get("hermite_basis_sigma", 3.0))
-    sigma_z = float(args.get("hermite_sigma_z", 1.0))
-    max_order_z_arg = args.get("hermite_max_order_z")
-    max_order_z = int(max_order_z_arg) if max_order_z_arg is not None else None
-
-    dl_args = cfg.get("data_loader", {}).get("args", {})
-    D_dim = int(dl_args.get("D", dl_args.get("d", 1)))
-    H_dim = int(dl_args.get("H", dl_args.get("h", 21)))
-    W_dim = int(dl_args.get("W", dl_args.get("w", 21)))
-
-    if D_dim > 1:
-        W_basis, b, orders = _build_hermite_basis_3d(
-            D_dim,
-            H_dim,
-            W_dim,
-            max_order,
-            sigma_ref,
-            sigma_z,
-            max_order_z=max_order_z,
-        )
-        max_order_z_used = (
-            max_order_z if max_order_z is not None else min(1, D_dim - 1)
-        )
-    else:
-        W_basis, b, orders = _build_hermite_basis_2d(
-            H_dim, W_dim, max_order, sigma_ref
-        )
-        max_order_z_used = 0
-    d = W_basis.shape[1]
-
-    basis_data = {
-        "W": W_basis,
-        "b": b,
-        "d": d,
-        "orders": orders,
-        "max_order": max_order,
-        "max_order_z": max_order_z_used,
-        "sigma_ref": sigma_ref,
-        "sigma_z": sigma_z,
-        "sigma_prior": 3.0,
-        "basis_type": "hermite",
-        "shape": (D_dim, H_dim, W_dim),
-    }
-    basis_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(basis_data, basis_path)
-    logger.info(
-        "Saved %s (Hermite basis: %dD, max_order=%d, max_order_z=%d, "
-        "sigma_ref=%.2f, d=%d)",
-        basis_path.name,
-        3 if D_dim > 1 else 2,
-        max_order,
-        max_order_z_used,
-        sigma_ref,
-        d,
-    )
-    if events_out is not None:
-        events_out.append(
-            {
-                "file": basis_path.name,
-                "action": "created",
-                "path": str(basis_path),
-                "reason": "Hermite basis warmstart auto-generated",
-                "max_order": max_order,
-                "max_order_z": max_order_z_used,
-                "sigma_ref": sigma_ref,
-                "d": d,
-            }
-        )
-
-
 def prepare_per_bin_priors(
     cfg: dict,
     *,
@@ -147,11 +23,7 @@ def prepare_per_bin_priors(
     force: bool = False,
     events_out: list[dict] | None = None,
 ) -> None:
-    """Generate per-bin prior .pt files if the loss config requires them.
-
-    Checks whether the loss config references per-bin files
-    (s_squared_per_group).
-    and generates any that are missing.
+    """Generate resolution-bin group labels and the empirical background prior.
 
     Args:
         cfg: Full YAML config dict.  If `loss.args.n_bins` is set in the
@@ -217,59 +89,23 @@ def prepare_per_bin_priors(
                 conc_cfg["d_max"],
             )
 
-    # Determine which files are referenced and which are missing
-    per_bin_keys = [
-        "s_squared_per_group",
-    ]
-
-    needed = {}
-    for key in per_bin_keys:
-        if key not in loss_args:
-            continue
-        filename = loss_args[key]
-        if isinstance(filename, str):
-            path = _nbins_path(filename, n_bins, data_dir)
-            if force or not path.exists():
-                needed[key] = path
-
-    # Check group_label consistency with n_bins even if all files exist
+    # Regenerate group_labels if missing or binned at a different n_bins.
     need_group_labels = False
     gl_path = _nbins_path("group_labels.pt", n_bins, data_dir)
     if not gl_path.exists():
         need_group_labels = True
     else:
         existing_gl = torch.load(gl_path, weights_only=True)
-        existing_n_bins = int(existing_gl.max().item()) + 1
-        if existing_n_bins != n_bins:
-            logger.warning(
-                "group_labels_%d.pt has %d bins but config specifies n_bins=%d; "
-                "re-binning and regenerating all per-bin files",
-                n_bins,
-                existing_n_bins,
-                n_bins,
-            )
-            # Force regeneration of ALL referenced per-bin files
-            for key in per_bin_keys:
-                if key not in loss_args:
-                    continue
-                filename = loss_args[key]
-                if isinstance(filename, str):
-                    needed[key] = _nbins_path(filename, n_bins, data_dir)
+        if int(existing_gl.max().item()) + 1 != n_bins:
+            need_group_labels = True
 
-    # Check if global background prior needs computing.
-    # Fits Gamma MLE on all background values and saves (alpha, rate).
     bg_prior_path = data_dir / "bg_prior.pt"
     need_bg_prior = (
         "bg_rate" not in loss_args and "bg_concentration" not in loss_args
     ) and (force or not bg_prior_path.exists())
 
-    if not needed and not need_group_labels and not need_bg_prior:
+    if not need_group_labels and not need_bg_prior:
         return
-
-    logger.info(
-        "Generating per-bin prior files: %s",
-        ", ".join(needed.keys()),
-    )
 
     metadata = torch.load(
         _resolve_reference_path(data_dir, cfg), weights_only=False
@@ -277,21 +113,12 @@ def prepare_per_bin_priors(
     d = metadata["d"]
     N = len(d)
 
-    # Bin by resolution (n_bins may be reduced if bins are too small)
-    group_labels, bin_edges, n_bins = _bin_by_resolution(d, n_bins)
+    group_labels, _, n_bins = _bin_by_resolution(d, n_bins)
     logger.info("Binned %d reflections into %d resolution shells", N, n_bins)
 
-    # Save group_labels as a separate n_bins-suffixed file (never mutate metadata.pt)
-    # Also set in-memory for downstream prior computation in this function.
-    metadata["group_label"] = group_labels
     gl_path = _nbins_path("group_labels.pt", n_bins, data_dir)
     torch.save(group_labels, gl_path)
     logger.info("Saved %s (%d bins)", gl_path.name, n_bins)
-
-    if "s_squared_per_group" in needed:
-        s_squared = _compute_s_squared_per_group(d, group_labels, n_bins)
-        torch.save(s_squared, needed["s_squared_per_group"])
-        logger.info("Saved s_squared_per_group.pt")
 
     # Global background prior via Gamma MLE
     if need_bg_prior:
@@ -439,21 +266,6 @@ def _compute_wavelength_bin_edges(
     return edges
 
 
-def _compute_s_squared_per_group(
-    d: Tensor,
-    group_labels: Tensor,
-    n_bins: int,
-) -> Tensor:
-    """Wilson resolution parameter: s_k^2 = 1 / (4 * mean_d_k^2)."""
-    s_sq = torch.zeros(n_bins)
-    for b in range(n_bins):
-        sel = d[group_labels == b]
-        if len(sel) > 0:
-            mean_d = sel.mean()
-            s_sq[b] = 1.0 / (4.0 * mean_d**2)
-    return s_sq
-
-
 def _fit_gamma_mle(
     x: Tensor,
     n_iter: int = 100,
@@ -481,142 +293,5 @@ def _fit_gamma_mle(
 
     beta = alpha / xbar
     return alpha, beta
-
-
-def _hermite_polynomial(n_order: int, x: Tensor) -> Tensor:
-    """Probabilist's Hermite polynomial H_n(x) by three-term recurrence."""
-    if n_order == 0:
-        return torch.ones_like(x)
-    if n_order == 1:
-        return x
-    h_prev2 = torch.ones_like(x)
-    h_prev1 = x
-    for k in range(2, n_order + 1):
-        h_curr = x * h_prev1 - (k - 1) * h_prev2
-        h_prev2 = h_prev1
-        h_prev1 = h_curr
-    return h_curr
-
-
-def _build_hermite_basis_2d(
-    H: int = 21,
-    W: int = 21,
-    max_order: int = 4,
-    sigma_ref: float = 3.0,
-) -> tuple[Tensor, Tensor, list[tuple[int, int]]]:
-    """2D Hermite function basis with half-Gaussian envelope.
-
-    Each basis function: phi_{nx,ny}(x,y) = H_nx(x/s) * H_ny(y/s) * exp(-r^2/(4s^2))
-    Orthogonal in unweighted L^2(R^2).  The (0,0) mode is excluded (absorbed by b).
-
-    Returns:
-        Tuple of (W, b, orders) where W is a (H*W, d) basis matrix, b is a
-        (H*W,) bias (log of reference Gaussian profile), and orders is a
-        list of (nx, ny) tuples.
-    """
-    cy, cx = (H - 1) / 2.0, (W - 1) / 2.0
-    yy, xx = torch.meshgrid(
-        torch.arange(H, dtype=torch.float64),
-        torch.arange(W, dtype=torch.float64),
-        indexing="ij",
-    )
-    x_norm = (xx - cx) / sigma_ref
-    y_norm = (yy - cy) / sigma_ref
-
-    # Half-Gaussian envelope
-    half_gaussian = torch.exp(-0.25 * (x_norm**2 + y_norm**2))
-
-    # Reference profile (for bias b)
-    full_gaussian = torch.exp(-0.5 * (x_norm**2 + y_norm**2))
-    ref = full_gaussian / full_gaussian.sum()
-    b = torch.log(ref.reshape(-1).clamp(min=1e-10)).float()
-
-    basis_list = []
-    orders = []
-    for nx in range(max_order + 1):
-        for ny in range(max_order + 1 - nx):
-            if nx == 0 and ny == 0:
-                continue
-            phi = (
-                _hermite_polynomial(nx, x_norm)
-                * _hermite_polynomial(ny, y_norm)
-                * half_gaussian
-            )
-            phi = phi / phi.norm()
-            basis_list.append(phi.reshape(-1))
-            orders.append((nx, ny))
-
-    W_basis = torch.stack(basis_list, dim=1).float()
-    return W_basis, b, orders
-
-
-def _build_hermite_basis_3d(
-    D: int,
-    H: int = 21,
-    W: int = 21,
-    max_order: int = 4,
-    sigma_ref: float = 3.0,
-    sigma_z: float = 1.0,
-    max_order_z: int | None = None,
-) -> tuple[Tensor, Tensor, list[tuple[int, int, int]]]:
-    """3D Hermite function basis with half-Gaussian envelope.
-
-    Args:
-        D: Number of frames (z dimension).
-        H: Shoebox height.
-        W: Shoebox width.
-        max_order: Max polynomial order in x, y.
-        sigma_ref: Reference Gaussian width in pixels (x, y).
-        sigma_z: Reference Gaussian width along z/frame axis.
-        max_order_z: Max polynomial order in z. Defaults to `min(1, D-1)`.
-
-    Returns:
-        Tuple of (W, b, orders) where W is a (D*H*W, d) basis matrix, b is a
-        (D*H*W,) bias (log of reference 3D Gaussian profile), and orders is a
-        list of (nx, ny, nz) tuples.
-    """
-    cy, cx = (H - 1) / 2.0, (W - 1) / 2.0
-    cz = (D - 1) / 2.0
-
-    zz, yy, xx = torch.meshgrid(
-        torch.arange(D, dtype=torch.float64),
-        torch.arange(H, dtype=torch.float64),
-        torch.arange(W, dtype=torch.float64),
-        indexing="ij",
-    )
-    x_norm = (xx - cx) / sigma_ref
-    y_norm = (yy - cy) / sigma_ref
-    z_norm = (zz - cz) / sigma_z
-
-    # Half-Gaussian envelope in all 3 dims
-    half_gaussian = torch.exp(-0.25 * (x_norm**2 + y_norm**2 + z_norm**2))
-
-    # Reference 3D Gaussian profile
-    full_gaussian = torch.exp(-0.5 * (x_norm**2 + y_norm**2 + z_norm**2))
-    ref = full_gaussian / full_gaussian.sum()
-    b = torch.log(ref.reshape(-1).clamp(min=1e-10)).float()
-
-    if max_order_z is None:
-        max_order_z = min(1, D - 1)
-
-    basis_list = []
-    orders = []
-    for nz in range(max_order_z + 1):
-        for nx in range(max_order + 1):
-            for ny in range(max_order + 1 - nx):
-                if nx == 0 and ny == 0 and nz == 0:
-                    continue
-                phi = (
-                    _hermite_polynomial(nx, x_norm)
-                    * _hermite_polynomial(ny, y_norm)
-                    * _hermite_polynomial(nz, z_norm)
-                    * half_gaussian
-                )
-                phi = phi / phi.norm()
-                basis_list.append(phi.reshape(-1))
-                orders.append((nx, ny, nz))
-
-    W_basis = torch.stack(basis_list, dim=1).float()
-    return W_basis, b, orders
 
 

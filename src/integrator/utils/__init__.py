@@ -8,7 +8,6 @@ from .factory_utils import (
 from .prepare_priors import (
     inject_binning_labels,
     prepare_per_bin_priors,
-    prepare_profile_basis,
 )
 
 __all__ = [
@@ -19,5 +18,4 @@ __all__ = [
     "save_run_artifacts",
     "inject_binning_labels",
     "prepare_per_bin_priors",
-    "prepare_profile_basis",
 ]

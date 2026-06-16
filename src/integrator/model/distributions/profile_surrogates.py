@@ -1,7 +1,6 @@
 import math
 from dataclasses import dataclass
 
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
@@ -61,58 +60,6 @@ class ProfileSurrogateOutput:
     scale: Tensor
 
 
-class FixedBasisProfileSurrogate(nn.Module):
-    """Profile surrogate with a fixed basis (Hermite basis).
-
-    Args:
-        input_dim: Dimension of the encoder output.
-        basis_path: Path to profile_basis.pt.
-        init_std: Initial posterior std for h.
-    """
-
-    def __init__(
-        self,
-        input_dim: int,
-        basis_path: str,
-        init_std: float = 0.5,
-    ) -> None:
-        super().__init__()
-
-        basis = torch.load(basis_path, weights_only=False)
-        self.W: Tensor
-        self.b: Tensor
-        self.register_buffer("W", basis["W"])  # (K, d)
-        self.register_buffer("b", basis["b"])  # (K,)
-        self.d: int = int(basis["d"])
-
-        self.loc_head = nn.Linear(input_dim, self.d)
-        self.scale_head = nn.Linear(input_dim, self.d)
-
-        nn.init.zeros_(self.scale_head.weight)
-        nn.init.constant_(self.scale_head.bias, _softplus_inverse(init_std))
-
-    def forward(
-        self,
-        x: Tensor,
-        mc_samples: int = 1,
-        group_labels: Tensor | None = None,
-        **kwargs,
-    ) -> ProfileSurrogateOutput:
-        loc = self.loc_head(x)  # (B, d)
-        scale = F.softplus(self.scale_head(x))  # (B, d)
-
-        zp, mean_profile = _sample_and_decode(
-            loc, scale, self.W, self.b, mc_samples
-        )
-
-        return ProfileSurrogateOutput(
-            zp=zp,
-            mean_profile=mean_profile,
-            loc=loc,
-            scale=scale,
-        )
-
-
 class LearnedBasisProfileSurrogate(nn.Module):
     """Profile surrogate with a learned linear decoder.
 
@@ -121,16 +68,9 @@ class LearnedBasisProfileSurrogate(nn.Module):
 
     Args:
         input_dim: Dimension of the encoder output.
-        latent_dim: Dimension of the latent h. When `warmstart_basis_path`
-            is provided, defaults to the basis's `d` and must match it
-            exactly if set explicitly. Without warm-start, defaults to 8.
+        latent_dim: Dimension of the latent h. Default 8.
         output_dim: Number of profile pixels (D*H*W). Default 441.
-        warmstart_basis_path: Optional .pt file with keys 'W' (K, d) and
-            'b' (K,) to warm-start the decoder.
-
-    Raises:
-        ValueError: If `latent_dim` is set explicitly and differs from
-            the basis's `d` when warm-starting.
+        init_std: Initial posterior std for h.
     """
 
     def __init__(
@@ -139,32 +79,11 @@ class LearnedBasisProfileSurrogate(nn.Module):
         latent_dim: int | None = None,
         output_dim: int = 441,
         init_std: float = 0.5,
-        warmstart_basis_path: str | None = None,
-        freeze_bias: bool = False,
     ) -> None:
         super().__init__()
 
-        self._basis_W: Tensor | None = None
-        self._basis_b: Tensor | None = None
-
-        if warmstart_basis_path is not None:
-            basis = torch.load(warmstart_basis_path, weights_only=False)
-            self._basis_W = basis["W"].float()  # (K, d_basis)
-            self._basis_b = basis["b"].float()  # (K,)
-            d_basis = self._basis_W.shape[1]
-            if latent_dim is None:
-                latent_dim = d_basis
-            elif latent_dim != d_basis:
-                raise ValueError(
-                    f"latent_dim={latent_dim} does not match warmstart "
-                    f"basis d={d_basis} (from {warmstart_basis_path!r}). "
-                    f"Drop latent_dim from the config to auto-infer, or "
-                    f"set it to {d_basis} to match."
-                )
-
         if latent_dim is None:
             latent_dim = 8
-
         self.d: int = latent_dim
 
         self.loc_head = nn.Linear(input_dim, self.d)
@@ -173,29 +92,6 @@ class LearnedBasisProfileSurrogate(nn.Module):
 
         nn.init.zeros_(self.scale_head.weight)
         nn.init.constant_(self.scale_head.bias, _softplus_inverse(init_std))
-
-        if self._basis_W is not None:
-            self._apply_warmstart(output_dim)
-
-        if freeze_bias:
-            self.decoder.bias.requires_grad_(False)
-
-    def _apply_warmstart(self, output_dim: int) -> None:
-        W, b = self._basis_W, self._basis_b
-        if W.shape[0] != output_dim:
-            raise ValueError(
-                f"warmstart basis W has K={W.shape[0]} but output_dim="
-                f"{output_dim}."
-            )
-        if b.shape[0] != output_dim:
-            raise ValueError(
-                f"warmstart basis b has K={b.shape[0]} but output_dim="
-                f"{output_dim}."
-            )
-        with torch.no_grad():
-            self.decoder.weight.data.copy_(W)
-            self.decoder.bias.data.copy_(b)
-        del self._basis_W, self._basis_b
 
     def forward(
         self,

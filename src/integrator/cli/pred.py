@@ -142,7 +142,7 @@ def main():
             )
 
             ckpt_ = torch.load(ckpt.as_posix())
-            integrator = construct_integrator(config, skip_warmstart=True)
+            integrator = construct_integrator(config)
             integrator.load_state_dict(ckpt_["state_dict"])
 
             if torch.cuda.is_available():

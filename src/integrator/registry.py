@@ -4,7 +4,6 @@ from integrator.data_loaders import (
 )
 from integrator.model.distributions import (
     DirichletDistribution,
-    FixedBasisProfileSurrogate,
     GammaDistributionRepamA,
     GammaDistributionRepamB,
     GammaDistributionRepamE,
@@ -44,7 +43,6 @@ REGISTRY = {
         "dirichlet": DirichletDistribution,
         "learned_basis_profile": LearnedBasisProfileSurrogate,
         "position_aware_profile": PositionAwareProfileSurrogate,
-        "fixed_basis_profile": FixedBasisProfileSurrogate,
     },
     "data_loader": {
         "rotation_data": RotationDataModule,

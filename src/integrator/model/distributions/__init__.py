@@ -6,7 +6,6 @@ from .gamma import (
 )
 from .position_aware_profile import PositionAwareProfileSurrogate
 from .profile_surrogates import (
-    FixedBasisProfileSurrogate,
     LearnedBasisProfileSurrogate,
     ProfileSurrogateOutput,
 )
@@ -16,7 +15,6 @@ __all__ = [
     "GammaDistributionRepamA",
     "GammaDistributionRepamB",
     "GammaDistributionRepamE",
-    "FixedBasisProfileSurrogate",
     "LearnedBasisProfileSurrogate",
     "ProfileSurrogateOutput",
     "PositionAwareProfileSurrogate",
