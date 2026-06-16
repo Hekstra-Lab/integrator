@@ -234,7 +234,9 @@ class RotationDataModule(pl.LightningDataModule):
         stats = torch.load(
             os.path.join(self.data_dir, self.shoebox_file_names["stats"])
         )
-        reference = torch.load(
+        from integrator.utils.torch_to_refl import load_metadata
+
+        reference = load_metadata(
             os.path.join(self.data_dir, self.shoebox_file_names["reference"])
         )
 
@@ -442,9 +444,10 @@ class SimulatedShoeboxLoader(pl.LightningDataModule):
             os.path.join(self.data_dir, self.shoebox_file_names["stats"]),
             weights_only=False,
         )
-        reference = torch.load(
-            os.path.join(self.data_dir, self.shoebox_file_names["reference"]),
-            weights_only=False,
+        from integrator.utils.torch_to_refl import load_metadata
+
+        reference = load_metadata(
+            os.path.join(self.data_dir, self.shoebox_file_names["reference"])
         )
 
         # Alias refl_id -> refl_ids for compatibility with callbacks
