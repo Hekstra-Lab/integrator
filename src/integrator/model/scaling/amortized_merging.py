@@ -70,11 +70,7 @@ _N_COND = 3  # per-observation conditioning: [log scale, log lp|wavelength, d]
 
 
 class AmortizedMergingIntegrator(BaseIntegrator):
-    """Per-HKL amortized variational intensity (sibling of conjugate merging).
-
-    See the module docstring for the `mean` vs `sum` aggregation modes. Best
-    paired with `GroupedAsuIdBatchSampler` (`group_by_asu_id: true`).
-    """
+    """Per-HKL amortized variational intensity."""
 
     REQUIRED_ENCODERS = {
         "profile": configs.ProfileEncoderArgs,
@@ -100,10 +96,8 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         # LP-corrected intensity; lp_correction would double-count it.
         if getattr(self.loss, "_apply_lp", False):
             raise ValueError(
-                "AmortizedMergingIntegrator applies LP through the scale, so "
-                "I_h is LP-corrected; enabling lp_correction would multiply the "
-                "Wilson prior by LP too and double-count it. Set "
-                "loss.args.lp_correction: false."
+                "AmortizedMergingIntegrator applies LP through the scale."
+                "Set loss.args.lp_correction: false."
             )
 
         self.n_hkl = cfg.n_hkl
@@ -114,28 +108,30 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         self.merge_overdispersion = bool(
             getattr(cfg, "merge_overdispersion", False)
         )
-        # Optional decoupled LR for the scale field (its own Adam group); None=lr.
+        # Optional LR for the scale
         self.scaling_lr = getattr(cfg, "scaling_lr", None)
-        # Cross-observation scaling-consistency loss weight (0 = off). Mirrors
-        # ConjugateMergingIntegrator: a direct, data-only gradient for the per-obs
-        # scale via internal consistency of symmetry-equivalents.
-        self.consistency_weight = float(getattr(cfg, "consistency_weight", 0.0))
-        # Anomalous-preserving terms (see configs.IntegratorCfg):
-        #   pool_friedel  - consistency WLS target over the Friedel-pooled group.
-        #   centric_anchor- zero-anomalous control on the scale from centrics.
-        #   double_wilson - log-ratio coupling of paired mates' merged means.
+
+        # Cross-observation scaling-consistency loss weight (0 = off)
+        self.consistency_weight = float(
+            getattr(cfg, "consistency_weight", 0.0)
+        )
+
         self.consistency_pool_friedel = bool(
             getattr(cfg, "consistency_pool_friedel", False)
         )
+
         self.centric_anchor_weight = float(
             getattr(cfg, "centric_anchor_weight", 0.0)
         )
+
         self.double_wilson_weight = float(
             getattr(cfg, "double_wilson_weight", 0.0)
         )
+
         self.wilson_centric_prior = bool(
             getattr(cfg, "wilson_centric_prior", False)
         )
+
         d = cfg.encoder_out
 
         if self.merge_aggregation == "mean":
@@ -152,9 +148,6 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                 self.merge_attn = nn.MultiheadAttention(
                     in_dim, num_heads=1, batch_first=True
                 )
-                # Zero the output projection so attention starts as a no-op
-                # (feat_ctx == feat): the head begins life as the pure
-                # sum-of-potentials backbone and learns the gating from there.
                 nn.init.zeros_(self.merge_attn.out_proj.weight)
                 nn.init.zeros_(self.merge_attn.out_proj.bias)
                 self.gate_head = nn.Linear(in_dim, 1)
@@ -163,16 +156,13 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                 self.disp_head = nn.Sequential(
                     nn.Linear(3, 16), nn.ReLU(), nn.Linear(16, 1)
                 )
-                nn.init.constant_(
-                    self.disp_head[-1].bias, -5.0
-                )  # phi ~ 0 init
+                nn.init.constant_(self.disp_head[-1].bias, -5.0)
         else:
             raise ValueError(
                 f"unknown merge_aggregation {self.merge_aggregation!r}"
             )
 
-        # Final merged per-HKL posterior, populated by `finalize_merge` (a clean
-        # full-dataset pass).
+        # Final merged per-HKL posterior, populated by `finalize_merge`
         self.register_buffer(
             "alpha_buffer",
             torch.full((cfg.n_hkl,), self.alpha_W),
@@ -187,24 +177,18 @@ class AmortizedMergingIntegrator(BaseIntegrator):
             persistent=False,
         )
 
-        # Scale function (identical to the other merging integrators)
+        # Scale function
         self.scale_restraint_weight = float(
             getattr(cfg, "scale_absorption_restraint", 0.0)
         )
         if getattr(cfg, "scale_laue_spectral", False):
-            # Polychromatic (Laue stills): STRUCTURED spectral scale. The incident
-            # spectrum G(lambda) is a low-order ChebyshevSpectrum (the form the
-            # working polychromatic_wilson integrator uses in its prior), warm-
-            # startable from that model's spectrum.c and optionally frozen, plus
-            # optional physical Lorentz/polarization and a learned geometry
-            # residual. Replaces LaueMLPScale, which stalls at a near-constant
-            # scale because a black-box MLP cannot learn G(lambda) against the
-            # merge gauge. Precedence over all other scales.
             self.scale_fn = LaueSpectralScale(
                 degree=getattr(cfg, "scale_spectrum_degree", 40),
                 lambda_min=cfg.scale_lambda_min,
                 lambda_max=cfg.scale_lambda_max,
-                spectrum_init_from=getattr(cfg, "scale_spectrum_init_from", None),
+                spectrum_init_from=getattr(
+                    cfg, "scale_spectrum_init_from", None
+                ),
                 freeze_spectrum=getattr(cfg, "scale_freeze_spectrum", False),
                 lorentz=getattr(cfg, "scale_lorentz", False),
                 polarization=getattr(cfg, "scale_polarization", False),
@@ -219,11 +203,6 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                 d_min=getattr(cfg, "dmin", 1.0),
             )
         elif getattr(cfg, "scale_laue_mlp", False):
-            # Polychromatic (Laue stills): wavelength-aware MLP scale. Inputs
-            # [lambda, x, y, d] (+ optional crystal-frame SH absorption when
-            # scale_mlp_absorption); the MLP owns spectrum + geometry, no /lp by
-            # the caller. Optional per-image log-scale. Precedence over rotation
-            # scales.
             n_abs_sh = 0
             if getattr(cfg, "scale_mlp_absorption", False):
                 n_abs_sh = (int(cfg.scale_sh_lmax) + 1) ** 2 - 1
@@ -244,12 +223,6 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                 ),
             )
         elif getattr(cfg, "scale_physical", False):
-            # DIALS-style: smooth scale(phi) x decay(phi,d) x crystal-frame SH
-            # absorption (precomputed `absorption_sh`, scripts/
-            # extract_crystal_frame_sh.py). scale_sh_lmax MUST match --lmax. Here
-            # the scale lives in the conjugate merge (no warm-start/freeze), so
-            # the surface is the under-identified within-image band the MLP left
-            # at r_detrended~0; restrain it (scale_absorption_restraint).
             self.scale_fn = PhysicalScale(
                 n_sh=(int(cfg.scale_sh_lmax) + 1) ** 2 - 1,
                 degree_scale=cfg.scale_degree,
@@ -301,7 +274,6 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                 frame_max=cfg.scale_frame_max,
             )
 
-
     def _build_optimizer(self) -> torch.optim.Optimizer:
         """Adam; with scaling_lr set, the scale field gets its own param group.
 
@@ -321,9 +293,8 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                 continue
             if name.startswith("scale_fn."):
                 scale_params.append(param)
-            elif (
-                self.decoder_weight_decay is not None
-                and name.endswith("surrogates.qp.decoder.weight")
+            elif self.decoder_weight_decay is not None and name.endswith(
+                "surrogates.qp.decoder.weight"
             ):
                 decoder_params.append(param)
             else:
@@ -379,9 +350,7 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                         "loader's reference at the augmented metadata file."
                     )
                 a = metadata["absorption_sh"].to(device).float()
-            return self.scale_fn(
-                wavelength, x_det, y_det, d, image_num, a
-            )
+            return self.scale_fn(wavelength, x_det, y_det, d, image_num, a)
         frame = metadata["xyzcal.px.2"].to(device).float()
         lp = metadata["lp"].to(device).float().clamp(min=1e-8)
         if isinstance(self.scale_fn, PhysicalScale):
@@ -533,11 +502,6 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         beta_h = tau_h + beta_sum
 
         if self.merge_overdispersion:
-            # Per-HKL spread of the per-observation intensities -> a *detached*
-            # calibration signal for phi. no_grad because (a) the spread must not
-            # train the encoders to game it, and (b) it sidesteps the sqrt-at-0
-            # gradient when an HKL has a single observation (var == 0), which
-            # would otherwise be inf/NaN and crash the backward pass.
             with torch.no_grad():
                 i_obs = delta_alpha / delta_beta.clamp(min=1e-6)
                 sum_i, _, _ = _scatter_sum_compact(i_obs, asu_ids)
@@ -560,15 +524,7 @@ class AmortizedMergingIntegrator(BaseIntegrator):
 
     @torch.no_grad()
     def finalize_merge(self, dataloader) -> None:
-        """Recompute the per-HKL posterior over the full dataset.
-
-        Requires a loader that yields COMPLETE HKL groups per batch -- i.e. a
-        `group_by_asu_id` loader such as `predict_dataloader(grouped=True)`. With
-        complete groups the per-batch `_merge` is the exact per-HKL posterior for
-        every mode (sum/mean, attention, overdispersion). A guard raises if an
-        HKL spans batches (an ungrouped loader), which would otherwise produce
-        silent partial sums.
-        """
+        """Recompute the per-HKL posterior over the full dataset."""
         self.eval()
         device = self.alpha_buffer.device
         seen = torch.zeros(self.n_hkl, dtype=torch.bool, device=device)
@@ -797,7 +753,9 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         key = nonanom[sel] * 2 + plus[sel].long()
         uniq_key, key_inv = torch.unique(key, return_inverse=True)
         k = uniq_key.numel()
-        num = torch.zeros(k, device=device).scatter_add(0, key_inv, ws * js * s)
+        num = torch.zeros(k, device=device).scatter_add(
+            0, key_inv, ws * js * s
+        )
         den = (
             torch.zeros(k, device=device)
             .scatter_add(0, key_inv, ws * s * s)
@@ -865,7 +823,9 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         g = int(na_inv.max().item()) + 1
 
         def _agg(m: Tensor) -> tuple[Tensor, Tensor]:
-            s = torch.zeros(g, device=device).scatter_add(0, na_inv[m], logmu[m])
+            s = torch.zeros(g, device=device).scatter_add(
+                0, na_inv[m], logmu[m]
+            )
             c = torch.zeros(g, device=device).scatter_add(
                 0, na_inv[m], torch.ones_like(logmu[m])
             )
@@ -1009,7 +969,9 @@ class AmortizedMergingIntegrator(BaseIntegrator):
             isinstance(self.scale_fn, PhysicalScale)
             and self.scale_restraint_weight > 0.0
         ):
-            restraint = self.scale_restraint_weight * self.scale_fn.restraint_penalty()
+            restraint = (
+                self.scale_restraint_weight * self.scale_fn.restraint_penalty()
+            )
             total_loss = total_loss + restraint
             self.log(
                 f"{step} scale_restraint", restraint.detach(), on_epoch=True

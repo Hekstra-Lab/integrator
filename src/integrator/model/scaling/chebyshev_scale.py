@@ -118,15 +118,13 @@ class SpatialChebyshevScale(nn.Module):
 
 
 class MLPScale(nn.Module):
-    """MLP scale that replaces s/lp with a single learned correction.
-
+    """
     Takes per-observation features (frame, detector x/y, LP, d-spacing)
     and outputs a positive scale factor.
 
-    rate = scale_mlp(features) × F^2 × profile + bg
+    rate = scale_mlp(features) * F^2 * profile + bg
 
-    Features are normalized to [-1, 1] or [0, 1] using registered
-    buffers for stable training.
+    Features are normalized to [-1, 1] or [0, 1]
     """
 
     def __init__(
@@ -158,9 +156,7 @@ class MLPScale(nn.Module):
         self.register_buffer("d_min", torch.tensor(d_min))
         self.register_buffer("d_max", torch.tensor(max(d_max, d_min + 1.0)))
 
-        # Optional crystal-frame SH absorption features as extra inputs. Keep
-        # even-l harmonics only (Friedel-symmetric -> cannot build the odd-l
-        # anomalous-gating band) unless absorption_even_only is False.
+        # Optional crystal-frame SH absorption features as extra inputs
         self.n_abs_sh = int(n_abs_sh)
         n_abs_in = 0
         if self.n_abs_sh > 0:
@@ -196,10 +192,7 @@ class MLPScale(nn.Module):
         layers.append(nn.Linear(in_dim, 1))
         self.net = nn.Sequential(*layers)
 
-        # Bias 0 so softplus(0) ~ 0.69 (flat constant scale) at init. The output
-        # weight is zero by default (legacy: hidden layers get zero gradient on
-        # step 0); a small head_init_std seeds the spatial scale structure so it
-        # develops from the first step without changing the init scale level.
+        # Bias 0 so softplus(0) ~ 0.69 (flat constant scale) at init
         nn.init.zeros_(self.net[-1].bias)
         if head_init_std > 0.0:
             nn.init.normal_(self.net[-1].weight, std=head_init_std)
@@ -617,14 +610,18 @@ class PhysicalScale(nn.Module):
         self.register_buffer("frame_half", torch.tensor(frame_half))
 
         sc = torch.zeros(degree_scale + 1)
-        sc[0] = math.log(init_scale)  # log-space constant -> scale starts at init
+        sc[0] = math.log(
+            init_scale
+        )  # log-space constant -> scale starts at init
         self.scale_c = nn.Parameter(sc)
         # B(phi) for decay; 0 -> no resolution falloff at init.
         self.decay_c = nn.Parameter(torch.zeros(degree_decay + 1))
         # Absorption SH coefficients; 0 -> flat absorption at init. A small
         # absorption_init_std seeds the surface so it develops from step 0.
         if absorption_init_std > 0.0:
-            self.absorption_c = nn.Parameter(torch.randn(n_sh) * absorption_init_std)
+            self.absorption_c = nn.Parameter(
+                torch.randn(n_sh) * absorption_init_std
+            )
         else:
             self.absorption_c = nn.Parameter(torch.zeros(n_sh))
 
@@ -640,7 +637,9 @@ class PhysicalScale(nn.Module):
         self.lmax = lmax
         l_of_col = [l for l in range(1, lmax + 1) for _ in range(2 * l + 1)]
         self.register_buffer(
-            "sh_l", torch.tensor(l_of_col, dtype=torch.float32), persistent=False
+            "sh_l",
+            torch.tensor(l_of_col, dtype=torch.float32),
+            persistent=False,
         )
 
     def restraint_penalty(self) -> Tensor:
@@ -663,7 +662,9 @@ class PhysicalScale(nn.Module):
         t = ((frame - self.frame_mid) / self.frame_half).clamp(-1.0, 1.0)
         return torch.stack(ChebyshevSpectrum._chebyshev(t, degree), dim=-1)
 
-    def forward(self, frame: Tensor, d: Tensor, absorption_sh: Tensor) -> Tensor:
+    def forward(
+        self, frame: Tensor, d: Tensor, absorption_sh: Tensor
+    ) -> Tensor:
         """Evaluate the physical scale.
 
         Args:

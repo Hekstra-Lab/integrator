@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 def _load_shoebox_array(path, weights_only=True):
-    """Load counts/masks from either new .npy (refltorch mksbox >= memmap era)
+    """Load counts/masks from either new .npy (integrator.mksbox memmap era)
     or .pt (torch.save). Returns torch.Tensor.
     """
     p = Path(path)
@@ -279,7 +279,9 @@ class RotationDataModule(pl.LightningDataModule):
         stats = torch.load(
             os.path.join(self.data_dir, self.shoebox_file_names["stats"])
         )
-        reference = torch.load(
+        from integrator.utils.torch_to_refl import load_metadata
+
+        reference = load_metadata(
             os.path.join(self.data_dir, self.shoebox_file_names["reference"])
         )
 
@@ -486,9 +488,7 @@ class RotationDataModule(pl.LightningDataModule):
         if grouped and self.group_by_asu_id:
             sampler = GroupedAsuIdBatchSampler(
                 asu_ids=self.full_dataset.reference[self.group_by_key],
-                indices=torch.arange(
-                    len(self.full_dataset), dtype=torch.long
-                ),
+                indices=torch.arange(len(self.full_dataset), dtype=torch.long),
                 batch_size=self.batch_size,
                 shuffle=False,
                 drop_last=False,

@@ -14,7 +14,7 @@ Architecture:
     shoebox → encoder → z_i
     scatter_mean by asu_id → z_h
     z_h → I_head → (k_h, rate_h) → qi_h = Gamma
-    broadcast qi_h sample to obs → scale × I × profile + bg
+    broadcast qi_h sample to obs → scale * I * profile + bg
     loss = Poisson NLL + Wilson KL on qi_h (per-HKL) + KL_prf + KL_bg
 """
 

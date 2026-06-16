@@ -113,7 +113,7 @@ class RefinementIntegrator(BaseIntegrator):
     are nn.Parameters optimized jointly with profile, background, and
     scale through the pixel-level Poisson ELBO.
 
-    rate = s(frame)/lp × |F_calc(atoms)|² × profile + background
+    rate = s(frame)/lp * |F_calc(atoms)|² * profile + background
 
     Requires SFC_Torch to be installed.
     """

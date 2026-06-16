@@ -139,7 +139,9 @@ class PolychromaticDataModule(pl.LightningDataModule):
         stats = torch.load(
             os.path.join(self.data_dir, self.shoebox_file_names["stats"]),
         )
-        reference = torch.load(
+        from integrator.utils.torch_to_refl import load_metadata
+
+        reference = load_metadata(
             os.path.join(self.data_dir, self.shoebox_file_names["reference"]),
         )
 
@@ -328,9 +330,7 @@ class PolychromaticDataModule(pl.LightningDataModule):
         if grouped and self.group_by_asu_id:
             sampler = GroupedAsuIdBatchSampler(
                 asu_ids=self.full_dataset.reference[self.group_by_key],
-                indices=torch.arange(
-                    len(self.full_dataset), dtype=torch.long
-                ),
+                indices=torch.arange(len(self.full_dataset), dtype=torch.long),
                 batch_size=self.batch_size,
                 shuffle=False,
                 drop_last=False,

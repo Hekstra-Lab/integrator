@@ -38,9 +38,10 @@ dev = ['pytest','ruff','mypy','wandb>=0.17']
 [project.scripts]
 "integrator.train" = "integrator.cli.train:main"
 "integrator.pred" = "integrator.cli.pred:main"
+"integrator.mksbox" = "integrator.cli.mksbox:main"
 
 [project.urls]
-Homepage = "https://github.com/Hekstra-Lab/integrator/tree/integrator_mvn"
+Homepage = "https://github.com/Hekstra-Lab/integrator/"
 Repository = "https://github.com/Hekstra-Lab/integrator"
 
 # Hatchling build config

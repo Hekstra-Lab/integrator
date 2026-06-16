@@ -6,7 +6,7 @@ F² never enters the pixel-level rate — clean separation.
 
     pixels → encoder → I_obs_i ─→ pixel_loss (Poisson NLL)
                           │
-                          └──→ merge_loss (Normal NLL on I_obs vs scale × F²_h)
+                          └──→ merge_loss (Normal NLL on I_obs vs scale * F²_h)
                                   ↑
                              F²_h embedding
 """
@@ -46,13 +46,13 @@ class MergingIntegrator(BaseIntegrator):
 
     Integration layer (pixel-level):
         Encoder predicts per-observation qi (Gamma intensity).
-        rate = qi_sample × profile + bg
+        rate = qi_sample * profile + bg
         Poisson NLL on pixel counts.
 
     Merging layer (intensity-level):
         Per-HKL F² embedding (free parameter per unique reflection).
         Scale function converts F² to observed intensity scale.
-        Normal NLL: I_obs ~ Normal(scale × F², sigma_obs)
+        Normal NLL: I_obs ~ Normal(scale * F², sigma_obs)
         Wilson KL prior on F².
 
     The encoder bridges both: pixel_loss teaches it to extract intensity
@@ -85,7 +85,7 @@ class MergingIntegrator(BaseIntegrator):
 
         # Per-HKL F posterior: FoldedNormal(mu, sigma)
         # F = |X|, X ~ N(mu, sigma²)
-        # F² = X² → I_pred = scale × F²
+        # F² = X² → I_pred = scale * F²
         # Wilson KL: KL(N(mu, sigma²) || N(0, sigma_w²))
         eps = cfg.scaling_eps
         init_mu = max(cfg.scaling_init_mu, 1e-6)
@@ -242,12 +242,12 @@ class MergingIntegrator(BaseIntegrator):
         """Merge loss: distributional match + Wilson KL.
 
         Matches the encoder's per-observation Gamma posterior (qi) to
-        a Gamma derived from the merge prediction (scale × F²_h).
+        a Gamma derived from the merge prediction (scale * F²_h).
 
         F ~ FoldedNormal(mu, sigma): X ~ N(mu, sigma), F² = X².
-        I_pred = scale × F² has known moments:
-            E[I]   = scale × (mu² + sigma²)
-            Var[I] = scale² × (4 mu² sigma² + 2 sigma⁴)
+        I_pred = scale * F² has known moments:
+            E[I]   = scale * (mu² + sigma²)
+            Var[I] = scale² * (4 mu² sigma² + 2 sigma⁴)
 
         Fit a Gamma to these moments → Gamma(k_pred, rate_pred).
         KL(qi || Gamma_pred) measures distributional consistency.
@@ -258,7 +258,7 @@ class MergingIntegrator(BaseIntegrator):
         F_mu, F_sigma = self._get_F_params(asu_ids)
         scale = self._get_scale(metadata, device)
 
-        # Moments of I = scale × F² where F² = X², X ~ N(mu, sigma)
+        # Moments of I = scale * F² where F² = X², X ~ N(mu, sigma)
         mu_sq = F_mu.pow(2)
         sig_sq = F_sigma.pow(2)
         E_F_sq = mu_sq + sig_sq

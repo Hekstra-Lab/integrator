@@ -412,7 +412,9 @@ def _build_asu_hkl_table_fallback(
     HKL for both members of a Friedel pair happen to be in the same
     symmetry-equivalent form.  Prefer using `asu_id_to_hkl.pt` instead.
     """
-    meta = torch.load(metadata_path, weights_only=False, map_location="cpu")
+    from integrator.utils.torch_to_refl import load_metadata
+
+    meta = load_metadata(metadata_path)
     asu_id = meta["asu_id"].long().numpy()
     H = meta["H"].numpy()
     K = meta["K"].numpy()
