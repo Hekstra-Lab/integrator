@@ -81,7 +81,6 @@ surrogates:
       in_features: *encoder_out
       eps: 1.0e-06
       k_min: 0.01
-      positive_constraint: log
 
 loss:
   name: monochromatic_wilson

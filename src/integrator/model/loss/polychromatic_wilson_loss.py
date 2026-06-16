@@ -117,10 +117,4 @@ class PolychromaticWilsonLoss(WilsonLoss):
                 L = self._lorentz_factor(two_theta)
                 tau = tau / L
 
-        if self.absorption is not None:
-            x_px = metadata["xyzcal.px.0"].to(device)
-            y_px = metadata["xyzcal.px.1"].to(device)
-            f_A = self.absorption(wavelength, x_px, y_px)
-            tau = tau / f_A
-
         return tau
