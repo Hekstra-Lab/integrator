@@ -98,7 +98,16 @@ class RunLogger:
                 self.out_dir / f"{_slug(name)}{self._suffix(step)}.csv"
             )
 
-    def log_scatter(self, name: str, df, x: str, y: str, step=None) -> None:
+    def log_scatter(
+        self,
+        name: str,
+        df,
+        x: str,
+        y: str,
+        step=None,
+        figsize=(3.0, 3.0),
+        dpi: int = 80,
+    ) -> None:
         sub = df.select([x, y])
         if self.use_wandb:
             table = wandb.Table(data=sub.rows(), columns=[x, y])
@@ -106,15 +115,17 @@ class RunLogger:
             return
         import matplotlib.pyplot as plt
 
-        fig, ax = plt.subplots()
-        ax.scatter(df[x].to_numpy(), df[y].to_numpy(), s=4, alpha=0.5)
+        # small, low-res figure on purpose: cheap to write every epoch
+        fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+        ax.scatter(df[x].to_numpy(), df[y].to_numpy(), s=3, alpha=0.4)
         ax.set_xlabel(x)
         ax.set_ylabel(y)
-        ax.set_title(name)
+        ax.set_title(name, fontsize=8)
         slug = _slug(name)
         fig.savefig(
             self.out_dir / f"{slug}{self._suffix(step)}.png",
             bbox_inches="tight",
+            dpi=dpi,
         )
         plt.close(fig)
         sub.write_csv(self.out_dir / f"{slug}{self._suffix(step)}.csv")

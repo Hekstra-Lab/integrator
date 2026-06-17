@@ -183,6 +183,11 @@ def parse_args():
 
     # Misc
     parser.add_argument(
+        "--scatter",
+        action="store_true",
+        help="Log model-vs-DIALS intensity/background scatters (off by default)",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="count",
@@ -267,7 +272,9 @@ def main():
 
     from integrator.callbacks import (
         EpochMetricRecorder,
+        LossCurveLogger,
         LossTraceRecorder,
+        PredictionScatterLogger,
         assign_labels,
     )
     from integrator.utils import (
@@ -463,8 +470,11 @@ def main():
         val_epoch_recorder,
         train_epoch_recorder,
         loss_trace_recorder,
+        LossCurveLogger(),
         checkpoint_callback,
     ]
+    if args.scatter:
+        callbacks.append(PredictionScatterLogger())
     if early_stop_cb is not None:
         callbacks.append(early_stop_cb)
 
