@@ -275,6 +275,7 @@ def main():
         LossCurveLogger,
         LossTraceRecorder,
         PredictionScatterLogger,
+        WilsonParamLogger,
         assign_labels,
     )
     from integrator.utils import (
@@ -473,6 +474,7 @@ def main():
         train_epoch_recorder,
         loss_trace_recorder,
         LossCurveLogger(),
+        WilsonParamLogger(),
         checkpoint_callback,
     ]
     if args.scatter:

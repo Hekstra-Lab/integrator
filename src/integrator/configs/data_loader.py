@@ -4,7 +4,7 @@ from pathlib import Path
 
 @dataclass
 class DataFileNames:
-    """Filenames of the on-disk shoebox tensors, resolved against `data_dir`.
+    """Filenames
 
     Attributes:
         data_dir: Directory the other filenames are resolved against.

@@ -16,7 +16,6 @@ def write_refl_with_predictions(
 ):
     """Overwrite the intensity/background columns of a DIALS `.refl`.
 
-
     Args:
         refl_file: source `.refl` (must carry a `refl_ids` column).
         out_file: destination `.refl`.

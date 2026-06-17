@@ -176,3 +176,107 @@ class PredictionScatterLogger(Callback):
             step=epoch,
             loglog=False,
         )
+
+
+class WilsonParamLogger(Callback):
+    """Log the learned Wilson prior parameters each epoch.
+
+    Tracks the B-factor (always) and the scale: a scalar G for the
+    monochromatic loss, or the full G(lambda) Chebyshev spectrum for the
+    polychromatic loss. No-op when the loss is not a Wilson loss.
+    """
+
+    def __init__(self, n_lambda: int = 100):
+        super().__init__()
+        self.n_lambda = n_lambda
+        self._hist: list[dict] = []
+        self._spectra: list[tuple] = []  # (epoch, lambdas, G)
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        if trainer.sanity_checking:
+            return
+        loss = getattr(pl_module, "loss", None)
+        if loss is None or not hasattr(loss, "get_B"):
+            return  # not a Wilson loss
+
+        import torch
+        import torch.nn.functional as F
+
+        epoch = int(trainer.current_epoch)
+        row: dict = {"epoch": epoch}
+        with torch.no_grad():
+            row["B"] = float(loss.get_B())
+
+            spectrum = getattr(loss, "spectrum", None)
+            if spectrum is not None:
+                lam_lo = float(spectrum.lam_mid - spectrum.lam_scale)
+                lam_hi = float(spectrum.lam_mid + spectrum.lam_scale)
+                lam = torch.linspace(lam_lo, lam_hi, self.n_lambda)
+                g = spectrum.get_log_G(lam).exp()
+                self._spectra.append(
+                    (epoch, lam.cpu().numpy(), g.cpu().numpy())
+                )
+                row["G_mean"] = float(g.mean())
+            elif hasattr(loss, "get_G"):
+                row["G"] = float(loss.get_G())
+
+            if getattr(loss, "learn_concentration", False) and hasattr(
+                loss, "log_alpha_per_group"
+            ):
+                row["alpha_mean"] = float(
+                    F.softplus(loss.log_alpha_per_group).mean()
+                )
+
+        self._hist.append(row)
+        self._plot(trainer)
+
+    def _plot(self, trainer):
+        import matplotlib.pyplot as plt
+        import polars as pl
+
+        rl = get_run_logger(self, trainer)
+        epochs = [r["epoch"] for r in self._hist]
+
+        rl.log_scalars(
+            {f"wilson/{k}": v for k, v in self._hist[-1].items() if k != "epoch"},
+            step=self._hist[-1]["epoch"],
+        )
+
+        def series(key):
+            return [r.get(key) for r in self._hist]
+
+        g_key = "G" if any("G" in r for r in self._hist) else "G_mean"
+        fig, axes = plt.subplots(1, 2, figsize=(7, 3), dpi=90)
+        axes[0].plot(epochs, series("B"), "-", marker=".")
+        axes[0].set_xlabel("epoch")
+        axes[0].set_ylabel("B (Å²)")
+        axes[0].set_title("Wilson B-factor")
+        if any(g_key in r for r in self._hist):
+            axes[1].plot(epochs, series(g_key), "-", marker=".")
+        axes[1].set_xlabel("epoch")
+        axes[1].set_ylabel(g_key)
+        axes[1].set_title("Wilson scale")
+        fig.tight_layout()
+        rl.log_figure("wilson_params", fig)
+
+        # G(lambda) spectrum and its evolution (polychromatic only)
+        if self._spectra:
+            n = len(self._spectra)
+            fig2, ax = plt.subplots(figsize=(4, 3), dpi=90)
+            for i, (ep, lam, g) in enumerate(self._spectra):
+                label = f"ep {ep}" if i in (0, n - 1) else None
+                ax.plot(
+                    lam, g, color=plt.cm.viridis(i / max(n - 1, 1)), label=label
+                )
+            ax.set_xlabel("wavelength λ (Å)")
+            ax.set_ylabel("G(λ)")
+            ax.set_title("Learned spectrum G(λ)")
+            ax.legend(fontsize=8)
+            rl.log_figure("wilson_spectrum", fig2)
+
+            ep, lam, g = self._spectra[-1]
+            rl.log_table(
+                "wilson_spectrum", pl.DataFrame({"wavelength": lam, "G": g})
+            )
+
+        rl.log_table("wilson_params", pl.DataFrame(self._hist))

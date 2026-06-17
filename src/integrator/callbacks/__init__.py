@@ -1,5 +1,5 @@
 from .metrics import EpochMetricRecorder, LossTraceRecorder
-from .plots import LossCurveLogger, PredictionScatterLogger
+from .plots import LossCurveLogger, PredictionScatterLogger, WilsonParamLogger
 from .prediction_writer import BatchPredWriter, assign_labels
 
 __all__ = [
@@ -9,4 +9,5 @@ __all__ = [
     "LossTraceRecorder",
     "LossCurveLogger",
     "PredictionScatterLogger",
+    "WilsonParamLogger",
 ]
