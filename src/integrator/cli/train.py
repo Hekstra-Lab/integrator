@@ -32,7 +32,7 @@ def parse_args():
 
     # Paths
     parser.add_argument(
-        "--data-path",
+        "--data-dir",
         type=str,
         default=None,
         help="Override data_dir in the YAML config",

@@ -48,8 +48,8 @@ def _apply_cli_overrides(
 
     if getattr(args, "batch_size", None) is not None:
         _dl_args("batch_size", args.batch_size)
-    if getattr(args, "data_path", None) is not None:
-        _dl_args("data_dir", str(args.data_path))
+    if getattr(args, "data_dir", None) is not None:
+        _dl_args("data_dir", str(args.data_dir))
     if getattr(args, "num_workers", None) is not None:
         _dl_args("num_workers", args.num_workers)
     if getattr(args, "val_split", None) is not None:
