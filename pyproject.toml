@@ -105,9 +105,6 @@ testpaths = ["tests"]
 torch = [
     { index = "pytorch-cu124" }
 ]
-# Upstream main carries the corrected .refl msgpack dtype table (includes
-# bool); the released PyPI/conda-forge build does not yet, so it fails to read
-# some columns from a DIALS .refl files.
 reciprocalspaceship = { git = "https://github.com/rs-station/reciprocalspaceship" }
 
 [[tool.uv.index]]
@@ -117,10 +114,11 @@ explicit = true
 
 [dependency-groups]
 docs = [
+  "zensical>=0.0.45",
   "mkdocs>=1.6",
   "mkdocs-material>=9.5",
   "mkdocstrings[python]>=0.18",
-  "mkdocs-mermaid2-plugin>=1.1",
+  "mkdocs-autorefs>=1.4",
 ]
 dev = [
     "griffe-inherited-docstrings>=1.1.1",
