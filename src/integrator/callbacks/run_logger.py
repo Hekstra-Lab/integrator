@@ -53,13 +53,12 @@ def _resolve_plot_dir(trainer) -> Path:
 
 
 class RunLogger:
-    """Log scalars/figures/tables to W&B if a run is active, else to local files."""
+    """Always write local files; additionally log to W&B when a run is active."""
 
     def __init__(self, out_dir, use_wandb: bool | None = None):
         self.use_wandb = wandb_active() if use_wandb is None else use_wandb
         self.out_dir = Path(out_dir)
-        if not self.use_wandb:
-            self.out_dir.mkdir(parents=True, exist_ok=True)
+        self.out_dir.mkdir(parents=True, exist_ok=True)
 
     def _suffix(self, step) -> str:
         return "" if step is None else f"_step{int(step):04d}"
@@ -68,35 +67,30 @@ class RunLogger:
         if not metrics:
             return
         clean = {k: _to_scalar(v) for k, v in metrics.items()}
-        if self.use_wandb:
-            wandb.log(clean)
-            return
         with open(self.out_dir / "metrics.jsonl", "a") as fh:
             fh.write(json.dumps({"step": step, **clean}, default=str) + "\n")
+        if self.use_wandb:
+            wandb.log(clean)
 
     def log_figure(
         self, name: str, fig, step=None, close: bool = True
     ) -> None:
+        fig.savefig(
+            self.out_dir / f"{_slug(name)}{self._suffix(step)}.png",
+            bbox_inches="tight",
+        )
         if self.use_wandb:
             wandb.log({name: wandb.Image(fig)})
-        else:
-            fig.savefig(
-                self.out_dir / f"{_slug(name)}{self._suffix(step)}.png",
-                bbox_inches="tight",
-            )
         if close:
             import matplotlib.pyplot as plt
 
             plt.close(fig)
 
     def log_table(self, name: str, df, step=None) -> None:
+        df.write_csv(self.out_dir / f"{_slug(name)}{self._suffix(step)}.csv")
         if self.use_wandb:
             table = wandb.Table(data=df.rows(), columns=df.columns)
             wandb.log({name: table})
-        else:
-            df.write_csv(
-                self.out_dir / f"{_slug(name)}{self._suffix(step)}.csv"
-            )
 
     def log_scatter(
         self,
@@ -109,13 +103,9 @@ class RunLogger:
         dpi: int = 80,
         loglog: bool = False,
     ) -> None:
-        sub = df.select([x, y])
-        if self.use_wandb:
-            table = wandb.Table(data=sub.rows(), columns=[x, y])
-            wandb.log({name: wandb.plot.scatter(table, x, y, title=name)})
-            return
         import matplotlib.pyplot as plt
 
+        sub = df.select([x, y])
         xv = df[x].to_numpy()
         yv = df[y].to_numpy()
         # small, low-res figure on purpose: cheap to write every epoch
@@ -137,12 +127,20 @@ class RunLogger:
         )
         plt.close(fig)
         sub.write_csv(self.out_dir / f"{slug}{self._suffix(step)}.csv")
+        if self.use_wandb:
+            table = wandb.Table(data=sub.rows(), columns=[x, y])
+            wandb.log({name: wandb.plot.scatter(table, x, y, title=name)})
 
 
 def get_run_logger(obj, trainer) -> RunLogger:
-    """Return a cached RunLogger for a callback, built from the trainer's dirs."""
+    """Return a cached RunLogger for a callback.
+
+    Uses the callback's explicit out_dir when set (e.g. run-dir/plots), else
+    falls back to a directory derived from the trainer's logger.
+    """
     rl = getattr(obj, "_run_logger", None)
     if rl is None:
-        rl = RunLogger(_resolve_plot_dir(trainer))
+        out_dir = getattr(obj, "out_dir", None) or _resolve_plot_dir(trainer)
+        rl = RunLogger(out_dir)
         obj._run_logger = rl
     return rl

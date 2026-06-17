@@ -11,6 +11,14 @@ from .utils.logger import setup_logging
 logger = logging.getLogger(__name__)
 
 
+def _default_run_name() -> str:
+    """Auto run-dir name: sortable timestamp + short random id."""
+    from datetime import datetime
+    from uuid import uuid4
+
+    return f"{datetime.now():%Y%m%d-%H%M%S}_{uuid4().hex[:4]}"
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         prog="integrator.train", description="Train integrator model"
@@ -23,11 +31,26 @@ def parse_args():
         required=True,
         help="Path to configuration YAML file",
     )
+
+    # Run location: a run dir is created under --log-dir with an auto name,
+    # unless --run-dir gives an exact path.
+    parser.add_argument(
+        "--log-dir",
+        type=str,
+        default="runs",
+        help="Parent directory holding run dirs (default: ./runs)",
+    )
+    parser.add_argument(
+        "--run-name",
+        type=str,
+        default=None,
+        help="Name of the run dir (default: <timestamp>_<id>)",
+    )
     parser.add_argument(
         "--run-dir",
         type=str,
-        required=True,
-        help="Path to run directory (saves config copy and run metadata)",
+        default=None,
+        help="Exact run directory; overrides --log-dir/--run-name",
     )
 
     # Paths
@@ -37,12 +60,6 @@ def parse_args():
         default=None,
         help="Override data_dir in the YAML config",
     )
-    parser.add_argument(
-        "--save-dir",
-        type=str,
-        default="lightning_logs",
-        help="Path to store logs and checkpoints",
-    )
 
     # W&B (optional)
     parser.add_argument(
@@ -50,6 +67,13 @@ def parse_args():
         type=str,
         default=None,
         help="W&B project name. Enables W&B logging when set.",
+    )
+    parser.add_argument(
+        "--save-dir",
+        type=str,
+        default="lightning_logs",
+        help="W&B output root (typically on scratch); only used with "
+        "--wb-project. W&B writes <save-dir>/wandb/run-<id>/.",
     )
     parser.add_argument(
         "--wandb-resume-id",
@@ -197,34 +221,27 @@ def parse_args():
     return parser.parse_args()
 
 
-def _make_logger(args, tags, save_dir):
-    """Create a Lightning CSV logger (or W&B if requested)"""
-    use_wandb = args.wb_project is not None
-    if use_wandb:
-        try:
-            from pytorch_lightning.loggers import WandbLogger
-        except ImportError:
-            logger.warning(
-                "wandb not installed; falling back to CSVLogger. "
-                "Install with: pip install wandb"
-            )
-            use_wandb = False
-
-    if use_wandb:
-        Path(save_dir).mkdir(parents=True, exist_ok=True)
-        wb_kwargs = dict(
-            project=args.wb_project,
-            save_dir=save_dir,
-            tags=tags,
+def _make_wandb_logger(args, tags):
+    """Return a WandbLogger if --wb-project is set and wandb is importable, else None."""
+    if args.wb_project is None:
+        return None
+    try:
+        from pytorch_lightning.loggers import WandbLogger
+    except ImportError:
+        logger.warning(
+            "wandb not installed; using local logging. "
+            "Install with: pip install wandb"
         )
-        if args.wandb_resume_id:
-            wb_kwargs["id"] = args.wandb_resume_id
-            wb_kwargs["resume"] = "must"
-        return WandbLogger(**wb_kwargs)
+        return None
 
-    from pytorch_lightning.loggers import CSVLogger
-
-    return CSVLogger(save_dir=save_dir, name="integrator")
+    Path(args.save_dir).mkdir(parents=True, exist_ok=True)
+    wb_kwargs = dict(
+        project=args.wb_project, save_dir=args.save_dir, tags=tags
+    )
+    if args.wandb_resume_id:
+        wb_kwargs["id"] = args.wandb_resume_id
+        wb_kwargs["resume"] = "must"
+    return WandbLogger(**wb_kwargs)
 
 
 def _log_git_info(pl_logger):
@@ -324,30 +341,40 @@ def main():
         cfg["surrogates"]["qi"]["name"],
     ]
 
-    save_dir = args.save_dir
-    pl_logger = _make_logger(args, tags, save_dir)
-    _log_git_info(pl_logger)
+    pl_logger = _make_wandb_logger(args, tags)
+    is_wandb = pl_logger is not None
+    if is_wandb:
+        _log_git_info(pl_logger)
+        default_name = pl_logger.experiment.name or pl_logger.experiment.id
+    else:
+        default_name = _default_run_name()
 
-    is_wandb = hasattr(pl_logger, "experiment") and hasattr(
-        pl_logger.experiment, "dir"
+    if args.run_dir:
+        run_dir = Path(args.run_dir)
+    else:
+        run_dir = Path(args.log_dir) / (args.run_name or default_name)
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    # W&B: heavy output lives in the wandb run dir; else under run_dir.
+    output_root = (
+        Path(pl_logger.experiment.dir).parent if is_wandb else run_dir
     )
 
-    if is_wandb:
-        logdir = Path(pl_logger.experiment.dir)
-    else:
-        logdir = Path(pl_logger.log_dir)
+    # Standard W&B layout: files/ holds checkpoints + metrics + traces, with
+    # plots/ and predictions/ as siblings.
+    logdir = output_root / "files"
+    plots_dir = output_root / "plots"
+    predictions_dir = output_root / "predictions"
     logdir.mkdir(parents=True, exist_ok=True)
-
-    run_dir = Path(args.run_dir)
-    logger.info(f"Logging directory: {logdir.as_posix()}")
-    logger.info(f"Run directory: {run_dir}")
+    logger.info(f"Run directory (handle): {run_dir}")
+    logger.info(f"Output root (files/plots/predictions): {output_root}")
 
     config_copy = run_dir / "config_copy.yaml"
     cfg_json = deepcopy(cfg)
     with open(config_copy, "w") as f:
         yaml.safe_dump(cfg_json, f, sort_keys=False)
 
-    if hasattr(pl_logger, "log_hyperparams"):
+    if is_wandb:
         pl_logger.log_hyperparams(cfg_json)
 
     resolved_paths = _collect_resolved_paths(cfg)
@@ -355,6 +382,9 @@ def main():
     metadata = {
         "config": config_copy.as_posix(),
         "log_dir": logdir.as_posix(),
+        "output_root": output_root.as_posix(),
+        "predictions_dir": predictions_dir.as_posix(),
+        "plots_dir": plots_dir.as_posix(),
         "slurm": {
             "job_id": os.environ.get("SLURM_JOB_ID"),
         },
@@ -366,7 +396,7 @@ def main():
             "project": args.wb_project,
             "run_id": pl_logger.experiment.id,
             "entity": pl_logger.experiment.entity,
-            "log_dir": pl_logger.experiment.dir,
+            "log_dir": logdir.as_posix(),
         }
         pl_logger.log_hyperparams(metadata)
 
@@ -473,19 +503,19 @@ def main():
         val_epoch_recorder,
         train_epoch_recorder,
         loss_trace_recorder,
-        LossCurveLogger(),
-        WilsonParamLogger(),
+        LossCurveLogger(out_dir=plots_dir),
+        WilsonParamLogger(out_dir=plots_dir),
         checkpoint_callback,
     ]
     if args.scatter:
-        callbacks.append(PredictionScatterLogger())
+        callbacks.append(PredictionScatterLogger(out_dir=plots_dir))
     if early_stop_cb is not None:
         callbacks.append(early_stop_cb)
 
     trainer = construct_trainer(
         cfg,
         callbacks=callbacks,
-        logger=pl_logger,
+        logger=pl_logger if is_wandb else False,
     )
 
     trainer.fit(

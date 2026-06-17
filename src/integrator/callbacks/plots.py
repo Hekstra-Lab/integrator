@@ -1,4 +1,5 @@
 from collections import defaultdict
+from pathlib import Path
 
 from pytorch_lightning.callbacks import Callback
 
@@ -12,8 +13,9 @@ _SPLITS = ("train", "val")
 class LossCurveLogger(Callback):
     """Plot train/val total loss and split-ELBO curves each epoch."""
 
-    def __init__(self):
+    def __init__(self, out_dir=None):
         super().__init__()
+        self.out_dir = Path(out_dir) if out_dir is not None else None
         self._hist: list[dict] = []
         self._acc: dict[str, dict] = {}
         self._reset_epoch()
@@ -108,8 +110,11 @@ class PredictionScatterLogger(Callback):
     y-axis = DIALS, x-axis = model
     """
 
-    def __init__(self, max_points: int = 2000, every_n_epochs: int = 1):
+    def __init__(
+        self, out_dir=None, max_points: int = 2000, every_n_epochs: int = 1
+    ):
         super().__init__()
+        self.out_dir = Path(out_dir) if out_dir is not None else None
         self.max_points = max_points
         self.every_n_epochs = every_n_epochs
         self._buf: dict[str, list] = defaultdict(list)
@@ -186,8 +191,9 @@ class WilsonParamLogger(Callback):
     polychromatic loss. No-op when the loss is not a Wilson loss.
     """
 
-    def __init__(self, n_lambda: int = 100):
+    def __init__(self, out_dir=None, n_lambda: int = 100):
         super().__init__()
+        self.out_dir = Path(out_dir) if out_dir is not None else None
         self.n_lambda = n_lambda
         self._hist: list[dict] = []
         self._spectra: list[tuple] = []  # (epoch, lambdas, G)

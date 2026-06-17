@@ -85,11 +85,10 @@ def main():
     config = load_config(meta["config"])
     config = apply_dataset_defaults(config)
 
-    # log_dir is recorded for every run; fall back to the wandb block for runs
-    # logged before that key existed.
+    # log_dir is the files/ dir (checkpoints inside); predictions/ is its sibling.
     log_dir = Path(meta.get("log_dir") or meta["wandb"]["log_dir"])
-    pred_dir = log_dir.parent / "predictions"
-    pred_dir.mkdir(exist_ok=True)
+    pred_dir = Path(meta.get("predictions_dir") or log_dir.parent / "predictions")
+    pred_dir.mkdir(parents=True, exist_ok=True)
 
     checkpoints = sorted(log_dir.glob("**/epoch*.ckpt"))
     logger.info("Found %d checkpoints", len(checkpoints))
@@ -140,7 +139,7 @@ def main():
             trainer = construct_trainer(
                 config,
                 callbacks=callbacks,
-                logger=None,
+                logger=False,
             )
 
             ckpt_ = torch.load(ckpt.as_posix())

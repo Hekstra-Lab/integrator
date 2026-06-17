@@ -403,7 +403,7 @@ def construct_data_loader(cfg):
 
 def construct_trainer(
     cfg: dict,
-    logger: Logger | None = None,
+    logger: Logger | bool | None = False,
     callbacks: list[Callback] | Callback | None = None,
 ) -> pl.Trainer:
     # trainer section is optional; TrainerConfig defaults cover an empty one

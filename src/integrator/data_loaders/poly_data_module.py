@@ -108,9 +108,7 @@ class PolychromaticDataModule(pl.LightningDataModule):
                 "regenerate the dataset with mksbox"
             )
         stats_key = "anscombe" if self.transform == "anscombe" else "raw"
-        stats = torch.tensor(
-            spec["stats"][stats_key], dtype=torch.float32
-        )
+        stats = torch.tensor(spec["stats"][stats_key], dtype=torch.float32)
         reference = load_data(
             os.path.join(self.data_dir, self.shoebox_file_names["reference"])
         )
