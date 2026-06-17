@@ -63,6 +63,13 @@ def _log_loss(
 
 
 class BaseIntegrator(pl.LightningModule):
+    """Variational integrator base class.
+
+    Encodes shoeboxes, samples the ELBO surrogates, and drives the Lightning
+    train/validation/predict loop and optimizer/scheduler setup. Subclasses
+    implement `_forward_impl` to assemble the per-pixel rate.
+    """
+
     REQUIRED_ENCODERS: dict[str, type] = {}
     ARGS: type
 
@@ -73,6 +80,14 @@ class BaseIntegrator(pl.LightningModule):
         encoders: dict[str, nn.Module],
         surrogates: dict[str, nn.Module],
     ):
+        """Build the integrator from its config and submodules.
+
+        Args:
+            cfg: Integrator configuration with learning-rate, schedule, Monte Carlo, and shoebox-shape fields.
+            loss: ELBO module returning the NLL, KL, and per-component KL terms.
+            encoders: Named encoder modules mapping shoeboxes to embeddings.
+            surrogates: Named variational surrogates (`qi`, `qbg`, `qp`) mapping embeddings to posterior distributions.
+        """
         super().__init__()
         self.cfg = cfg
 
@@ -110,6 +125,7 @@ class BaseIntegrator(pl.LightningModule):
         mask: Tensor,
         metadata: dict,
     ) -> dict[str, Any]:
+        """Run the integrator forward pass, returning the surrogates and assembled outputs."""
         out = self._forward_impl(counts, shoebox, mask, metadata)
         return out
 
@@ -179,12 +195,15 @@ class BaseIntegrator(pl.LightningModule):
         }
 
     def training_step(self, batch, _batch_idx):
+        """Run one training step and log the ELBO and its components."""
         return self._step(batch, step="train")
 
     def validation_step(self, batch, _batch_idx):
+        """Run one validation step and log the ELBO and its components."""
         return self._step(batch, step="val")
 
     def predict_step(self, batch, _batch_idx):
+        """Run inference and return the `predict_keys` subset of the forward outputs."""
         counts, shoebox, mask, metadata = batch
         outputs = self(counts, shoebox, mask, metadata)
         return {
@@ -357,6 +376,7 @@ class BaseIntegrator(pl.LightningModule):
         return lr_lambda
 
     def configure_optimizers(self) -> Any:
+        """Build the Adam optimizer and the optional warmup/cosine or step-warmup scheduler."""
         optimizer = self._build_optimizer()
         if self.lr_schedule is None:
             return optimizer

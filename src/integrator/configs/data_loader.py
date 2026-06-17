@@ -4,10 +4,19 @@ from pathlib import Path
 
 @dataclass
 class DataFileNames:
+    """Filenames of the on-disk shoebox tensors, resolved against `data_dir`.
+
+    Attributes:
+        data_dir: Directory the other filenames are resolved against.
+        counts: Filename of the raw photon-count tensor.
+        masks: Filename of the per-pixel validity mask tensor.
+        reference: Filename of the reference reflection table.
+        standardized_counts: Optional filename of pre-standardized counts; `None` to standardize on the fly.
+    """
+
     data_dir: str
     counts: str
     masks: str
-    stats: str
     reference: str
     standardized_counts: str | None = None
 
@@ -15,7 +24,6 @@ class DataFileNames:
         for name in (
             "counts",
             "masks",
-            "stats",
             "reference",
         ):
             p = self._resolve(getattr(self, name))
@@ -35,6 +43,25 @@ class DataFileNames:
 
 @dataclass
 class DataLoaderArgs:
+    """Constructor arguments for the shoebox data module.
+
+    Attributes:
+        data_dir: Root directory holding the shoebox tensors; must exist.
+        batch_size: Number of reflections per batch; must be non-negative.
+        val_split: Fraction of data held out for validation.
+        test_split: Fraction of data held out for testing.
+        num_workers: Number of `DataLoader` worker processes.
+        include_test: Whether to materialize the test split.
+        subset_size: Cap on the number of reflections loaded.
+        cutoff: Optional resolution cutoff, or `None` for no cutoff.
+        shoebox_file_names: `DataFileNames` locating the tensors on disk.
+        D: Shoebox depth in pixels.
+        H: Shoebox height in pixels.
+        W: Shoebox width in pixels.
+        anscombe: Legacy flag selecting Anscombe plus global z-score standardization when `transform` is omitted.
+        transform: Count transform `anscombe`, `log1p`, or `none`; `None` honors the legacy `anscombe` flag. `log1p` feeds raw `log1p` counts to the encoder (the scvi-tools recipe for skewed-count VAEs); `none` mean-subtracts and std-divides the raw counts.
+    """
+
     data_dir: str
     batch_size: int
     val_split: float
@@ -48,10 +75,6 @@ class DataLoaderArgs:
     H: int
     W: int
     anscombe: bool
-    # "anscombe" (legacy default — anscombe + global z-score), "log1p"
-    # (raw log1p straight to the encoder; matches scvi-tools' literature
-    # recipe for skewed-count VAEs), or "none" (mean-subtract+std-divide
-    # of raw counts). When omitted, we honor the legacy `anscombe` flag.
     transform: str | None = None
 
     def __post_init__(self):
@@ -70,5 +93,12 @@ class DataLoaderArgs:
 
 @dataclass
 class DataLoaderConfig:
+    """Registry selection for the data module: a `name` plus its typed `args`.
+
+    Attributes:
+        name: Registry key naming the data-module class to construct.
+        args: Data-module constructor arguments.
+    """
+
     name: str
     args: DataLoaderArgs

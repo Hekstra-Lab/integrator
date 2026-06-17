@@ -1,0 +1,54 @@
+integrator:
+  name: hierarchical
+  args:
+    lr: 0.001
+    encoder_out: &eo 64
+    decoder_weight_decay: 1.0e-3
+    mc_samples: &mc 100
+    predict_keys: [refl_ids, is_test, qi_mean, qi_var, qbg_mean, qbg_var, intensity.prf.value, intensity.prf.variance, background.mean, d, group_label, qp_mean, qp_loc, qp_scale]
+
+# profile + 4 intensity encoders (k_i, r_i, k_bg, r_bg); conv layers from presets
+encoders:
+- name: profile_encoder
+  args:
+    encoder_out: *eo
+- &intensity_encoder
+  name: intensity_encoder  # k_i
+  args:
+    encoder_out: *eo
+- *intensity_encoder  # r_i 
+- *intensity_encoder # k_bg
+- *intensity_encoder # k_i
+
+surrogates:
+  qp:
+    name: learned_basis_profile
+    args:
+      input_dim: *eo
+      latent_dim: 12
+      init_std: 0.5
+  qi:
+    name: gammaB
+    args:
+      in_features: *eo
+      k_min: 0.01
+  qbg:
+    name: gammaB
+    args:
+      in_features: *eo
+      k_min: 0.01
+      positive_constraint: exp
+
+loss:
+  name: monochromatic_wilson
+  args:
+    mc_samples: *mc
+    n_bins: 25
+    profile_prior_scale: 3.0
+
+data_loader:
+  name: rotation_data
+  args:
+    data_dir: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data
+    batch_size: 1024
+    val_split: 0.2

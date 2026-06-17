@@ -1,3 +1,8 @@
+from .dataset import (
+    data_dim_for,
+    read_dataset_spec,
+    write_dataset_yaml,
+)
 from .dtypes import (
     DEFAULT_EXCLUDED_COLS,
     DEFAULT_REFL_COLS,
@@ -30,4 +35,7 @@ __all__ = [
     "write_refl_from_preds",
     "unstack_preds",
     "write_refl_with_predictions",
+    "read_dataset_spec",
+    "write_dataset_yaml",
+    "data_dim_for",
 ]

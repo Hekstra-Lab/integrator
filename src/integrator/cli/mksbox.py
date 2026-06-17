@@ -36,7 +36,6 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import yaml
 from numpy.lib.format import open_memmap
 
 from integrator.io import refl_as_pt, save_data
@@ -155,8 +154,8 @@ def parse_args():
     common.add_argument(
         "--no-stats",
         action="store_true",
-        help="skip writing stats.npy / anscombe_stats.npy / concentration.npy "
-        "(written by default)",
+        help="skip the normalization stats (stored in dataset.yaml) and "
+        "concentration.npy (written by default)",
     )
     common.add_argument(
         "--stats-chunk",
@@ -200,17 +199,14 @@ def main():
         run_dials(args)
 
 
-def _save_stats_from_memmap(
+def _stats_from_memmap(
     counts_path: Path,
     masks_path: Path,
-    out_dir: Path,
     chunk: int = 10_000,
-    ans_fname: str = "anscombe_stats.npy",
-    stats_fname: str = "stats.npy",
-):
-    """Compute (mean, var) of masked counts and their Anscombe transform.
+) -> dict:
+    """Return (mean, var) of masked counts and their Anscombe transform.
 
-    Streams the on-disk memmap in chunks.
+    Streams the on-disk memmap in chunks; values are stored in dataset.yaml.
     """
     counts = np.load(counts_path, mmap_mode="r")
     masks = np.load(masks_path, mmap_mode="r")
@@ -234,13 +230,10 @@ def _save_stats_from_memmap(
     mean_a = sum_a / nel
     var_a = sumsq_a / nel - mean_a * mean_a
 
-    save_data(
-        torch.tensor([mean_c, var_c], dtype=torch.float32),
-        out_dir / stats_fname,
-    )
-    save_data(
-        torch.tensor([mean_a, var_a], dtype=torch.float32), out_dir / ans_fname
-    )
+    return {
+        "raw": [float(mean_c), float(var_c)],
+        "anscombe": [float(mean_a), float(var_a)],
+    }
 
 
 def _save_concentration_from_memmap(
@@ -257,6 +250,32 @@ def _save_concentration_from_memmap(
         c = counts[i : i + chunk].astype(np.float32)
         conc[i : i + chunk] = c.mean(axis=1)
     save_data(torch.from_numpy(conc), out_dir / out_fname)
+
+
+def _write_spec(
+    args, out_dir: Path, counts_path: Path, *, polychromatic, crystal, stats
+):
+    """Write the consolidated dataset.yaml (geometry, files, stats, crystal)."""
+    from integrator.io import write_dataset_yaml
+
+    n = int(np.load(counts_path, mmap_mode="r").shape[0])
+    ext = "pt" if args.shoebox_format == "pt" else "npy"
+    write_dataset_yaml(
+        out_dir,
+        geometry={"d": args.d, "h": args.h, "w": args.w},
+        n_reflections=n,
+        polychromatic=polychromatic,
+        anscombe=not args.no_stats,
+        files={
+            "counts": f"counts.{ext}",
+            "masks": f"masks.{ext}",
+            "reference": "metadata.npy",
+        },
+        crystal=crystal,
+        stats=stats,
+        refl_file=str(out_dir / args.refl_fname),
+    )
+    print(f"wrote dataset.yaml under {out_dir}")
 
 
 def _convert_npy_memmap_to_pt(npy_path: Path) -> Path:
@@ -625,19 +644,25 @@ def run_dials(args):
     )
     print(f"wrote metadata.npy under {out_dir}")
 
+    stats = None
     if not args.no_stats:
-        _save_stats_from_memmap(
-            counts_path=counts_path,
-            masks_path=masks_path,
-            out_dir=out_dir,
-            chunk=args.stats_chunk,
+        stats = _stats_from_memmap(
+            counts_path, masks_path, chunk=args.stats_chunk
         )
         _save_concentration_from_memmap(
             counts_path=counts_path,
             out_dir=out_dir,
             chunk=args.stats_chunk,
         )
-        print("wrote stats.npy, anscombe_stats.npy, concentration.npy")
+        print("wrote concentration.npy")
+    _write_spec(
+        args,
+        out_dir,
+        counts_path,
+        polychromatic=False,
+        crystal=None,
+        stats=stats,
+    )
 
     if args.shoebox_format == "pt":
         nbytes = counts_path.stat().st_size + masks_path.stat().st_size
@@ -958,10 +983,8 @@ def run_laue(args):
             float(beam_center_px[1]),
         ],
     }
-    (out_dir / "crystal.yaml").write_text(yaml.safe_dump(crystal_meta))
     print(
-        f"wrote crystal metadata -> {out_dir / 'crystal.yaml'}: "
-        f"cell={tuple(round(c, 3) for c in crystal_meta['cell'])}, "
+        f"crystal: cell={tuple(round(c, 3) for c in crystal_meta['cell'])}, "
         f"sg={crystal_meta['space_group']}, "
         f"beam_center_px=({beam_center_px[0]:.1f}, {beam_center_px[1]:.1f})"
     )
@@ -1083,19 +1106,25 @@ def run_laue(args):
     )
     print(f"wrote metadata.npy under {out_dir}")
 
+    stats = None
     if not args.no_stats:
-        _save_stats_from_memmap(
-            counts_path=counts_path,
-            masks_path=masks_path,
-            out_dir=out_dir,
-            chunk=args.stats_chunk,
+        stats = _stats_from_memmap(
+            counts_path, masks_path, chunk=args.stats_chunk
         )
         _save_concentration_from_memmap(
             counts_path=counts_path,
             out_dir=out_dir,
             chunk=args.stats_chunk,
         )
-        print("wrote stats.npy, anscombe_stats.npy, concentration.npy")
+        print("wrote concentration.npy")
+    _write_spec(
+        args,
+        out_dir,
+        counts_path,
+        polychromatic=True,
+        crystal=crystal_meta,
+        stats=stats,
+    )
 
     if args.shoebox_format == "pt":
         nbytes = counts_path.stat().st_size + masks_path.stat().st_size

@@ -63,6 +63,7 @@ def main():
 
     from integrator.callbacks import BatchPredWriter
     from integrator.utils import (
+        apply_dataset_defaults,
         construct_data_loader,
         construct_integrator,
         construct_trainer,
@@ -82,6 +83,7 @@ def main():
 
     meta = yaml.safe_load((run_dir / "run_metadata.yaml").read_text())
     config = load_config(meta["config"])
+    config = apply_dataset_defaults(config)
 
     # log_dir is recorded for every run; fall back to the wandb block for runs
     # logged before that key existed.
@@ -174,8 +176,8 @@ def main():
             data_dir = Path(config["data_loader"]["args"]["data_dir"])
             write_mtz_from_preds(
                 pred_data=pred_data,
-                metadata_path=data_dir / "metadata.pt",
-                crystal_yaml_path=data_dir / "crystal.yaml",
+                metadata_path=data_dir / "metadata.npy",
+                data_dir=data_dir,
                 out_path=ckpt_dir / args.write_mtz,
             )
 

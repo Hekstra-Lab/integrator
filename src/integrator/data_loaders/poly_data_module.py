@@ -3,7 +3,6 @@ import os
 
 import pytorch_lightning as pl
 import torch
-import yaml
 from torch.utils.data import DataLoader, Subset
 
 from integrator.data_loaders.data_module import (
@@ -76,7 +75,6 @@ class PolychromaticDataModule(pl.LightningDataModule):
         self.shoebox_file_names = shoebox_file_names or {
             "counts": "counts.npy",
             "masks": "masks.npy",
-            "stats": "anscombe_stats.npy",
             "reference": "metadata.npy",
             "standardized_counts": None,
         }
@@ -101,26 +99,30 @@ class PolychromaticDataModule(pl.LightningDataModule):
         masks = _load_shoebox_array(
             os.path.join(self.data_dir, self.shoebox_file_names["masks"])
         ).squeeze(-1)
-        from integrator.io import load_data
+        from integrator.io import load_data, read_dataset_spec
 
-        stats = load_data(
-            os.path.join(self.data_dir, self.shoebox_file_names["stats"])
+        spec = read_dataset_spec(self.data_dir)
+        if spec is None:
+            raise FileNotFoundError(
+                f"dataset.yaml not found in {self.data_dir}; "
+                "regenerate the dataset with mksbox"
+            )
+        stats_key = "anscombe" if self.transform == "anscombe" else "raw"
+        stats = torch.tensor(
+            spec["stats"][stats_key], dtype=torch.float32
         )
         reference = load_data(
             os.path.join(self.data_dir, self.shoebox_file_names["reference"])
         )
 
-        crystal_path = os.path.join(self.data_dir, "crystal.yaml")
-        if os.path.exists(crystal_path):
-            with open(crystal_path) as f:
-                crystal_meta = yaml.safe_load(f)
-            self.beam_center_px = crystal_meta.get("beam_center_px")
-            if self.beam_center_px is not None:
-                logger.info(
-                    "Beam center (px): %.1f, %.1f",
-                    self.beam_center_px[0],
-                    self.beam_center_px[1],
-                )
+        crystal_meta = spec.get("crystal") or {}
+        self.beam_center_px = crystal_meta.get("beam_center_px")
+        if self.beam_center_px is not None:
+            logger.info(
+                "Beam center (px): %.1f, %.1f",
+                self.beam_center_px[0],
+                self.beam_center_px[1],
+            )
 
         all_dead = masks.sum(-1) < self.min_valid_pixels
         n_dead = all_dead.sum().item()

@@ -7,6 +7,15 @@ P = TypeVar("P")
 
 @dataclass
 class DirichletParams:
+    """Parameters of a Dirichlet profile prior.
+
+    Attributes:
+        concentration: Scalar concentration, or a path to a precomputed concentration tensor.
+        shape: Profile shape `(depth, height, width)`.
+        quantile: Optional quantile in `(0, 1)` used to set the concentration from data.
+        conc_factor: Scale applied to the data-derived concentration.
+    """
+
     concentration: float | str
     shape: tuple[int, int, int]
     quantile: float | None = None
@@ -44,6 +53,13 @@ class DirichletParams:
 
 @dataclass
 class GammaParams:
+    """Parameters of a Gamma prior.
+
+    Attributes:
+        concentration: Gamma shape parameter; must be non-negative.
+        rate: Gamma rate parameter; must be non-negative.
+    """
+
     concentration: float
     rate: float
 
@@ -63,6 +79,14 @@ class GammaParams:
 
 @dataclass
 class PriorConfig[P]:
+    """A weighted prior selection, generic over its parameter payload `P`.
+
+    Attributes:
+        name: Prior family, `dirichlet`, `exponential`, or `gamma`.
+        params: Family-specific parameters; a `DirichletParams` or `GammaParams` depending on `name`.
+        weight: Scalar weight applied to this prior's KL term.
+    """
+
     name: Literal[
         "dirichlet",
         "exponential",

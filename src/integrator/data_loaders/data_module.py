@@ -186,7 +186,6 @@ class RotationDataModule(pl.LightningDataModule):
             shoebox_file_names = {
                 "counts": "counts.npy",
                 "masks": "masks.npy",
-                "stats": "stats.npy",
                 "reference": "metadata.npy",
                 "standardized_counts": None,
             }
@@ -194,7 +193,9 @@ class RotationDataModule(pl.LightningDataModule):
         self.H = H
         self.W = W
         self.D = D
-        self.standardized_counts = shoebox_file_names["standardized_counts"]
+        self.standardized_counts = shoebox_file_names.get(
+            "standardized_counts"
+        )
         self.get_dxyz = get_dxyz
         self.anscombe = anscombe
         if transform is None:
@@ -214,11 +215,16 @@ class RotationDataModule(pl.LightningDataModule):
         masks = _load_shoebox_array(
             os.path.join(self.data_dir, self.shoebox_file_names["masks"])
         ).squeeze(-1)
-        from integrator.io import load_data, load_metadata
+        from integrator.io import load_metadata, read_dataset_spec
 
-        stats = load_data(
-            os.path.join(self.data_dir, self.shoebox_file_names["stats"])
-        )
+        spec = read_dataset_spec(self.data_dir)
+        if spec is None:
+            raise FileNotFoundError(
+                f"dataset.yaml not found in {self.data_dir}; "
+                "regenerate the dataset with mksbox"
+            )
+        stats_key = "anscombe" if self.transform == "anscombe" else "raw"
+        stats = torch.tensor(spec["stats"][stats_key], dtype=torch.float32)
         reference = load_metadata(
             os.path.join(self.data_dir, self.shoebox_file_names["reference"])
         )

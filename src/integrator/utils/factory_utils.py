@@ -187,12 +187,15 @@ def _get_loss_args(
     loss_cfg = dict(cfg["loss"])
     loss_args = _normalize_tuples(loss_cfg["args"])
 
+    # mc_samples / eps fall back to LossArgs defaults when omitted from the YAML.
+    optional = {
+        k: loss_args[k] for k in ("mc_samples", "eps") if k in loss_args
+    }
     args_cls = configs.LossArgs(
-        mc_samples=loss_args["mc_samples"],
-        eps=loss_args["eps"],
         pbg_cfg=prior_configs["pbg_cfg"],
         pi_cfg=prior_configs["pi_cfg"],
         pprf_cfg=prior_configs["pprf_cfg"],
+        **optional,
     )
 
     return args_cls
@@ -395,30 +398,7 @@ def construct_integrator(
 
 def construct_data_loader(cfg):
     dl_cls = _get_dataloader_cls(cfg["data_loader"]["name"])
-    args = cfg["data_loader"]["args"]
-
-    if cfg["data_loader"]["name"] in ("polychromatic_data"):
-        return dl_cls(**args)
-
-    dl_args = configs.DataLoaderArgs(**args)
-    data_dir = Path(dl_args.data_dir)
-
-    return dl_cls(
-        data_dir=data_dir.as_posix(),
-        batch_size=dl_args.batch_size,
-        val_split=dl_args.val_split,
-        test_split=dl_args.test_split,
-        num_workers=dl_args.num_workers,
-        include_test=dl_args.include_test,
-        subset_size=dl_args.subset_size,
-        cutoff=dl_args.cutoff,
-        shoebox_file_names=dl_args.shoebox_file_names,
-        D=dl_args.D,
-        H=dl_args.H,
-        W=dl_args.W,
-        anscombe=dl_args.anscombe,
-        transform=dl_args.transform,
-    )
+    return dl_cls(**cfg["data_loader"]["args"])
 
 
 def construct_trainer(
@@ -426,7 +406,8 @@ def construct_trainer(
     logger: Logger | None = None,
     callbacks: list[Callback] | Callback | None = None,
 ) -> pl.Trainer:
-    tr_cfg = configs.TrainerConfig(**cfg["trainer"])
+    # trainer section is optional; TrainerConfig defaults cover an empty one
+    tr_cfg = configs.TrainerConfig(**(cfg.get("trainer") or {}))
 
     trainer_kwargs = dict(
         max_epochs=tr_cfg.max_epochs,
@@ -477,8 +458,6 @@ def _collect_resolved_paths(cfg: dict) -> dict:
     if isinstance(shoebox_files, dict):
         for k, fname in shoebox_files.items():
             if k == "data_dir":
-                # `shoebox_file_names.data_dir` is a directory override,
-                # not a filename; skip.
                 continue
             if isinstance(fname, str):
                 dl_paths[k] = _resolved_path_info(
@@ -598,3 +577,61 @@ def load_config(resource: str | Path) -> dict:
         with open(Path(p), encoding="utf-8") as f:
             raw = yaml.safe_load(f)
     return raw
+
+
+def apply_dataset_defaults(cfg: dict) -> dict:
+    """Fill dataset-derived values from <data_dir>/dataset.yaml where unset in cfg."""
+    from integrator.io import data_dim_for, read_dataset_spec
+
+    dl_args = cfg.get("data_loader", {}).get("args", {})
+    data_dir = dl_args.get("data_dir")
+    if not data_dir:
+        return cfg
+    spec = read_dataset_spec(data_dir)
+    if not spec:
+        return cfg
+
+    geom = spec.get("geometry", {})
+    d, h, w = geom.get("d"), geom.get("h"), geom.get("w")
+    if d is None or h is None or w is None:
+        return cfg
+    data_dim = geom.get("data_dim") or data_dim_for(d)
+    profile_n = d * h * w if data_dim == "3d" else h * w
+
+    def fill(target: dict, key, value):
+        if value is not None and target.get(key) is None:
+            target[key] = value
+
+    iargs = cfg.setdefault("integrator", {}).setdefault("args", {})
+    fill(iargs, "data_dim", data_dim)
+    fill(iargs, "d", d)
+    fill(iargs, "h", h)
+    fill(iargs, "w", w)
+
+    input_shape = [h, w] if data_dim == "2d" else [d, h, w]
+    for enc in cfg.get("encoders", []) or []:
+        eargs = enc.setdefault("args", {})
+        fill(eargs, "data_dim", data_dim)
+        if enc.get("name") == "profile_encoder":
+            fill(eargs, "input_shape", input_shape)
+
+    qp = cfg.get("surrogates", {}).get("qp")
+    if qp is not None and qp.get("name") == "learned_basis_profile":
+        fill(qp.setdefault("args", {}), "output_dim", profile_n)
+
+    fill(dl_args, "D", d)
+    fill(dl_args, "H", h)
+    fill(dl_args, "W", w)
+    fill(dl_args, "anscombe", spec.get("anscombe"))
+    files = spec.get("files", {})
+    if files and dl_args.get("shoebox_file_names") is None:
+        # stats live in the spec, not a file; counts/masks/reference are files
+        dl_args["shoebox_file_names"] = {
+            "data_dir": data_dir,
+            "counts": files.get("counts", "counts.npy"),
+            "masks": files.get("masks", "masks.npy"),
+            "reference": files.get("reference", "metadata.npy"),
+            "standardized_counts": None,
+        }
+
+    return cfg

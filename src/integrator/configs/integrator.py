@@ -4,6 +4,27 @@ from typing import Literal
 
 @dataclass
 class IntegratorCfg:
+    """Hyperparameters for an integrator `LightningModule`.
+
+    Attributes:
+        data_dim: Shoebox dimensionality, either `2d` or `3d`.
+        d: Shoebox depth in pixels (number of z-slices); ignored for `2d` data but still validated positive.
+        h: Shoebox height in pixels; must be positive.
+        w: Shoebox width in pixels; must be positive.
+        lr: Peak optimizer learning rate; must be positive.
+        encoder_out: Width of the encoder embedding consumed by the surrogates.
+        weight_decay: Adam weight decay applied to all parameters; must be non-negative.
+        decoder_weight_decay: Separate weight decay for the `qp` decoder weight; `None` reuses `weight_decay`.
+        qp_smoothness_weight: Penalty weight on profile-basis spatial smoothness; `None` disables it.
+        qp_orthogonality_weight: Penalty weight on profile-basis column orthogonality; `None` disables it.
+        lr_schedule: Schedule name `cosine_warmup` or `step_linear_warmup`, or `None` for a constant rate.
+        warmup_epochs: Number of linear-warmup epochs used by `cosine_warmup`.
+        warmup_steps: Number of linear-warmup steps used by `step_linear_warmup`.
+        lr_min: Floor learning rate for the schedule; must be non-negative and `<= lr`.
+        mc_samples: Monte Carlo samples drawn from each surrogate per forward pass; must be `>= 1`.
+        predict_keys: Output columns to emit at predict time, or `default` for the built-in set.
+    """
+
     data_dim: Literal["2d", "3d"]
     d: int
     h: int
@@ -74,6 +95,13 @@ class IntegratorCfg:
 
 @dataclass
 class IntegratorConfig:
+    """Registry selection for the integrator: a `name` plus its typed `args`.
+
+    Attributes:
+        name: Registry key naming the integrator class to construct.
+        args: Integrator hyperparameters as an `IntegratorCfg`.
+    """
+
     name: str
     args: IntegratorCfg
 

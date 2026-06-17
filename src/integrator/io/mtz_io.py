@@ -5,7 +5,6 @@ import gemmi
 import numpy as np
 import reciprocalspaceship as rs
 import torch
-import yaml
 
 from .metadata import load_metadata
 
@@ -15,19 +14,26 @@ logger = logging.getLogger(__name__)
 def write_mtz_from_preds(
     pred_data: dict,
     metadata_path: Path,
-    crystal_yaml_path: Path,
+    data_dir: Path,
     out_path: Path,
 ):
     """Build and write an MTZ file from integrator predictions.
 
     Args:
         pred_data: dict with keys refl_ids, qi_mean, qi_var, qbg_mean.
-        metadata_path: path to metadata.pt (has H,K,L, wavelength, xyzcal, etc.)
-        crystal_yaml_path: path to crystal.yaml (has cell + spacegroup).
+        metadata_path: path to metadata.npy (has H,K,L, wavelength, xyzcal, etc.)
+        data_dir: dataset directory holding dataset.yaml (cell + spacegroup).
         out_path: where to write the .mtz file.
     """
+    from .dataset import read_dataset_spec
+
     meta = load_metadata(metadata_path)
-    crystal = yaml.safe_load(crystal_yaml_path.read_text())
+    spec = read_dataset_spec(data_dir)
+    if spec is None or "crystal" not in spec:
+        raise FileNotFoundError(
+            f"dataset.yaml with a crystal block not found in {data_dir}"
+        )
+    crystal = spec["crystal"]
 
     refl_ids = pred_data["refl_ids"]
     if isinstance(refl_ids, torch.Tensor):

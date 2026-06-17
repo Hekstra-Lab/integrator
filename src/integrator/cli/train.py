@@ -278,6 +278,7 @@ def main():
         assign_labels,
     )
     from integrator.utils import (
+        apply_dataset_defaults,
         construct_data_loader,
         construct_integrator,
         construct_trainer,
@@ -295,6 +296,7 @@ def main():
 
     cfg = load_config(args.config)
     cfg = _apply_cli_overrides(cfg, args=args)
+    cfg = apply_dataset_defaults(cfg)
 
     logger.info("Starting Training")
 

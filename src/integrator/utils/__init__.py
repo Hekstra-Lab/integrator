@@ -1,4 +1,5 @@
 from .factory_utils import (
+    apply_dataset_defaults,
     construct_data_loader,
     construct_integrator,
     construct_trainer,
@@ -11,6 +12,7 @@ from .prepare_priors import (
 )
 
 __all__ = [
+    "apply_dataset_defaults",
     "construct_data_loader",
     "construct_integrator",
     "construct_trainer",
