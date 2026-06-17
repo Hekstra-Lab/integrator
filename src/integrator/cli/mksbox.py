@@ -16,8 +16,7 @@ integrator.mksbox \
     --refl integrated.refl \
     --expt integrated.expt \
     --out-dir /n/.../pytorch_data \
-    --w 21 --h 21 --d 3 \
-    --save-as-pt 
+    --w 21 --h 21 --d 3
 
 Run (laue mode): 
 integrator.mksbox --laue \
@@ -26,8 +25,7 @@ integrator.mksbox --laue \
     --expt integrated.expt \
     --out-dir /n/.../pytorch_data \
     --w 21 --h 21 --d 1 \
-    --max-images 1000 \
-    --save-as-pt
+    --max-images 1000
 """
 
 import argparse
@@ -144,7 +142,7 @@ def parse_args():
     common.add_argument(
         "--no-mask-overlap",
         action="store_true",
-        help="skip geometric neighbor (overlap) masking",
+        help="skip overlap masking",
     )
     common.add_argument(
         "--shoebox-format",
@@ -155,9 +153,10 @@ def parse_args():
         "memmap writes. pt converts each memmap to a .pt tensor at the end ",
     )
     common.add_argument(
-        "--save-as-pt",
+        "--no-stats",
         action="store_true",
-        help="also write stats.npy, anscombe_stats.npy, concentration.npy",
+        help="skip writing stats.npy / anscombe_stats.npy / concentration.npy "
+        "(written by default)",
     )
     common.add_argument(
         "--stats-chunk",
@@ -591,7 +590,7 @@ def run_dials(args):
         )
     print(f"extracted {N} shoeboxes -> {counts_path}, {masks_path}")
 
-    # geometric neighbor (overlap) masking, grouped per start frame (bbox z0)
+    # overlap masking, grouped per start frame (bbox z0)
     if not args.no_mask_overlap:
         bb = np.stack(
             [b.as_numpy_array() for b in reflections["bbox"].parts()]
@@ -626,7 +625,7 @@ def run_dials(args):
     )
     print(f"wrote metadata.npy under {out_dir}")
 
-    if args.save_as_pt:
+    if not args.no_stats:
         _save_stats_from_memmap(
             counts_path=counts_path,
             masks_path=masks_path,
@@ -1050,7 +1049,7 @@ def run_laue(args):
         )
     print(f"extracted {n_done} shoeboxes -> {counts_path}, {masks_path}")
 
-    # geometric neighbor (overlap) masking, grouped per image
+    # overlap masking, grouped per image
     if not args.no_mask_overlap:
         xyz = reflections["xyzcal.px"]
         centroids = np.stack(
@@ -1084,7 +1083,7 @@ def run_laue(args):
     )
     print(f"wrote metadata.npy under {out_dir}")
 
-    if args.save_as_pt:
+    if not args.no_stats:
         _save_stats_from_memmap(
             counts_path=counts_path,
             masks_path=masks_path,
