@@ -1,13 +1,3 @@
-"""Lightweight, W&B-optional training plots.
-
-`LossCurveLogger` (always on) plots train/val total loss and split-ELBO terms.
-`PredictionScatterLogger` (opt-in, off by default) scatters model intensity /
-background against DIALS for a subset of validation reflections.
-
-Everything routes through `RunLogger`, so figures/CSVs go to W&B when a run is
-active and to local files otherwise.
-"""
-
 from collections import defaultdict
 
 from pytorch_lightning.callbacks import Callback
@@ -20,14 +10,7 @@ _SPLITS = ("train", "val")
 
 
 class LossCurveLogger(Callback):
-    """Plot train/val total loss and split-ELBO curves each epoch.
-
-    Accumulates the per-batch `loss_components` the integrator returns
-    (`loss`, `nll`, `kl`, `kl_prf`, `kl_i`, `kl_bg`) over each epoch and
-    writes a `loss_total` curve, a `loss_terms` panel, and a `loss_history`
-    CSV via RunLogger. Robust to logger-metric timing because it reads the
-    step outputs directly.
-    """
+    """Plot train/val total loss and split-ELBO curves each epoch."""
 
     def __init__(self):
         super().__init__()
@@ -39,7 +22,11 @@ class LossCurveLogger(Callback):
         self._acc = {s: defaultdict(list) for s in _SPLITS}
 
     def _collect(self, split, outputs):
-        lc = outputs.get("loss_components") if isinstance(outputs, dict) else None
+        lc = (
+            outputs.get("loss_components")
+            if isinstance(outputs, dict)
+            else None
+        )
         if not lc:
             return
         for term in _TERMS:
@@ -50,7 +37,9 @@ class LossCurveLogger(Callback):
     def on_train_epoch_start(self, trainer, pl_module):
         self._reset_epoch()
 
-    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+    def on_train_batch_end(
+        self, trainer, pl_module, outputs, batch, batch_idx
+    ):
         if not trainer.sanity_checking:
             self._collect("train", outputs)
 
@@ -97,7 +86,7 @@ class LossCurveLogger(Callback):
 
         panel = ("nll", "kl_prf", "kl_i", "kl_bg")
         fig2, axes = plt.subplots(2, 2, figsize=(7, 5), dpi=90)
-        for ax_, term in zip(axes.ravel(), panel):
+        for ax_, term in zip(axes.ravel(), panel, strict=False):
             for split, style in (("train", "-"), ("val", "--")):
                 ys = series(f"{split}_{term}")
                 if any(y is not None for y in ys):
@@ -114,10 +103,9 @@ class LossCurveLogger(Callback):
 class PredictionScatterLogger(Callback):
     """Scatter model vs DIALS intensity/background for a subset of val reflections.
 
-    Off by default (opt-in). y-axis = DIALS, x-axis = model. Saves a small
-    low-res PNG and a CSV per scatter via RunLogger. Config-agnostic: needs
-    only `qi_mean`/`qbg_mean` in the forward output plus the DIALS columns in
-    the batch metadata (auto-detects mono `prf`/`mean` vs poly `sum`).
+    Off by default (opt-in).
+
+    y-axis = DIALS, x-axis = model
     """
 
     def __init__(self, max_points: int = 2000, every_n_epochs: int = 1):
@@ -174,9 +162,17 @@ class PredictionScatterLogger(Callback):
         rl = get_run_logger(self, trainer)
         rl.log_scatter(
             "val_intensity_model_vs_dials",
-            df, x="qi_mean", y="dials_intensity", step=epoch,
+            df,
+            x="qi_mean",
+            y="dials_intensity",
+            step=epoch,
+            loglog=True,
         )
         rl.log_scatter(
             "val_background_model_vs_dials",
-            df, x="qbg_mean", y="dials_background", step=epoch,
+            df,
+            x="qbg_mean",
+            y="dials_background",
+            step=epoch,
+            loglog=False,
         )

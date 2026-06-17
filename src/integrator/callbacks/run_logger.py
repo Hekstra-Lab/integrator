@@ -107,6 +107,7 @@ class RunLogger:
         step=None,
         figsize=(3.0, 3.0),
         dpi: int = 80,
+        loglog: bool = False,
     ) -> None:
         sub = df.select([x, y])
         if self.use_wandb:
@@ -115,9 +116,16 @@ class RunLogger:
             return
         import matplotlib.pyplot as plt
 
+        xv = df[x].to_numpy()
+        yv = df[y].to_numpy()
         # small, low-res figure on purpose: cheap to write every epoch
         fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
-        ax.scatter(df[x].to_numpy(), df[y].to_numpy(), s=3, alpha=0.4)
+        if loglog:
+            mask = (xv > 0) & (yv > 0)
+            xv, yv = xv[mask], yv[mask]
+            ax.set_xscale("log")
+            ax.set_yscale("log")
+        ax.scatter(xv, yv, s=3, alpha=0.4)
         ax.set_xlabel(x)
         ax.set_ylabel(y)
         ax.set_title(name, fontsize=8)
