@@ -17,7 +17,10 @@ integrator.mksbox \
     --expt integrated.expt \
     --out-dir /n/.../pytorch_data \
     --w 21 --h 21 --d 3 \
-    --save-as-pt Run (laue mode): integrator.mksbox --laue \
+    --save-as-pt 
+
+Run (laue mode): 
+integrator.mksbox --laue \
     --data-dir /n/.../laue-dials \
     --refl integrated.refl \
     --expt integrated.expt \
@@ -38,7 +41,7 @@ import torch
 import yaml
 from numpy.lib.format import open_memmap
 
-from integrator.io import refl_as_pt
+from integrator.io import refl_as_pt, save_data
 
 # re to parse image numbers from laue-dials filenames
 _TRAILING_INT_RE = re.compile(r"_(\d+)\.[A-Za-z0-9]+$")
@@ -154,7 +157,7 @@ def parse_args():
     common.add_argument(
         "--save-as-pt",
         action="store_true",
-        help="also write stats.pt, anscombe_stats.pt, concentration.pt",
+        help="also write stats.npy, anscombe_stats.npy, concentration.npy",
     )
     common.add_argument(
         "--stats-chunk",
@@ -203,8 +206,8 @@ def _save_stats_from_memmap(
     masks_path: Path,
     out_dir: Path,
     chunk: int = 10_000,
-    ans_fname: str = "anscombe_stats.pt",
-    stats_fname: str = "stats.pt",
+    ans_fname: str = "anscombe_stats.npy",
+    stats_fname: str = "stats.npy",
 ):
     """Compute (mean, var) of masked counts and their Anscombe transform.
 
@@ -232,11 +235,11 @@ def _save_stats_from_memmap(
     mean_a = sum_a / nel
     var_a = sumsq_a / nel - mean_a * mean_a
 
-    torch.save(
+    save_data(
         torch.tensor([mean_c, var_c], dtype=torch.float32),
         out_dir / stats_fname,
     )
-    torch.save(
+    save_data(
         torch.tensor([mean_a, var_a], dtype=torch.float32), out_dir / ans_fname
     )
 
@@ -245,7 +248,7 @@ def _save_concentration_from_memmap(
     counts_path: Path,
     out_dir: Path,
     chunk: int = 10_000,
-    out_fname: str = "concentration.pt",
+    out_fname: str = "concentration.npy",
 ):
     """Per-reflection mean over voxels, computed by streaming the memmap."""
     counts = np.load(counts_path, mmap_mode="r")
@@ -254,7 +257,7 @@ def _save_concentration_from_memmap(
     for i in range(0, n, chunk):
         c = counts[i : i + chunk].astype(np.float32)
         conc[i : i + chunk] = c.mean(axis=1)
-    torch.save(torch.from_numpy(conc), out_dir / out_fname)
+    save_data(torch.from_numpy(conc), out_dir / out_fname)
 
 
 def _convert_npy_memmap_to_pt(npy_path: Path) -> Path:
@@ -282,16 +285,7 @@ def _apply_overlap_mask(
     nproc,
     chunk,
 ):
-    """Mask neighbor-owned pixels in an already-written masks memmap.
-
-    Computes the geometric overlap mask (centroid-distance ownership), then
-    ANDs `~overlap` into the masks memmap in place. Mask rows are aligned with
-    `bboxes`/`centroids`/`image_ids` by position (both extractors index the
-    memmap by refl_ids == arange(N) in this same order).
-
-    image_ids groups reflections before checking overlap: pass image_num for
-    laue stills, or None to group by start frame (bbox z0) for rotation data.
-    """
+    """Mask neighbor-owned pixels in an already-written masks memmap."""
     from integrator.cli.utils.overlap import compute_overlap_mask
 
     n = len(bboxes)
@@ -505,9 +499,6 @@ def run_dials(args):
     if "panel" not in reflections:
         raise SystemExit("refl table has no 'panel' column")
 
-    identifier = dict(reflections.experiment_identifiers())
-    (out_dir / "identifiers.yaml").write_text(yaml.safe_dump(identifier))
-
     x, y, z = reflections["xyzcal.px"].parts()
     x = flex.floor(x).iround()
     y = flex.floor(y).iround()
@@ -647,7 +638,7 @@ def run_dials(args):
             out_dir=out_dir,
             chunk=args.stats_chunk,
         )
-        print("wrote stats.pt, anscombe_stats.pt, concentration.pt")
+        print("wrote stats.npy, anscombe_stats.npy, concentration.npy")
 
     if args.shoebox_format == "pt":
         nbytes = counts_path.stat().st_size + masks_path.stat().st_size
@@ -950,10 +941,6 @@ def run_laue(args):
     reflections.as_file(str(refl_path_out))
     print(f"wrote refl with bbox/wavelength/refl_ids/d -> {refl_path_out}")
 
-    # write identifiers
-    identifier = dict(reflections.experiment_identifiers())
-    (out_dir / "identifiers.yaml").write_text(yaml.safe_dump(identifier))
-
     # crystal metadata: cell + spacegroup + beam center
     # All per-image experiments are copies of the same refined crystal model,
     # so the first one contains the necessary metadata
@@ -1109,7 +1096,7 @@ def run_laue(args):
             out_dir=out_dir,
             chunk=args.stats_chunk,
         )
-        print("wrote stats.pt, anscombe_stats.pt, concentration.pt")
+        print("wrote stats.npy, anscombe_stats.npy, concentration.npy")
 
     if args.shoebox_format == "pt":
         nbytes = counts_path.stat().st_size + masks_path.stat().st_size

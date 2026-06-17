@@ -4,6 +4,8 @@ from pathlib import Path
 import torch
 from torch import Tensor
 
+from integrator.io import data_path, load_data, save_data
+
 logger = logging.getLogger(__name__)
 
 
@@ -46,7 +48,7 @@ def prepare_per_bin_priors(
     if loss_name == "polychromatic_wilson":
         if "lambda_min" not in loss_args or "lambda_max" not in loss_args:
             ref_path = _resolve_reference_path(data_dir, cfg)
-            ref = torch.load(ref_path, weights_only=False)
+            ref = load_data(ref_path)
             wl = None
             if isinstance(ref, dict) and "wavelength" in ref:
                 wl = ref["wavelength"]
@@ -71,7 +73,7 @@ def prepare_per_bin_priors(
         "d_min" not in conc_cfg or "d_max" not in conc_cfg
     ):
         ref_path = _resolve_reference_path(data_dir, cfg)
-        ref = torch.load(ref_path, weights_only=False)
+        ref = load_data(ref_path)
         d = None
         if isinstance(ref, dict) and "d" in ref:
             d = ref["d"]
@@ -86,33 +88,32 @@ def prepare_per_bin_priors(
 
     # Regenerate group_labels if missing or binned at a different n_bins.
     need_group_labels = False
-    gl_path = _nbins_path("group_labels.pt", n_bins, data_dir)
-    if not gl_path.exists():
+    gl_path = _nbins_path("group_labels.npy", n_bins, data_dir)
+    if data_path(gl_path) is None:
         need_group_labels = True
     else:
-        existing_gl = torch.load(gl_path, weights_only=True)
+        existing_gl = load_data(gl_path)
         if int(existing_gl.max().item()) + 1 != n_bins:
             need_group_labels = True
 
-    bg_prior_path = data_dir / "bg_prior.pt"
+    bg_prior_path = data_dir / "bg_prior.npy"
     need_bg_prior = (
         "bg_rate" not in loss_args and "bg_concentration" not in loss_args
-    ) and (force or not bg_prior_path.exists())
+    ) and (force or data_path(bg_prior_path) is None)
 
     if not need_group_labels and not need_bg_prior:
         return
 
-    metadata = torch.load(
-        _resolve_reference_path(data_dir, cfg), weights_only=False
-    )
+    metadata = load_data(_resolve_reference_path(data_dir, cfg))
     d = metadata["d"]
     N = len(d)
 
     group_labels, _, n_bins = _bin_by_resolution(d, n_bins)
     logger.info("Binned %d reflections into %d resolution shells", N, n_bins)
 
-    gl_path = _nbins_path("group_labels.pt", n_bins, data_dir)
-    torch.save(group_labels, gl_path)
+    gl_path = save_data(
+        group_labels, _nbins_path("group_labels.npy", n_bins, data_dir)
+    )
     logger.info("Saved %s (%d bins)", gl_path.name, n_bins)
 
     # Global background prior via Gamma MLE
@@ -130,9 +131,9 @@ def prepare_per_bin_priors(
                     "bg_rate": float(rate.item()),
                     "n_samples": int(pos.numel()),
                 }
-                torch.save(bg_prior, bg_prior_path)
+                save_data(bg_prior, bg_prior_path)
                 logger.info(
-                    "Saved bg_prior.pt (Gamma MLE: alpha=%.3f, rate=%.3f, n=%d)",
+                    "Saved bg_prior (Gamma MLE: alpha=%.3f, rate=%.3f, n=%d)",
                     bg_prior["bg_concentration"],
                     bg_prior["bg_rate"],
                     bg_prior["n_samples"],
@@ -159,26 +160,25 @@ def inject_binning_labels(data_loader, cfg: dict) -> None:
 
     ref = data_loader.full_dataset.reference
 
-    gl_path = _nbins_path("group_labels.pt", n_bins, data_dir)
-    if gl_path.exists():
-        ref["group_label"] = torch.load(gl_path, weights_only=True)
+    gl_path = _nbins_path("group_labels.npy", n_bins, data_dir)
+    if data_path(gl_path) is not None:
+        ref["group_label"] = load_data(gl_path)
         logger.debug("Injected group_label from %s", gl_path.name)
 
-    pgl_path = _nbins_path("profile_group_labels.pt", n_bins, data_dir)
-    if pgl_path.exists():
-        ref["profile_group_label"] = torch.load(pgl_path, weights_only=True)
+    pgl_path = _nbins_path("profile_group_labels.npy", n_bins, data_dir)
+    if data_path(pgl_path) is not None:
+        ref["profile_group_label"] = load_data(pgl_path)
         logger.debug("Injected profile_group_label from %s", pgl_path.name)
 
 
 def _resolve_reference_path(data_dir: Path, cfg: dict) -> Path:
     """Find the metadata/reference .pt file from the config."""
     sfn = cfg["data_loader"]["args"].get("shoebox_file_names", {})
-    ref_name = sfn.get("reference", "reference.pt")
-    # Fall back to metadata.pt if reference.pt doesn't exist
+    ref_name = sfn.get("reference", "metadata.npy")
     ref_path = data_dir / ref_name
-    if not ref_path.exists():
-        ref_path = data_dir / "metadata.pt"
-    return ref_path
+    if data_path(ref_path) is not None:
+        return ref_path
+    return data_dir / "metadata.npy"
 
 
 def _bin_by_resolution(

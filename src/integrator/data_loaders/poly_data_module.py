@@ -76,8 +76,8 @@ class PolychromaticDataModule(pl.LightningDataModule):
         self.shoebox_file_names = shoebox_file_names or {
             "counts": "counts.npy",
             "masks": "masks.npy",
-            "stats": "anscombe_stats.pt",
-            "reference": "metadata.pt",
+            "stats": "anscombe_stats.npy",
+            "reference": "metadata.npy",
             "standardized_counts": None,
         }
 
@@ -101,11 +101,13 @@ class PolychromaticDataModule(pl.LightningDataModule):
         masks = _load_shoebox_array(
             os.path.join(self.data_dir, self.shoebox_file_names["masks"])
         ).squeeze(-1)
-        stats = torch.load(
-            os.path.join(self.data_dir, self.shoebox_file_names["stats"]),
+        from integrator.io import load_data
+
+        stats = load_data(
+            os.path.join(self.data_dir, self.shoebox_file_names["stats"])
         )
-        reference = torch.load(
-            os.path.join(self.data_dir, self.shoebox_file_names["reference"]),
+        reference = load_data(
+            os.path.join(self.data_dir, self.shoebox_file_names["reference"])
         )
 
         crystal_path = os.path.join(self.data_dir, "crystal.yaml")

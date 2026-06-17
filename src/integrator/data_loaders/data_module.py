@@ -184,10 +184,10 @@ class RotationDataModule(pl.LightningDataModule):
         self.full_dataset = None
         if shoebox_file_names is None:
             shoebox_file_names = {
-                "counts": "counts.pt",
-                "masks": "masks.pt",
-                "stats": "stats.pt",
-                "reference": "reference.pt",
+                "counts": "counts.npy",
+                "masks": "masks.npy",
+                "stats": "stats.npy",
+                "reference": "metadata.npy",
                 "standardized_counts": None,
             }
         self.shoebox_file_names = shoebox_file_names
@@ -214,11 +214,11 @@ class RotationDataModule(pl.LightningDataModule):
         masks = _load_shoebox_array(
             os.path.join(self.data_dir, self.shoebox_file_names["masks"])
         ).squeeze(-1)
-        stats = torch.load(
+        from integrator.io import load_data, load_metadata
+
+        stats = load_data(
             os.path.join(self.data_dir, self.shoebox_file_names["stats"])
         )
-        from integrator.io import load_metadata
-
         reference = load_metadata(
             os.path.join(self.data_dir, self.shoebox_file_names["reference"])
         )
