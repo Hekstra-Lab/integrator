@@ -15,9 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def _load_shoebox_array(path, weights_only=True):
-    """Load counts/masks from either new .npy (integrator.mksbox memmap era)
-    or .pt (torch.save). Returns torch.Tensor.
-    """
+    """Load counts/masks from either new .npy  or .pt. Returns torch.Tensor."""
     p = Path(path)
     npy = p.with_suffix(".npy")
     if npy.exists():

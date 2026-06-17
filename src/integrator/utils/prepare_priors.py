@@ -26,16 +26,11 @@ def prepare_per_bin_priors(
     """Generate resolution-bin group labels and the empirical background prior.
 
     Args:
-        cfg: Full YAML config dict.  If `loss.args.n_bins` is set in the
-            config, it is used as the number of resolution bins (unless
-            overridden by the *n_bins* argument).
-        n_bins: Number of resolution bins.  When <= 0 (default), reads from
-            `cfg["loss"]["args"]["n_bins"]`, falling back to 20.
-            force: Regenerate even if files already exist.
-        events_out: Optional list that will be appended with structured
+        cfg: Full YAML config dict.
+        n_bins: Number of resolution bins.
+        events_out: Optional list that will be appended with
             event dicts describing each file action ("created",
-            "regenerated", "reused") and the reason. Lets the CLI echo
-            a summary and record what happened in run_metadata.yaml.
+            "regenerated", "reused")
     """
     loss_name = cfg.get("loss", {}).get("name", "")
     if loss_name not in ("monochromatic_wilson", "polychromatic_wilson"):
@@ -156,12 +151,7 @@ def prepare_per_bin_priors(
 
 
 def inject_binning_labels(data_loader, cfg: dict) -> None:
-    """Load binning label files and inject into the dataset's metadata.
-    Called after data_loader.setup() to add group_label and
-    profile_group_label to the dataset without mutating metadata.pt.
-    Files are saved by prepare_per_bin_priors() as separate
-    n_bins-suffixed .pt files.
-    """
+    """Load binning label files and inject into the dataset's metadata."""
 
     loss_args = cfg.get("loss", {}).get("args", {})
     n_bins = int(loss_args.get("n_bins", 20))
@@ -198,10 +188,6 @@ def _bin_by_resolution(
 ) -> tuple[Tensor, Tensor, int]:
     """Assign reflections to resolution bins via quantiles.
 
-    If any bin has fewer than `min_per_bin` reflections, `n_bins` is
-    reduced and the binning is retried until all bins are large enough
-    (or n_bins reaches 1).
-
     Returns:
         group_labels: (N,) integer bin index per reflection
         bin_edges: (n_bins_actual + 1,) bin boundaries
@@ -232,40 +218,6 @@ def _bin_by_resolution(
     return group_labels, bin_edges, 1
 
 
-def _compute_wavelength_bin_edges(
-    metadata_path: Path,
-    n_lambda_bins: int,
-) -> Tensor:
-    """Quantile-based wavelength bin edges from metadata['wavelength'].
-
-    Returns a 1-D tensor of length `n_lambda_bins + 1` such that consecutive
-    edges define a half-open bin `[edges[i], edges[i+1])` (rightmost
-    inclusive). Equal-quantile spacing -> roughly equal counts per bin -> the
-    per-bin G_k posteriors get balanced gradient signal.
-    """
-    from integrator.io import load_metadata
-
-    metadata = load_metadata(metadata_path)
-    if "wavelength" not in metadata:
-        raise KeyError(
-            f"metadata.pt at {metadata_path} has no 'wavelength' column; "
-            "this CLI step requires output from integrator.mksbox --laue."
-        )
-    wavelength = metadata["wavelength"].float()
-    if wavelength.numel() == 0:
-        raise ValueError("metadata['wavelength'] is empty")
-    qs = torch.linspace(0.0, 1.0, n_lambda_bins + 1)
-    edges = torch.quantile(wavelength, qs)
-    # Guard: degenerate spectra (all-equal λ) would collapse all edges to one
-    # value and break bucketize. Spread by a tiny epsilon if so.
-    if edges[-1] <= edges[0]:
-        raise ValueError(
-            f"wavelength range is degenerate: [{float(edges[0]):.6f}, "
-            f"{float(edges[-1]):.6f}]; cannot form {n_lambda_bins} bins"
-        )
-    return edges
-
-
 def _fit_gamma_mle(
     x: Tensor,
     n_iter: int = 100,
@@ -293,5 +245,3 @@ def _fit_gamma_mle(
 
     beta = alpha / xbar
     return alpha, beta
-
-

@@ -1,9 +1,3 @@
-"""Lightweight per-step / per-epoch metric recorders (CSV or parquet).
-
-Both recorders hold no GPU tensors across steps and flush to disk once per
-epoch, so they add negligible overhead to training.
-"""
-
 from pathlib import Path
 
 import polars as pl
@@ -13,9 +7,6 @@ from pytorch_lightning.callbacks import Callback
 
 class LossTraceRecorder(Callback):
     """Record per-step loss components to CSV/parquet without slowing training.
-
-    Accumulates scalar loss values in plain Python lists (no GPU tensors held),
-    then flushes to disk once per epoch.
 
     Columns: step, loss, nll, kl, kl_prf, kl_i, kl_bg
     """
@@ -172,9 +163,7 @@ class EpochMetricRecorder(Callback):
 
             data[key] = x.cpu().numpy()
 
-        df = pl.DataFrame(data).select(
-            pl.lit(epoch).alias("epoch"), pl.all()
-        )
+        df = pl.DataFrame(data).select(pl.lit(epoch).alias("epoch"), pl.all())
 
         suffix = "parquet" if self.use_parquet else "csv"
         fname = f"{self.out_dir}/{self.split}_epoch_{epoch:04d}.{suffix}"

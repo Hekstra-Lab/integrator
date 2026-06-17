@@ -1,12 +1,3 @@
-"""Run-logging backend: Weights & Biases when active, else local files.
-
-The plot callbacks build matplotlib figures and polars DataFrames, then log
-them through this interface. When a W&B run is active the calls forward to
-wandb; otherwise (the default when wandb is not installed) figures are written
-as PNG, tables and scatter data as CSV, and scalars are appended to a JSONL
-file under a local directory. This keeps logging working without wandb.
-"""
-
 from __future__ import annotations
 
 import json

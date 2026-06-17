@@ -5,7 +5,7 @@ from .gamma import (
     GammaDistributionRepamE,
 )
 from .profile_surrogates import (
-    LearnedBasisProfileSurrogate,
+    ProfileSurrogate,
     ProfileSurrogateOutput,
 )
 
@@ -14,6 +14,6 @@ __all__ = [
     "GammaDistributionRepamA",
     "GammaDistributionRepamB",
     "GammaDistributionRepamE",
-    "LearnedBasisProfileSurrogate",
+    "ProfileSurrogate",
     "ProfileSurrogateOutput",
 ]

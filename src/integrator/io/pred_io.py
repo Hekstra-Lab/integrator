@@ -1,19 +1,16 @@
-"""Load integrator predictions from disk and write them back to a DIALS `.refl`."""
-
 from pathlib import Path
 from typing import Literal
 
-import h5py
 import polars as pl
 import torch
 
 from .refl_io import unstack_preds, write_refl_with_predictions
 
 
-# WARNING: Will use an arbitrary file if both .h5 and pt files are in ckpt_dir
+# Load integrator predictions from disk and write them back to a DIALS .refl
 def get_pred_files(
     ckpt_dir: Path,
-    filetype: Literal["h5", "pt", "parquet"],
+    filetype: Literal["pt", "parquet"],
 ):
     data = None
     if filetype == "pt":
@@ -23,18 +20,6 @@ def get_pred_files(
         pred_file = pred_files[0]
         data = torch.load(pred_file, weights_only=False)
         data = unstack_preds(data)
-    elif filetype == "h5":
-        pred_files = list(ckpt_dir.glob("preds_epoch_*.h5"))
-        if not pred_files:
-            raise RuntimeError(f"No prediction files found in {ckpt_dir}")
-        pred_file = pred_files[0]
-        with h5py.File(pred_file, "r") as f:
-            data = {
-                "refl_ids": f["refl_ids"][:],
-                "qi_mean": f["qi_mean"][:],
-                "qi_var": f["qi_var"][:],
-                "qbg_mean": f["qbg_mean"][:],
-            }
     elif filetype == "parquet":
         pred_files = list(ckpt_dir.glob("preds_epoch_*.parquet"))
         lf = pl.scan_parquet(pred_files)
@@ -59,12 +44,12 @@ def write_refl_from_preds(
     ckpt_dir,
     refl_file,
     epoch: int,
-    filetype: Literal["h5", "pt", "parquet"],
+    filetype: Literal["pt", "parquet"],
 ):
     """Write per-epoch predictions back into a copy of the source `.refl`."""
     data = get_pred_files(ckpt_dir=ckpt_dir, filetype=filetype)
 
-    # Exclude coset reflections — they have no meaningful intensity predictions
+    # Exclude coset reflections
     if "is_coset" in data:
         is_coset = data["is_coset"]
         if hasattr(is_coset, "astype"):

@@ -13,16 +13,6 @@ def compute_profile_kl(
     pprf_weight: float,
     device: torch.device,
 ) -> Tensor:
-    """Compute profile KL divergence.
-
-    Args:
-        prior_scale: scalar or (B,) tensor for per-reflection σ_prior(r).
-            When a (B,) tensor, it is broadcast across the latent dimensions.
-
-    Supports:
-    - ProfileSurrogateOutput: Normal-Normal KL with N(0, prior_scale^2 I)
-    - Dirichlet: KL(q || Dirichlet(1,...,1)) with uniform prior
-    """
     if isinstance(qp, ProfileSurrogateOutput):
         q = Normal(qp.loc, qp.scale)
         if isinstance(prior_scale, Tensor) and prior_scale.dim() >= 1:

@@ -9,7 +9,7 @@ from integrator.model.loss.learned_spectrum import ChebyshevSpectrum
 
 
 class ChebyshevProfilePriorScale(nn.Module):
-    """Learned profile prior scale σ_prior(r, θ) as a smooth function of
+    """Learned profile prior scale sigma_prior(r, teheta) as a smooth function of
     detector radius and azimuthal angle.
     """
 
@@ -67,7 +67,7 @@ class ChebyshevProfilePriorScale(nn.Module):
 
 
 class ChebyshevConcentration(nn.Module):
-    """Learned intensity prior concentration α(s²) as a smooth function of
+    """Learned intensity prior concentration alpha(s^2) as a smooth function of
     resolution, parameterized via Chebyshev polynomials.
     """
 

@@ -291,9 +291,6 @@ class BaseIntegrator(pl.LightningModule):
                 weight_decay=self.weight_decay,
             )
 
-        # Decoder-specific weight decay: only targets the learned profile
-        # basis W (nn.Linear.weight of qp.decoder). All other parameters
-        # keep the base weight_decay.
         decoder_params: list[nn.Parameter] = []
         other_params: list[nn.Parameter] = []
         for name, param in self.named_parameters():

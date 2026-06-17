@@ -1,10 +1,3 @@
-"""Write model predictions to MTZ format for downstream scaling with Careless.
-
-Produces an MTZ file matching the column layout of laue-dials integrate.py
-so that Careless can consume it directly:
-    H, K, L, BATCH, I, SIGI, xcal, ycal, wavelength, BG, SIGBG
-"""
-
 import logging
 from pathlib import Path
 
@@ -73,7 +66,9 @@ def write_mtz_from_preds(
     cell_params = crystal["cell"]
     cell = gemmi.UnitCell(*cell_params)
 
-    sg_str = crystal.get("space_group", crystal.get("space_group_symbol", "P1"))
+    sg_str = crystal.get(
+        "space_group", crystal.get("space_group_symbol", "P1")
+    )
     sg_str = sg_str.split("(")[0].strip()
     spacegroup = gemmi.SpaceGroup(sg_str)
 

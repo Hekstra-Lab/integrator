@@ -91,9 +91,7 @@ class WilsonLoss(nn.Module):
 
         # Per-bin learnable concentration (Gamma shape)
         if self.learn_concentration:
-            init_raw = torch.full(
-                (n_bins,), math.log(math.expm1(init_alpha))
-            )
+            init_raw = torch.full((n_bins,), math.log(math.expm1(init_alpha)))
             self.log_alpha_per_group = nn.Parameter(init_raw)
 
     def get_B(self) -> Tensor:

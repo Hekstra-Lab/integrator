@@ -1,10 +1,4 @@
-"""Canonical DIALS reflection-table schema for the IO layer.
-
-`SCALAR_DTYPES` and `VECTOR_COLUMNS` mirror the column names and cctbx dtypes
-of a DIALS `.refl`. `DEFAULT_REFL_COLS` is the set of columns read back from a
-`.refl` via reciprocalspaceship; `DEFAULT_EXCLUDED_COLS` are columns to drop
-when converting a reflection table to a per-reflection metadata dict.
-"""
+"""DIALS reflection-table schema for the IO layer."""
 
 SCALAR_DTYPES = {
     "zeta": "double",

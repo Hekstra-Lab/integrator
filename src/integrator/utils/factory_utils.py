@@ -133,7 +133,6 @@ def _resolve_data_path(
 
 
 def _require(cfg: dict, *path: str) -> Any:
-    """Fetch `cfg[path[0]][path[1]]...`, raising a clear KeyError if any step is missing."""
     node: Any = cfg
     traversed: list[str] = []
     for key in path:
@@ -598,4 +597,3 @@ def load_config(resource: str | Path) -> dict:
         with open(Path(p), encoding="utf-8") as f:
             raw = yaml.safe_load(f)
     return raw
-

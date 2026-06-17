@@ -1,11 +1,3 @@
-"""Reflection-table / metadata / MTZ serialization for the integrator pipeline.
-
-Single home for converting between DIALS `.refl` files, per-reflection metadata
-(`.pt`/`.npy`), model predictions, and MTZ output. DIALS itself is imported
-lazily inside the `.refl` writer, so importing this package does not require a
-DIALS install.
-"""
-
 from .dtypes import (
     DEFAULT_EXCLUDED_COLS,
     DEFAULT_REFL_COLS,

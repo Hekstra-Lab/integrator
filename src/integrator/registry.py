@@ -7,7 +7,7 @@ from integrator.model.distributions import (
     GammaDistributionRepamA,
     GammaDistributionRepamB,
     GammaDistributionRepamE,
-    LearnedBasisProfileSurrogate,
+    ProfileSurrogate,
 )
 from integrator.model.encoders import (
     IntensityEncoder,
@@ -40,7 +40,7 @@ REGISTRY = {
         "gammaB": GammaDistributionRepamB,
         "gammaE": GammaDistributionRepamE,
         "dirichlet": DirichletDistribution,
-        "learned_basis_profile": LearnedBasisProfileSurrogate,
+        "learned_basis_profile": ProfileSurrogate,
     },
     "data_loader": {
         "rotation_data": RotationDataModule,

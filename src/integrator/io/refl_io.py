@@ -1,12 +1,3 @@
-"""Write model predictions into a DIALS `.refl` via the DIALS flex API.
-
-The writer reads the source `.refl` produced by `integrator.mksbox` with
-`flex.reflection_table.from_file` (which preserves all columns and experiment
-identifiers), overwrites the intensity/background columns with model
-predictions, and writes it back with `.as_file`. DIALS/cctbx is imported lazily
-so importing this module does not require a DIALS install.
-"""
-
 import numpy as np
 
 
@@ -23,12 +14,8 @@ def write_refl_with_predictions(
     i_variance,
     bg_mean,
 ):
-    """Overwrite the intensity/background columns of a DIALS `.refl` with
-    model predictions and write the result.
+    """Overwrite the intensity/background columns of a DIALS `.refl`.
 
-    Rows are matched to predictions by the integer `refl_ids` column assigned
-    by `integrator.mksbox`. The prediction arrays may cover a subset of the
-    table (e.g. lattice-only, with cosets dropped); only matched rows are kept.
 
     Args:
         refl_file: source `.refl` (must carry a `refl_ids` column).

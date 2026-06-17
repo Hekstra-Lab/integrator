@@ -5,10 +5,8 @@ fixed-size window around each predicted centroid directly from the raw image
 data.
 
 Two modes:
-
-- Default (rotation / sequence): one imageset with a rotation scan.
-
-- --laue: many single-frame stills from laue-dials. --d must be 1;
+1. Default (rotation / sequence): one imageset with a rotation scan.
+2. --laue: many single-frame stills from laue-dials. --d must be 1;
 
 Examples: 
 

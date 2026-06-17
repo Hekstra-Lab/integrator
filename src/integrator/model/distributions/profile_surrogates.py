@@ -60,7 +60,7 @@ class ProfileSurrogateOutput:
     scale: Tensor
 
 
-class LearnedBasisProfileSurrogate(nn.Module):
+class ProfileSurrogate(nn.Module):
     """Profile surrogate with a learned linear decoder.
 
         prf = softmax(W @ h + b)

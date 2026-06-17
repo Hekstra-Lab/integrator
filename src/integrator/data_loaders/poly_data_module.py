@@ -143,7 +143,7 @@ class PolychromaticDataModule(pl.LightningDataModule):
             masks = masks[selection]
             reference = {k: v[selection] for k, v in reference.items()}
 
-        # Standardize counts (2D path — counts is always (N, H*W) for stills)
+        # Standardize counts
         if self.transform == "anscombe":
             anscombe_transformed = 2 * (counts.clamp(min=0) + 0.375).sqrt()
             standardized_counts = (

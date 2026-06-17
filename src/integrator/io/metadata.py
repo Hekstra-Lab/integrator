@@ -1,10 +1,3 @@
-"""Convert per-reflection metadata between a DIALS `.refl` and torch/numpy.
-
-`refl_as_pt` reads a `.refl` (via reciprocalspaceship) into a tensor dict and
-optionally serializes it as `.pt` or `.npy`; `load_metadata` reads either format
-back. Used by `integrator.mksbox` and the data loaders.
-"""
-
 from pathlib import Path
 
 import numpy as np
@@ -40,8 +33,6 @@ def refl_as_pt(
         fname = Path(out_fname)
 
     if fname.suffix == ".npy":
-        # numpy-native: a single pickled dict of arrays (loadable without
-        # torch). Mirrors the .npy counts/masks; read back via load_metadata.
         np.save(
             fname,
             {k: v.numpy() for k, v in data.items()},
