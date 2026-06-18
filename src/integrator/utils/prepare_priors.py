@@ -23,16 +23,12 @@ def prepare_per_bin_priors(
     *,
     n_bins: int = 0,
     force: bool = False,
-    events_out: list[dict] | None = None,
 ) -> None:
     """Generate resolution-bin group labels and the empirical background prior.
 
     Args:
         cfg: Full YAML config dict.
         n_bins: Number of resolution bins.
-        events_out: Optional list that will be appended with
-            event dicts describing each file action ("created",
-            "regenerated", "reused")
     """
     loss_name = cfg.get("loss", {}).get("name", "")
     if loss_name not in ("monochromatic_wilson", "polychromatic_wilson"):
@@ -85,7 +81,17 @@ def prepare_per_bin_priors(
     d = metadata["d"]
     N = len(d)
 
+    requested = n_bins
     group_labels, _, n_bins = _bin_by_resolution(d, n_bins)
+    if n_bins != requested:
+        logger.warning(
+            "Reduced n_bins %d -> %d (sparse shells); updating config so "
+            "label lookup and the loss use the actual bin count",
+            requested,
+            n_bins,
+        )
+    # keep cfg in sync: inject_binning_labels + the loss both read n_bins from here
+    cfg["loss"].setdefault("args", {})["n_bins"] = n_bins
     logger.info("Binned %d reflections into %d resolution shells", N, n_bins)
 
     gl_path = save_data(

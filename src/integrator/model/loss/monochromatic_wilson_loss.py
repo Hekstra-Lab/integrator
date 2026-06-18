@@ -13,12 +13,10 @@ class MonochromaticWilsonLoss(WilsonLoss):
         self,
         *,
         init_log_K: float = 0.0,
-        k_prior: float = 1.0,
         lp_correction: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
-        self.k_prior = k_prior
         self._apply_lp = lp_correction
         self.raw_G = nn.Parameter(torch.tensor(float(init_log_K)))
 

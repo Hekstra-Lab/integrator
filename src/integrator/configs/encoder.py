@@ -122,16 +122,3 @@ class IntensityEncoderArgs:
                 f"encoder_out must be >= 1, got {self.encoder_out}"
             )
         _check_spatial_ndims(self)
-
-
-@dataclass
-class EncoderConfig:
-    """Registry selection for a single encoder: a `name` plus its typed `args`.
-
-    Attributes:
-        name: Registry key naming the encoder class to construct.
-        args: Constructor arguments, a `ProfileEncoderArgs` or `IntensityEncoderArgs`.
-    """
-
-    name: str
-    args: ProfileEncoderArgs | IntensityEncoderArgs

@@ -38,7 +38,8 @@ def parse_args():
         "--save-preds-as",
         type=str,
         default="parquet",
-        help="Filetype to save predictions as. Support for .h5, .pt, and .parquet",
+        choices=["parquet"],
+        help="Filetype to save predictions as (only parquet is supported)",
     )
     parser.add_argument(
         "-v",

@@ -37,26 +37,3 @@ class IntegratorCfg:
 
         if self.mc_samples < 1:
             raise ValueError(f"mc_samples must be >= 1, got {self.mc_samples}")
-
-
-@dataclass
-class IntegratorConfig:
-    """Registry selection for the integrator: a `name` plus its typed `args`.
-
-    Attributes:
-        name: Registry key naming the integrator class to construct.
-        args: Integrator hyperparameters as an `IntegratorCfg`.
-    """
-
-    name: str
-    args: IntegratorCfg
-
-    def __post_init__(self):
-        from integrator.registry import REGISTRY
-
-        valid = REGISTRY["integrator"].keys()
-        if self.name not in valid:
-            raise ValueError(
-                f"Unknown integrator '{self.name}'. "
-                f"Available integrators: {sorted(valid)}"
-            )

@@ -331,17 +331,8 @@ def main():
     logger.info("Starting Training")
 
     # Auto-generate prior distribution files if needed by the loss
-    prior_events: list[dict] = []
-    prepare_per_bin_priors(cfg, events_out=prior_events)
-
-    for event in prior_events:
-        action = event["action"]
-        if action == "reused":
-            logger.info(f"Prior file reused: {event['file']}")
-        else:
-            logger.info(
-                f"Prior file {action}: {event['file']} — {event['reason']}"
-            )
+    # (prepare_per_bin_priors logs each file action itself)
+    prepare_per_bin_priors(cfg)
 
     data_loader = construct_data_loader(cfg)
     data_loader.setup()
@@ -401,7 +392,6 @@ def main():
             "job_id": os.environ.get("SLURM_JOB_ID"),
         },
         "resolved_paths": resolved_paths,
-        "prior_events": prior_events,
     }
     if is_wandb:
         metadata["wandb"] = {

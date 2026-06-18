@@ -103,8 +103,6 @@ class BaseIntegrator(pl.LightningModule):
         },
     }
 
-    ARGS: type
-
     def __init__(
         self,
         cfg: IntegratorCfg,
@@ -284,7 +282,7 @@ class BaseIntegrator(pl.LightningModule):
         total = zero
         components: dict[str, Tensor] = {}
 
-        if smooth_w is not None and smooth_w > 0:
+        if smooth_w > 0:
             vol = W.T.reshape(d, D, H, W_spatial)
             gx = vol[..., 1:] - vol[..., :-1]
             gy = vol[..., 1:, :] - vol[..., :-1, :]

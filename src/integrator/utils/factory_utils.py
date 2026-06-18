@@ -515,8 +515,6 @@ def save_run_artifacts(
     """Save model metadata and prior artifacts to the wandb log directory.
 
     Saves:
-        - prior_concentration.pt: the rescaled Dirichlet concentration vector
-          used during training
         - run_artifacts.yaml: prior configs, model param counts, loss settings,
           and every file the factory actually loaded (post path resolution)
     """
@@ -525,19 +523,6 @@ def save_run_artifacts(
 
     loss_module = integrator.loss
     artifacts = {}
-
-    # Dirichlet prior concentration, rescaled
-    pprf_params = getattr(loss_module, "pprf_params", None)
-    if pprf_params is not None and "concentration" in pprf_params:
-        conc = pprf_params["concentration"]
-        torch.save(conc, artifacts_dir / "prior_concentration.pt")
-        artifacts["prior_concentration"] = {
-            "n_elements": int(conc.numel()),
-            "sum": float(conc.sum()),
-            "min": float(conc.min()),
-            "max": float(conc.max()),
-            "mean": float(conc.mean()),
-        }
 
     prior_summary = {}
     for attr, label in [
@@ -645,6 +630,11 @@ def apply_dataset_defaults(cfg: dict) -> dict:
             "reference": files.get("reference", "metadata.npy"),
             "standardized_counts": None,
         }
+
+    # surface the manifest's refl_file so `pred --write-refl` works from a minimal config
+    refl_file = spec.get("refl_file")
+    if refl_file:
+        fill(cfg.setdefault("output", {}), "refl_file", refl_file)
 
     return cfg
 
