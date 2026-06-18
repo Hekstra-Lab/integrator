@@ -297,9 +297,7 @@ def main():
     from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 
     from integrator.callbacks import (
-        EpochMetricRecorder,
         LossCurveLogger,
-        LossTraceRecorder,
         PredictionScatterLogger,
         WilsonParamLogger,
         assign_labels,
@@ -435,24 +433,6 @@ def main():
         "xyzcal.px.2",
         "d",
     ]
-    train_metric_dir = logdir / "train_metrics"
-    val_metric_dir = logdir / "val_metrics"
-
-    train_epoch_recorder = EpochMetricRecorder(
-        out_dir=train_metric_dir,
-        keys=keys,
-        split="train",
-        every_n_epochs=1,
-        max_rows_per_epoch=200_000,
-    )
-    val_epoch_recorder = EpochMetricRecorder(
-        out_dir=val_metric_dir,
-        keys=keys,
-        split="val",
-    )
-    loss_trace_recorder = LossTraceRecorder(
-        out_dir=logdir / "loss_traces",
-    )
 
     early_stop_cb = None
     es_raw = cfg.get("early_stop")
@@ -505,9 +485,6 @@ def main():
     )
 
     callbacks = [
-        val_epoch_recorder,
-        train_epoch_recorder,
-        loss_trace_recorder,
         LossCurveLogger(out_dir=plots_dir),
         WilsonParamLogger(out_dir=plots_dir),
         checkpoint_callback,
