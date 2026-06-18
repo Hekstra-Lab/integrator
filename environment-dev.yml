@@ -1,10 +1,5 @@
 # Development environment for the integrator project (CPU + dev tooling).
 
-# environment.yml plus the test/lint/notebook stack and the package installed
-# with its dev extras (`-e .[dev]` -> pytest, ruff, mypy, wandb). Local dev is
-# CPU; for GPU debugging start from environment-cuda.yml and add the dev pip
-# block below.
-
 # Instructions:
 #   micromamba env create -f environment-dev.yml
 #   micromamba activate integrator-dev

@@ -3,13 +3,10 @@
 # Same as environment.yml but pulls the conda-forge CUDA build of PyTorch.
 # DIALS and PyTorch both come from conda-forge.
 
-# Use on a Linux GPU machine (e.g. the cluster). conda-forge has no CUDA
-# builds for macOS, so this file only solves on linux-64.
-
 # Instructions:
 #   micromamba env create -f environment-cuda.yml
 #   micromamba activate integrator-cuda
-#
+
 # To pin a specific CUDA toolkit (match the cluster driver), add e.g.
 #   - cuda-version=12.4
 # under dependencies. The =cuda* build string selects the GPU build.

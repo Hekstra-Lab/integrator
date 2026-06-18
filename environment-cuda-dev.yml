@@ -6,7 +6,7 @@
 # Instructions:
 #   micromamba env create -f environment-cuda-dev.yml
 #   micromamba activate integrator-cuda-dev
-#
+
 # To pin a specific CUDA toolkit (match the cluster driver), add e.g.
 #   - cuda-version=12.4
 # under dependencies. 
@@ -18,7 +18,7 @@ channels:
 dependencies:
   - python=3.12
   - dials=3.26
-  # GPU PyTorch from conda-forge.
+  # GPU PyTorch from conda-forge
   - pytorch-gpu=2.9
   - torchvision=0.24
   - pytorch-lightning>=2.2
@@ -37,7 +37,7 @@ dependencies:
       - "reciprocalspaceship @ git+https://github.com/rs-station/reciprocalspaceship"
       # The integrator package with dev extras (pytest, ruff, mypy, wandb).
       - "-e .[dev]"
-      # extra dev tooling not in the [dev] pip extra
+      # extra dev tooling not in [dev] 
       - ipython
       - plotly
       - pytest-cov
