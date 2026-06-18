@@ -70,8 +70,10 @@ class CheckpointConfig:
             `None` auto-selects (`1` when early stopping is on, else `-1`).
         monitor: Metric ranking checkpoints; `None` inherits the early-stop monitor.
         mode: `min` or `max`; `None` inherits the early-stop mode (else `min`).
+        every_n_epochs: Write a checkpoint every N epochs (combine with `save_top_k=-1` to keep every Nth).
     """
 
     save_top_k: int | None = None
     monitor: str | None = None
     mode: Literal["min", "max"] | None = None
+    every_n_epochs: int = 1

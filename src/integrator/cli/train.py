@@ -495,16 +495,17 @@ def main():
     checkpoint_callback = ModelCheckpoint(
         dirpath=ckpt_dir,
         filename="{epoch:04d}",
-        every_n_epochs=1,
+        every_n_epochs=ckpt.every_n_epochs,
         save_top_k=save_top_k,
         save_last="link",
         monitor=ckpt_monitor if save_top_k > 0 else None,
         mode=ckpt_mode if save_top_k > 0 else "min",
     )
     logger.info(
-        "Checkpoints: dir=%s save_top_k=%d monitor=%s",
+        "Checkpoints: dir=%s save_top_k=%d every_n_epochs=%d monitor=%s",
         ckpt_dir.as_posix(),
         save_top_k,
+        ckpt.every_n_epochs,
         ckpt_monitor,
     )
 
