@@ -39,8 +39,8 @@ laue = ['laue-dials']
 
 [project.scripts]
 "integrator.train" = "integrator.cli.train:main"
-"integrator.predict" = "integrator.cli.pred:main"
-"integrator.make_shoeboxes" = "integrator.cli.mksbox:main"
+"integrator.predict" = "integrator.cli.predict:main"
+"integrator.make_shoeboxes" = "integrator.cli.make_shoeboxes:main"
 "integrator.resolve" = "integrator.cli.resolve:main"
 
 [project.urls]
