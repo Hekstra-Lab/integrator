@@ -17,7 +17,27 @@ def parse_args():
         "--run-dir",
         type=str,
         required=False,
-        help="Path to dir containing config.yaml file",
+        help="Run dir with run_log.yaml (config + checkpoints + predictions)",
+    )
+    # explicit overrides: use these to run without a --run-dir, or to override
+    # individual pieces of one
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Config YAML (overrides --run-dir's config)",
+    )
+    parser.add_argument(
+        "--ckpt",
+        type=str,
+        default=None,
+        help="A .ckpt file or a directory of them (overrides --run-dir's checkpoints)",
+    )
+    parser.add_argument(
+        "--out-dir",
+        type=str,
+        default=None,
+        help="Output dir for predictions (default: run-dir predictions/, else <ckpt>/predictions)",
     )
     parser.add_argument(
         "--write-refl",
@@ -57,6 +77,59 @@ def parse_args():
     return parser.parse_args()
 
 
+def _resolve_sources(args):
+    """Resolve (config, checkpoints, pred_dir) from --run-dir and/or the explicit
+    --config / --ckpt / --out-dir overrides. Each override wins over the run dir."""
+    from pathlib import Path
+
+    import yaml
+
+    from integrator.utils import apply_dataset_defaults, load_config
+
+    meta: dict = {}
+    if args.run_dir:
+        meta = yaml.safe_load(
+            (Path(args.run_dir) / "run_log.yaml").read_text()
+        )
+
+    config_path = args.config or meta.get("config")
+    if not config_path:
+        raise SystemExit("integrator.pred: provide --config or --run-dir")
+    config = apply_dataset_defaults(load_config(config_path))
+
+    def _log_dir() -> Path:
+        return Path(meta.get("log_dir") or meta["wandb"]["log_dir"])
+
+    if args.ckpt:
+        p = Path(args.ckpt)
+        if p.is_dir():
+            checkpoints = [
+                c for c in sorted(p.glob("**/*.ckpt")) if c.name != "last.ckpt"
+            ]
+        elif p.exists():
+            checkpoints = [p]
+        else:
+            raise SystemExit(f"integrator.pred: --ckpt not found: {p}")
+    elif meta:
+        checkpoints = sorted(_log_dir().glob("**/epoch*.ckpt"))
+    else:
+        raise SystemExit("integrator.pred: provide --ckpt or --run-dir")
+    if not checkpoints:
+        raise SystemExit("integrator.pred: no checkpoints found")
+
+    if args.out_dir:
+        pred_dir = Path(args.out_dir)
+    elif meta:
+        pred_dir = Path(
+            meta.get("predictions_dir") or _log_dir().parent / "predictions"
+        )
+    else:
+        pred_dir = checkpoints[0].parent / "predictions"
+    pred_dir.mkdir(parents=True, exist_ok=True)
+
+    return config, checkpoints, pred_dir
+
+
 def main():
     from pathlib import Path
 
@@ -64,49 +137,31 @@ def main():
 
     torch.set_float32_matmul_precision("high")
 
-    import yaml
-
     from integrator.callbacks import BatchPredWriter
     from integrator.utils import (
-        apply_dataset_defaults,
         construct_data_loader,
         construct_integrator,
         construct_trainer,
         inject_binning_labels,
-        load_config,
     )
 
     args = parse_args()
 
     setup_logging(args.verbose)
 
-    logger.info("Run directory: %s", args.run_dir)
     logger.info("CUDA available: %s", torch.cuda.is_available())
     logger.info("Starting Predictions")
 
-    run_dir = Path(args.run_dir)
-
-    meta = yaml.safe_load((run_dir / "run_metadata.yaml").read_text())
-    config = load_config(meta["config"])
-    config = apply_dataset_defaults(config)
-
-    # log_dir is the files/ dir (checkpoints inside); predictions/ is its sibling.
-    log_dir = Path(meta.get("log_dir") or meta["wandb"]["log_dir"])
-    pred_dir = Path(
-        meta.get("predictions_dir") or log_dir.parent / "predictions"
+    config, checkpoints, pred_dir = _resolve_sources(args)
+    logger.info(
+        "Found %d checkpoint(s); predictions -> %s", len(checkpoints), pred_dir
     )
-    pred_dir.mkdir(parents=True, exist_ok=True)
-
-    checkpoints = sorted(log_dir.glob("**/epoch*.ckpt"))
-    logger.info("Found %d checkpoints", len(checkpoints))
 
     data_loader = construct_data_loader(config)
     data_loader.setup()
     inject_binning_labels(data_loader, config)
 
     if args.list_keys:
-        # run one forward pass (random weights are fine) to enumerate the
-        # columns this data + model can emit as predict_keys
         integrator = construct_integrator(config)
         integrator.eval()
         batch = next(iter(data_loader.predict_dataloader()))
@@ -128,15 +183,11 @@ def main():
     epoch_re = re.compile(r"epoch=(\d+)")
     for ckpt in checkpoints:
         m = epoch_re.search(ckpt.name)
-        if not m:
-            raise ValueError(f"Could not parse epoch from {ckpt.name}")
-        epoch = int(m.group(1))
+        epoch = int(m.group(1)) if m else 0
+        ckpt_dir = pred_dir / (f"epoch_{epoch:04d}" if m else ckpt.stem)
 
         logger.info("Processing checkpoint: %s", ckpt.name)
         logger.debug("Checkpoint path: %s", ckpt)
-        logger.info("Epoch: %d", epoch)
-
-        ckpt_dir = pred_dir / f"epoch_{epoch:04d}"
 
         ckpt_dir.mkdir(parents=True, exist_ok=True)
 
