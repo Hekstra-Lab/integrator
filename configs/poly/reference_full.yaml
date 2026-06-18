@@ -98,21 +98,20 @@ loss:
     # --- shared Wilson prior ---
     init_log_B: 3.0
     b_min: 0.0
-    # --- fixed geometric corrections (Ren & Moffat 1995) ---
+    # --- fixed geometric corrections --- 
     polarization: false         # requires beam_center when true
     polarization_fraction: 0.99
     lorentz: false
-    beam_center: null           # [cx, cy]; from dataset.yaml if omitted
+    beam_center: null           # [dx, dy]; from dataset.yaml if omitted
     # --- KL weights ---
     pi_weight: 1.0
     pbg_weight: 1.0
     pprf_weight: 1.0
     # --- background Gamma prior ---
-    # scalar by default; auto-filled (per resolution bin when n_bins > 1) from the
-    # empirical Gamma MLE in <data_dir>/bg_prior_<n_bins>.npy when present
+    # scalar by default; 
     bg_rate: 1.0
     bg_concentration: 1.0
-    n_bins: 1                   # resolution shells for the per-bin background prior
+    n_bins: 1      # resolution shells for the per-bin background prior
     # --- optional explicit priors (advanced; default off) -----------------
     # pi_cfg:  {name: gamma, params: {concentration: 1.0, rate: 0.5}, weight: 1.0}
     # pbg_cfg: {name: gamma, params: {concentration: 1.0, rate: 0.5}, weight: 1.0}
@@ -129,7 +128,7 @@ data_loader:
     subset_size: null
     cutoff: null
     min_valid_pixels: 10
-    transform: anscombe         # anscombe | log1p | standardization (derived from dataset.yaml if omitted)
+    transform: anscombe         # anscombe | log1p | standardization
     shoebox_file_names:
       data_dir: /path/to/hewl_laue/pytorch_data
       counts: counts.pt

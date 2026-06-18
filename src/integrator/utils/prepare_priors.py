@@ -90,7 +90,7 @@ def prepare_per_bin_priors(
             requested,
             n_bins,
         )
-    # keep cfg in sync: inject_binning_labels + the loss both read n_bins from here
+
     cfg["loss"].setdefault("args", {})["n_bins"] = n_bins
     logger.info("Binned %d reflections into %d resolution shells", N, n_bins)
 
