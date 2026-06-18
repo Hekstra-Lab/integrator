@@ -192,7 +192,7 @@ def main():
         )
         if has_preds:
             logger.info(
-                "Predictions for epoch %d already exist - skipping inference",
+                "Predictions for epoch %d already exist: skipping inference",
                 epoch,
             )
         else:
@@ -253,7 +253,7 @@ def main():
         import polars as pl
     except ImportError:
         logger.warning(
-            "polars not installed - skipping test_preds_all.parquet"
+            "polars not installed: skipping test_preds_all.parquet"
             " aggregation."
         )
     else:
@@ -262,7 +262,8 @@ def main():
 
         if not _glob(parquet_glob):
             logger.info(
-                "No parquet files under %s - skipping test-set aggregation",
+                "No parquet files under %s: skipping test-set aggregation"
+                " (use --save-preds-as parquet if you want it).",
                 pred_dir,
             )
         else:
@@ -270,7 +271,7 @@ def main():
             schema = lf.collect_schema()
             if "is_test" not in schema:
                 logger.info(
-                    "is_test not in predictions - skipping test-set aggregation"
+                    "is_test not in predictions: skipping test-set aggregation"
                 )
             else:
                 out_path = pred_dir / "test_preds_all.parquet"
