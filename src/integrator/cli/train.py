@@ -25,7 +25,7 @@ def _default_run_name() -> str:
     from datetime import datetime
     from uuid import uuid4
 
-    return f"run_{datetime.now():%Y%m%d-%H%M%S}_{uuid4().hex[:4]}"
+    return f"run_{datetime.now():%Y%m%d-}_{uuid4().hex[:4]}"
 
 
 def parse_args():
@@ -482,10 +482,15 @@ def main():
     ckpt_monitor = ckpt.monitor or (es.monitor if es else None)
     ckpt_mode = ckpt.mode or (es.mode if es else "min")
     ckpt_dir = logdir / "checkpoints"
+    # default to checkpointing whenever validation runs
+    check_val = int(cfg.get("trainer", {}).get("check_val_every_n_epoch", 1))
+    every_n_epochs = (
+        ckpt.every_n_epochs if ckpt.every_n_epochs is not None else check_val
+    )
     checkpoint_callback = ModelCheckpoint(
         dirpath=ckpt_dir,
         filename="{epoch:04d}",
-        every_n_epochs=ckpt.every_n_epochs,
+        every_n_epochs=every_n_epochs,
         save_top_k=save_top_k,
         save_last="link",
         monitor=ckpt_monitor if save_top_k > 0 else None,
@@ -495,7 +500,7 @@ def main():
         "Checkpoints: dir=%s save_top_k=%d every_n_epochs=%d monitor=%s",
         ckpt_dir.as_posix(),
         save_top_k,
-        ckpt.every_n_epochs,
+        every_n_epochs,
         ckpt_monitor,
     )
 

@@ -152,7 +152,7 @@ early_stop:
 # Optional: checkpoint selection (defaults keep all epochs).
 checkpoint:
   save_top_k: -1                # -1 keeps every (written) ckpt; N keeps best N by monitor
-  every_n_epochs: 1             # write a ckpt every N epochs (use with save_top_k=-1 for every Nth)
+  # every_n_epochs: 1           # omiting inherits check_val_every_n_epoch (ckpt whenever val runs)
   monitor: val elbo
   mode: min
 

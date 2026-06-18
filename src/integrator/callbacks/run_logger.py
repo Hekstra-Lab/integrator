@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 try:
@@ -59,6 +58,12 @@ class RunLogger:
         self.use_wandb = wandb_active() if use_wandb is None else use_wandb
         self.out_dir = Path(out_dir)
         self.out_dir.mkdir(parents=True, exist_ok=True)
+        self._metrics_path = self.out_dir / "metrics.csv"
+        self._scalar_rows: list[dict] = []
+        if self._metrics_path.exists():
+            import polars as pl
+
+            self._scalar_rows = pl.read_csv(self._metrics_path).to_dicts()
 
     def _suffix(self, step) -> str:
         return "" if step is None else f"_step{int(step):04d}"
@@ -66,9 +71,13 @@ class RunLogger:
     def log_scalars(self, metrics: dict, step=None) -> None:
         if not metrics:
             return
+        import polars as pl
+
         clean = {k: _to_scalar(v) for k, v in metrics.items()}
-        with open(self.out_dir / "metrics.jsonl", "a") as fh:
-            fh.write(json.dumps({"step": step, **clean}, default=str) + "\n")
+        self._scalar_rows.append({"step": step, **clean})
+        pl.from_dicts(self._scalar_rows, infer_schema_length=None).write_csv(
+            self._metrics_path
+        )
         if self.use_wandb:
             wandb.log(clean)
 

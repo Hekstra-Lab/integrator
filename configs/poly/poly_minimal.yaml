@@ -15,7 +15,7 @@ optimizer:
 # data loader settings
 data_loader:
   args:
-    data_dir: /n/hekstra_lab/people/aldama/integrator_data/hewl_1118/pytorch_data
+    data_dir: /path/to/shoebox_data
     batch_size: 2048 # number of shoeboxes per iteration
     validation_split: 0.2 # fraction of dataset to use for validation
 
@@ -25,3 +25,8 @@ trainer:
   accelerator: gpu # use 'cpu' if you do not have a gpu
   devices: 1 # number of gpus to use
   gradient_clip_val: 1.0
+  check_val_every_n_epoch: 5 # will check validation data every N epochs 
+
+checkpoint:
+  save_top_k: -1 # -1 keeps every ckpt 
+  every_n_epochs: 5 # write a ckpt every N epochs 
