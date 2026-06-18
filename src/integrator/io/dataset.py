@@ -8,7 +8,6 @@ spec_NAME = "dataset.yaml"
 
 
 def data_dim_for(d: int) -> str:
-    """Shoebox depth -> integrator data_dim ('2d' for a single z-slice)."""
     return "2d" if int(d) == 1 else "3d"
 
 

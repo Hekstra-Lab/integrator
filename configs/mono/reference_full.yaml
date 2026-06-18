@@ -90,29 +90,25 @@ surrogates:
 loss:
   name: monochromatic_wilson
   args:
-    # --- intensity (Wilson) prior ---
+    # --- intensity (Wilson) prior: fixed Exponential, p(I) = Gamma(1, tau) ---
     init_log_K: 0.0             # init scalar G = softplus(raw_G); mono-only
     lp_correction: false        # multiply tau by metadata['lp']; mono-only
     init_log_B: 3.0             # init Wilson B factor (softplus(raw_B) + b_min)
     b_min: 0.0
-    learn_concentration: false  # learn a per-resolution-bin Gamma shape alpha
-    init_alpha: 1.0             # init for the per-bin shape when learn_concentration
-    n_bins: 1                   # resolution shells (1 = single global Wilson prior)
     # --- KL weights ---
     pi_weight: 1.0
     pbg_weight: 1.0
     pprf_weight: 1.0
-    # --- background prior (scalar Gamma) ---
-    bg_rate: 1.0                # auto-filled from <data_dir>/bg_prior.npy when present
+    # --- background Gamma prior ---
+    # scalar by default; auto-filled (per resolution bin when n_bins > 1) from the
+    # empirical Gamma MLE in <data_dir>/bg_prior_<n_bins>.npy when present
+    bg_rate: 1.0
     bg_concentration: 1.0
+    n_bins: 1                   # resolution shells for the per-bin background prior
     # --- optional explicit priors (advanced; default off) -----------------
     # pi_cfg:  {name: gamma, params: {concentration: 1.0, rate: 0.5}, weight: 1.0}
     # pbg_cfg: {name: gamma, params: {concentration: 1.0, rate: 0.5}, weight: 1.0}
     # pprf_cfg: {name: dirichlet, params: {concentration: conc.pt, shape: [3, 21, 21]}, weight: 1.0}
-    # --- optional learned spatial/spectral priors (advanced; default off) -
-    # concentration_cfg: {degree: 4, d_min: 1.5, d_max: 50.0, init_alpha: 1.0}
-    # bg_prior_cfg:      {degree: 4, r_min: 0.0, r_max: 1500.0, init_rate: 1.0, init_alpha: 1.0}
-    # profile_prior_cfg: {degree: 4, r_min: 0.0, r_max: 1500.0, init_scale: 3.0, fourier_order: 0}
 
 data_loader:
   name: rotation_data

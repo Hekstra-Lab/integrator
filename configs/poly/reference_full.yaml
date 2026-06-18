@@ -90,18 +90,14 @@ surrogates:
 loss:
   name: polychromatic_wilson
   args:
-    # --- learned spectrum G(lambda) for the Wilson prior (Laue-specific) ---
+    # --- learned spectrum G(lambda); intensity prior is fixed Exponential Gamma(1, tau) ---
     degree: 40                  # Chebyshev order of log G(lambda)
     lambda_min: 0.95            # from dataset.yaml if omitted
     lambda_max: 1.25
-    spectrum_init_from: null    # path to a checkpoint to warm-start G/B/alpha
-    freeze_prior: false         # freeze the spectrum + B (+ alpha) parameters
+    spectrum_init_from: null    # path to a checkpoint to warm-start G/B
     # --- shared Wilson prior ---
     init_log_B: 3.0
     b_min: 0.0
-    learn_concentration: false
-    init_alpha: 1.0
-    n_bins: 1                   # 1 = single global Wilson prior
     # --- fixed geometric corrections (Ren & Moffat 1995) ---
     polarization: false         # requires beam_center when true
     polarization_fraction: 0.99
@@ -111,16 +107,16 @@ loss:
     pi_weight: 1.0
     pbg_weight: 1.0
     pprf_weight: 1.0
-    # --- background prior (scalar Gamma) ---
-    bg_rate: 1.0                # auto-filled from <data_dir>/bg_prior.npy when present
+    # --- background Gamma prior ---
+    # scalar by default; auto-filled (per resolution bin when n_bins > 1) from the
+    # empirical Gamma MLE in <data_dir>/bg_prior_<n_bins>.npy when present
+    bg_rate: 1.0
     bg_concentration: 1.0
-    # --- optional explicit / learned priors (advanced; default off) -------
+    n_bins: 1                   # resolution shells for the per-bin background prior
+    # --- optional explicit priors (advanced; default off) -----------------
     # pi_cfg:  {name: gamma, params: {concentration: 1.0, rate: 0.5}, weight: 1.0}
     # pbg_cfg: {name: gamma, params: {concentration: 1.0, rate: 0.5}, weight: 1.0}
     # pprf_cfg: {name: dirichlet, params: {concentration: conc.pt, shape: [1, 25, 25]}, weight: 1.0}
-    # concentration_cfg: {degree: 4, d_min: 1.5, d_max: 50.0, init_alpha: 1.0}
-    # bg_prior_cfg:      {degree: 4, r_min: 0.0, r_max: 1500.0, init_rate: 1.0, init_alpha: 1.0}
-    # profile_prior_cfg: {degree: 4, r_min: 0.0, r_max: 1500.0, init_scale: 3.0, fourier_order: 0}
 
 data_loader:
   name: polychromatic_data
