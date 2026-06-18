@@ -291,7 +291,7 @@ def _get_loss_module(
             kwargs["spectrum_init_from"], data_dir, None
         )
 
-    # Inject the empirical background prior (scalar or per-bin) when not set explicitly
+    # Inject the empirical background prior
     if "bg_rate" not in kwargs or "bg_concentration" not in kwargs:
         from integrator.io import data_path, load_data
         from integrator.utils.prepare_priors import _nbins_path
