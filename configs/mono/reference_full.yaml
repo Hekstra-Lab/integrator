@@ -1,13 +1,3 @@
-# =============================================================================
-# FULL REFERENCE — monochromatic (rotation) hierarchical integrator.
-# Every setting is shown at its default value. Real runs need only a few of
-# these (see hierarchical_minimal.yaml); this file documents the whole surface.
-# `integrator.resolve <cfg>` prints the fully-expanded config a run builds.
-#
-# Shortcut: `mode: monochromatic` fills loss.name + data_loader.name. They are
-# written out explicitly below instead.
-# =============================================================================
-
 integrator:
   name: hierarchical            # registered integrator; also: hierarchical_3enc
   args:
@@ -28,8 +18,6 @@ optimizer:
   warmup_steps: 0               # used by step_linear_warmup
   lr_min: 1.0e-5                # schedule floor LR (<= lr)
 
-# Encoders are synthesized from the integrator's REQUIRED_ENCODERS when omitted.
-# The full conv architecture (otherwise supplied by presets) is spelled out here.
 encoders:
   - name: profile_encoder
     args:
@@ -72,8 +60,6 @@ encoders:
   - *intensity_encoder
   - *intensity_encoder
 
-# Surrogates are synthesized from the integrator's DEFAULT_SURROGATES when
-# omitted; a partial block overrides only the keys it names.
 surrogates:
   qp:
     name: learned_basis_profile   # or: dirichlet
@@ -106,7 +92,6 @@ loss:
   args:
     # --- intensity (Wilson) prior ---
     init_log_K: 0.0             # init scalar G = softplus(raw_G); mono-only
-    k_prior: 1.0                # mono-only
     lp_correction: false        # multiply tau by metadata['lp']; mono-only
     init_log_B: 3.0             # init Wilson B factor (softplus(raw_B) + b_min)
     b_min: 0.0
@@ -135,24 +120,17 @@ data_loader:
     data_dir: /path/to/hewl/pytorch_data
     batch_size: 1024
     val_split: 0.2
-    test_split: 0.0
     num_workers: 8
     include_test: true
     subset_size: null           # cap on reflections loaded (debugging)
     cutoff: null                # resolution cutoff, or null
     min_valid_pixels: 10        # drop shoeboxes with fewer valid pixels
-    get_dxyz: false             # also load per-pixel dxyz offsets
-    single_sample_index: null   # restrict to one reflection index (debugging)
     transform: anscombe         # anscombe | log1p | standardization (derived from dataset.yaml if omitted)
-    D: 3                        # geometry (filled from dataset.yaml if omitted)
-    H: 21
-    W: 21
     shoebox_file_names:
       data_dir: /path/to/hewl/pytorch_data
       counts: counts.pt
       masks: masks.pt
       reference: metadata.pt
-      standardized_counts: null
 
 trainer:
   max_epochs: 40
@@ -177,13 +155,11 @@ early_stop:
 
 # Optional: checkpoint selection (defaults keep all epochs).
 checkpoint:
-  save_top_k: -1                # -1 keeps every epoch; N keeps best N by monitor
+  save_top_k: -1                # -1 keeps every (written) ckpt; N keeps best N by monitor
+  every_n_epochs: 1             # write a ckpt every N epochs (use with save_top_k=-1 for every Nth)
   monitor: val elbo
   mode: min
 
-# Output artifact paths (consumed by reporting; optional).
+# Output paths; used to write overwrite a reflection table
 output:
   refl_file: /path/to/reflections.refl
-  dials_merge_html: null
-  phenix_refine_log: null
-  anomalous_peaks: null

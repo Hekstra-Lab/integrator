@@ -128,22 +128,17 @@ data_loader:
     data_dir: /path/to/hewl_laue/pytorch_data
     batch_size: 512
     val_split: 0.2
-    test_split: 0.0
     num_workers: 8
     include_test: true
     subset_size: null
     cutoff: null
     min_valid_pixels: 10
     transform: anscombe         # anscombe | log1p | standardization (derived from dataset.yaml if omitted)
-    D: 1
-    H: 25
-    W: 25
     shoebox_file_names:
       data_dir: /path/to/hewl_laue/pytorch_data
       counts: counts.pt
       masks: masks.pt
       reference: metadata.pt
-      standardized_counts: null
 
 trainer:
   max_epochs: 100
@@ -168,12 +163,10 @@ early_stop:
 
 # Optional: checkpoint selection.
 checkpoint:
-  save_top_k: -1
+  save_top_k: -1                # -1 keeps every (written) ckpt; N keeps best N by monitor
+  every_n_epochs: 1             # write a ckpt every N epochs (use with save_top_k=-1 for every Nth)
   monitor: val elbo
   mode: min
 
 output:
   refl_file: /path/to/reflections.refl
-  dials_merge_html: null
-  phenix_refine_log: null
-  anomalous_peaks: null
