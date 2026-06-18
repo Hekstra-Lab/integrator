@@ -1,11 +1,3 @@
-"""Read/write the consolidated per-dataset spec (dataset.yaml).
-
-mksbox writes one dataset.yaml at the data directory holding everything that is a
-property of the dataset rather than a modeling choice: shoebox geometry, the file
-spec, crystal parameters, and normalization stats. The config loader reads it
-to fill geometry/filenames so training YAMLs only carry model choices.
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -40,10 +32,7 @@ def write_dataset_yaml(
     stats: dict | None = None,
     refl_file=None,
 ) -> Path:
-    """Write the consolidated dataset spec to out_dir/dataset.yaml.
-
-    geometry must hold d, h, w; data_dim is derived when absent.
-    """
+    """Write the dataset spec to out_dir/dataset.yaml."""
     d, h, w = (int(geometry[k]) for k in ("d", "h", "w"))
     spec: dict = {
         "geometry": {

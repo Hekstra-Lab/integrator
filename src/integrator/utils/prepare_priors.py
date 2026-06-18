@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 def _nbins_path(filename: str, n_bins: int, data_dir: Path) -> Path:
-    """Resolve a prior filename with n_bins suffix: 'foo.pt' -> data_dir/'foo_30.pt'."""
+    """Resolve a prior filename with n_bins suffix."""
     p = Path(filename)
     suffixed = f"{p.stem}_{n_bins}{p.suffix}"
     if p.is_absolute():
@@ -69,7 +69,7 @@ def prepare_per_bin_priors(
         if int(existing_gl.max().item()) + 1 != n_bins:
             need_group_labels = True
 
-    bg_prior_path = data_dir / "bg_prior.npy"
+    bg_prior_path = _nbins_path("bg_prior.npy", n_bins, data_dir)
     need_bg_prior = (
         "bg_rate" not in loss_args and "bg_concentration" not in loss_args
     ) and (force or data_path(bg_prior_path) is None)
@@ -99,37 +99,29 @@ def prepare_per_bin_priors(
     )
     logger.info("Saved %s (%d bins)", gl_path.name, n_bins)
 
-    # Global background prior via Gamma MLE
+    # Per-resolution-bin background Gamma prior (a single global fit when n_bins == 1)
     if need_bg_prior:
         bg_vals = metadata.get(
             "background.mean",
             metadata.get("background.sum.value"),
         )
-        if bg_vals is not None:
-            pos = bg_vals[bg_vals > 0]
-            if pos.numel() >= 10:
-                alpha, rate = _fit_gamma_mle(pos)
-                bg_prior = {
-                    "bg_concentration": float(alpha.item()),
-                    "bg_rate": float(rate.item()),
-                    "n_samples": int(pos.numel()),
-                }
-                save_data(bg_prior, bg_prior_path)
-                logger.info(
-                    "Saved bg_prior (Gamma MLE: alpha=%.3f, rate=%.3f, n=%d)",
-                    bg_prior["bg_concentration"],
-                    bg_prior["bg_rate"],
-                    bg_prior["n_samples"],
-                )
-            else:
-                logger.warning(
-                    "Too few positive background values (%d) for MLE; "
-                    "using default bg_rate=1.0, bg_concentration=1.0",
-                    pos.numel(),
-                )
+        if bg_vals is not None and int((bg_vals > 0).sum()) >= 10:
+            alphas, rates = _fit_per_bin_gamma(bg_vals, group_labels, n_bins)
+            payload = (
+                {"bg_concentration": alphas[0], "bg_rate": rates[0]}
+                if n_bins == 1
+                else {"bg_concentration": alphas, "bg_rate": rates}
+            )
+            payload["n_bins"] = n_bins
+            p = save_data(
+                payload, _nbins_path("bg_prior.npy", n_bins, data_dir)
+            )
+            logger.info(
+                "Saved %s (%d-bin background Gamma MLE)", p.name, n_bins
+            )
         else:
             logger.warning(
-                "No background column in metadata; "
+                "No usable background column for MLE; "
                 "using default bg_rate=1.0, bg_concentration=1.0"
             )
 
@@ -205,7 +197,7 @@ def _fit_gamma_mle(
     x: Tensor,
     n_iter: int = 100,
 ) -> tuple[Tensor, Tensor]:
-    """Fit Gamma distribution via Newton MLE on the profile log-likelihood.
+    """Fit Gamma distribution via MLE on the profile log-likelihood.
 
     Args:
         x: Positive-valued samples (1-D).
@@ -215,16 +207,38 @@ def _fit_gamma_mle(
         Tuple of (alpha, beta) -- MLE shape (concentration) and rate parameters.
     """
     xbar = x.mean()
-    s = xbar.log() - x.log().mean()  # >= 0 by Jensen
+    s = (xbar.log() - x.log().mean()).clamp(min=1e-6)
 
-    # Init from method of moments
-    alpha = xbar**2 / x.var()
+    # Method-of-moments init, kept finite (var==0 for constant x would give inf)
+    var = x.var().clamp(min=1e-12)
+    alpha = (xbar**2 / var).clamp(1e-3, 1e6)
 
     for _ in range(n_iter):
         grad = alpha.log() - torch.digamma(alpha) - s
         hess = 1.0 / alpha - torch.polygamma(1, alpha)
-        alpha = alpha - grad / hess
-        alpha = alpha.clamp(min=1e-6)
+        alpha = (alpha - grad / hess).clamp(1e-3, 1e6)
 
     beta = alpha / xbar
     return alpha, beta
+
+
+def _fit_per_bin_gamma(
+    bg_vals: Tensor,
+    group_labels: Tensor,
+    n_bins: int,
+    min_samples: int = 10,
+) -> tuple[list[float], list[float]]:
+    """Fit a Gamma MLE to the positive background values in each resolution bin."""
+    pos_all = bg_vals[bg_vals > 0]
+    g_alpha, g_rate = _fit_gamma_mle(pos_all)  # global fallback
+    alphas: list[float] = []
+    rates: list[float] = []
+    for k in range(n_bins):
+        pos_k = bg_vals[(group_labels == k) & (bg_vals > 0)]
+        if pos_k.numel() >= min_samples:
+            a, r = _fit_gamma_mle(pos_k)
+        else:
+            a, r = g_alpha, g_rate
+        alphas.append(float(a))
+        rates.append(float(r))
+    return alphas, rates

@@ -18,9 +18,6 @@ def _check_spatial_ndims(args) -> None:
 class ProfileEncoderArgs:
     """Constructor arguments for the convolutional profile encoder.
 
-    The `conv{1,2}_*`, `norm{1,2}_*`, and `pool_*` fields configure a two-block
-    CNN stack (conv then group-norm) with a single pooling stage between blocks.
-
     Attributes:
         data_dim: Encoder dimensionality, `2d` (Conv2d) or `3d` (Conv3d).
         in_channels: Number of input channels; must be `>= 1`.

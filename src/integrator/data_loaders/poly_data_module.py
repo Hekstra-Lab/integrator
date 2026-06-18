@@ -45,37 +45,28 @@ class PolychromaticDataModule(pl.LightningDataModule):
         data_dir,
         batch_size: int = 256,
         val_split: float = 0.2,
-        test_split: float = 0.0,
         num_workers: int = 8,
         include_test: bool = True,
         subset_size: int | None = None,
         cutoff: float | None = None,
         min_valid_pixels: int = 10,
         shoebox_file_names: dict | None = None,
-        D: int = 1,
-        H: int = 25,
-        W: int = 25,
         transform: str | None = None,
     ):
         super().__init__()
         self.data_dir = str(data_dir)
         self.batch_size = batch_size
         self.val_split = val_split
-        self.test_split = test_split
         self.include_test = include_test
         self.subset_size = subset_size
         self.num_workers = num_workers
         self.cutoff = cutoff
         self.min_valid_pixels = min_valid_pixels
-        self.D = D
-        self.H = H
-        self.W = W
 
         self.shoebox_file_names = shoebox_file_names or {
             "counts": "counts.npy",
             "masks": "masks.npy",
             "reference": "metadata.npy",
-            "standardized_counts": None,
         }
 
         transform = transform or "standardization"

@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any
 
 import pytorch_lightning as pl
-import torch
 import torch.nn as nn
 import yaml
 from pytorch_lightning.callbacks import Callback
@@ -249,8 +248,6 @@ def _get_encoder_modules(
     for (slot, (enc_name, args_cls)), encoder_cfg in zip(
         required_encoders.items(), cfg_["encoders"], strict=True
     ):
-        # Wire by validated name, not blind position: a reordered `encoders:`
-        # list must not silently feed the wrong args into a slot.
         got = encoder_cfg.get("name")
         if got != enc_name:
             raise ValueError(
@@ -294,15 +291,19 @@ def _get_loss_module(
             kwargs["spectrum_init_from"], data_dir, None
         )
 
-    # Inject global background prior from bg_prior if not set explicitly
+    # Inject the empirical background prior (scalar or per-bin) when not set explicitly
     if "bg_rate" not in kwargs or "bg_concentration" not in kwargs:
         from integrator.io import data_path, load_data
+        from integrator.utils.prepare_priors import _nbins_path
 
-        if data_path(Path(data_dir) / "bg_prior.npy") is not None:
-            bg_prior = load_data(Path(data_dir) / "bg_prior.npy")
-            kwargs.setdefault("bg_rate", float(bg_prior["bg_rate"]))
+        n_bins = int(kwargs.get("n_bins", 1))
+        bg_path = _nbins_path("bg_prior.npy", n_bins, Path(data_dir))
+        if data_path(bg_path) is not None:
+            bg_prior = load_data(bg_path)
+            # .tolist() -> float for a 0-d scalar fit, list for per-bin arrays
+            kwargs.setdefault("bg_rate", bg_prior["bg_rate"].tolist())
             kwargs.setdefault(
-                "bg_concentration", float(bg_prior["bg_concentration"])
+                "bg_concentration", bg_prior["bg_concentration"].tolist()
             )
 
     valid_keys = _valid_loss_keys(loss_cls)
@@ -482,7 +483,6 @@ def _collect_resolved_paths(cfg: dict) -> dict:
     loss_args = cfg.get("loss", {}).get("args", {}) or {}
     loss_paths: dict = {}
 
-    # Prior path-valued args, per the priors registry (e.g. dirichlet concentration)
     for p_key in ("pprf_cfg", "pbg_cfg", "pi_cfg"):
         p_dict = loss_args.get(p_key)
         if not isinstance(p_dict, dict):
@@ -612,9 +612,6 @@ def apply_dataset_defaults(cfg: dict) -> dict:
         if enc.get("name") == "profile_encoder":
             fill(eargs, "input_shape", input_shape)
 
-    fill(dl_args, "D", d)
-    fill(dl_args, "H", h)
-    fill(dl_args, "W", w)
     # derive `transform` from the dataset's anscombe flag
     if dl_args.get("transform") is None:
         dl_args["transform"] = (
@@ -622,7 +619,6 @@ def apply_dataset_defaults(cfg: dict) -> dict:
         )
     files = spec.get("files", {})
     if files and dl_args.get("shoebox_file_names") is None:
-        # stats live in the spec, not a file; counts/masks/reference are files
         dl_args["shoebox_file_names"] = {
             "data_dir": data_dir,
             "counts": files.get("counts", "counts.npy"),
@@ -631,7 +627,6 @@ def apply_dataset_defaults(cfg: dict) -> dict:
             "standardized_counts": None,
         }
 
-    # surface the manifest's refl_file so `pred --write-refl` works from a minimal config
     refl_file = spec.get("refl_file")
     if refl_file:
         fill(cfg.setdefault("output", {}), "refl_file", refl_file)

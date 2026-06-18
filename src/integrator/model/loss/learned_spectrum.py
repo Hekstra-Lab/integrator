@@ -52,8 +52,6 @@ class ChebyshevSpectrum(nn.Module):
 
     def design_matrix(self, wavelength: Tensor) -> Tensor:
         """(B,) -> (B, degree+1)"""
-        # clamp to the Chebyshev domain (matches the background/profile siblings);
-        # out-of-range lambda would explode the degree-D recurrence -> NaN KL
         x = ((wavelength - self.lam_mid) / self.lam_scale).clamp(-1.0, 1.0)
         return torch.stack(self._chebyshev(x, self.degree), dim=-1)
 

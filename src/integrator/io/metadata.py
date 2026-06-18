@@ -1,10 +1,3 @@
-"""Read/write integrator artifacts (metadata, stats, labels, priors).
-
-`.npy` is the default on-disk format; `.pt` is used only when a path explicitly
-ends in `.pt`. Reads prefer a `.npy` sibling and fall back to `.pt`, so existing
-`.pt` artifacts keep loading.
-"""
-
 from pathlib import Path
 
 import numpy as np
@@ -22,7 +15,7 @@ def _to_numpy(v):
 def save_data(obj, path) -> Path:
     """Save a tensor or dict-of-tensors.
 
-    Writes `.npy` by default; writes `.pt` (torch.save) only when `path` ends
+    Writes `.npy` by default; writes `.pt` only when path ends
     in `.pt`. Returns the path actually written.
     """
     p = Path(path)
@@ -40,7 +33,6 @@ def save_data(obj, path) -> Path:
 
 
 def data_path(path) -> Path | None:
-    """Existing artifact for `path`, preferring `.npy` over `.pt`, else None."""
     p = Path(path)
     npy = p.with_suffix(".npy")
     if npy.exists():
@@ -52,7 +44,6 @@ def data_path(path) -> Path | None:
 
 
 def load_data(path, map_location="cpu"):
-    """Load a tensor or dict-of-tensors, preferring a `.npy` sibling over `.pt`."""
     target = data_path(path) or Path(path)
     if target.suffix == ".npy":
         arr = np.load(target, allow_pickle=True)
@@ -71,7 +62,7 @@ def load_data(path, map_location="cpu"):
 
 
 def load_metadata(path, map_location="cpu") -> dict:
-    """Load a per-reflection metadata dict, preferring `.npy` over `.pt`."""
+    """Load a per-reflection metadata dict."""
     return load_data(path, map_location=map_location)
 
 

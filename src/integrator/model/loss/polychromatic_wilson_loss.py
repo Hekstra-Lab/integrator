@@ -18,7 +18,6 @@ class PolychromaticWilsonLoss(WilsonLoss):
         lambda_min: float = 0.95,
         lambda_max: float = 1.25,
         spectrum_init_from: str | None = None,
-        freeze_prior: bool = False,
         beam_center: list[float] | None = None,
         polarization: bool = False,
         polarization_fraction: float = 0.99,
@@ -42,17 +41,6 @@ class PolychromaticWilsonLoss(WilsonLoss):
             if "raw_B" in saved and saved["raw_B"] is not None:
                 with torch.no_grad():
                     self.raw_B.copy_(saved["raw_B"])
-            if "log_alpha_per_group" in saved and self.learn_concentration:
-                saved_alpha = saved["log_alpha_per_group"]
-                if saved_alpha.shape == self.log_alpha_per_group.shape:
-                    with torch.no_grad():
-                        self.log_alpha_per_group.copy_(saved_alpha)
-
-        if freeze_prior:
-            self.spectrum.c.requires_grad_(False)
-            self.raw_B.requires_grad_(False)
-            if self.learn_concentration:
-                self.log_alpha_per_group.requires_grad_(False)
 
         # Polarization correction (fixed geometric correction)
         self._apply_polarization = polarization
@@ -89,7 +77,7 @@ class PolychromaticWilsonLoss(WilsonLoss):
 
     @staticmethod
     def _lorentz_factor(two_theta: Tensor) -> Tensor:
-        """f_L = sin^2(2θ)  (Ren & Moffat eq. 10)."""
+        """f_L = sin^2(2 theta)  (Ren & Moffat eq. 10)."""
         return torch.sin(two_theta).pow(2).clamp(min=1e-8)
 
     def _get_tau(

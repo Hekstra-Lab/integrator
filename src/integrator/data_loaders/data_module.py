@@ -155,28 +155,20 @@ class RotationDataModule(pl.LightningDataModule):
         data_dir: Path,
         batch_size: int = 10,
         val_split: float = 0.2,
-        test_split: float = 0.1,
         num_workers: int = 3,
         include_test: bool = False,
         subset_size: int | None = None,
-        single_sample_index=None,
         cutoff: float | None = None,
         min_valid_pixels: int = 10,
         shoebox_file_names: dict | None = None,
-        H: int = 21,
-        W: int = 21,
-        D: int = 3,
-        get_dxyz: bool = False,
         transform: str | None = None,
     ):
         super().__init__()
         self.data_dir = data_dir
         self.batch_size = batch_size
         self.val_split = val_split
-        self.test_split = test_split
         self.include_test = include_test
         self.subset_size = subset_size
-        self.single_sample_index = single_sample_index
         self.num_workers = num_workers
         self.cutoff = cutoff
         self.min_valid_pixels = min_valid_pixels
@@ -186,16 +178,8 @@ class RotationDataModule(pl.LightningDataModule):
                 "counts": "counts.npy",
                 "masks": "masks.npy",
                 "reference": "metadata.npy",
-                "standardized_counts": None,
             }
         self.shoebox_file_names = shoebox_file_names
-        self.H = H
-        self.W = W
-        self.D = D
-        self.standardized_counts = shoebox_file_names.get(
-            "standardized_counts"
-        )
-        self.get_dxyz = get_dxyz
         transform = transform or "standardization"
         if transform not in ("anscombe", "log1p", "standardization"):
             raise ValueError(
@@ -263,8 +247,6 @@ class RotationDataModule(pl.LightningDataModule):
                     (anscombe_transformed - stats[0]) / stats[1].sqrt()
                 ) * masks
             elif self.transform == "log1p":
-                # No standardization — encoder GroupNorm handles per-batch
-                # normalization (scvi-tools `log_variational=True` recipe).
                 standardized_counts = torch.log1p(counts.clamp(min=0)) * masks
             else:
                 standardized_counts = ((counts * masks) - stats[0]) / stats[

@@ -45,7 +45,7 @@ def _log_loss(
     step: Literal["train", "val"],
     kl_components: dict[str, Tensor] | None = None,
 ):
-    # live per-step loss so the bar moves within an epoch (train only)
+    # live per-step loss
     if step == "train":
         self.log(
             "loss", total_loss, on_step=True, on_epoch=False, prog_bar=True
@@ -71,12 +71,7 @@ def _log_loss(
 
 
 class BaseIntegrator(pl.LightningModule):
-    """Variational integrator base class.
-
-    Encodes shoeboxes, samples the ELBO surrogates, and drives the Lightning
-    train/validation/predict loop and optimizer/scheduler setup. Subclasses
-    implement `_forward_impl` to assemble the per-pixel rate.
-    """
+    """Variational integrator base class."""
 
     REQUIRED_ENCODERS: dict[str, tuple[str, type]] = {}
 
@@ -116,8 +111,8 @@ class BaseIntegrator(pl.LightningModule):
         Args:
             cfg: Architecture/inference config (shoebox shape, encoder width, MC samples, predict keys).
             loss: ELBO module returning the NLL, KL, and per-component KL terms.
-            encoders: Named encoder modules mapping shoeboxes to embeddings.
-            surrogates: Named variational surrogates (`qi`, `qbg`, `qp`) mapping embeddings to posterior distributions.
+            encoders: Named encoder modules mapping shoeboxes to hidden representations.
+            surrogates: Named variational surrogates (`qi`, `qbg`, `qp`) mapping representations to posterior distributions.
             optimizer: Optimizer/schedule settings; defaults are used when omitted.
         """
         super().__init__()
@@ -260,9 +255,7 @@ class BaseIntegrator(pl.LightningModule):
         """Regularization penalties on the learned qp decoder weight W.
 
         - Smoothness: mean squared spatial gradient across (D, H, W) per
-          column, penalizing high-frequency structure in W.
-        Returns (total_penalty, components_dict). Zero and empty when
-        disabled or when qp has no decoder.weight (e.g. fixed basis).
+          column
         """
         zero = torch.zeros((), device=self.device)
         qp = self.surrogates["qp"] if "qp" in self.surrogates else None
@@ -353,9 +346,7 @@ class BaseIntegrator(pl.LightningModule):
                 other_params.append(param)
         if not decoder_params:
             raise RuntimeError(
-                "decoder_weight_decay is set but no surrogate "
-                "'.decoder.weight' parameter was found; "
-                "set decoder_weight_decay=null for surrogates without a decoder."
+                "decoder_weight_decay is set but no surrogate '.decoder.weight' parameter was found "
             )
         return torch.optim.Adam(
             [
@@ -369,18 +360,12 @@ class BaseIntegrator(pl.LightningModule):
         )
 
     def _cosine_warmup_lambda(self, max_epochs: int):
-        """Linear warmup for `warmup_epochs`, then cosine decay to lr_min.
-
-        Returns a multiplier in [lr_min/lr, 1.0] to be applied by LambdaLR.
-        """
+        """Linear warmup for `warmup_epochs`, then cosine decay to lr_min."""
         warmup = self.warmup_epochs
         lr_min_ratio = self.lr_min / max(self.lr, 1e-12)
 
         def lr_lambda(epoch: int) -> float:
             if warmup > 0 and epoch < warmup:
-                # Linear ramp 0 -> 1 over the first `warmup` epochs. Start at
-                # 1/warmup on epoch 0 (not 0) so the optimizer takes a real
-                # step immediately; stepping at lr=0 is a no-op.
                 return float(epoch + 1) / float(warmup)
             # Cosine decay from epoch == warmup (value 1) down to lr_min_ratio
             # at epoch == max_epochs.
@@ -400,8 +385,6 @@ class BaseIntegrator(pl.LightningModule):
                 return 1.0
             if step >= warmup:
                 return 1.0
-            # Start at 1/warmup on step 0 (not 0) so the optimizer takes a
-            # nonzero step immediately.
             return float(step + 1) / float(warmup)
 
         return lr_lambda
