@@ -799,11 +799,7 @@ def _inject_runtime_surrogate_args(
     profile_n: int | None,
     sbox_shape: list[int] | None,
 ) -> None:
-    """Inject runtime-derived args into each surrogate that declares them.
-
-    The surrogate's `__init__` is the source of truth - adding a new surrogate
-    needs no edit here, just the matching arg names.
-    """
+    """Inject runtime-derived args into each surrogate that declares them."""
     runtime = {
         "input_dim": encoder_out,
         "in_features": encoder_out,
