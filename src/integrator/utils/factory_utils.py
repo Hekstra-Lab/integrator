@@ -632,7 +632,9 @@ def apply_dataset_defaults(cfg: dict) -> dict:
     fill(dl_args, "W", w)
     # derive `transform` from the dataset's anscombe flag
     if dl_args.get("transform") is None:
-        dl_args["transform"] = "anscombe" if spec.get("anscombe") else "none"
+        dl_args["transform"] = (
+            "anscombe" if spec.get("anscombe") else "standardization"
+        )
     files = spec.get("files", {})
     if files and dl_args.get("shoebox_file_names") is None:
         # stats live in the spec, not a file; counts/masks/reference are files

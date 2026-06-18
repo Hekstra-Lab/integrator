@@ -147,7 +147,7 @@ class RotationDataModule(pl.LightningDataModule):
     """LightningDataModule for rotation-geometry shoebox data.
 
     Attributes:
-        transform: Count transform `anscombe`, `log1p`, or `none`.
+        transform: Count transform `anscombe`, `log1p`, or `standardization`.
     """
 
     def __init__(
@@ -196,10 +196,10 @@ class RotationDataModule(pl.LightningDataModule):
             "standardized_counts"
         )
         self.get_dxyz = get_dxyz
-        transform = transform or "none"
-        if transform not in ("anscombe", "log1p", "none"):
+        transform = transform or "standardization"
+        if transform not in ("anscombe", "log1p", "standardization"):
             raise ValueError(
-                f"transform must be 'anscombe', 'log1p', or 'none'; "
+                f"transform must be 'anscombe', 'log1p', or 'standardization'; "
                 f"got {transform!r}"
             )
         self.transform = transform

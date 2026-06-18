@@ -78,10 +78,10 @@ class PolychromaticDataModule(pl.LightningDataModule):
             "standardized_counts": None,
         }
 
-        transform = transform or "none"
-        if transform not in ("anscombe", "log1p", "none"):
+        transform = transform or "standardization"
+        if transform not in ("anscombe", "log1p", "standardization"):
             raise ValueError(
-                f"transform must be 'anscombe', 'log1p', or 'none'; "
+                f"transform must be 'anscombe', 'log1p', or 'standardization'; "
                 f"got {transform!r}"
             )
         self.transform = transform

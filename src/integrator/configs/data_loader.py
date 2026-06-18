@@ -58,9 +58,9 @@ class DataLoaderArgs:
         D: Shoebox depth in pixels.
         H: Shoebox height in pixels.
         W: Shoebox width in pixels.
-        transform: Count transform `anscombe`, `log1p`, or `none`. `log1p` feeds raw `log1p` counts
-            to the encoder (the scvi-tools recipe for skewed-count VAEs); `none` mean-subtracts and
-            std-divides the raw counts.
+        transform: Count transform `anscombe`, `log1p`, or `standardization`. `log1p` feeds raw `log1p`
+            counts to the encoder (the scvi-tools recipe for skewed-count VAEs); `standardization`
+            mean-subtracts and std-divides the raw counts.
         min_valid_pixels: Drop shoeboxes with fewer than this many valid pixels.
         get_dxyz: Also load per-pixel dxyz offsets (rotation data only).
         single_sample_index: Restrict the dataset to a single reflection index (debugging; rotation only).
