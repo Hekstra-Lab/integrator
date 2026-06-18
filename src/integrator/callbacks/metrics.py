@@ -1,8 +1,11 @@
+import logging
 from pathlib import Path
 
 import polars as pl
 import torch
 from pytorch_lightning.callbacks import Callback
+
+logger = logging.getLogger(__name__)
 
 
 class LossTraceRecorder(Callback):
@@ -173,7 +176,7 @@ class EpochMetricRecorder(Callback):
         else:
             df.write_csv(fname)
 
-        print(f"[Recorder] wrote {fname}")
+        logger.debug("Recorder wrote %s", fname)
 
         self.buffers.clear()
 

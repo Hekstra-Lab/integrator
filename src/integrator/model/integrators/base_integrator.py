@@ -45,7 +45,7 @@ def _log_loss(
     step: Literal["train", "val"],
     kl_components: dict[str, Tensor] | None = None,
 ):
-    # live per-step loss
+    # progress bar shows only train loss  and val loss
     if step == "train":
         self.log(
             "loss", total_loss, on_step=True, on_epoch=False, prog_bar=True
@@ -55,10 +55,10 @@ def _log_loss(
         total_loss,
         on_step=False,
         on_epoch=True,
-        prog_bar=True,
+        prog_bar=(step == "val"),
     )
-    self.log(f"{step} kl", kl, on_step=False, on_epoch=True, prog_bar=True)
-    self.log(f"{step} nll", nll, on_step=False, on_epoch=True, prog_bar=True)
+    self.log(f"{step} kl", kl, on_step=False, on_epoch=True)
+    self.log(f"{step} nll", nll, on_step=False, on_epoch=True)
     self.log("epoch", float(self.current_epoch), on_step=False, on_epoch=True)
     if kl_components is not None:
         for name, value in kl_components.items():

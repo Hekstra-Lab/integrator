@@ -1,9 +1,12 @@
+import logging
 from pathlib import Path
 
 import numpy as np
 import polars as pl
 import torch
 from pytorch_lightning.callbacks import BasePredictionWriter
+
+logger = logging.getLogger(__name__)
 
 
 def assign_labels(
@@ -31,9 +34,9 @@ def assign_labels(
             val_id_df = pl.concat([val_id_df, val_ids])
 
     train_id_df.write_csv(save_dir + "/train_labels.csv")
-    print(f"train labels saved to {save_dir + '/train_labels.csv'}")
+    logger.debug("train labels saved to %s/train_labels.csv", save_dir)
     val_id_df.write_csv(save_dir + "/val_labels.csv")
-    print(f"val labels saved to {save_dir + '/val_labels.csv'}")
+    logger.debug("val labels saved to %s/val_labels.csv", save_dir)
 
 
 class BatchPredWriter(BasePredictionWriter):
