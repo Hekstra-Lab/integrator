@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TypeVar
+from typing import TypeVar
 
 P = TypeVar("P")
 
@@ -82,15 +82,11 @@ class PriorConfig[P]:
     """A weighted prior selection, generic over its parameter payload `P`.
 
     Attributes:
-        name: Prior family, `dirichlet`, `exponential`, or `gamma`.
+        name: Prior family registered in `REGISTRY["priors"]` (e.g. `gamma`, `dirichlet`).
         params: Family-specific parameters; a `DirichletParams` or `GammaParams` depending on `name`.
         weight: Scalar weight applied to this prior's KL term.
     """
 
-    name: Literal[
-        "dirichlet",
-        "exponential",
-        "gamma",
-    ]
+    name: str
     params: P
     weight: float

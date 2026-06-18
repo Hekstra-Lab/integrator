@@ -42,30 +42,9 @@ def prepare_per_bin_priors(
     loss_args = cfg["loss"].get("args", {})
 
     if n_bins <= 0:
-        n_bins = int(loss_args.get("n_bins", 20))
+        n_bins = int(loss_args.get("n_bins", 1))
 
-    # Spectral Wilson: auto-compute lambda_min/lambda_max from data
-    if loss_name == "polychromatic_wilson":
-        if "lambda_min" not in loss_args or "lambda_max" not in loss_args:
-            ref_path = _resolve_reference_path(data_dir, cfg)
-            ref = load_data(ref_path)
-            wl = None
-            if isinstance(ref, dict) and "wavelength" in ref:
-                wl = ref["wavelength"]
-            elif isinstance(ref, dict) and "column_names" in ref:
-                col_names = ref["column_names"]
-                if "wavelength" in col_names:
-                    wl_idx = col_names.index("wavelength")
-                    wl = ref["reference"][:, wl_idx]
-            if wl is not None:
-                pad = 0.01
-                loss_args.setdefault("lambda_min", float(wl.min()) - pad)
-                loss_args.setdefault("lambda_max", float(wl.max()) + pad)
-                logger.info(
-                    "polychromatic_wilson: auto lambda_min=%.4f lambda_max=%.4f",
-                    loss_args["lambda_min"],
-                    loss_args["lambda_max"],
-                )
+    # lambda_min/max now come from dataset.yaml (mksbox --laue), wired by resolve_config.
 
     # Auto-compute d_min/d_max for concentration_cfg from data
     conc_cfg = loss_args.get("concentration_cfg")
@@ -155,7 +134,7 @@ def inject_binning_labels(data_loader, cfg: dict) -> None:
     """Load binning label files and inject into the dataset's metadata."""
 
     loss_args = cfg.get("loss", {}).get("args", {})
-    n_bins = int(loss_args.get("n_bins", 20))
+    n_bins = int(loss_args.get("n_bins", 1))
     data_dir = Path(cfg["data_loader"]["args"]["data_dir"])
 
     ref = data_loader.full_dataset.reference

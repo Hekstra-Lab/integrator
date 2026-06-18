@@ -40,3 +40,38 @@ class TrainerConfig:
                     epochs = {self.max_epochs}
                     """
             )
+
+
+@dataclass
+class EarlyStopConfig:
+    """`EarlyStopping` callback settings (the `early_stop:` section).
+
+    Attributes:
+        monitor: Logged metric to watch, e.g. `val elbo` / `val nll`.
+        mode: `min` stops when the metric stops decreasing, `max` when it stops increasing.
+        patience: Epochs with no improvement before stopping.
+        min_delta: Minimum change counted as an improvement.
+        strict: Error if `monitor` is absent from the logged metrics.
+    """
+
+    monitor: str
+    mode: Literal["min", "max"] = "min"
+    patience: int = 3
+    min_delta: float = 0.0
+    strict: bool = True
+
+
+@dataclass
+class CheckpointConfig:
+    """`ModelCheckpoint` selection settings (the `checkpoint:` section).
+
+    Attributes:
+        save_top_k: Keep the best `k` checkpoints by `monitor`; `-1` keeps every epoch;
+            `None` auto-selects (`1` when early stopping is on, else `-1`).
+        monitor: Metric ranking checkpoints; `None` inherits the early-stop monitor.
+        mode: `min` or `max`; `None` inherits the early-stop mode (else `min`).
+    """
+
+    save_top_k: int | None = None
+    monitor: str | None = None
+    mode: Literal["min", "max"] | None = None

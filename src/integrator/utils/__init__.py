@@ -4,6 +4,7 @@ from .factory_utils import (
     construct_integrator,
     construct_trainer,
     load_config,
+    resolve_config,
     save_run_artifacts,
 )
 from .prepare_priors import (
@@ -17,6 +18,7 @@ __all__ = [
     "construct_integrator",
     "construct_trainer",
     "load_config",
+    "resolve_config",
     "save_run_artifacts",
     "inject_binning_labels",
     "prepare_per_bin_priors",

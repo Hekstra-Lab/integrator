@@ -16,21 +16,22 @@ from .encoder import (
     ProfileEncoderArgs,
 )
 from .integrator import IntegratorCfg, IntegratorConfig
-from .logger import LoggerConfig
 from .loss import (
     LossArgs,
     LossConfig,
 )
+from .optimizer import OptimizerConfig
 from .output import OutputConfig
 from .priors import (
     DirichletParams,
     GammaParams,
     PriorConfig,
 )
-from .trainer import TrainerConfig
-from .yaml_config import YAMLConfig
+from .trainer import CheckpointConfig, EarlyStopConfig, TrainerConfig
 
 __all__ = [
+    "CheckpointConfig",
+    "EarlyStopConfig",
     "DirichletParams",
     "DirichletArgs",
     "GammaParams",
@@ -46,11 +47,10 @@ __all__ = [
     "PriorConfig",
     "LossConfig",
     "OutputConfig",
-    "LoggerConfig",
+    "OptimizerConfig",
     "TrainerConfig",
     "SurrogateArgs",
     "SurrogateConfig",
     "Surrogates",
-    "YAMLConfig",
     "shallow_dict",
 ]

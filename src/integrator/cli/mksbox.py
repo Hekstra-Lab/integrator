@@ -974,6 +974,10 @@ def run_laue(args):
 
     beam_center_px = _beam_center_px(expt_path_in)
 
+    # spectrum support
+    wl_arr = np.array(reflections["wavelength"])
+    pad = 0.01
+
     crystal_meta = {
         "cell": [float(x) for x in cell_params],
         "space_group": sg_info.symbol_and_number(),
@@ -982,6 +986,8 @@ def run_laue(args):
             float(beam_center_px[0]),
             float(beam_center_px[1]),
         ],
+        "lambda_min": float(wl_arr.min()) - pad,
+        "lambda_max": float(wl_arr.max()) + pad,
     }
     print(
         f"crystal: cell={tuple(round(c, 3) for c in crystal_meta['cell'])}, "

@@ -41,6 +41,7 @@ laue = ['laue-dials']
 "integrator.train" = "integrator.cli.train:main"
 "integrator.pred" = "integrator.cli.pred:main"
 "integrator.mksbox" = "integrator.cli.mksbox:main"
+"integrator.resolve" = "integrator.cli.resolve:main"
 
 [project.urls]
 Homepage = "https://github.com/Hekstra-Lab/integrator/tree/integrator_mvn"

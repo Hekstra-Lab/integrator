@@ -66,6 +66,11 @@ def _assemble_outputs(
             name: getattr(out.qi, name) for name in out.qi.arg_constraints
         },
     }
+    # qp is a Distribution
+    if not is_profile_output:
+        distribution_params["qp_params"] = {
+            name: getattr(out.qp, name) for name in out.qp.arg_constraints
+        }
 
     base.update(out.metadata)
     base.update(distribution_params)

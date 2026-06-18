@@ -1,3 +1,12 @@
+"""
+CLI to train the integratio nmodel
+
+Example usage:
+
+integrator.train \
+    --config 
+"""
+
 import argparse
 import logging
 from copy import deepcopy
@@ -16,7 +25,7 @@ def _default_run_name() -> str:
     from datetime import datetime
     from uuid import uuid4
 
-    return f"{datetime.now():%Y%m%d-%H%M%S}_{uuid4().hex[:4]}"
+    return f"run_{datetime.now():%Y%m%d-%H%M%S}_{uuid4().hex[:4]}"
 
 
 def parse_args():
@@ -295,6 +304,7 @@ def main():
         WilsonParamLogger,
         assign_labels,
     )
+    from integrator.configs import CheckpointConfig, EarlyStopConfig
     from integrator.utils import (
         apply_dataset_defaults,
         construct_data_loader,
@@ -303,6 +313,7 @@ def main():
         inject_binning_labels,
         load_config,
         prepare_per_bin_priors,
+        resolve_config,
         save_run_artifacts,
     )
     from integrator.utils.factory_utils import _collect_resolved_paths
@@ -315,6 +326,7 @@ def main():
     cfg = load_config(args.config)
     cfg = _apply_cli_overrides(cfg, args=args)
     cfg = apply_dataset_defaults(cfg)
+    cfg = resolve_config(cfg)
 
     logger.info("Starting Training")
 
@@ -369,7 +381,7 @@ def main():
     logger.info(f"Run directory (handle): {run_dir}")
     logger.info(f"Output root (files/plots/predictions): {output_root}")
 
-    config_copy = run_dir / "config_copy.yaml"
+    config_copy = run_dir / "config_log.yaml"
     cfg_json = deepcopy(cfg)
     with open(config_copy, "w") as f:
         yaml.safe_dump(cfg_json, f, sort_keys=False)
@@ -453,35 +465,32 @@ def main():
     )
 
     early_stop_cb = None
-    es_cfg = cfg.get("early_stop")
-    if es_cfg:
+    es_raw = cfg.get("early_stop")
+    es = EarlyStopConfig(**es_raw) if es_raw else None
+    if es is not None:
         early_stop_cb = EarlyStopping(
-            monitor=es_cfg["monitor"],
-            mode=es_cfg.get("mode", "min"),
-            patience=int(es_cfg.get("patience", 3)),
-            min_delta=float(es_cfg.get("min_delta", 0.0)),
-            strict=bool(es_cfg.get("strict", True)),
+            monitor=es.monitor,
+            mode=es.mode,
+            patience=es.patience,
+            min_delta=es.min_delta,
+            strict=es.strict,
             verbose=True,
         )
         logger.info(
             "EarlyStopping: monitor=%s mode=%s patience=%d min_delta=%.4f",
-            es_cfg["monitor"],
-            es_cfg.get("mode", "min"),
-            int(es_cfg.get("patience", 3)),
-            float(es_cfg.get("min_delta", 0.0)),
+            es.monitor,
+            es.mode,
+            es.patience,
+            es.min_delta,
         )
 
-    ckpt_cfg = cfg.get("checkpoint", {}) or {}
+    ckpt = CheckpointConfig(**(cfg.get("checkpoint") or {}))
     default_top_k = 1 if early_stop_cb else -1
-    save_top_k = int(ckpt_cfg.get("save_top_k", default_top_k))
-    ckpt_monitor = ckpt_cfg.get(
-        "monitor",
-        es_cfg["monitor"] if es_cfg else None,
+    save_top_k = (
+        ckpt.save_top_k if ckpt.save_top_k is not None else default_top_k
     )
-    ckpt_mode = ckpt_cfg.get(
-        "mode",
-        es_cfg.get("mode", "min") if es_cfg else "min",
-    )
+    ckpt_monitor = ckpt.monitor or (es.monitor if es else None)
+    ckpt_mode = ckpt.mode or (es.mode if es else "min")
     ckpt_dir = logdir / "checkpoints"
     checkpoint_callback = ModelCheckpoint(
         dirpath=ckpt_dir,

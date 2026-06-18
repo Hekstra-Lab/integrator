@@ -17,6 +17,8 @@ from integrator.model.loss.learned_background import (
     ChebyshevProfilePriorScale,
 )
 
+_DEFAULT_PROFILE_PRIOR_SCALE = 3.0
+
 
 class WilsonLoss(nn.Module):
     """Base ELBO loss with Wilson intensity prior.
@@ -28,14 +30,11 @@ class WilsonLoss(nn.Module):
     def __init__(
         self,
         *,
-        mc_samples: int = 4,
-        eps: float = 1e-6,
         # Background prior
         bg_rate: float = 1.0,
         bg_concentration: float = 1.0,
         bg_prior_cfg: dict | None = None,
         # Profile prior
-        profile_prior_scale: float = 3.0,
         profile_prior_cfg: dict | None = None,
         # B factor
         init_log_B: float = 3.0,
@@ -43,7 +42,7 @@ class WilsonLoss(nn.Module):
         # Intensity prior shape
         learn_concentration: bool = False,
         init_alpha: float = 1.0,
-        n_bins: int = 20,
+        n_bins: int = 1,
         concentration_cfg: dict | None = None,
         # Prior configs from yaml
         pi_cfg=None,
@@ -55,8 +54,6 @@ class WilsonLoss(nn.Module):
         pi_weight: float = 1.0,
     ):
         super().__init__()
-        self.mc_samples = mc_samples
-        self.eps = eps
         self.b_min = b_min
         self.bg_rate = bg_rate
         self.bg_concentration = bg_concentration
@@ -64,13 +61,16 @@ class WilsonLoss(nn.Module):
             self.bg_prior = ChebyshevBackgroundPrior(**bg_prior_cfg)
         else:
             self.bg_prior = None
-        self.profile_prior_scale = profile_prior_scale
         if profile_prior_cfg is not None:
             self.profile_prior = ChebyshevProfilePriorScale(
                 **profile_prior_cfg
             )
         else:
             self.profile_prior = None
+        # keep the prior cfgs so run artifacts can record them
+        self.pprf_cfg = pprf_cfg
+        self.pbg_cfg = pbg_cfg
+        self.pi_cfg = pi_cfg
         self.pprf_weight = (
             pprf_cfg.weight if pprf_cfg is not None else pprf_weight
         )
@@ -83,7 +83,7 @@ class WilsonLoss(nn.Module):
         # used by polychromatic and monochromatic loss classes
         self.raw_B = nn.Parameter(torch.tensor(float(init_log_B)))
 
-        # Continuous learnable concentration α(s²)
+        # Continuous learnable concentration alpha(s^2)
         if concentration_cfg is not None:
             self.concentration_fn = ChebyshevConcentration(**concentration_cfg)
         else:
@@ -126,12 +126,16 @@ class WilsonLoss(nn.Module):
         if metadata is None or "d" not in metadata:
             raise ValueError("Wilson loss requires metadata['d'].")
 
+        prf_prior_scale: float | Tensor
         if self.profile_prior is not None:
             x_px = metadata["xyzcal.px.0"].to(device)
             y_px = metadata["xyzcal.px.1"].to(device)
             prf_prior_scale = self.profile_prior(x_px, y_px)
         else:
-            prf_prior_scale = self.profile_prior_scale
+            # owned by the surrogate; default only hit by Dirichlet (ignores it)
+            prf_prior_scale = getattr(
+                qp, "prior_scale", _DEFAULT_PROFILE_PRIOR_SCALE
+            )
         kl_prf = compute_profile_kl(
             qp, prf_prior_scale, self.pprf_weight, device
         )

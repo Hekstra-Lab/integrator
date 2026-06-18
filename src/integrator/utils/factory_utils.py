@@ -16,25 +16,6 @@ from integrator.configs import shallow_dict
 from integrator.model.integrators.base_integrator import BaseIntegrator
 from integrator.registry import REGISTRY
 
-PRIOR_PARAMS = {
-    "gamma": configs.GammaParams,
-    "dirichlet": configs.DirichletParams,
-}
-
-TUPLE_FIELDS = {
-    "input_shape",
-    "conv1_kernel_size",
-    "conv1_padding",
-    "pool_kernel_size",
-    "pool_stride",
-    "conv2_kernel_size",
-    "conv2_padding",
-    "conv3_kernel_size",
-    "conv3_padding",
-    "shape",
-    "sbox_shape",
-}
-
 # User-supplied YAML args override these.
 # Only data_dim is required.
 _ENCODER_PRESETS: dict[tuple[str, str], dict] = {
@@ -107,6 +88,26 @@ _ENCODER_PRESETS: dict[tuple[str, str], dict] = {
 }
 
 
+_MODE_DEFAULTS: dict[str, dict[str, str]] = {
+    "monochromatic": {
+        "loss": "monochromatic_wilson",
+        "data_loader": "rotation_data",
+    },
+    "polychromatic": {
+        "loss": "polychromatic_wilson",
+        "data_loader": "polychromatic_data",
+    },
+}
+
+# fail at import if a mode preset points at an unregistered component
+for _m, _preset in _MODE_DEFAULTS.items():
+    for _cat, _name in _preset.items():
+        if _name not in REGISTRY[_cat]:
+            raise ValueError(
+                f"mode {_m!r}: {_cat} {_name!r} is not in REGISTRY[{_cat!r}]"
+            )
+
+
 def _apply_encoder_preset(name: str, args: dict) -> dict:
     """Merge encoder preset defaults under user-supplied args."""
     data_dim = args.get("data_dim")
@@ -168,37 +169,15 @@ def _get_dataloader_cls(name: str) -> nn.Module:
     return REGISTRY["data_loader"][name]
 
 
-def _normalize_tuples(d: dict) -> dict:
-    out = dict(d)
-    for k in TUPLE_FIELDS:
-        if k in out:
-            v = out[k]
-            if isinstance(v, list):
-                out[k] = tuple(v)
-            elif not isinstance(v, tuple):
-                raise TypeError(f"{k} must be list or tuple, got {type(v)}")
-    return out
-
-
 def _get_loss_args(
     cfg: dict,
     prior_configs: dict,
 ) -> configs.LossArgs:
-    loss_cfg = dict(cfg["loss"])
-    loss_args = _normalize_tuples(loss_cfg["args"])
-
-    # mc_samples / eps fall back to LossArgs defaults when omitted from the YAML.
-    optional = {
-        k: loss_args[k] for k in ("mc_samples", "eps") if k in loss_args
-    }
-    args_cls = configs.LossArgs(
+    return configs.LossArgs(
         pbg_cfg=prior_configs["pbg_cfg"],
         pi_cfg=prior_configs["pi_cfg"],
         pprf_cfg=prior_configs["pprf_cfg"],
-        **optional,
     )
-
-    return args_cls
 
 
 def _get_surrogate_modules(cfg: dict) -> dict[str, nn.Module]:
@@ -219,34 +198,37 @@ def _get_prior_cfgs(
     pi_cfg: str = "pi_cfg",
 ) -> dict[str, configs.PriorConfig | None]:
     priors = {}
-    prior_cfgs = dict(cfg)
     data_dir = _get_data_dir(cfg)
     for p in (pprf_cfg, pbg_cfg, pi_cfg):
-        p_dict = prior_cfgs["loss"]["args"].get(p)
-        if p_dict is not None:
-            p_name = p_dict["name"]
-            p_params_dict = dict(p_dict.get("params") or {})
-            # Resolve relative concentration paths for Dirichlet
-            if p_name == "dirichlet" and "concentration" in p_params_dict:
-                conc = p_params_dict["concentration"]
-                if (
-                    isinstance(conc, str)
-                    and not os.path.isabs(conc)
-                    and not conc.startswith("~")
-                ):
-                    p_params_dict["concentration"] = os.path.join(
-                        data_dir, conc
-                    )
-            p_params = PRIOR_PARAMS[p_name](**p_params_dict)
-            p_prior_cfgs = configs.PriorConfig(
-                name=p_name,
-                params=p_params,
-                weight=p_dict["weight"],
-            )
-            priors[p] = p_prior_cfgs
-        else:
+        p_dict = cfg["loss"]["args"].get(p)
+        if p_dict is None:
             priors[p] = None
+            continue
+        p_name = p_dict["name"]
+        params_cls, _ = REGISTRY["priors"][p_name]
+        p_params_dict = _resolve_prior_paths(
+            p_name, dict(p_dict.get("params") or {}), data_dir
+        )
+        priors[p] = configs.PriorConfig(
+            name=p_name,
+            params=params_cls(**p_params_dict),
+            weight=p_dict["weight"],
+        )
     return priors
+
+
+def _resolve_prior_paths(name: str, params: dict, data_dir: str) -> dict:
+    """Resolve a prior's path-valued args (per the registry) against data_dir."""
+    _, path_fields = REGISTRY["priors"][name]
+    for field in path_fields:
+        v = params.get(field)
+        if (
+            isinstance(v, str)
+            and not os.path.isabs(v)
+            and not v.startswith("~")
+        ):
+            params[field] = os.path.join(data_dir, v)
+    return params
 
 
 def _get_encoder_modules(
@@ -264,16 +246,20 @@ def _get_encoder_modules(
             """
         )
     encoders = {}
-    for items, encoder_cfg in zip(
-        required_encoders.items(), cfg_["encoders"], strict=False
+    for (slot, (enc_name, args_cls)), encoder_cfg in zip(
+        required_encoders.items(), cfg_["encoders"], strict=True
     ):
-        name, args = items
-        raw_args = encoder_cfg.get("args") or {}
-        merged = _apply_encoder_preset(encoder_cfg["name"], raw_args)
-        encoder_args = args(**merged)
-        encoders[name] = REGISTRY["encoders"][encoder_cfg["name"]](
-            **asdict(encoder_args)
-        )
+        # Wire by validated name, not blind position: a reordered `encoders:`
+        # list must not silently feed the wrong args into a slot.
+        got = encoder_cfg.get("name")
+        if got != enc_name:
+            raise ValueError(
+                f"Integrator '{model}' slot '{slot}' expects encoder "
+                f"'{enc_name}', got '{got}'. Check the order of `encoders:`."
+            )
+        merged = _apply_encoder_preset(enc_name, encoder_cfg.get("args") or {})
+        encoder_args = args_cls(**merged)
+        encoders[slot] = REGISTRY["encoders"][enc_name](**asdict(encoder_args))
     return encoders
 
 
@@ -319,16 +305,33 @@ def _get_loss_module(
                 "bg_concentration", float(bg_prior["bg_concentration"])
             )
 
-    import inspect
-
-    sig = inspect.signature(loss_cls.__init__)
-    params = sig.parameters
-    has_var_keyword = any(p.kind == p.VAR_KEYWORD for p in params.values())
-    if not has_var_keyword:
-        valid_keys = set(params.keys()) - {"self"}
-        kwargs = {k: v for k, v in kwargs.items() if k in valid_keys}
+    valid_keys = _valid_loss_keys(loss_cls)
+    unknown = set(kwargs) - valid_keys
+    if unknown:
+        raise ValueError(
+            f"Unknown loss arg(s) for {cfg['loss']['name']}: {sorted(unknown)}. "
+            f"Valid args: {sorted(valid_keys)}."
+        )
 
     return loss_cls(**kwargs)
+
+
+def _valid_loss_keys(loss_cls: type) -> set[str]:
+    """All explicit `__init__` arg names across a loss class's MRO."""
+    import inspect
+
+    valid: set[str] = set()
+    for klass in loss_cls.__mro__:
+        init = klass.__dict__.get("__init__")
+        if init is None:
+            continue
+        for name, p in inspect.signature(init).parameters.items():
+            if name != "self" and p.kind not in (
+                p.VAR_KEYWORD,
+                p.VAR_POSITIONAL,
+            ):
+                valid.add(name)
+    return valid
 
 
 def _check_name(category: str, name: str) -> None:
@@ -341,11 +344,7 @@ def _check_name(category: str, name: str) -> None:
 
 
 def _validate_registry_names(cfg: dict) -> None:
-    """Validate all REGISTRY name references in cfg before construction.
-
-    Produces a single, clear error listing valid options instead of a deep
-    KeyError raised mid-construction.
-    """
+    """Validate all REGISTRY name references in cfg before construction."""
     _check_name("integrator", _require(cfg, "integrator", "name"))
     _check_name("loss", _require(cfg, "loss", "name"))
     _check_name("data_loader", _require(cfg, "data_loader", "name"))
@@ -367,23 +366,35 @@ def _validate_registry_names(cfg: dict) -> None:
         raise TypeError(
             f"cfg['surrogates'] must be a dict, got {type(surrogates).__name__}"
         )
+    arg_errors: list[str] = []
     for key, sur in surrogates.items():
         if not isinstance(sur, dict) or "name" not in sur:
             raise ValueError(
                 f"cfg['surrogates'][{key!r}] must be a dict with a 'name' key"
             )
         _check_name("surrogates", sur["name"])
+        accepted = _constructor_arg_names(REGISTRY["surrogates"][sur["name"]])
+        unknown = set(sur.get("args") or {}) - accepted
+        if unknown:
+            arg_errors.append(
+                f"  surrogate {key!r} ({sur['name']}): unknown args "
+                f"{sorted(unknown)}; valid: {sorted(accepted)}"
+            )
+    if arg_errors:
+        raise ValueError("Invalid surrogate args:\n" + "\n".join(arg_errors))
 
 
 def construct_integrator(
     cfg: dict,
 ) -> BaseIntegrator:
     """Build the integrator + its components from a YAML config."""
+    cfg = resolve_config(cfg)
     _validate_registry_names(cfg)
 
     integrator_cls = _get_integrator_cls(cfg["integrator"]["name"])
 
     integrator_args = configs.IntegratorCfg(**cfg["integrator"]["args"])
+    optimizer_cfg = configs.OptimizerConfig(**cfg.get("optimizer", {}))
     encoders = _get_encoder_modules(cfg)
     surrogates = _get_surrogate_modules(cfg)
     loss = _get_loss_module(cfg)
@@ -393,10 +404,12 @@ def construct_integrator(
         encoders=encoders,
         surrogates=surrogates,
         loss=loss,
+        optimizer=optimizer_cfg,
     )
 
 
 def construct_data_loader(cfg):
+    cfg = resolve_config(cfg)
     dl_cls = _get_dataloader_cls(cfg["data_loader"]["name"])
     return dl_cls(**cfg["data_loader"]["args"])
 
@@ -469,23 +482,25 @@ def _collect_resolved_paths(cfg: dict) -> dict:
     loss_args = cfg.get("loss", {}).get("args", {}) or {}
     loss_paths: dict = {}
 
-    # Dirichlet prior concentration file (resolved in _get_prior_cfgs)
+    # Prior path-valued args, per the priors registry (e.g. dirichlet concentration)
     for p_key in ("pprf_cfg", "pbg_cfg", "pi_cfg"):
         p_dict = loss_args.get(p_key)
         if not isinstance(p_dict, dict):
             continue
-        if p_dict.get("name") != "dirichlet":
+        spec = REGISTRY["priors"].get(p_dict.get("name"))
+        if not spec:
             continue
         params = p_dict.get("params") or {}
-        conc = params.get("concentration")
-        if (
-            isinstance(conc, str)
-            and not os.path.isabs(conc)
-            and not conc.startswith("~")
-        ):
-            loss_paths[f"{p_key}.concentration"] = _resolved_path_info(
-                os.path.join(data_dir, conc)
-            )
+        for field in spec[1]:
+            v = params.get(field)
+            if (
+                isinstance(v, str)
+                and not os.path.isabs(v)
+                and not v.startswith("~")
+            ):
+                loss_paths[f"{p_key}.{field}"] = _resolved_path_info(
+                    os.path.join(data_dir, v)
+                )
     if loss_paths:
         report["loss"] = loss_paths
 
@@ -547,8 +562,6 @@ def save_run_artifacts(
 
     artifacts["loss"] = {
         "name": cfg["loss"]["name"],
-        "mc_samples": getattr(loss_module, "mc_samples", None),
-        "eps": getattr(loss_module, "eps", None),
     }
 
     param_counts = {}
@@ -596,7 +609,6 @@ def apply_dataset_defaults(cfg: dict) -> dict:
     if d is None or h is None or w is None:
         return cfg
     data_dim = geom.get("data_dim") or data_dim_for(d)
-    profile_n = d * h * w if data_dim == "3d" else h * w
 
     def fill(target: dict, key, value):
         if value is not None and target.get(key) is None:
@@ -615,14 +627,12 @@ def apply_dataset_defaults(cfg: dict) -> dict:
         if enc.get("name") == "profile_encoder":
             fill(eargs, "input_shape", input_shape)
 
-    qp = cfg.get("surrogates", {}).get("qp")
-    if qp is not None and qp.get("name") == "learned_basis_profile":
-        fill(qp.setdefault("args", {}), "output_dim", profile_n)
-
     fill(dl_args, "D", d)
     fill(dl_args, "H", h)
     fill(dl_args, "W", w)
-    fill(dl_args, "anscombe", spec.get("anscombe"))
+    # derive `transform` from the dataset's anscombe flag
+    if dl_args.get("transform") is None:
+        dl_args["transform"] = "anscombe" if spec.get("anscombe") else "none"
     files = spec.get("files", {})
     if files and dl_args.get("shoebox_file_names") is None:
         # stats live in the spec, not a file; counts/masks/reference are files
@@ -633,5 +643,162 @@ def apply_dataset_defaults(cfg: dict) -> dict:
             "reference": files.get("reference", "metadata.npy"),
             "standardized_counts": None,
         }
+
+    return cfg
+
+
+def _apply_mode_defaults(cfg: dict) -> None:
+    """Fill loss/data_loader registry keys implied by a top-level `mode`, if set."""
+    mode = cfg.get("mode")
+    if mode is None:
+        return
+    preset = _MODE_DEFAULTS.get(mode)
+    if preset is None:
+        valid = ", ".join(sorted(_MODE_DEFAULTS))
+        raise ValueError(f"Unknown mode {mode!r}. Valid options: {valid}")
+
+    loss = cfg.setdefault("loss", {})
+    loss.setdefault("name", preset["loss"])
+    loss.setdefault("args", {})
+
+    cfg.setdefault("data_loader", {}).setdefault("name", preset["data_loader"])
+
+
+def _inject_poly_metadata(cfg: dict) -> None:
+    """Fill the poly loss beam_center + lambda range from <data_dir>/dataset.yaml."""
+    if cfg.get("loss", {}).get("name") != "polychromatic_wilson":
+        return
+    from integrator.io import read_dataset_spec
+
+    data_dir = cfg.get("data_loader", {}).get("args", {}).get("data_dir")
+    if not data_dir:
+        return
+    crystal = (read_dataset_spec(data_dir) or {}).get("crystal", {})
+    loss_args = cfg.setdefault("loss", {}).setdefault("args", {})
+    if crystal.get("beam_center_px") is not None:
+        loss_args.setdefault("beam_center", list(crystal["beam_center_px"]))
+    for key in ("lambda_min", "lambda_max"):
+        if crystal.get(key) is not None:
+            loss_args.setdefault(key, crystal[key])
+
+
+def _default_encoders(
+    integrator_cls: type[BaseIntegrator],
+    data_dim: str | None,
+    encoder_out: int,
+    input_shape: list[int] | None,
+) -> list[dict]:
+    """Synthesize the `encoders:` list from an integrator's REQUIRED_ENCODERS."""
+    encoders: list[dict] = []
+    for enc_name, args_cls in integrator_cls.REQUIRED_ENCODERS.values():
+        enc_args: dict[str, Any] = {
+            "data_dim": data_dim,
+            "encoder_out": encoder_out,
+        }
+        # inject input_shape only for encoders that declare it
+        if (
+            "input_shape" in args_cls.__dataclass_fields__
+            and input_shape is not None
+        ):
+            enc_args["input_shape"] = input_shape
+        encoders.append({"name": enc_name, "args": enc_args})
+    return encoders
+
+
+def _merge_surrogates(defaults: dict, user: dict | None) -> dict:
+    """Merge a (possibly partial) `surrogates:` section over the integrator defaults."""
+    user = user or {}
+    merged: dict[str, dict] = {}
+    keys = list(defaults) + [k for k in user if k not in defaults]
+    for key in keys:
+        d = defaults.get(key, {})
+        u = user.get(key, {})
+        u_args = dict(u.get("args") or {})
+        if "name" in u and u["name"] != d.get("name"):
+            merged[key] = {"name": u["name"], "args": u_args}
+        else:
+            merged[key] = {
+                "name": u.get("name", d.get("name")),
+                "args": {**dict(d.get("args") or {}), **u_args},
+            }
+    return merged
+
+
+def _constructor_arg_names(target) -> set[str]:
+    import inspect
+
+    explicit = getattr(target, "arg_names", None)
+    if explicit is not None:
+        return set(explicit)
+    params = inspect.signature(target).parameters
+    return {
+        n
+        for n, p in params.items()
+        if n != "self" and p.kind not in (p.VAR_KEYWORD, p.VAR_POSITIONAL)
+    }
+
+
+def _inject_runtime_surrogate_args(
+    cfg: dict,
+    encoder_out: int,
+    profile_n: int | None,
+    sbox_shape: list[int] | None,
+) -> None:
+    """Inject runtime-derived args into each surrogate that declares them.
+
+    The surrogate's `__init__` is the source of truth — adding a new surrogate
+    needs no edit here, just the matching arg names.
+    """
+    runtime = {
+        "input_dim": encoder_out,
+        "in_features": encoder_out,
+        "output_dim": profile_n,
+        "sbox_shape": sbox_shape,
+    }
+    for sur in (cfg.get("surrogates") or {}).values():
+        if not isinstance(sur, dict):
+            continue
+        target = REGISTRY["surrogates"].get(sur.get("name"))
+        if target is None:
+            continue
+        accepted = _constructor_arg_names(target)
+        args = sur.setdefault("args", {})
+        for arg, val in runtime.items():
+            if arg in accepted and val is not None:
+                args.setdefault(arg, val)
+
+
+def resolve_config(cfg: dict) -> dict:
+    """Expand a config to a fully-specified one, filling everything inferable."""
+    cfg = apply_dataset_defaults(cfg)
+    _apply_mode_defaults(cfg)
+    _inject_poly_metadata(cfg)
+
+    iargs = cfg.get("integrator", {}).get("args", {})
+    encoder_out = iargs.get("encoder_out", 64)
+    data_dim = iargs.get("data_dim")
+    d, h, w = iargs.get("d"), iargs.get("h"), iargs.get("w")
+    input_shape = None
+    profile_n = None
+    if None not in (d, h, w):
+        input_shape = [h, w] if data_dim == "2d" else [d, h, w]
+        profile_n = h * w if data_dim == "2d" else d * h * w
+    sbox_shape = [d, h, w] if None not in (d, h, w) else None
+
+    integrator_name = cfg.get("integrator", {}).get("name")
+    integrator_cls = REGISTRY["integrator"].get(integrator_name)
+    if integrator_cls is not None:
+        if not cfg.get("encoders"):
+            cfg["encoders"] = _default_encoders(
+                integrator_cls, data_dim, encoder_out, input_shape
+            )
+        cfg["surrogates"] = _merge_surrogates(
+            integrator_cls.DEFAULT_SURROGATES, cfg.get("surrogates")
+        )
+
+    for enc in cfg.get("encoders", []) or []:
+        if isinstance(enc, dict):
+            enc.setdefault("args", {}).setdefault("encoder_out", encoder_out)
+    _inject_runtime_surrogate_args(cfg, encoder_out, profile_n, sbox_shape)
 
     return cfg

@@ -2,9 +2,8 @@ import argparse
 import logging
 import re
 
-from integrator.io import write_refl_from_preds
 from integrator.cli.utils.logger import setup_logging
-from integrator.io import write_mtz_from_preds
+from integrator.io import write_mtz_from_preds, write_refl_from_preds
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +86,9 @@ def main():
 
     # log_dir is the files/ dir (checkpoints inside); predictions/ is its sibling.
     log_dir = Path(meta.get("log_dir") or meta["wandb"]["log_dir"])
-    pred_dir = Path(meta.get("predictions_dir") or log_dir.parent / "predictions")
+    pred_dir = Path(
+        meta.get("predictions_dir") or log_dir.parent / "predictions"
+    )
     pred_dir.mkdir(parents=True, exist_ok=True)
 
     checkpoints = sorted(log_dir.glob("**/epoch*.ckpt"))

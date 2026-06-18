@@ -52,12 +52,14 @@ class ProfileSurrogateOutput:
         mean_profile: Profile at posterior mean h, shape (B, K).
         loc: Posterior mean of h, shape (B, d).
         scale: Posterior std of h, shape (B, d).
+        prior_scale: Std of the N(0, prior_scale) prior on the latent h
     """
 
     zp: Tensor
     mean_profile: Tensor
     loc: Tensor
     scale: Tensor
+    prior_scale: float = 3.0
 
 
 class ProfileSurrogate(nn.Module):
@@ -79,12 +81,16 @@ class ProfileSurrogate(nn.Module):
         latent_dim: int | None = None,
         output_dim: int = 441,
         init_std: float = 0.5,
+        prior_scale: float = 3.0,
+        smoothness_weight: float = 0.0,
     ) -> None:
         super().__init__()
 
         if latent_dim is None:
             latent_dim = 8
         self.d: int = latent_dim
+        self.prior_scale = prior_scale
+        self.smoothness_weight = smoothness_weight
 
         self.loc_head = nn.Linear(input_dim, self.d)
         self.scale_head = nn.Linear(input_dim, self.d)
@@ -97,7 +103,6 @@ class ProfileSurrogate(nn.Module):
         self,
         x: Tensor,
         mc_samples: int = 1,
-        group_labels: Tensor | None = None,
         **kwargs,
     ) -> ProfileSurrogateOutput:
         loc = self.loc_head(x)  # (B, d)
@@ -111,4 +116,5 @@ class ProfileSurrogate(nn.Module):
             mean_profile=mean_profile,
             loc=loc,
             scale=scale,
+            prior_scale=self.prior_scale,
         )

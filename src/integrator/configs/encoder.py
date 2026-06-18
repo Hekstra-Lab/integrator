@@ -1,5 +1,17 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Literal
+
+
+def _check_spatial_ndims(args) -> None:
+    """Every tuple/list arg (kernels, padding, input_shape) must match data_dim."""
+    ndim = 2 if args.data_dim == "2d" else 3
+    for f in fields(args):
+        v = getattr(args, f.name)
+        if isinstance(v, (list, tuple)) and len(v) != ndim:
+            raise ValueError(
+                f"{f.name} must have {ndim} elements for data_dim="
+                f"{args.data_dim!r}, got {v}"
+            )
 
 
 @dataclass
@@ -52,6 +64,7 @@ class ProfileEncoderArgs:
             raise ValueError(
                 f"encoder_out must be >= 1, got {self.encoder_out}"
             )
+        _check_spatial_ndims(self)
 
 
 @dataclass
@@ -108,6 +121,7 @@ class IntensityEncoderArgs:
             raise ValueError(
                 f"encoder_out must be >= 1, got {self.encoder_out}"
             )
+        _check_spatial_ndims(self)
 
 
 @dataclass

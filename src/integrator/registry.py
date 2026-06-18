@@ -1,13 +1,12 @@
+from integrator.configs import DirichletParams, GammaParams
 from integrator.data_loaders import (
     PolychromaticDataModule,
     RotationDataModule,
 )
 from integrator.model.distributions import (
     DirichletDistribution,
-    GammaDistributionRepamA,
-    GammaDistributionRepamB,
-    GammaDistributionRepamE,
     ProfileSurrogate,
+    build_gamma,
 )
 from integrator.model.encoders import (
     IntensityEncoder,
@@ -36,14 +35,16 @@ REGISTRY = {
         "hierarchical_3enc": HierarchicalIntegrator3Enc,
     },
     "surrogates": {
-        "gammaA": GammaDistributionRepamA,
-        "gammaB": GammaDistributionRepamB,
-        "gammaE": GammaDistributionRepamE,
+        "gamma": build_gamma,
         "dirichlet": DirichletDistribution,
         "learned_basis_profile": ProfileSurrogate,
     },
     "data_loader": {
         "rotation_data": RotationDataModule,
         "polychromatic_data": PolychromaticDataModule,
+    },
+    "priors": {
+        "gamma": (GammaParams, ()),
+        "dirichlet": (DirichletParams, ("concentration",)),
     },
 }

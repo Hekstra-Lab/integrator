@@ -2,6 +2,31 @@
 
 from copy import deepcopy
 
+# arg name -> (config path, optional value transform)
+ARG_OVERRIDES = {
+    "max_epochs": (("trainer", "max_epochs"), None),
+    "gradient_clip_val": (("trainer", "gradient_clip_val"), None),
+    "precision": (("trainer", "precision"), None),
+    "accelerator": (("trainer", "accelerator"), None),
+    "devices": (("trainer", "devices"), None),
+    "check_val_every_n_epoch": (("trainer", "check_val_every_n_epoch"), None),
+    "batch_size": (("data_loader", "args", "batch_size"), None),
+    "data_dir": (("data_loader", "args", "data_dir"), str),
+    "num_workers": (("data_loader", "args", "num_workers"), None),
+    "val_split": (("data_loader", "args", "val_split"), None),
+    "subset_size": (("data_loader", "args", "subset_size"), None),
+    "lr": (("optimizer", "lr"), None),
+    "weight_decay": (("optimizer", "weight_decay"), None),
+    "mc_samples": (("integrator", "args", "mc_samples"), None),
+    "integrator_name": (("integrator", "name"), None),
+    "qi": (("surrogates", "qi", "name"), None),
+    "qbg": (("surrogates", "qbg", "name"), None),
+    "pprf_weight": (("loss", "args", "pprf_weight"), None),
+    "pbg_weight": (("loss", "args", "pbg_weight"), None),
+    "pi_weight": (("loss", "args", "pi_weight"), None),
+    "n_bins": (("loss", "args", "n_bins"), None),
+}
+
 
 def _deep_merge(a: dict, b: dict) -> dict:
     out = deepcopy(a)
@@ -13,76 +38,17 @@ def _deep_merge(a: dict, b: dict) -> dict:
     return out
 
 
-def _apply_cli_overrides(
-    cfg: dict,
-    *,
-    args,
-) -> dict:
-    base = dict(cfg)
-    updates = {}
+def _set_nested(d: dict, path: tuple, value) -> None:
+    for k in path[:-1]:
+        d = d.setdefault(k, {})
+    d[path[-1]] = value
 
-    def _trainer(k, v):
-        updates.setdefault("trainer", {})[k] = v
 
-    def _dl_args(k, v):
-        updates.setdefault("data_loader", {}).setdefault("args", {})[k] = v
-
-    def _integrator_args(k, v):
-        updates.setdefault("integrator", {}).setdefault("args", {})[k] = v
-
-    def _loss_args(k, v):
-        updates.setdefault("loss", {}).setdefault("args", {})[k] = v
-
-    if getattr(args, "max_epochs", None) is not None:
-        _trainer("max_epochs", args.max_epochs)
-    if getattr(args, "gradient_clip_val", None) is not None:
-        _trainer("gradient_clip_val", args.gradient_clip_val)
-    if getattr(args, "precision", None) is not None:
-        _trainer("precision", args.precision)
-    if getattr(args, "accelerator", None) is not None:
-        _trainer("accelerator", args.accelerator)
-    if getattr(args, "devices", None) is not None:
-        _trainer("devices", args.devices)
-    if getattr(args, "check_val_every_n_epoch", None) is not None:
-        _trainer("check_val_every_n_epoch", args.check_val_every_n_epoch)
-
-    if getattr(args, "batch_size", None) is not None:
-        _dl_args("batch_size", args.batch_size)
-    if getattr(args, "data_dir", None) is not None:
-        _dl_args("data_dir", str(args.data_dir))
-    if getattr(args, "num_workers", None) is not None:
-        _dl_args("num_workers", args.num_workers)
-    if getattr(args, "val_split", None) is not None:
-        _dl_args("val_split", args.val_split)
-    if getattr(args, "subset_size", None) is not None:
-        _dl_args("subset_size", args.subset_size)
-
-    if getattr(args, "integrator_name", None) is not None:
-        updates.setdefault("integrator", {})["name"] = args.integrator_name
-    if getattr(args, "lr", None) is not None:
-        _integrator_args("lr", args.lr)
-    if getattr(args, "weight_decay", None) is not None:
-        _integrator_args("weight_decay", args.weight_decay)
-    if getattr(args, "mc_samples", None) is not None:
-        _integrator_args("mc_samples", args.mc_samples)
-
-    if getattr(args, "qi", None) is not None:
-        updates.setdefault("surrogates", {}).setdefault("qi", {})["name"] = (
-            args.qi
-        )
-    if getattr(args, "qbg", None) is not None:
-        updates.setdefault("surrogates", {}).setdefault("qbg", {})["name"] = (
-            args.qbg
-        )
-
-    if getattr(args, "pprf_weight", None) is not None:
-        _loss_args("pprf_weight", args.pprf_weight)
-    if getattr(args, "pbg_weight", None) is not None:
-        _loss_args("pbg_weight", args.pbg_weight)
-    if getattr(args, "pi_weight", None) is not None:
-        _loss_args("pi_weight", args.pi_weight)
-    if getattr(args, "n_bins", None) is not None:
-        _loss_args("n_bins", args.n_bins)
-
-    merged = _deep_merge(base, updates)
-    return merged
+def _apply_cli_overrides(cfg: dict, *, args) -> dict:
+    updates: dict = {}
+    for arg, (path, transform) in ARG_OVERRIDES.items():
+        v = getattr(args, arg, None)
+        if v is None:
+            continue
+        _set_nested(updates, path, transform(v) if transform else v)
+    return _deep_merge(dict(cfg), updates)

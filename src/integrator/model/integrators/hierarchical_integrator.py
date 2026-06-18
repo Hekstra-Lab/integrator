@@ -34,11 +34,11 @@ class HierarchicalIntegrator(BaseIntegrator):
     """Hierarchical integrator with 5 decoupled encoders."""
 
     REQUIRED_ENCODERS = {
-        "profile": configs.ProfileEncoderArgs,
-        "k_i": configs.IntensityEncoderArgs,
-        "r_i": configs.IntensityEncoderArgs,
-        "k_bg": configs.IntensityEncoderArgs,
-        "r_bg": configs.IntensityEncoderArgs,
+        "profile": ("profile_encoder", configs.ProfileEncoderArgs),
+        "k_i": ("intensity_encoder", configs.IntensityEncoderArgs),
+        "r_i": ("intensity_encoder", configs.IntensityEncoderArgs),
+        "k_bg": ("intensity_encoder", configs.IntensityEncoderArgs),
+        "r_bg": ("intensity_encoder", configs.IntensityEncoderArgs),
     }
 
     def _forward_impl(
@@ -110,9 +110,9 @@ class HierarchicalIntegrator3Enc(BaseIntegrator):
     """Hierarchical integrator with 3 encoders: profile, k, r."""
 
     REQUIRED_ENCODERS = {
-        "profile": configs.ProfileEncoderArgs,
-        "k": configs.IntensityEncoderArgs,
-        "r": configs.IntensityEncoderArgs,
+        "profile": ("profile_encoder", configs.ProfileEncoderArgs),
+        "k": ("intensity_encoder", configs.IntensityEncoderArgs),
+        "r": ("intensity_encoder", configs.IntensityEncoderArgs),
     }
 
     def _forward_impl(

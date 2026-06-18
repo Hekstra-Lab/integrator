@@ -52,14 +52,18 @@ class DataLoaderArgs:
         test_split: Fraction of data held out for testing.
         num_workers: Number of `DataLoader` worker processes.
         include_test: Whether to materialize the test split.
-        subset_size: Cap on the number of reflections loaded.
+        subset_size: Cap on the number of reflections loaded, or `None`.
         cutoff: Optional resolution cutoff, or `None` for no cutoff.
-        shoebox_file_names: `DataFileNames` locating the tensors on disk.
+        shoebox_file_names: Mapping locating the tensors on disk (see `DataFileNames`).
         D: Shoebox depth in pixels.
         H: Shoebox height in pixels.
         W: Shoebox width in pixels.
-        anscombe: Legacy flag selecting Anscombe plus global z-score standardization when `transform` is omitted.
-        transform: Count transform `anscombe`, `log1p`, or `none`; `None` honors the legacy `anscombe` flag. `log1p` feeds raw `log1p` counts to the encoder (the scvi-tools recipe for skewed-count VAEs); `none` mean-subtracts and std-divides the raw counts.
+        transform: Count transform `anscombe`, `log1p`, or `none`. `log1p` feeds raw `log1p` counts
+            to the encoder (the scvi-tools recipe for skewed-count VAEs); `none` mean-subtracts and
+            std-divides the raw counts.
+        min_valid_pixels: Drop shoeboxes with fewer than this many valid pixels.
+        get_dxyz: Also load per-pixel dxyz offsets (rotation data only).
+        single_sample_index: Restrict the dataset to a single reflection index (debugging; rotation only).
     """
 
     data_dir: str
@@ -68,14 +72,16 @@ class DataLoaderArgs:
     test_split: float
     num_workers: int
     include_test: bool
-    subset_size: int
+    subset_size: int | None
     cutoff: int | None
     shoebox_file_names: DataFileNames
     D: int
     H: int
     W: int
-    anscombe: bool
     transform: str | None = None
+    min_valid_pixels: int = 10
+    get_dxyz: bool = False
+    single_sample_index: int | None = None
 
     def __post_init__(self):
         if self.batch_size < 0:

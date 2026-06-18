@@ -1,3 +1,4 @@
+import logging
 import math
 from abc import abstractmethod
 from typing import Any, Literal
@@ -7,7 +8,9 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from integrator.configs import IntegratorCfg
+from integrator.configs import IntegratorCfg, OptimizerConfig
+
+_logger = logging.getLogger(__name__)
 
 DEFAULT_PREDICT_KEYS = [
     "refl_ids",
@@ -70,7 +73,31 @@ class BaseIntegrator(pl.LightningModule):
     implement `_forward_impl` to assemble the per-pixel rate.
     """
 
-    REQUIRED_ENCODERS: dict[str, type] = {}
+    REQUIRED_ENCODERS: dict[str, tuple[str, type]] = {}
+
+    DEFAULT_SURROGATES: dict[str, dict] = {
+        "qp": {
+            "name": "learned_basis_profile",
+            "args": {"latent_dim": 12, "init_std": 0.5, "prior_scale": 3.0},
+        },
+        "qbg": {
+            "name": "gamma",
+            "args": {
+                "reparameterization": "mean_fano",
+                "eps": 1.0e-6,
+                "k_min": 0.01,
+            },
+        },
+        "qi": {
+            "name": "gamma",
+            "args": {
+                "reparameterization": "mean_fano",
+                "eps": 1.0e-6,
+                "k_min": 0.01,
+            },
+        },
+    }
+
     ARGS: type
 
     def __init__(
@@ -79,27 +106,29 @@ class BaseIntegrator(pl.LightningModule):
         loss: nn.Module,
         encoders: dict[str, nn.Module],
         surrogates: dict[str, nn.Module],
+        optimizer: OptimizerConfig | None = None,
     ):
         """Build the integrator from its config and submodules.
 
         Args:
-            cfg: Integrator configuration with learning-rate, schedule, Monte Carlo, and shoebox-shape fields.
+            cfg: Architecture/inference config (shoebox shape, encoder width, MC samples, predict keys).
             loss: ELBO module returning the NLL, KL, and per-component KL terms.
             encoders: Named encoder modules mapping shoeboxes to embeddings.
             surrogates: Named variational surrogates (`qi`, `qbg`, `qp`) mapping embeddings to posterior distributions.
+            optimizer: Optimizer/schedule settings; defaults are used when omitted.
         """
         super().__init__()
         self.cfg = cfg
 
-        self.lr = cfg.lr
-        self.weight_decay = cfg.weight_decay
-        self.decoder_weight_decay = cfg.decoder_weight_decay
-        self.qp_smoothness_weight = cfg.qp_smoothness_weight
-        self.qp_orthogonality_weight = cfg.qp_orthogonality_weight
-        self.lr_schedule = cfg.lr_schedule
-        self.warmup_epochs = cfg.warmup_epochs
-        self.warmup_steps = cfg.warmup_steps
-        self.lr_min = cfg.lr_min
+        opt = optimizer or OptimizerConfig()
+        self.optimizer_cfg = opt
+        self.lr = opt.lr
+        self.weight_decay = opt.weight_decay
+        self.decoder_weight_decay = opt.decoder_weight_decay
+        self.lr_schedule = opt.lr_schedule
+        self.warmup_epochs = opt.warmup_epochs
+        self.warmup_steps = opt.warmup_steps
+        self.lr_min = opt.lr_min
         self.mc_samples = cfg.mc_samples
         if cfg.data_dim == "2d":
             self.shoebox_shape = (cfg.h, cfg.w)
@@ -206,19 +235,29 @@ class BaseIntegrator(pl.LightningModule):
         """Run inference and return the `predict_keys` subset of the forward outputs."""
         counts, shoebox, mask, metadata = batch
         outputs = self(counts, shoebox, mask, metadata)
-        return {
-            k: v
-            for k, v in outputs["forward_out"].items()
-            if k in self.predict_keys
-        }
+        forward_out = outputs["forward_out"]
+        self._warn_unknown_predict_keys(forward_out)
+        return {k: v for k, v in forward_out.items() if k in self.predict_keys}
+
+    def _warn_unknown_predict_keys(self, forward_out: dict) -> None:
+        """Warn once if `predict_keys` requests columns the model never produces."""
+        if getattr(self, "_predict_keys_checked", False):
+            return
+        self._predict_keys_checked = True
+        missing = [k for k in self.predict_keys if k not in forward_out]
+        if missing:
+            _logger.warning(
+                "predict_keys not produced by this integrator (ignored): %s. "
+                "Available outputs: %s",
+                sorted(missing),
+                sorted(forward_out),
+            )
 
     def _profile_basis_penalty(self) -> tuple[Tensor, dict[str, Tensor]]:
         """Regularization penalties on the learned qp decoder weight W.
 
         - Smoothness: mean squared spatial gradient across (D, H, W) per
           column, penalizing high-frequency structure in W.
-        - Orthogonality: mean squared off-diagonal entry of the column-
-          normalized Gram matrix, penalizing redundant / collinear columns.
         Returns (total_penalty, components_dict). Zero and empty when
         disabled or when qp has no decoder.weight (e.g. fixed basis).
         """
@@ -226,13 +265,9 @@ class BaseIntegrator(pl.LightningModule):
         qp = self.surrogates["qp"] if "qp" in self.surrogates else None
         decoder = getattr(qp, "decoder", None)
         W = getattr(decoder, "weight", None)
-        smooth_w = self.qp_smoothness_weight
-        ortho_w = self.qp_orthogonality_weight
+        # The smoothness penalty weight is owned by the profile surrogate.
+        smooth_w = float(getattr(qp, "smoothness_weight", 0.0))
         if W is None or W.dim() != 2:
-            return zero, {}
-        if (smooth_w is None or smooth_w == 0) and (
-            ortho_w is None or ortho_w == 0
-        ):
             return zero, {}
 
         shape = self.shoebox_shape
@@ -257,15 +292,6 @@ class BaseIntegrator(pl.LightningModule):
             smooth = sq_sum / max(n_terms, 1)
             components["profile_smoothness"] = smooth.detach()
             total = total + smooth_w * smooth
-
-        if ortho_w is not None and ortho_w > 0:
-            W_n = W / (W.norm(dim=0, keepdim=True) + 1e-8)
-            gram = W_n.T @ W_n
-            off_sq = (gram.pow(2)).sum() - float(d)
-            denom = max(d * (d - 1), 1)
-            ortho = off_sq / denom
-            components["profile_orthogonality"] = ortho.detach()
-            total = total + ortho_w * ortho
 
         return total, components
 
@@ -315,16 +341,18 @@ class BaseIntegrator(pl.LightningModule):
         for name, param in self.named_parameters():
             if not param.requires_grad:
                 continue
-            if name.endswith("surrogates.qp.decoder.weight"):
+            # any surrogate decoder weight (e.g. surrogates.qp.decoder.weight)
+            if name.startswith("surrogates.") and name.endswith(
+                ".decoder.weight"
+            ):
                 decoder_params.append(param)
             else:
                 other_params.append(param)
         if not decoder_params:
             raise RuntimeError(
-                "decoder_weight_decay is set but no "
-                "'surrogates.qp.decoder.weight' parameter was found. "
-                "Only the learned_basis_profile surrogate exposes this; "
-                "set decoder_weight_decay=null for other surrogates."
+                "decoder_weight_decay is set but no surrogate "
+                "'.decoder.weight' parameter was found; "
+                "set decoder_weight_decay=null for surrogates without a decoder."
             )
         return torch.optim.Adam(
             [

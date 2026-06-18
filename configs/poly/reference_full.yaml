@@ -1,0 +1,179 @@
+integrator:
+  name: hierarchical            # registered integrator; also: hierarchical_3enc
+  args:
+    data_dim: 2d                # Laue shoeboxes are single-slice images
+    d: 1
+    h: 25
+    w: 25
+    encoder_out: 64
+    mc_samples: 50
+    predict_keys: default       # 'default' or an explicit list of output columns
+
+optimizer:
+  lr: 0.001
+  weight_decay: 0.0
+  decoder_weight_decay: null
+  lr_schedule: cosine_warmup    # null | cosine_warmup | step_linear_warmup
+  warmup_epochs: 5
+  warmup_steps: 0
+  lr_min: 1.0e-5
+
+encoders:
+  - name: profile_encoder
+    args:
+      data_dim: 2d
+      in_channels: 1
+      input_shape: [25, 25]
+      encoder_out: 64
+      conv1_out_channels: 64
+      conv1_kernel_size: [3, 3]
+      conv1_padding: [1, 1]
+      norm1_num_groups: 4
+      pool_kernel_size: [2, 2]
+      pool_stride: [2, 2]
+      conv2_out_channels: 128
+      conv2_kernel_size: [3, 3]
+      conv2_padding: [0, 0]
+      norm2_num_groups: 4
+      dropout: 0.0
+  - &intensity_encoder          # 4 intensity encoders: k_i, r_i, k_bg, r_bg
+    name: intensity_encoder
+    args:
+      data_dim: 2d
+      in_channels: 1
+      encoder_out: 64
+      conv1_out_channels: 64
+      conv1_kernel_size: [3, 3]
+      conv1_padding: [1, 1]
+      norm1_num_groups: 4
+      pool_kernel_size: [2, 2]
+      pool_stride: [2, 2]
+      conv2_out_channels: 128
+      conv2_kernel_size: [3, 3]
+      conv2_padding: [0, 0]
+      norm2_num_groups: 4
+      conv3_out_channels: 256
+      conv3_kernel_size: [3, 3]
+      conv3_padding: [1, 1]
+      norm3_num_groups: 8
+  - *intensity_encoder
+  - *intensity_encoder
+  - *intensity_encoder
+
+surrogates:
+  qp:
+    name: learned_basis_profile
+    args:
+      input_dim: 64
+      latent_dim: 16            # poly typically uses a larger profile latent
+      output_dim: 625           # h*w for 2d (injected from geometry if omitted)
+      init_std: 0.5
+      prior_scale: 3.0
+      smoothness_weight: 0.0
+  qbg:
+    name: gamma
+    args:
+      reparameterization: mean_fano   # shape_rate | mean_fano | nakagami
+      in_features: 64
+      eps: 1.0e-6
+      k_min: 0.1                       # higher floor for bright Laue spots
+      positive_constraint: softplus    # softplus | exp; or a [head1, head2] pair
+  qi:
+    name: gamma
+    args:
+      reparameterization: mean_fano
+      in_features: 64
+      eps: 1.0e-6
+      k_min: 0.1
+      positive_constraint: softplus
+
+loss:
+  name: polychromatic_wilson
+  args:
+    # --- learned spectrum G(lambda) for the Wilson prior (Laue-specific) ---
+    degree: 40                  # Chebyshev order of log G(lambda)
+    lambda_min: 0.95            # from dataset.yaml if omitted
+    lambda_max: 1.25
+    spectrum_init_from: null    # path to a checkpoint to warm-start G/B/alpha
+    freeze_prior: false         # freeze the spectrum + B (+ alpha) parameters
+    # --- shared Wilson prior ---
+    init_log_B: 3.0
+    b_min: 0.0
+    learn_concentration: false
+    init_alpha: 1.0
+    n_bins: 1                   # 1 = single global Wilson prior
+    # --- fixed geometric corrections (Ren & Moffat 1995) ---
+    polarization: false         # requires beam_center when true
+    polarization_fraction: 0.99
+    lorentz: false
+    beam_center: null           # [cx, cy]; from dataset.yaml if omitted
+    # --- KL weights ---
+    pi_weight: 1.0
+    pbg_weight: 1.0
+    pprf_weight: 1.0
+    # --- background prior (scalar Gamma) ---
+    bg_rate: 1.0                # auto-filled from <data_dir>/bg_prior.npy when present
+    bg_concentration: 1.0
+    # --- optional explicit / learned priors (advanced; default off) -------
+    # pi_cfg:  {name: gamma, params: {concentration: 1.0, rate: 0.5}, weight: 1.0}
+    # pbg_cfg: {name: gamma, params: {concentration: 1.0, rate: 0.5}, weight: 1.0}
+    # pprf_cfg: {name: dirichlet, params: {concentration: conc.pt, shape: [1, 25, 25]}, weight: 1.0}
+    # concentration_cfg: {degree: 4, d_min: 1.5, d_max: 50.0, init_alpha: 1.0}
+    # bg_prior_cfg:      {degree: 4, r_min: 0.0, r_max: 1500.0, init_rate: 1.0, init_alpha: 1.0}
+    # profile_prior_cfg: {degree: 4, r_min: 0.0, r_max: 1500.0, init_scale: 3.0, fourier_order: 0}
+
+data_loader:
+  name: polychromatic_data
+  args:
+    data_dir: /path/to/hewl_laue/pytorch_data
+    batch_size: 512
+    val_split: 0.2
+    test_split: 0.0
+    num_workers: 8
+    include_test: true
+    subset_size: null
+    cutoff: null
+    min_valid_pixels: 10
+    transform: anscombe         # anscombe | log1p | none (derived from dataset.yaml if omitted)
+    D: 1
+    H: 25
+    W: 25
+    shoebox_file_names:
+      data_dir: /path/to/hewl_laue/pytorch_data
+      counts: counts.pt
+      masks: masks.pt
+      reference: metadata.pt
+      standardized_counts: null
+
+trainer:
+  max_epochs: 100
+  accelerator: gpu              # cpu | gpu | auto
+  devices: 1
+  logger: true
+  precision: '32'               # '16' | '32'
+  check_val_every_n_epoch: 2
+  log_every_n_steps: 1
+  enable_checkpointing: true
+  deterministic: false
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+
+# Optional: early stopping (omit the section to disable).
+early_stop:
+  monitor: val elbo
+  mode: min
+  patience: 3
+  min_delta: 0.0
+  strict: true
+
+# Optional: checkpoint selection.
+checkpoint:
+  save_top_k: -1
+  monitor: val elbo
+  mode: min
+
+output:
+  refl_file: /path/to/reflections.refl
+  dials_merge_html: null
+  phenix_refine_log: null
+  anomalous_peaks: null

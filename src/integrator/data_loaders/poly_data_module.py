@@ -55,7 +55,6 @@ class PolychromaticDataModule(pl.LightningDataModule):
         D: int = 1,
         H: int = 25,
         W: int = 25,
-        anscombe: bool = True,
         transform: str | None = None,
     ):
         super().__init__()
@@ -79,15 +78,13 @@ class PolychromaticDataModule(pl.LightningDataModule):
             "standardized_counts": None,
         }
 
-        if transform is None:
-            self.transform = "anscombe" if anscombe else "none"
-        elif transform not in ("anscombe", "log1p", "none"):
+        transform = transform or "none"
+        if transform not in ("anscombe", "log1p", "none"):
             raise ValueError(
                 f"transform must be 'anscombe', 'log1p', or 'none'; "
                 f"got {transform!r}"
             )
-        else:
-            self.transform = transform
+        self.transform = transform
 
         self.full_dataset = None
         self.beam_center_px = None
