@@ -65,7 +65,9 @@ def load_data(path, map_location="cpu"):
     try:
         return torch.load(target, weights_only=True, map_location=map_location)
     except Exception:
-        return torch.load(target, weights_only=False, map_location=map_location)
+        return torch.load(
+            target, weights_only=False, map_location=map_location
+        )
 
 
 def load_metadata(path, map_location="cpu") -> dict:

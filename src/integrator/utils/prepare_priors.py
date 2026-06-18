@@ -44,8 +44,6 @@ def prepare_per_bin_priors(
     if n_bins <= 0:
         n_bins = int(loss_args.get("n_bins", 1))
 
-    # lambda_min/max now come from dataset.yaml (mksbox --laue), wired by resolve_config.
-
     # Auto-compute d_min/d_max for concentration_cfg from data
     conc_cfg = loss_args.get("concentration_cfg")
     if isinstance(conc_cfg, dict) and (
