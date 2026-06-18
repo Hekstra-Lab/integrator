@@ -134,7 +134,7 @@ data_loader:
     subset_size: null
     cutoff: null
     min_valid_pixels: 10
-    transform: anscombe         # anscombe | log1p | none (derived from dataset.yaml if omitted)
+    transform: anscombe         # anscombe | log1p | standardization (derived from dataset.yaml if omitted)
     D: 1
     H: 25
     W: 25

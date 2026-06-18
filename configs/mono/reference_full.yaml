@@ -87,7 +87,7 @@ surrogates:
   qbg:
     name: gamma
     args:
-      reparameterization: shape_rate  # shape_rate | mean_fano | nakagami  (aliases a|b|e)
+      reparameterization: mean_fano  # shape_rate | mean_fano | nakagami  (aliases a|b|e)
       in_features: 64                 # = encoder_out (injected if omitted)
       eps: 1.0e-6
       k_min: 0.01                     # floor on the Gamma shape (rsample stability)
@@ -95,7 +95,7 @@ surrogates:
   qi:
     name: gamma
     args:
-      reparameterization: shape_rate
+      reparameterization: mean_fano
       in_features: 64
       eps: 1.0e-6
       k_min: 0.01
@@ -143,7 +143,7 @@ data_loader:
     min_valid_pixels: 10        # drop shoeboxes with fewer valid pixels
     get_dxyz: false             # also load per-pixel dxyz offsets
     single_sample_index: null   # restrict to one reflection index (debugging)
-    transform: anscombe         # anscombe | log1p | none (derived from dataset.yaml if omitted)
+    transform: anscombe         # anscombe | log1p | standardization (derived from dataset.yaml if omitted)
     D: 3                        # geometry (filled from dataset.yaml if omitted)
     H: 21
     W: 21

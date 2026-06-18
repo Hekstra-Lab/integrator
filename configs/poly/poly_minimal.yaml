@@ -1,57 +1,26 @@
+mode: polychromatic
+
 integrator:
   name: hierarchical
   args:
-    lr: 0.001
-    encoder_out: &eo 64
-    lr_schedule: cosine_warmup
-    mc_samples: &mc 50
-    predict_keys: [refl_ids, qi_mean, qi_var, qbg_mean, qbg_var, intensity.sum.value, intensity.sum.variance, background.sum.value, background.sum.variance, d, wavelength, group_label, qp_mean]
+    encoder_out: 64
+    mc_samples: 100
+    predict_keys: [refl_ids, qi_mean, qi_var, qbg_mean, qbg_var,
+                  intensity.sum.value, intensity.sum.variance, background.sum.value,
+                  background.sum.variance, d, wavelength, group_label, qp_mean]
 
-# profile + 4 intensity encoders (k_i, r_i, k_bg, r_bg); conv layers from presets
-encoders:
-- name: profile_encoder
-  args:
-    encoder_out: *eo
-- &intensity_encoder
-  name: intensity_encoder  # k_i
-  args:
-    encoder_out: *eo
-- *intensity_encoder  # r_i 
-- *intensity_encoder # k_bg
-- *intensity_encoder # k_i
-
-surrogates:
-  qp:
-    name: learned_basis_profile
-    args:
-      input_dim: *eo
-      latent_dim: 16
-  qi:
-    name: gammaB
-    args:
-      in_features: *eo
-      k_min: 0.1
-  qbg:
-    name: gammaB
-    args:
-      in_features: *eo
-      k_min: 0.1
-
-loss:
-  name: polychromatic_wilson
-  args:
-    mc_samples: *mc
-    degree: 40
+optimizer:
+  lr: 0.001
+  lr_schedule: cosine_warmup
 
 data_loader:
-  name: polychromatic_data
   args:
     data_dir: /n/hekstra_lab/people/aldama/integrator_data/hewl_1118/pytorch_data
-    batch_size: 512
+    batch_size: 2048
     val_split: 0.2
 
 trainer:
-  max_epochs: 100
+  max_epochs: 20
   accelerator: gpu
   devices: 1
   gradient_clip_val: 1.0
