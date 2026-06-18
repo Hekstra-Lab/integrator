@@ -25,7 +25,7 @@ def _default_run_name() -> str:
     from datetime import datetime
     from uuid import uuid4
 
-    return f"run_{datetime.now():%Y%m%d}_{uuid4().hex[:4]}"
+    return f"run_{datetime.now():%Y%m%d-%H%M%S}_{uuid4().hex[:4]}"
 
 
 def parse_args():
