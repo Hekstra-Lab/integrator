@@ -44,6 +44,7 @@ def data_path(path) -> Path | None:
 
 
 def load_data(path, map_location="cpu"):
+    """Load a tensor or dict-of-tensors"""
     target = data_path(path) or Path(path)
     if target.suffix == ".npy":
         arr = np.load(target, allow_pickle=True)
