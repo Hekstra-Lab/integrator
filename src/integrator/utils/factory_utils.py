@@ -801,7 +801,7 @@ def _inject_runtime_surrogate_args(
 ) -> None:
     """Inject runtime-derived args into each surrogate that declares them.
 
-    The surrogate's `__init__` is the source of truth — adding a new surrogate
+    The surrogate's `__init__` is the source of truth - adding a new surrogate
     needs no edit here, just the matching arg names.
     """
     runtime = {

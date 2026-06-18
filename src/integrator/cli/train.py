@@ -41,7 +41,7 @@ def parse_args():
         help="Path to configuration YAML file",
     )
 
-    # Run location: a run dir is created under --log-dir with an auto name,
+    # Run location: a run dir is created under --log-dir with an auto-generated name,
     # unless --run-dir gives an exact path.
     parser.add_argument(
         "--log-dir",
@@ -510,7 +510,7 @@ def main():
     logger.info("Training complete!")
     # final summary, always shown: where the run lives + how to predict from it
     print(f"\nRun directory: {run_dir}")
-    print(f"Predict with:  integrator.pred --run-dir {run_dir}")
+    print(f"Predict with:  integrator.predict --run-dir {run_dir}")
 
 
 if __name__ == "__main__":

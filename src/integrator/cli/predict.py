@@ -46,20 +46,13 @@ def parse_args():
     )
     parser.add_argument(
         "--write-mtz",
-        type=str,
+        action="store_true",
         help="Write predictions as an .mtz file; for polychromatic data only",
     )
     parser.add_argument(
         "--batch-size",
         type=int,
         help="Integer value specifying the size of each training batch",
-    )
-    parser.add_argument(
-        "--save-preds-as",
-        type=str,
-        default="parquet",
-        choices=["parquet"],
-        help="Filetype to save predictions as (only parquet is supported)",
     )
     parser.add_argument(
         "--list-keys",
@@ -79,7 +72,7 @@ def parse_args():
 
 def _resolve_sources(args):
     """Resolve (config, checkpoints, pred_dir) from --run-dir and/or the explicit
-    --config / --ckpt / --out-dir overrides. Each override wins over the run dir."""
+    --config / --ckpt / --out-dir overrides."""
     from pathlib import Path
 
     import yaml
@@ -199,7 +192,7 @@ def main():
         )
         if has_preds:
             logger.info(
-                "Predictions for epoch %d already exist — skipping inference",
+                "Predictions for epoch %d already exist - skipping inference",
                 epoch,
             )
         else:
@@ -238,22 +231,20 @@ def main():
                 ckpt_dir=ckpt_dir,
                 refl_file=refl_file,
                 epoch=epoch,
-                filetype=args.save_preds_as,
+                filetype="parquet",
             )
 
         if args.write_mtz:
             from integrator.io import get_pred_files
 
             logger.info("Writing .mtz output for epoch %d", epoch)
-            pred_data = get_pred_files(
-                ckpt_dir=ckpt_dir, filetype=args.save_preds_as
-            )
+            pred_data = get_pred_files(ckpt_dir=ckpt_dir, filetype="parquet")
             data_dir = Path(config["data_loader"]["args"]["data_dir"])
             write_mtz_from_preds(
                 pred_data=pred_data,
                 metadata_path=data_dir / "metadata.npy",
                 data_dir=data_dir,
-                out_path=ckpt_dir / args.write_mtz,
+                out_path=ckpt_dir / f"preds_epoch_{epoch:04d}.mtz",
             )
 
     logger.info("Prediction complete!")
@@ -262,7 +253,7 @@ def main():
         import polars as pl
     except ImportError:
         logger.warning(
-            "polars not installed — skipping test_preds_all.parquet"
+            "polars not installed - skipping test_preds_all.parquet"
             " aggregation."
         )
     else:
@@ -271,8 +262,7 @@ def main():
 
         if not _glob(parquet_glob):
             logger.info(
-                "No parquet files under %s — skipping test-set aggregation"
-                " (use --save-preds-as parquet if you want it).",
+                "No parquet files under %s - skipping test-set aggregation",
                 pred_dir,
             )
         else:
@@ -280,7 +270,7 @@ def main():
             schema = lf.collect_schema()
             if "is_test" not in schema:
                 logger.info(
-                    "is_test not in predictions — skipping test-set aggregation"
+                    "is_test not in predictions - skipping test-set aggregation"
                 )
             else:
                 out_path = pred_dir / "test_preds_all.parquet"
