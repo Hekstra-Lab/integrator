@@ -17,7 +17,7 @@ def parse_args():
         "--run-dir",
         type=str,
         required=False,
-        help="Run dir with run_log.yaml (config + checkpoints + predictions)",
+        help="Run dir with run_paths.yaml (config + checkpoints + predictions)",
     )
     # explicit overrides: use these to run without a --run-dir, or to override
     # individual pieces of one
@@ -89,7 +89,7 @@ def _resolve_sources(args):
     meta: dict = {}
     if args.run_dir:
         meta = yaml.safe_load(
-            (Path(args.run_dir) / "run_log.yaml").read_text()
+            (Path(args.run_dir) / "run_paths.yaml").read_text()
         )
 
     config_path = args.config or meta.get("config")

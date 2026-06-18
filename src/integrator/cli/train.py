@@ -400,7 +400,7 @@ def main():
         }
         pl_logger.log_hyperparams(metadata)
 
-    m_fname = run_dir / "run_log.yaml"
+    m_fname = run_dir / "run_paths.yaml"
     m_fname.write_text(yaml.safe_dump(metadata))
     logger.info(f"Saved run_metadata: {m_fname}")
 
