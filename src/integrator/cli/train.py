@@ -174,17 +174,17 @@ def parse_args():
 
     # Loss weights
     parser.add_argument(
-        "--pprf-weight",
+        "--profile-kl-weight",
         type=float,
         help="Profile KL weight",
     )
     parser.add_argument(
-        "--pbg-weight",
+        "--background-kl-weight",
         type=float,
         help="Background KL weight",
     )
     parser.add_argument(
-        "--pi-weight",
+        "--intensity-kl-weight",
         type=float,
         help="Intensity KL weight",
     )
@@ -196,7 +196,7 @@ def parse_args():
 
     # Data
     parser.add_argument(
-        "--val-split",
+        "--validation-split",
         type=float,
         help="Fraction of data for validation",
     )

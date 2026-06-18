@@ -42,6 +42,11 @@ def parse_args():
         help="Filetype to save predictions as (only parquet is supported)",
     )
     parser.add_argument(
+        "--list-keys",
+        action="store_true",
+        help="Print the predict_keys available from this data/model, then exit",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="count",
@@ -99,6 +104,20 @@ def main():
     data_loader.setup()
     inject_binning_labels(data_loader, config)
 
+    if args.list_keys:
+        # run one forward pass (random weights are fine) to enumerate the
+        # columns this data + model can emit as predict_keys
+        integrator = construct_integrator(config)
+        integrator.eval()
+        batch = next(iter(data_loader.predict_dataloader()))
+        with torch.no_grad():
+            out = integrator(*batch)
+        keys = sorted(out["forward_out"].keys())
+        print(f"Available predict_keys ({len(keys)}):")
+        for k in keys:
+            print(f"  {k}")
+        return
+
     # path to input refl file (only needed for --write-refl)
     refl_file = config.get("output", {}).get("refl_file")
     if args.write_refl and not refl_file:
@@ -123,35 +142,39 @@ def main():
 
         # Skip prediction if outputs already exist, but still
         # run post-processing (write-refl, write-mtz) below.
-        has_preds = any(ckpt_dir.glob("preds_epoch_*"))
+        has_preds = (
+            any(ckpt_dir.glob("preds_epoch_*"))
+            or (ckpt_dir / "pred.parquet").exists()
+        )
         if has_preds:
             logger.info(
                 "Predictions for epoch %d already exist — skipping inference",
                 epoch,
             )
         else:
-            callbacks = []
+            integrator = construct_integrator(config)
+            integrator.load_state_dict(
+                torch.load(ckpt.as_posix())["state_dict"]
+            )
+            if torch.cuda.is_available():
+                integrator.to(torch.device("cuda"))
+            integrator.eval()
+
+            # qp_mean is a large per-pixel vector:
+            # shard to manage memory;
+            # otherwise everything fits in one pred.parquet
+            partition = "qp_mean" in integrator.predict_keys
             pred_writer = BatchPredWriter(
                 output_dir=ckpt_dir,
                 write_interval="batch",
                 epoch=epoch,
+                partition=partition,
             )
-            callbacks.append(pred_writer)
-
             trainer = construct_trainer(
                 config,
-                callbacks=callbacks,
+                callbacks=[pred_writer],
                 logger=False,
             )
-
-            ckpt_ = torch.load(ckpt.as_posix())
-            integrator = construct_integrator(config)
-            integrator.load_state_dict(ckpt_["state_dict"])
-
-            if torch.cuda.is_available():
-                integrator.to(torch.device("cuda"))
-
-            integrator.eval()
             trainer.predict(
                 integrator,
                 return_predictions=False,

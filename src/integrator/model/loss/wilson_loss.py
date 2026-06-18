@@ -37,9 +37,9 @@ class WilsonLoss(nn.Module):
         pbg_cfg=None,
         pprf_cfg=None,
         # KL weights
-        pprf_weight: float = 1.0,
-        pbg_weight: float = 1.0,
-        pi_weight: float = 1.0,
+        profile_kl_weight: float = 1.0,
+        background_kl_weight: float = 1.0,
+        intensity_kl_weight: float = 1.0,
     ):
         super().__init__()
         self.b_min = b_min  # minimum B-factor
@@ -59,11 +59,11 @@ class WilsonLoss(nn.Module):
         self.pbg_cfg = pbg_cfg
         self.pi_cfg = pi_cfg
 
-        self.pprf_weight = (
-            pprf_cfg.weight if pprf_cfg is not None else pprf_weight
+        self.profile_kl_weight = (
+            pprf_cfg.weight if pprf_cfg is not None else profile_kl_weight
         )
-        self.pbg_weight = pbg_cfg.weight if pbg_cfg is not None else pbg_weight
-        self.pi_weight = pi_cfg.weight if pi_cfg is not None else pi_weight
+        self.background_kl_weight = pbg_cfg.weight if pbg_cfg is not None else background_kl_weight
+        self.intensity_kl_weight = pi_cfg.weight if pi_cfg is not None else intensity_kl_weight
 
         # Point-estimate B factor
         # used by polychromatic and monochromatic loss classes
@@ -107,7 +107,7 @@ class WilsonLoss(nn.Module):
             qp, "prior_scale", _DEFAULT_PROFILE_PRIOR_SCALE
         )
         kl_prf = compute_profile_kl(
-            qp, prf_prior_scale, self.pprf_weight, device
+            qp, prf_prior_scale, self.profile_kl_weight, device
         )
         kl = kl + kl_prf
 
@@ -119,7 +119,7 @@ class WilsonLoss(nn.Module):
 
         p_i = Gamma(concentration=torch.ones_like(tau), rate=tau)
 
-        kl_i = kl_divergence(qi, p_i) * self.pi_weight
+        kl_i = kl_divergence(qi, p_i) * self.intensity_kl_weight
         kl = kl + kl_i
 
         # background prior: shared Gamma, or per-resolution-bin
@@ -135,7 +135,7 @@ class WilsonLoss(nn.Module):
             bg_conc = self.bg_concentration
             bg_rate = self.bg_rate
         p_bg = Gamma(concentration=bg_conc, rate=bg_rate)
-        kl_bg = kl_divergence(qbg, p_bg) * self.pbg_weight
+        kl_bg = kl_divergence(qbg, p_bg) * self.background_kl_weight
         kl = kl + kl_bg
 
         # Poisson NLL

@@ -10,7 +10,7 @@ from integrator.model.distributions.profile_surrogates import (
 def compute_profile_kl(
     qp: Distribution | ProfileSurrogateOutput,
     prior_scale: float | Tensor,
-    pprf_weight: float,
+    profile_kl_weight: float,
     device: torch.device,
 ) -> Tensor:
     if isinstance(qp, ProfileSurrogateOutput):
@@ -19,7 +19,7 @@ def compute_profile_kl(
             prior_scale = prior_scale.unsqueeze(-1)
         p = Normal(torch.zeros_like(qp.loc), prior_scale)
         kl = kl_divergence(q, p).sum(dim=-1)
-        return kl * pprf_weight
+        return kl * profile_kl_weight
 
     from torch.distributions import Dirichlet
 
@@ -27,7 +27,7 @@ def compute_profile_kl(
         n_pixels = qp.concentration.shape[-1]
         prior = Dirichlet(torch.ones(n_pixels, device=device))
         kl = kl_divergence(qp, prior)
-        return kl * pprf_weight
+        return kl * profile_kl_weight
 
     raise NotImplementedError(
         f"Profile surrogate of type {type(qp).__name__} is not supported "

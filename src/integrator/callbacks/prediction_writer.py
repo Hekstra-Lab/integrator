@@ -45,6 +45,7 @@ class BatchPredWriter(BasePredictionWriter):
         epoch: int | None = None,
         filename_prefix: str = "preds",
         flush_every: int = 10,
+        partition: bool = False,
     ):
         super().__init__(write_interval)
         self.output_dir = Path(output_dir)
@@ -52,6 +53,7 @@ class BatchPredWriter(BasePredictionWriter):
         self.epoch = epoch
         self.filename_prefix = filename_prefix
         self.flush_every = flush_every
+        self.partition = partition
 
         self._buffer: list[pl.DataFrame] = []
         self._flush_idx = 0
@@ -114,11 +116,18 @@ class BatchPredWriter(BasePredictionWriter):
 
         self._buffer.append(pl.DataFrame(batch_cpu))
 
-        if len(self._buffer) >= self.flush_every:
+        # only shard when partitioning; otherwise accumulate for one file
+        if self.partition and len(self._buffer) >= self.flush_every:
             self._flush(trainer)
 
         del prediction
         torch.cuda.empty_cache()
 
     def on_predict_epoch_end(self, trainer, pl_module):
-        self._flush(trainer)
+        if self.partition:
+            self._flush(trainer)
+        elif self._buffer:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            df = pl.concat(self._buffer, rechunk=True)
+            self._buffer.clear()
+            df.write_parquet(self.output_dir / "pred.parquet")

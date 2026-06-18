@@ -21,7 +21,15 @@ def get_pred_files(
         data = torch.load(pred_file, weights_only=False)
         data = unstack_preds(data)
     elif filetype == "parquet":
-        pred_files = list(ckpt_dir.glob("preds_epoch_*.parquet"))
+        # single consolidated file, or sharded files for profile inclusion
+        single = ckpt_dir / "pred.parquet"
+        pred_files = (
+            [single]
+            if single.exists()
+            else list(ckpt_dir.glob("preds_epoch_*.parquet"))
+        )
+        if not pred_files:
+            raise RuntimeError(f"No prediction files found in {ckpt_dir}")
         lf = pl.scan_parquet(pred_files)
         refl_ids = lf.select("refl_ids").collect().to_numpy().ravel()
         qi_mean = lf.select("qi_mean").collect().to_numpy().ravel()

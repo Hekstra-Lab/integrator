@@ -86,7 +86,6 @@ _ENCODER_PRESETS: dict[tuple[str, str], dict] = {
     ),
 }
 
-
 _MODE_DEFAULTS: dict[str, dict[str, str]] = {
     "monochromatic": {
         "loss": "monochromatic_wilson",
@@ -105,6 +104,75 @@ for _m, _preset in _MODE_DEFAULTS.items():
             raise ValueError(
                 f"mode {_m!r}: {_cat} {_name!r} is not in REGISTRY[{_cat!r}]"
             )
+
+# reverse lookup: a loss name implies its mode (configs may set loss.name directly)
+_MODE_BY_LOSS = {p["loss"]: m for m, p in _MODE_DEFAULTS.items()}
+
+# Minimal per-mode prediction columns
+_DEFAULT_PREDICT_KEYS: dict[str, list[str]] = {
+    "monochromatic": [
+        "refl_ids",
+        "is_test",
+        "qi_mean",
+        "qi_var",
+        "qbg_mean",
+        "qbg_var",
+        "intensity.prf.value",
+        "intensity.prf.variance",
+        "intensity.sum.value",
+        "intensity.sum.variance",
+        "background.mean",
+        "d",
+        "H",
+        "K",
+        "L",
+    ],
+    "polychromatic": [
+        "refl_ids",
+        "is_test",
+        "qi_mean",
+        "qi_var",
+        "qbg_mean",
+        "qbg_var",
+        "intensity.sum.value",
+        "intensity.sum.variance",
+        "background.sum.value",
+        "background.sum.variance",
+        "d",
+        "wavelength",
+        "H",
+        "K",
+        "L",
+    ],
+}
+
+
+def _resolve_predict_keys(cfg: dict) -> None:
+    """Expand predict_keys ('default' -> mode minimal set) + append additional_predict_keys."""
+    iargs = cfg.get("integrator", {}).get("args")
+    if not isinstance(iargs, dict):
+        return
+    extra = iargs.pop("additional_predict_keys", None) or []
+    pk = iargs.get("predict_keys", "default")
+    if pk == "default":
+        loss_name = cfg.get("loss", {}).get("name")
+        mode = cfg.get("mode") or _MODE_BY_LOSS.get(loss_name)
+        base = _DEFAULT_PREDICT_KEYS.get(mode)
+        if base is None:
+            # unknown mode: leave "default" for the integrator's own fallback
+            if not extra:
+                return
+            base = []
+        pk = list(base)
+    else:
+        pk = list(pk)
+    seen: set[str] = set()
+    merged: list[str] = []
+    for k in pk + list(extra):
+        if k not in seen:
+            seen.add(k)
+            merged.append(k)
+    iargs["predict_keys"] = merged
 
 
 def _apply_encoder_preset(name: str, args: dict) -> dict:
@@ -760,6 +828,7 @@ def resolve_config(cfg: dict) -> dict:
     cfg = apply_dataset_defaults(cfg)
     _apply_mode_defaults(cfg)
     _inject_poly_metadata(cfg)
+    _resolve_predict_keys(cfg)
 
     iargs = cfg.get("integrator", {}).get("args", {})
     encoder_out = iargs.get("encoder_out", 64)

@@ -154,11 +154,11 @@ class RotationDataModule(pl.LightningDataModule):
         self,
         data_dir: Path,
         batch_size: int = 10,
-        val_split: float = 0.2,
+        validation_split: float = 0.2,
         num_workers: int = 3,
         include_test: bool = False,
         subset_size: int | None = None,
-        cutoff: float | None = None,
+        resolution_cutoff: float | None = None,
         min_valid_pixels: int = 10,
         shoebox_file_names: dict | None = None,
         transform: str | None = None,
@@ -166,11 +166,11 @@ class RotationDataModule(pl.LightningDataModule):
         super().__init__()
         self.data_dir = data_dir
         self.batch_size = batch_size
-        self.val_split = val_split
+        self.validation_split = validation_split
         self.include_test = include_test
         self.subset_size = subset_size
         self.num_workers = num_workers
-        self.cutoff = cutoff
+        self.resolution_cutoff = resolution_cutoff
         self.min_valid_pixels = min_valid_pixels
         self.full_dataset = None
         if shoebox_file_names is None:
@@ -227,14 +227,14 @@ class RotationDataModule(pl.LightningDataModule):
         )
 
         # Apply resolution cutoff before standardization
-        if self.cutoff is not None:
-            selection = reference["d"] < self.cutoff
+        if self.resolution_cutoff is not None:
+            selection = reference["d"] < self.resolution_cutoff
             n_cut = (~selection).sum().item()
             if n_cut > 0:
                 logger.info(
                     "Removed %d reflections with d >= %.2f",
                     n_cut,
-                    self.cutoff,
+                    self.resolution_cutoff,
                 )
             counts = counts[selection]
             masks = masks[selection]
@@ -296,7 +296,7 @@ class RotationDataModule(pl.LightningDataModule):
         self.test_dataset = Subset(self.full_dataset, test_idx.tolist())
 
         perm = torch.randperm(len(train_val_idx))
-        val_size = int(len(train_val_idx) * self.val_split)
+        val_size = int(len(train_val_idx) * self.validation_split)
         val_idx = train_val_idx[perm[:val_size]]
         train_idx = train_val_idx[perm[val_size:]]
 

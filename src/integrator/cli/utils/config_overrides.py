@@ -13,7 +13,7 @@ ARG_OVERRIDES = {
     "batch_size": (("data_loader", "args", "batch_size"), None),
     "data_dir": (("data_loader", "args", "data_dir"), str),
     "num_workers": (("data_loader", "args", "num_workers"), None),
-    "val_split": (("data_loader", "args", "val_split"), None),
+    "validation_split": (("data_loader", "args", "validation_split"), None),
     "subset_size": (("data_loader", "args", "subset_size"), None),
     "lr": (("optimizer", "lr"), None),
     "weight_decay": (("optimizer", "weight_decay"), None),
@@ -21,9 +21,9 @@ ARG_OVERRIDES = {
     "integrator_name": (("integrator", "name"), None),
     "qi": (("surrogates", "qi", "name"), None),
     "qbg": (("surrogates", "qbg", "name"), None),
-    "pprf_weight": (("loss", "args", "pprf_weight"), None),
-    "pbg_weight": (("loss", "args", "pbg_weight"), None),
-    "pi_weight": (("loss", "args", "pi_weight"), None),
+    "profile_kl_weight": (("loss", "args", "profile_kl_weight"), None),
+    "background_kl_weight": (("loss", "args", "background_kl_weight"), None),
+    "intensity_kl_weight": (("loss", "args", "intensity_kl_weight"), None),
     "n_bins": (("loss", "args", "n_bins"), None),
 }
 
