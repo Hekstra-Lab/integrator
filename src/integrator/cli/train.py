@@ -508,6 +508,9 @@ def main():
     )
 
     logger.info("Training complete!")
+    # final summary, always shown: where the run lives + how to predict from it
+    print(f"\nRun directory: {run_dir}")
+    print(f"Predict with:  integrator.pred --run-dir {run_dir}")
 
 
 if __name__ == "__main__":
