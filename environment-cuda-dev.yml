@@ -9,7 +9,7 @@
 #
 # To pin a specific CUDA toolkit (match the cluster driver), add e.g.
 #   - cuda-version=12.4
-# under dependencies. The pytorch-gpu metapackage selects the GPU build.
+# under dependencies. 
 
 name: integrator-cuda-dev
 channels:

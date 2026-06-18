@@ -37,7 +37,4 @@ dependencies:
   - pip:
       - laue-dials
       - "reciprocalspaceship @ git+https://github.com/rs-station/reciprocalspaceship"
-      # wandb is optional (dev extra only). Runtime logging falls back to a
-      # local CSV/PNG backend; install dev tooling for W&B (environment-dev.yml).
-      # The integrator package (editable).
       - "-e ."
