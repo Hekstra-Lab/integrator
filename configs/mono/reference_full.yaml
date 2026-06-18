@@ -7,7 +7,7 @@ integrator:
     w: 21                       # shoebox width
     encoder_out: 64             # embedding width feeding the surrogates
     mc_samples: 100             # Monte Carlo samples per forward pass
-    predict_keys: default       # 'default' or an explicit list of output columns
+    predict_keys: default       
 
 optimizer:
   lr: 0.001
@@ -91,14 +91,14 @@ loss:
   name: monochromatic_wilson
   args:
     # --- intensity (Wilson) prior: fixed Exponential, p(I) = Gamma(1, tau) ---
-    init_log_K: 0.0             # init scalar G = softplus(raw_G); mono-only
+    init_log_G: 0.0             # init scalar G = softplus(raw_G); mono-only
     lp_correction: false        # multiply tau by metadata['lp']; mono-only
     init_log_B: 3.0             # init Wilson B factor (softplus(raw_B) + b_min)
     b_min: 0.0
     # --- KL weights ---
-    pi_weight: 1.0
-    pbg_weight: 1.0
-    pprf_weight: 1.0
+    intensity_kl_weight: 1.0
+    background_kl_weight: 1.0
+    profile_kl_weight: 1.0
     # --- background Gamma prior ---
     # scalar by default; auto-filled (per resolution bin when n_bins > 1) from the
     # empirical Gamma MLE in <data_dir>/bg_prior_<n_bins>.npy when present
@@ -115,11 +115,11 @@ data_loader:
   args:
     data_dir: /path/to/hewl/pytorch_data
     batch_size: 1024
-    val_split: 0.2
+    validation_split: 0.2
     num_workers: 8
     include_test: true
     subset_size: null           # cap on reflections loaded (debugging)
-    cutoff: null                # resolution cutoff, or null
+    resolution_cutoff: null                # resolution cutoff, or null
     min_valid_pixels: 10        # drop shoeboxes with fewer valid pixels
     transform: anscombe         # anscombe | log1p | standardization (derived from dataset.yaml if omitted)
     shoebox_file_names:

@@ -3,11 +3,8 @@ mode: monochromatic # rotation method monochromatic crystallography
 integrator:
   name: hierarchical
   args:
-    encoder_out: 64 # hidden representation dimension 
+    encoder_out: 64 # hidden representation dimension
     mc_samples: 100 # number of monte carlo samples
-    predict_keys: [refl_ids, is_test, qi_mean, qi_var, qbg_mean,
-                  qbg_var, intensity.prf.value, intensity.prf.variance,
-                  background.mean, d, group_label, qp_mean, qp_loc, qp_scale]
 
 optimizer:
   lr: 0.001 # learning rate for the optimizer
@@ -17,4 +14,4 @@ data_loader:
   args:
     data_dir: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data
     batch_size: 2048
-    val_split: 0.2
+    validation_split: 0.2

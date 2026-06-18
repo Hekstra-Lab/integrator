@@ -1,13 +1,11 @@
 mode: polychromatic
 
+# integration model
 integrator:
   name: hierarchical
   args:
     encoder_out: 32 # dimension of the hidden representation
     mc_samples: 100 # number of Monte carlo samples to use
-    predict_keys: [refl_ids, qi_mean, qi_var, qbg_mean, qbg_var,
-                  intensity.sum.value, intensity.sum.variance, background.sum.value,
-                  background.sum.variance, d, wavelength, group_label, qp_mean]
 
 # Adam optimizer settings
 optimizer:
@@ -19,7 +17,7 @@ data_loader:
   args:
     data_dir: /n/hekstra_lab/people/aldama/integrator_data/hewl_1118/pytorch_data
     batch_size: 2048 # number of shoeboxes per iteration
-    val_split: 0.2 # fraction of dataset to use for validation
+    validation_split: 0.2 # fraction of dataset to use for validation
 
 # lightning trainer settings
 trainer:

@@ -7,7 +7,7 @@ integrator:
     w: 25
     encoder_out: 64
     mc_samples: 50
-    predict_keys: default       # 'default' or an explicit list of output columns
+    predict_keys: default       
 
 optimizer:
   lr: 0.001
@@ -76,7 +76,7 @@ surrogates:
       reparameterization: mean_fano   # shape_rate | mean_fano | nakagami
       in_features: 64
       eps: 1.0e-6
-      k_min: 0.1                       # higher floor for bright Laue spots
+      k_min: 0.1                       # minimum concentration (k) parameter 
       positive_constraint: softplus    # softplus | exp; or a [head1, head2] pair
   qi:
     name: gamma
@@ -104,15 +104,15 @@ loss:
     lorentz: false
     beam_center: null           # [dx, dy]; from dataset.yaml if omitted
     # --- KL weights ---
-    pi_weight: 1.0
-    pbg_weight: 1.0
-    pprf_weight: 1.0
+    intensity_kl_weight: 1.0
+    background_kl_weight: 1.0
+    profile_kl_weight: 1.0
     # --- background Gamma prior ---
     # scalar by default; 
     bg_rate: 1.0
     bg_concentration: 1.0
     n_bins: 1      # resolution shells for the per-bin background prior
-    # --- optional explicit priors (advanced; default off) -----------------
+    # --- optional explicit priors (default off) -----------------
     # pi_cfg:  {name: gamma, params: {concentration: 1.0, rate: 0.5}, weight: 1.0}
     # pbg_cfg: {name: gamma, params: {concentration: 1.0, rate: 0.5}, weight: 1.0}
     # pprf_cfg: {name: dirichlet, params: {concentration: conc.pt, shape: [1, 25, 25]}, weight: 1.0}
@@ -122,11 +122,11 @@ data_loader:
   args:
     data_dir: /path/to/hewl_laue/pytorch_data
     batch_size: 512
-    val_split: 0.2
+    validation_split: 0.2
     num_workers: 8
     include_test: true
     subset_size: null
-    cutoff: null
+    resolution_cutoff: null
     min_valid_pixels: 10
     transform: anscombe         # anscombe | log1p | standardization
     shoebox_file_names:
