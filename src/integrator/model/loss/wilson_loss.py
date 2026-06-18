@@ -24,13 +24,13 @@ class WilsonLoss(nn.Module):
     def __init__(
         self,
         *,
-        # Background Gamma prior: scalar, or per-resolution-bin arrays of length n_bins
+        # Background Gamma prior: scalar, or per-resolution-bin prior
         bg_rate: float | list[float] = 1.0,
         bg_concentration: float | list[float] = 1.0,
         # B factor
         init_log_B: float = 3.0,
         b_min: float = 0.0,
-        # Resolution bins backing a per-bin background prior
+        # Resolution bins for per-bin background prior
         n_bins: int = 1,
         # Prior configs from yaml
         pi_cfg=None,
@@ -42,10 +42,8 @@ class WilsonLoss(nn.Module):
         pi_weight: float = 1.0,
     ):
         super().__init__()
-        self.b_min = b_min
+        self.b_min = b_min  # minimum B-factor
         self.n_bins = n_bins
-        # 0-d (shared) or (n_bins,) per-bin background Gamma params; non-persistent
-        # buffers so they ride to the right device without entering the checkpoint
         self.register_buffer(
             "bg_concentration",
             torch.as_tensor(bg_concentration, dtype=torch.float32),
