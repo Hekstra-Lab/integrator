@@ -168,8 +168,13 @@ def miller_index_columns(
     }
     counts = {"n_friedelized": n_fried}
     if anomalous:
+        # Split I(+)/I(-) by flipping the sign of ACENTRIC F(-) observations.
+        # Centrics have I(+) == I(-) by symmetry, so they must NOT be split --
+        # they keep their pooled rep (one anomalous id). Without the `~centric`
+        # guard, centrics whose F(-) form gets an even ISYM are over-split, which
+        # inflates the anomalous reflection count by ~the centric count.
         canon = asu_hkl.copy()
-        is_minus = isym % 2 == 0
+        is_minus = (isym % 2 == 0) & (~centric)
         canon[is_minus] = -canon[is_minus]
         anom_ids, n_anom = _contiguous_group_ids(canon)
         columns["miller_idx_unfriedelized"] = torch.from_numpy(anom_ids)
