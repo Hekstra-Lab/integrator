@@ -168,6 +168,13 @@ def parse_args():
         default=0.1,
         help="fraction of reflections to flag as is_test (random)",
     )
+    common.add_argument(
+        "--anomalous",
+        action="store_true",
+        help="also write miller_idx_unfriedelized (Friedel pairs kept "
+        "separate) for anomalous merging. miller_idx_friedelized, centric, "
+        "and friedel_plus are always written.",
+    )
 
     laue = parser.add_argument_group("laue mode (--laue)")
     laue.add_argument(
@@ -253,7 +260,15 @@ def _save_concentration_from_memmap(
 
 
 def _write_spec(
-    args, out_dir: Path, counts_path: Path, *, polychromatic, crystal, stats
+    args,
+    out_dir: Path,
+    counts_path: Path,
+    *,
+    polychromatic,
+    crystal,
+    stats,
+    n_hkl=None,
+    scale=None,
 ):
     """Write the consolidated dataset.yaml (geometry, files, stats, crystal)."""
     from integrator.io import write_dataset_yaml
@@ -274,8 +289,46 @@ def _write_spec(
         crystal=crystal,
         stats=stats,
         refl_file=str(out_dir / args.refl_fname),
+        n_hkl=n_hkl,
+        scale=scale,
     )
     print(f"wrote dataset.yaml under {out_dir}")
+
+
+def _add_miller_index_columns(out_dir: Path, crystal_meta: dict, anomalous: bool):
+    """Augment the written metadata.npy for the merging model.
+
+    Adds miller_idx group ids (+ Friedel flags) and the Wilson resolution
+    statistic `s_sq = (sin(theta)/lambda)^2 = 1/(4 d^2)`. Returns the `n_hkl`
+    counts dict for the dataset spec.
+    """
+    from integrator.io import (
+        load_metadata,
+        miller_index_columns,
+        save_data,
+    )
+
+    meta = load_metadata(out_dir / "metadata.npy")
+    cols, n_hkl = miller_index_columns(
+        meta["H"],
+        meta["K"],
+        meta["L"],
+        space_group=crystal_meta["space_group_number"],
+        cell=crystal_meta["cell"],
+        anomalous=anomalous,
+    )
+    meta.update(cols)
+    added = sorted(cols)
+    if "d" in meta:
+        d = meta["d"].float().clamp(min=1e-6)
+        meta["s_sq"] = 1.0 / (4.0 * d.pow(2))  # (sin theta / lambda)^2
+        added.append("s_sq")
+    save_data(meta, out_dir / "metadata.npy")
+    extra = (
+        f", n_unfriedelized={n_hkl['n_unfriedelized']}" if anomalous else ""
+    )
+    print(f"  added {added}; n_friedelized={n_hkl['n_friedelized']}{extra}")
+    return n_hkl
 
 
 def _convert_npy_memmap_to_pt(npy_path: Path) -> Path:
@@ -644,6 +697,17 @@ def run_dials(args):
     )
     print(f"wrote metadata.npy under {out_dir}")
 
+    # Crystal symmetry + Miller-index group ids for the merging model.
+    crystal0 = experiments[0].crystal
+    sg_info = crystal0.get_space_group().info()
+    crystal_meta = {
+        "cell": [float(x) for x in crystal0.get_unit_cell().parameters()],
+        "space_group": sg_info.symbol_and_number(),
+        "space_group_number": int(sg_info.type().number()),
+        "beam_center_px": list(_beam_center_px(expt_path_in)),
+    }
+    n_hkl = _add_miller_index_columns(out_dir, crystal_meta, args.anomalous)
+
     stats = None
     if not args.no_stats:
         stats = _stats_from_memmap(
@@ -655,13 +719,16 @@ def run_dials(args):
             chunk=args.stats_chunk,
         )
         print("wrote concentration.npy")
+    scale_geom = _scale_geometry(reflections, crystal_meta["beam_center_px"])
     _write_spec(
         args,
         out_dir,
         counts_path,
         polychromatic=False,
-        crystal=None,
+        crystal=crystal_meta,
         stats=stats,
+        n_hkl=n_hkl,
+        scale=scale_geom,
     )
 
     if args.shoebox_format == "pt":
@@ -695,6 +762,25 @@ def _beam_center_px(expt_path: Path) -> tuple[float, float]:
     cx = bc_mm.dot(fast) / pix[0]
     cy = bc_mm.dot(slow) / pix[1]
     return (cx, cy)
+
+
+def _scale_geometry(reflections, beam_center) -> dict:
+    """Detector-geometry defaults for the merging model's MLP scale.
+
+    Derives the beam center, the max reflection radius, and the rotation-frame
+    range from the predicted centroids and stores them in dataset.yaml, so the
+    factory can auto-fill the scale's normalization (scale_beam_center /
+    scale_r_max / scale_frame_min / scale_frame_max) for the merging integrator.
+    """
+    x, y, z = (np.asarray(p) for p in reflections["xyzcal.px"].parts())
+    cx, cy = float(beam_center[0]), float(beam_center[1])
+    r = np.sqrt((x - cx) ** 2 + (y - cy) ** 2)
+    return {
+        "beam_center_px": [cx, cy],
+        "r_max": float(r.max()),
+        "frame_min": float(z.min()),
+        "frame_max": float(z.max()),
+    }
 
 
 def _path_to_image_num(path: str) -> int:
@@ -1112,6 +1198,9 @@ def run_laue(args):
     )
     print(f"wrote metadata.npy under {out_dir}")
 
+    # Miller-index group ids (+ Friedel flags) for the merging model.
+    n_hkl = _add_miller_index_columns(out_dir, crystal_meta, args.anomalous)
+
     stats = None
     if not args.no_stats:
         stats = _stats_from_memmap(
@@ -1123,6 +1212,7 @@ def run_laue(args):
             chunk=args.stats_chunk,
         )
         print("wrote concentration.npy")
+    scale_geom = _scale_geometry(reflections, beam_center_px)
     _write_spec(
         args,
         out_dir,
@@ -1130,6 +1220,8 @@ def run_laue(args):
         polychromatic=True,
         crystal=crystal_meta,
         stats=stats,
+        n_hkl=n_hkl,
+        scale=scale_geom,
     )
 
     if args.shoebox_format == "pt":

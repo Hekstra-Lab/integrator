@@ -13,6 +13,7 @@ from .metadata import (
     data_path,
     load_data,
     load_metadata,
+    miller_index_columns,
     refl_as_pt,
     save_data,
 )
@@ -30,6 +31,7 @@ __all__ = [
     "save_data",
     "data_path",
     "refl_as_pt",
+    "miller_index_columns",
     "write_mtz_from_preds",
     "get_pred_files",
     "write_refl_from_preds",

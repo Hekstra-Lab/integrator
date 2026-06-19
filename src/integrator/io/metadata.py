@@ -91,3 +91,87 @@ def refl_as_pt(
         fname = Path(out_fname)
     save_data(data, fname)
     return data
+
+
+def _contiguous_group_ids(hkl: np.ndarray) -> tuple[np.ndarray, int]:
+    """Contiguous integer id per unique (h, k, l) row."""
+    _, inverse = np.unique(hkl, axis=0, return_inverse=True)
+    inverse = inverse.astype(np.int64)
+    return inverse, (int(inverse.max()) + 1 if inverse.size else 0)
+
+
+def miller_index_columns(
+    H,
+    K,
+    L,
+    space_group,
+    cell=None,
+    anomalous: bool = False,
+) -> tuple[dict, dict]:
+    """Friedel-pooled / -separate Miller-index group ids + Friedel flags.
+
+    Maps each `(H, K, L)` to its asymmetric-unit representative
+    (`rs.utils.hkl_to_asu`) and assigns contiguous integer ids the merging model
+    batches and merges over:
+
+        miller_idx_friedelized    - Friedel-pooled id: both mates (H and -H)
+                                    share an id (Friedel's law applied).
+        miller_idx_unfriedelized  - Friedel-separate id: I(+) and I(-) get
+                                    distinct ids (only when `anomalous`).
+
+    Also returns `friedel_plus` (the I(+) member, ISYM odd) and `centric`.
+
+    Args:
+        H, K, L: per-observation Miller indices (int-like array or tensor).
+        space_group: `gemmi.SpaceGroup`, or an int number / Hermann-Mauguin str.
+        cell: 6 unit-cell params (only used for centric labeling); a placeholder
+            is used when None.
+        anomalous: also emit `miller_idx_unfriedelized`.
+
+    Returns:
+        `(columns, counts)`: `columns` maps each name to a torch tensor;
+        `counts` has `n_friedelized` and (if `anomalous`) `n_unfriedelized`.
+    """
+    import gemmi
+    import reciprocalspaceship as rs
+
+    if isinstance(space_group, gemmi.SpaceGroup):
+        sg = space_group
+    elif isinstance(space_group, int):
+        sg = gemmi.SpaceGroup(space_group)
+    else:
+        sg = gemmi.SpaceGroup(str(space_group).split("(")[0].strip())
+
+    H = _to_numpy(H).astype(np.int32).ravel()
+    K = _to_numpy(K).astype(np.int32).ravel()
+    L = _to_numpy(L).astype(np.int32).ravel()
+    hkl = np.stack([H, K, L], axis=1)
+
+    # ISYM odd = F(+)/hasu form, even = F(-). The pooled (friedelized) canonical
+    # is the asu representative with no sign flip, so both mates share it.
+    asu_hkl, isym = rs.utils.hkl_to_asu(hkl, sg)
+    friedel_plus = isym % 2 == 1
+    fried_ids, n_fried = _contiguous_group_ids(asu_hkl)
+
+    cellp = list(cell) if cell is not None else [1.0, 1.0, 1.0, 90.0, 90.0, 90.0]
+    ds = rs.DataSet(
+        {"H": H, "K": K, "L": L},
+        cell=gemmi.UnitCell(*cellp),
+        spacegroup=sg,
+    ).set_index(["H", "K", "L"])
+    centric = ds.label_centrics()["CENTRIC"].to_numpy().astype(bool)
+
+    columns = {
+        "miller_idx_friedelized": torch.from_numpy(fried_ids),
+        "friedel_plus": torch.from_numpy(np.ascontiguousarray(friedel_plus)),
+        "centric": torch.from_numpy(np.ascontiguousarray(centric)),
+    }
+    counts = {"n_friedelized": n_fried}
+    if anomalous:
+        canon = asu_hkl.copy()
+        is_minus = isym % 2 == 0
+        canon[is_minus] = -canon[is_minus]
+        anom_ids, n_anom = _contiguous_group_ids(canon)
+        columns["miller_idx_unfriedelized"] = torch.from_numpy(anom_ids)
+        counts["n_unfriedelized"] = n_anom
+    return columns, counts

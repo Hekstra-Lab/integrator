@@ -88,6 +88,13 @@ DEFAULT_DS_COLS = [
     "is_coset",
     "group_label",
     "profile_group_label",
+    # Merge / scaling columns (selected only if present in the reference file).
+    "miller_idx_friedelized",
+    "miller_idx_unfriedelized",
+    "centric",
+    "friedel_plus",
+    "absorption_sh",
+    "s_sq",
 ]
 
 
@@ -133,6 +140,8 @@ def _remove_flagged_variance(
     metadata: dict,
     filter_key: str = "intensity.prf.variance",
 ) -> tuple[torch.Tensor, torch.Tensor, dict]:
+    if filter_key not in metadata:
+        return counts, masks, metadata
     bad = metadata[filter_key] < 0
     n_bad = bad.sum().item()
     if n_bad > 0:
@@ -162,6 +171,10 @@ class RotationDataModule(pl.LightningDataModule):
         min_valid_pixels: int = 10,
         shoebox_file_names: dict | None = None,
         transform: str | None = None,
+        group_by_asu_id: bool = False,
+        group_by_key: str = "miller_idx_friedelized",
+        max_obs_per_hkl: int | None = None,
+        ice_ring_ranges: list | None = None,
     ):
         super().__init__()
         self.data_dir = data_dir
@@ -172,6 +185,12 @@ class RotationDataModule(pl.LightningDataModule):
         self.num_workers = num_workers
         self.resolution_cutoff = resolution_cutoff
         self.min_valid_pixels = min_valid_pixels
+        # Grouped (by asu_id / Miller index) batching for the merging models.
+        # Defaults keep the standard per-observation behavior.
+        self.group_by_asu_id = group_by_asu_id
+        self.group_by_key = group_by_key
+        self.max_obs_per_hkl = max_obs_per_hkl
+        self.ice_ring_ranges = ice_ring_ranges
         self.full_dataset = None
         if shoebox_file_names is None:
             shoebox_file_names = {
@@ -240,6 +259,22 @@ class RotationDataModule(pl.LightningDataModule):
             masks = masks[selection]
             reference = {k: v[selection] for k, v in reference.items()}
 
+        # Drop contaminated resolution bands (e.g. ice rings) at load time.
+        if self.ice_ring_ranges:
+            keep = torch.ones(len(reference["d"]), dtype=torch.bool)
+            for lo, hi in self.ice_ring_ranges:
+                keep &= ~((reference["d"] >= lo) & (reference["d"] <= hi))
+            n_ice = int((~keep).sum())
+            if n_ice > 0:
+                logger.info(
+                    "Removed %d reflections in ice-ring ranges %s",
+                    n_ice,
+                    self.ice_ring_ranges,
+                )
+            counts = counts[keep]
+            masks = masks[keep]
+            reference = {k: v[keep] for k, v in reference.items()}
+
         if counts.dim() == 2:
             if self.transform == "anscombe":
                 anscombe_transformed = 2 * (counts.clamp(min=0) + 0.375).sqrt()
@@ -303,7 +338,39 @@ class RotationDataModule(pl.LightningDataModule):
         self.val_dataset = Subset(self.full_dataset, val_idx.tolist())
         self.train_dataset = Subset(self.full_dataset, train_idx.tolist())
 
+        # Keep the split index tensors + the grouping key for grouped sampling.
+        self.train_idx = train_idx
+        self.val_idx = val_idx
+        self.test_idx = test_idx
+        self._miller_idx = None
+        if self.group_by_asu_id:
+            if self.group_by_key not in reference:
+                raise KeyError(
+                    f"group_by_asu_id requires '{self.group_by_key}' in the "
+                    "metadata reference; add it offline (e.g. an asu_id / "
+                    "nonanom_id column) and point the loader at that file."
+                )
+            self._miller_idx = reference[self.group_by_key].long()
+
     def train_dataloader(self):
+        if self.group_by_asu_id:
+            from integrator.data_loaders.grouped_sampler import (
+                GroupedAsuIdBatchSampler,
+            )
+
+            sampler = GroupedAsuIdBatchSampler(
+                miller_idx=self._miller_idx,
+                indices=self.train_idx,
+                batch_size=self.batch_size,
+                shuffle=True,
+                max_obs_per_hkl=self.max_obs_per_hkl,
+            )
+            return DataLoader(
+                self.full_dataset,
+                batch_sampler=sampler,
+                num_workers=self.num_workers,
+                pin_memory=True,
+            )
         return DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
@@ -313,6 +380,23 @@ class RotationDataModule(pl.LightningDataModule):
         )
 
     def val_dataloader(self):
+        if self.group_by_asu_id:
+            from integrator.data_loaders.grouped_sampler import (
+                GroupedAsuIdSampler,
+            )
+
+            sampler = GroupedAsuIdSampler(
+                miller_idx=self._miller_idx,
+                indices=self.val_idx,
+                shuffle=False,
+            )
+            return DataLoader(
+                self.full_dataset,
+                sampler=sampler,
+                batch_size=self.batch_size,
+                num_workers=self.num_workers,
+                pin_memory=True,
+            )
         return DataLoader(
             self.val_dataset,
             batch_size=self.batch_size,
@@ -333,7 +417,34 @@ class RotationDataModule(pl.LightningDataModule):
         else:
             return None
 
-    def predict_dataloader(self):
+    def predict_dataloader(self, grouped: bool | None = None):
+        # Default to grouped batching when the module was configured for it, so
+        # `finalize_merge` sees each HKL complete in one batch.
+        if grouped is None:
+            grouped = self.group_by_asu_id
+        if grouped:
+            if self._miller_idx is None:
+                raise RuntimeError(
+                    "grouped predict requires group_by_asu_id=True so the asu "
+                    "ids are loaded."
+                )
+            from integrator.data_loaders.grouped_sampler import (
+                GroupedAsuIdBatchSampler,
+            )
+
+            sampler = GroupedAsuIdBatchSampler(
+                miller_idx=self._miller_idx,
+                indices=None,
+                batch_size=self.batch_size,
+                shuffle=False,
+                max_obs_per_hkl=None,
+            )
+            return DataLoader(
+                self.full_dataset,
+                batch_sampler=sampler,
+                num_workers=self.num_workers,
+                pin_memory=True,
+            )
         return DataLoader(
             self.full_dataset,
             batch_size=self.batch_size,

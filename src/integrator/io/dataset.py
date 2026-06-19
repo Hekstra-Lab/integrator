@@ -30,6 +30,8 @@ def write_dataset_yaml(
     crystal: dict | None = None,
     stats: dict | None = None,
     refl_file=None,
+    n_hkl: dict | None = None,
+    scale: dict | None = None,
 ) -> Path:
     """Write the dataset spec to out_dir/dataset.yaml."""
     d, h, w = (int(geometry[k]) for k in ("d", "h", "w"))
@@ -45,6 +47,10 @@ def write_dataset_yaml(
         "anscombe": bool(anscombe),
         "files": dict(files),
     }
+    if n_hkl is not None:
+        spec["n_hkl"] = {k: int(v) for k, v in n_hkl.items()}
+    if scale is not None:
+        spec["scale"] = dict(scale)
     if crystal is not None:
         spec["crystal"] = dict(crystal)
     if stats is not None:

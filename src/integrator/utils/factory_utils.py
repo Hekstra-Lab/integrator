@@ -462,7 +462,10 @@ def construct_integrator(
 
     integrator_cls = _get_integrator_cls(cfg["integrator"]["name"])
 
-    integrator_args = configs.IntegratorCfg(**cfg["integrator"]["args"])
+    # An integrator may declare its own config dataclass via `CFG_CLASS`
+    # (e.g. the scaling/merging models); default is the shared IntegratorCfg.
+    cfg_cls = getattr(integrator_cls, "CFG_CLASS", configs.IntegratorCfg)
+    integrator_args = cfg_cls(**cfg["integrator"]["args"])
     optimizer_cfg = configs.OptimizerConfig(**cfg.get("optimizer", {}))
     encoders = _get_encoder_modules(cfg)
     surrogates = _get_surrogate_modules(cfg)
@@ -672,6 +675,27 @@ def apply_dataset_defaults(cfg: dict) -> dict:
     fill(iargs, "d", d)
     fill(iargs, "h", h)
     fill(iargs, "w", w)
+
+    # Scale-geometry defaults for the merging model's MLP scale. Only fields the
+    # integrator's config dataclass declares are filled, so non-merging
+    # integrators (plain IntegratorCfg) are unaffected.
+    scale = spec.get("scale", {})
+    if scale:
+        import dataclasses
+
+        name = cfg.get("integrator", {}).get("name")
+        cfg_cls = getattr(REGISTRY["integrator"].get(name), "CFG_CLASS", None)
+        accepted = (
+            {f.name for f in dataclasses.fields(cfg_cls)} if cfg_cls else set()
+        )
+        for key, value in (
+            ("scale_beam_center", scale.get("beam_center_px")),
+            ("scale_r_max", scale.get("r_max")),
+            ("scale_frame_min", scale.get("frame_min")),
+            ("scale_frame_max", scale.get("frame_max")),
+        ):
+            if key in accepted:
+                fill(iargs, key, value)
 
     input_shape = [h, w] if data_dim == "2d" else [d, h, w]
     for enc in cfg.get("encoders", []) or []:

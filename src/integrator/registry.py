@@ -20,6 +20,10 @@ from integrator.model.loss import (
     MonochromaticWilsonLoss,
     PolychromaticWilsonLoss,
 )
+from integrator.model.scaling import (
+    AmortizedMergingIntegrator,
+    MergingWilsonLoss,
+)
 
 REGISTRY = {
     "encoders": {
@@ -29,10 +33,12 @@ REGISTRY = {
     "loss": {
         "monochromatic_wilson": MonochromaticWilsonLoss,
         "polychromatic_wilson": PolychromaticWilsonLoss,
+        "merging_wilson": MergingWilsonLoss,
     },
     "integrator": {
         "hierarchical": HierarchicalIntegrator,
         "hierarchical_3enc": HierarchicalIntegrator3Enc,
+        "amortized_merging": AmortizedMergingIntegrator,
     },
     "surrogates": {
         "gamma": build_gamma,
