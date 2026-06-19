@@ -1,27 +1,3 @@
-# Amortized (sum-mode SVAE) merging integrator — anomalous + Friedel terms.
-# New-branch port of the scaling-refinement `amortized_merging_friedel_hewl.yaml`.
-
-# Standalone scaling model: NO BaseIntegrator parent, its own loss
-# (merging_wilson), SUM mode only — the mean / attention / overdispersion modes
-# and the non-MLP scales were dropped in the port. The per-observation scale is
-# an MLP that carries the LP correction, so the Wilson prior must NOT
-# (loss.args.lp_correction: false).
-
-# Three anomalous-preserving terms are ON (set any weight to 0 to disable):
-#   consistency_pool_friedel - data-only scaling consistency vs the +/- pooled mean
-#   double_wilson_weight     - shrink paired mates' merged log-ratio
-# The loader groups batches by miller_idx_friedelized so I(+) and I(-) of a
-# reflection share a batch (those terms need both mates present); the merge
-# itself is on miller_idx_unfriedelized (anomalous: true), so I(+) != I(-).
-
-# DATA PREP (offline):
-#   integrator.make_shoeboxes --anomalous ...   adds miller_idx_friedelized,
-#       miller_idx_unfriedelized, centric, friedel_plus and records n_hkl in
-#       dataset.yaml. Set integrator.args.n_hkl to dataset.yaml n_hkl.n_unfriedelized.
-#   scale_mlp_absorption: true additionally needs an `absorption_sh` column in
-#       the metadata (crystal-frame spherical harmonics). Set it false to train
-#       on the plain make_shoeboxes output.
-
 integrator:
   name: amortized_merging
   args:
@@ -31,28 +7,26 @@ integrator:
     w: 21
     encoder_out: 64
     mc_samples: 100
-    # n_hkl is auto-filled from dataset.yaml (n_hkl.n_unfriedelized for an
-    # anomalous run, else n_friedelized); set it here only to override.
+
     anomalous: true           # merge on miller_idx_unfriedelized (I(+) != I(-))
     wilson_alpha: 1.0
     merge_kl_weight: 1.0
-    scaling_lr: 0.005         # decoupled LR for the slow scale field
+    scaling_lr: 0.005         
 
-    # --- anomalous-preserving auxiliary losses ---
+    # --- anomalous auxiliary losses ---
     consistency_weight: 0.5
     consistency_pool_friedel: true
     double_wilson_weight: 1.0
     wilson_centric_prior: true
 
-    # --- MLP scale (carries LP; with even-l crystal-frame absorption) ---
+    # --- MLP scale ---
     dmin: 1.0
     scale_mlp: true
     scale_mlp_hidden: 128
     scale_mlp_layers: 4
     scale_head_init_std: 0.05
-    # beam center / r_max / frame range are auto-filled from dataset.yaml's
-    # `scale:` block (written by make_shoeboxes); set them here only to override,
-    # or for datasets made before that block existed.
+
+    # scale settings
     scale_frame_min: -2.0
     scale_frame_max: 1442.0
     scale_beam_center: [2058.2, 2193.9]
@@ -110,10 +84,7 @@ loss:
   args:
     lp_correction: false        # MLP scale already carries LP
     n_bins: 30                  # per-resolution-bin background prior
-    # B/G ablation knob: true = learned Wilson G/B envelope; false = fixed
-    # tau = 1 (B/G removed, the scale field owns the overall/resolution scale).
-    # The _nogb config is identical except for this line.
-    use_gb: true
+    use_gb: true # turn B and G factors on/off
     profile_kl_weight: 1.0      
     background_kl_weight: 1.0  
 
@@ -130,7 +101,7 @@ data_loader:
     transform: anscombe
     group_by_asu_id: true
     group_by_key: miller_idx_friedelized   # co-batch I(+)/I(-) mates
-    split_by_miller_idx: true   # free-set holdout by reflection (not random obs)
+    split_by_miller_idx: true   # free-set holdout by reflection
     test_split: 0.1             # fraction of reflections held out as test
     max_obs_per_hkl: null
     ice_ring_ranges: [[1.34, 1.42]]

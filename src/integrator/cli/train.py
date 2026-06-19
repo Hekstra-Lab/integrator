@@ -339,8 +339,11 @@ def main():
     tags = [
         cfg["integrator"]["name"],
         cfg["integrator"]["args"]["data_dim"],
-        cfg["surrogates"]["qi"]["name"],
     ]
+    # The merging integrators derive I_h directly and have no `qi` surrogate.
+    qi_cfg = cfg.get("surrogates", {}).get("qi")
+    if qi_cfg:
+        tags.append(qi_cfg["name"])
 
     pl_logger = _make_wandb_logger(args, tags)
     is_wandb = pl_logger is not None

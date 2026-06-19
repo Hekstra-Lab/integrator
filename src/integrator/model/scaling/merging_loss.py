@@ -80,9 +80,15 @@ class MergingWilsonLoss(nn.Module):
             self.raw_G = nn.Parameter(torch.tensor(float(init_log_G)))
 
     def get_B(self) -> Tensor:
+        # B = 0 / G = 1 when the envelope is off (tau = 1). Kept callable so the
+        # WilsonParamLogger can record them without special-casing use_gb.
+        if not self.use_gb:
+            return torch.zeros(())
         return F.softplus(self.raw_B) + self.b_min
 
     def get_G(self) -> Tensor:
+        if not self.use_gb:
+            return torch.ones(())
         return F.softplus(self.raw_G)
 
     def _get_tau(
