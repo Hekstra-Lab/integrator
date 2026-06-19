@@ -100,6 +100,12 @@ class AmortizedMergingIntegrator(ScalingLightningModule):
                 "loss.args.lp_correction: false."
             )
 
+        if cfg.n_hkl is None:
+            raise ValueError(
+                "n_hkl is required: set integrator.args.n_hkl, or ensure "
+                "<data_dir>/dataset.yaml has an `n_hkl` block (re-run "
+                "make_shoeboxes) so the factory can auto-fill it."
+            )
         self.n_hkl = cfg.n_hkl
         self.alpha_W = float(cfg.wilson_alpha)
         self.merge_kl_weight = float(cfg.merge_kl_weight)

@@ -31,7 +31,8 @@ integrator:
     w: 21
     encoder_out: 64
     mc_samples: 100
-    n_hkl: 86402              # = dataset.yaml n_hkl.n_unfriedelized (anomalous)
+    # n_hkl is auto-filled from dataset.yaml (n_hkl.n_unfriedelized for an
+    # anomalous run, else n_friedelized); set it here only to override.
     anomalous: true           # merge on miller_idx_unfriedelized (I(+) != I(-))
     wilson_alpha: 1.0
     merge_kl_weight: 1.0
@@ -129,6 +130,8 @@ data_loader:
     transform: anscombe
     group_by_asu_id: true
     group_by_key: miller_idx_friedelized   # co-batch I(+)/I(-) mates
+    split_by_miller_idx: true   # free-set holdout by reflection (not random obs)
+    test_split: 0.1             # fraction of reflections held out as test
     max_obs_per_hkl: null
     ice_ring_ranges: [[1.34, 1.42]]
     shoebox_file_names:

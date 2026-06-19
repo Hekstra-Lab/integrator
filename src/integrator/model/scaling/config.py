@@ -47,7 +47,9 @@ class MergingIntegratorCfg:
     d: int
     h: int
     w: int
-    n_hkl: int
+    # Number of unique merge reflections; sizes the merge buffers. Auto-filled
+    # from dataset.yaml's `n_hkl` block by the factory when omitted.
+    n_hkl: int | None = None
     encoder_out: int = 64
     mc_samples: int = 4
     predict_keys: Literal["default"] | list[str] = "default"
@@ -95,5 +97,5 @@ class MergingIntegratorCfg:
                 raise ValueError(f"{name} must be positive, got {v}")
         if self.mc_samples < 1:
             raise ValueError(f"mc_samples must be >= 1, got {self.mc_samples}")
-        if self.n_hkl <= 0:
+        if self.n_hkl is not None and self.n_hkl <= 0:
             raise ValueError(f"n_hkl must be positive, got {self.n_hkl}")

@@ -175,6 +175,9 @@ class RotationDataModule(pl.LightningDataModule):
         group_by_key: str = "miller_idx_friedelized",
         max_obs_per_hkl: int | None = None,
         ice_ring_ranges: list | None = None,
+        split_by_miller_idx: bool = False,
+        test_split: float = 0.0,
+        split_seed: int = 42,
     ):
         super().__init__()
         self.data_dir = data_dir
@@ -191,6 +194,11 @@ class RotationDataModule(pl.LightningDataModule):
         self.group_by_key = group_by_key
         self.max_obs_per_hkl = max_obs_per_hkl
         self.ice_ring_ranges = ice_ring_ranges
+        # Hold out whole reflections (by group_by_key) for val/test instead of
+        # random observations -- the crystallographic free-set convention.
+        self.split_by_miller_idx = split_by_miller_idx
+        self.test_split = test_split
+        self.split_seed = split_seed
         self.full_dataset = None
         if shoebox_file_names is None:
             shoebox_file_names = {
@@ -309,10 +317,7 @@ class RotationDataModule(pl.LightningDataModule):
             reference,
         )
 
-        # Split using is_test if available
-        is_test = reference.get("is_test")
         all_indices = torch.arange(len(self.full_dataset))
-
         if self.subset_size is not None and self.subset_size < len(
             self.full_dataset
         ):
@@ -320,21 +325,53 @@ class RotationDataModule(pl.LightningDataModule):
                 torch.randperm(len(all_indices))[: self.subset_size]
             ]
 
-        if is_test is not None and is_test.any():
-            test_mask = is_test[all_indices].bool()
-            test_idx = all_indices[test_mask]
-            train_val_idx = all_indices[~test_mask]
+        if self.split_by_miller_idx:
+            # Free-set split: hold out whole reflections (by group_by_key) so a
+            # reflection's observations never straddle train/val/test. Seeded and
+            # reproducible; overrides any per-observation is_test for consistency.
+            if self.group_by_key not in reference:
+                raise KeyError(
+                    f"split_by_miller_idx requires '{self.group_by_key}' in the "
+                    "metadata reference (re-run make_shoeboxes --anomalous)."
+                )
+            groups = reference[self.group_by_key].long()
+            uniq, inverse = torch.unique(groups, return_inverse=True)
+            gen = torch.Generator().manual_seed(self.split_seed)
+            perm = torch.randperm(len(uniq), generator=gen)
+            n_test = int(len(uniq) * self.test_split)
+            n_val = int(len(uniq) * self.validation_split)
+            label = torch.zeros(len(uniq), dtype=torch.long)  # 0 = train
+            label[perm[:n_test]] = 2  # test
+            label[perm[n_test : n_test + n_val]] = 1  # val
+            obs_label = label[inverse]  # per-observation
+            reference["is_test"] = obs_label == 2  # keep is_test consistent
+            logger.info(
+                "split_by_miller_idx: %d reflections -> train/val/test = "
+                "%d/%d/%d",
+                len(uniq),
+                int((label == 0).sum()),
+                n_val,
+                n_test,
+            )
+            sel = obs_label[all_indices]
+            test_idx = all_indices[sel == 2]
+            val_idx = all_indices[sel == 1]
+            train_idx = all_indices[sel == 0]
         else:
-            test_idx = torch.tensor([], dtype=torch.long)
-            train_val_idx = all_indices
+            is_test = reference.get("is_test")
+            if is_test is not None and is_test.any():
+                test_mask = is_test[all_indices].bool()
+                test_idx = all_indices[test_mask]
+                train_val_idx = all_indices[~test_mask]
+            else:
+                test_idx = torch.tensor([], dtype=torch.long)
+                train_val_idx = all_indices
+            perm = torch.randperm(len(train_val_idx))
+            val_size = int(len(train_val_idx) * self.validation_split)
+            val_idx = train_val_idx[perm[:val_size]]
+            train_idx = train_val_idx[perm[val_size:]]
 
         self.test_dataset = Subset(self.full_dataset, test_idx.tolist())
-
-        perm = torch.randperm(len(train_val_idx))
-        val_size = int(len(train_val_idx) * self.validation_split)
-        val_idx = train_val_idx[perm[:val_size]]
-        train_idx = train_val_idx[perm[val_size:]]
-
         self.val_dataset = Subset(self.full_dataset, val_idx.tolist())
         self.train_dataset = Subset(self.full_dataset, train_idx.tolist())
 

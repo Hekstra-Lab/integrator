@@ -676,26 +676,38 @@ def apply_dataset_defaults(cfg: dict) -> dict:
     fill(iargs, "h", h)
     fill(iargs, "w", w)
 
-    # Scale-geometry defaults for the merging model's MLP scale. Only fields the
-    # integrator's config dataclass declares are filled, so non-merging
-    # integrators (plain IntegratorCfg) are unaffected.
-    scale = spec.get("scale", {})
-    if scale:
-        import dataclasses
+    # Defaults for the merging model: fill only fields the integrator's config
+    # dataclass declares, so non-merging integrators (plain IntegratorCfg) are
+    # unaffected.
+    import dataclasses
 
-        name = cfg.get("integrator", {}).get("name")
-        cfg_cls = getattr(REGISTRY["integrator"].get(name), "CFG_CLASS", None)
-        accepted = (
-            {f.name for f in dataclasses.fields(cfg_cls)} if cfg_cls else set()
+    name = cfg.get("integrator", {}).get("name")
+    cfg_cls = getattr(REGISTRY["integrator"].get(name), "CFG_CLASS", None)
+    accepted = (
+        {f.name for f in dataclasses.fields(cfg_cls)} if cfg_cls else set()
+    )
+
+    # n_hkl from the recorded unique-reflection counts (anomalous -> the
+    # Friedel-separate count, else the pooled count).
+    nh = spec.get("n_hkl", {})
+    if "n_hkl" in accepted and nh:
+        anomalous = iargs.get("anomalous", True)
+        fill(
+            iargs,
+            "n_hkl",
+            nh.get("n_unfriedelized") if anomalous else nh.get("n_friedelized"),
         )
-        for key, value in (
-            ("scale_beam_center", scale.get("beam_center_px")),
-            ("scale_r_max", scale.get("r_max")),
-            ("scale_frame_min", scale.get("frame_min")),
-            ("scale_frame_max", scale.get("frame_max")),
-        ):
-            if key in accepted:
-                fill(iargs, key, value)
+
+    # MLP-scale normalization geometry.
+    scale = spec.get("scale", {})
+    for key, value in (
+        ("scale_beam_center", scale.get("beam_center_px")),
+        ("scale_r_max", scale.get("r_max")),
+        ("scale_frame_min", scale.get("frame_min")),
+        ("scale_frame_max", scale.get("frame_max")),
+    ):
+        if key in accepted and value is not None:
+            fill(iargs, key, value)
 
     input_shape = [h, w] if data_dim == "2d" else [d, h, w]
     for enc in cfg.get("encoders", []) or []:
