@@ -553,7 +553,11 @@ class AmortizedMergingIntegrator(ScalingLightningModule):
         forward_out = outputs["forward_out"]
         qi_h = outputs["qi_h"]
 
-        group_labels = metadata["group_label"].long()
+        group_labels = (
+            metadata["group_label"].long()
+            if "group_label" in metadata
+            else None
+        )
 
         # Per-observation terms: Poisson NLL + profile KL + background KL.
         loss_dict = self.loss(

@@ -31,7 +31,11 @@ def prepare_per_bin_priors(
         n_bins: Number of resolution bins.
     """
     loss_name = cfg.get("loss", {}).get("name", "")
-    if loss_name not in ("monochromatic_wilson", "polychromatic_wilson"):
+    if loss_name not in (
+        "monochromatic_wilson",
+        "polychromatic_wilson",
+        "merging_wilson",
+    ):
         return
 
     data_dir = Path(cfg["data_loader"]["args"]["data_dir"])
