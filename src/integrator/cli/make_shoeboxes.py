@@ -704,7 +704,7 @@ def run_dials(args):
         "cell": [float(x) for x in crystal0.get_unit_cell().parameters()],
         "space_group": sg_info.symbol_and_number(),
         "space_group_number": int(sg_info.type().number()),
-        "beam_center_px": list(_beam_center_px(expt_path_in)),
+        "beam_center_px": [float(v) for v in _beam_center_px(expt_path_in)],
     }
     n_hkl = _add_miller_index_columns(out_dir, crystal_meta, args.anomalous)
 

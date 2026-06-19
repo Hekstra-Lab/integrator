@@ -19,6 +19,25 @@ def read_dataset_spec(data_dir) -> dict | None:
     return yaml.safe_load(p.read_text()) or None
 
 
+def _to_native(obj):
+    """Recursively convert numpy scalars/arrays to native Python types.
+
+    `yaml.safe_dump` cannot represent `np.float64`/`np.int64`/`np.ndarray`, which
+    leak in from DIALS/numpy-derived geometry; this makes the spec safe to dump.
+    """
+    import numpy as np
+
+    if isinstance(obj, dict):
+        return {k: _to_native(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_native(v) for v in obj]
+    if isinstance(obj, np.generic):
+        return obj.item()
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    return obj
+
+
 def write_dataset_yaml(
     out_dir,
     *,
@@ -59,5 +78,5 @@ def write_dataset_yaml(
         spec["refl_file"] = str(refl_file)
 
     p = Path(out_dir) / spec_NAME
-    p.write_text(yaml.safe_dump(spec, sort_keys=False))
+    p.write_text(yaml.safe_dump(_to_native(spec), sort_keys=False))
     return p
