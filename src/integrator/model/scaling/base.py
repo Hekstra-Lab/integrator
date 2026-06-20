@@ -12,6 +12,7 @@ from torch import Tensor
 
 from integrator.configs import OptimizerConfig
 from integrator.model.scaling.config import MergingIntegratorCfg
+from integrator.model.scaling.scatter_logger import ScatterLoggerMixin
 
 _logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ DEFAULT_PREDICT_KEYS = [
 ]
 
 
-class ScalingLightningModule(pl.LightningModule):
+class ScalingLightningModule(ScatterLoggerMixin, pl.LightningModule):
     """Lightning base for the merging integrators (no `BaseIntegrator` parent)."""
 
     REQUIRED_ENCODERS: dict[str, tuple[str, type]] = {}
@@ -79,6 +80,7 @@ class ScalingLightningModule(pl.LightningModule):
         self.surrogates = nn.ModuleDict(surrogates)
         self.loss = loss
 
+        self._init_scatter_logger(cfg)
         self.automatic_optimization = True
 
     def forward(

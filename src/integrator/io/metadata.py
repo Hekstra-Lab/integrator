@@ -93,11 +93,18 @@ def refl_as_pt(
     return data
 
 
-def _contiguous_group_ids(hkl: np.ndarray) -> tuple[np.ndarray, int]:
-    """Contiguous integer id per unique (h, k, l) row."""
-    _, inverse = np.unique(hkl, axis=0, return_inverse=True)
+def _contiguous_group_ids(
+    hkl: np.ndarray,
+) -> tuple[np.ndarray, int, np.ndarray]:
+    """Contiguous integer id per unique (h, k, l) row.
+
+    Returns `(inverse, n_unique, table)` where `inverse[i]` is the id of row i
+    and `table[id]` is the (h, k, l) of that id (sorted-unique order).
+    """
+    uniq, inverse = np.unique(hkl, axis=0, return_inverse=True)
     inverse = inverse.astype(np.int64)
-    return inverse, (int(inverse.max()) + 1 if inverse.size else 0)
+    n = int(inverse.max()) + 1 if inverse.size else 0
+    return inverse, n, uniq.astype(np.int32)
 
 
 def miller_index_columns(
@@ -107,7 +114,7 @@ def miller_index_columns(
     space_group,
     cell=None,
     anomalous: bool = False,
-) -> tuple[dict, dict]:
+) -> tuple[dict, dict, dict]:
     """Friedel-pooled / -separate Miller-index group ids + Friedel flags.
 
     Maps each `(H, K, L)` to its asymmetric-unit representative
@@ -129,8 +136,10 @@ def miller_index_columns(
         anomalous: also emit `miller_idx_unfriedelized`.
 
     Returns:
-        `(columns, counts)`: `columns` maps each name to a torch tensor;
-        `counts` has `n_friedelized` and (if `anomalous`) `n_unfriedelized`.
+        `(columns, counts, hkl_tables)`: `columns` maps each name to a torch
+        tensor; `counts` has `n_friedelized` and (if `anomalous`)
+        `n_unfriedelized`; `hkl_tables` maps each id column to an `(n_id, 3)`
+        int array whose row `i` is the canonical `(h, k, l)` of id `i`.
     """
     import gemmi
     import reciprocalspaceship as rs
@@ -151,7 +160,7 @@ def miller_index_columns(
     # is the asu representative with no sign flip, so both mates share it.
     asu_hkl, isym = rs.utils.hkl_to_asu(hkl, sg)
     friedel_plus = isym % 2 == 1
-    fried_ids, n_fried = _contiguous_group_ids(asu_hkl)
+    fried_ids, n_fried, fried_table = _contiguous_group_ids(asu_hkl)
 
     cellp = list(cell) if cell is not None else [1.0, 1.0, 1.0, 90.0, 90.0, 90.0]
     ds = rs.DataSet(
@@ -167,6 +176,7 @@ def miller_index_columns(
         "centric": torch.from_numpy(np.ascontiguousarray(centric)),
     }
     counts = {"n_friedelized": n_fried}
+    hkl_tables = {"miller_idx_friedelized": fried_table}
     if anomalous:
         # Split I(+)/I(-) by flipping the sign of ACENTRIC F(-) observations.
         # Centrics have I(+) == I(-) by symmetry, so they must NOT be split --
@@ -176,7 +186,8 @@ def miller_index_columns(
         canon = asu_hkl.copy()
         is_minus = (isym % 2 == 0) & (~centric)
         canon[is_minus] = -canon[is_minus]
-        anom_ids, n_anom = _contiguous_group_ids(canon)
+        anom_ids, n_anom, anom_table = _contiguous_group_ids(canon)
         columns["miller_idx_unfriedelized"] = torch.from_numpy(anom_ids)
         counts["n_unfriedelized"] = n_anom
-    return columns, counts
+        hkl_tables["miller_idx_unfriedelized"] = anom_table
+    return columns, counts, hkl_tables

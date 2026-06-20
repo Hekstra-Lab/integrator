@@ -31,6 +31,8 @@ integrator:
     w: 21
     encoder_out: 64
     mc_samples: 100
+    log_intensity_scatter: true   # epoch scatters: model scale*I vs DIALS I
+    log_background_scatter: true
     # n_hkl is auto-filled from dataset.yaml (n_hkl.n_unfriedelized for an
     # anomalous run, else n_friedelized); set it here only to override.
     anomalous: true           # merge on miller_idx_unfriedelized (I(+) != I(-))

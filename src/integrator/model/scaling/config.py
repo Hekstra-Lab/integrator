@@ -86,6 +86,11 @@ class MergingIntegratorCfg:
     scale_mlp_absorption: bool = False
     scale_mlp_absorption_even_only: bool = True
 
+    # Model-vs-DIALS epoch scatter logging (intensity / background); off by
+    # default. Needs intensity.{sum,prf}.* in the metadata for the intensity one.
+    log_intensity_scatter: bool = False
+    log_background_scatter: bool = False
+
     def __post_init__(self):
         if self.data_dim not in ("2d", "3d"):
             raise ValueError(

@@ -7,6 +7,8 @@ integrator:
     w: 21
     encoder_out: 64
     mc_samples: 100
+    log_intensity_scatter: true   # epoch scatters: model scale*I vs DIALS I
+    log_background_scatter: true
 
     anomalous: true           # merge on miller_idx_unfriedelized (I(+) != I(-))
     wilson_alpha: 1.0

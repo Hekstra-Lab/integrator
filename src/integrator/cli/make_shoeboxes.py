@@ -309,7 +309,7 @@ def _add_miller_index_columns(out_dir: Path, crystal_meta: dict, anomalous: bool
     )
 
     meta = load_metadata(out_dir / "metadata.npy")
-    cols, n_hkl = miller_index_columns(
+    cols, n_hkl, _ = miller_index_columns(
         meta["H"],
         meta["K"],
         meta["L"],

@@ -654,6 +654,9 @@ class AmortizedMergingIntegrator(ScalingLightningModule):
                 on_epoch=True,
             )
 
+        if step == "train":
+            self._collect_scatters(outputs, metadata, mask, counts)
+
         return {
             "loss": total_loss,
             "forward_out": forward_out,

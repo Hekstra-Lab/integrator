@@ -695,7 +695,9 @@ def apply_dataset_defaults(cfg: dict) -> dict:
         fill(
             iargs,
             "n_hkl",
-            nh.get("n_unfriedelized") if anomalous else nh.get("n_friedelized"),
+            nh.get("n_unfriedelized")
+            if anomalous
+            else nh.get("n_friedelized"),
         )
 
     # MLP-scale normalization geometry.
