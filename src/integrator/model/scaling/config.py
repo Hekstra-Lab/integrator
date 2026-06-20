@@ -62,10 +62,11 @@ class MergingIntegratorCfg:
     # so I(+) != I(-). If false, merge on the pooled `miller_idx_friedelized`.
     anomalous: bool = True
 
+    responsibility_gate_init: float = -2.0
+
     # Optimization
     scaling_lr: float | None = None
 
-    # Anomalous-preserving auxiliary losses (all default off)
     consistency_weight: float = 0.0
     consistency_pool_friedel: bool = False
     centric_anchor_weight: float = 0.0

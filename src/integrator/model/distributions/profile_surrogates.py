@@ -18,7 +18,7 @@ def _sample_and_decode(
     W: Tensor,
     b: Tensor,
     mc_samples: int,
-) -> tuple[Tensor, Tensor]:
+) -> tuple[Tensor, Tensor, Tensor]:
     """Sample h from q(h|x) and decode to profile vectors.
 
     Args:
@@ -31,6 +31,7 @@ def _sample_and_decode(
     Returns:
         zp: Profile samples on the simplex, shape (S, B, K).
         mean_profile: Profile at posterior mean h, shape (B, K).
+        mean_logits: Pre-softmax logits at posterior mean h, shape (B, K).
     """
     q_h = Normal(loc, scale)
     h = q_h.rsample([mc_samples])  # (S, B, d)
@@ -40,7 +41,7 @@ def _sample_and_decode(
     mean_logits = loc @ W.T + b  # (B, K)
     mean_profile = F.softmax(mean_logits, dim=-1)
 
-    return zp, mean_profile
+    return zp, mean_profile, mean_logits
 
 
 @dataclass
@@ -50,6 +51,9 @@ class ProfileSurrogateOutput:
     Fields:
         zp: Profile samples on the simplex, shape (S, B, K).
         mean_profile: Profile at posterior mean h, shape (B, K).
+        mean_logits: Pre-softmax profile logits at posterior mean, shape (B, K).
+            The shared shape field: softmax -> profile, sigmoid(. + gate) ->
+            per-pixel signal responsibility.
         loc: Posterior mean of h, shape (B, d).
         scale: Posterior std of h, shape (B, d).
         prior_scale: Std of the N(0, prior_scale) prior on the latent h
@@ -57,6 +61,7 @@ class ProfileSurrogateOutput:
 
     zp: Tensor
     mean_profile: Tensor
+    mean_logits: Tensor
     loc: Tensor
     scale: Tensor
     prior_scale: float = 3.0
@@ -108,12 +113,13 @@ class ProfileSurrogate(nn.Module):
         loc = self.loc_head(x)  # (B, d)
         scale = F.softplus(self.scale_head(x))  # (B, d)
 
-        zp, mean_profile = _sample_and_decode(
+        zp, mean_profile, mean_logits = _sample_and_decode(
             loc, scale, self.decoder.weight, self.decoder.bias, mc_samples
         )
         return ProfileSurrogateOutput(
             zp=zp,
             mean_profile=mean_profile,
+            mean_logits=mean_logits,
             loc=loc,
             scale=scale,
             prior_scale=self.prior_scale,
