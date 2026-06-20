@@ -103,33 +103,26 @@ class GroupedAsuIdBatchSampler(BatchSampler):
         else:
             perm = np.arange(self._n_hkls)
 
-        batch: list[int] = []
-        for h in perm:
-            obs = self._hkl_groups[h]
-            if (
-                self.max_obs_per_hkl is not None
-                and len(obs) > self.max_obs_per_hkl
-            ):
-                # Random subset (without replacement) for very common HKLs
-                obs = np.random.choice(
-                    obs, size=self.max_obs_per_hkl, replace=False
-                )
-            batch.extend(int(x) for x in obs)
-            if len(batch) >= self.batch_size:
-                yield batch
-                batch = []
-
-        if batch and not self.drop_last:
+        for chunk in np.array_split(perm, len(self)):
+            batch: list[int] = []
+            for h in chunk:
+                obs = self._hkl_groups[h]
+                if (
+                    self.max_obs_per_hkl is not None
+                    and len(obs) > self.max_obs_per_hkl
+                ):
+                    # Random subset (without replacement) for very common HKLs
+                    obs = np.random.choice(
+                        obs, size=self.max_obs_per_hkl, replace=False
+                    )
+                batch.extend(int(x) for x in obs)
             yield batch
 
     def __len__(self) -> int:
-        # Approximate (HKL sizes vary). For epoch progress display.
-        avg = self._total_obs / max(self._n_hkls, 1)
-        approx_hkls_per_batch = max(1, int(self.batch_size / avg))
-        n = self._n_hkls // approx_hkls_per_batch
-        if not self.drop_last and self._n_hkls % approx_hkls_per_batch:
+        n = self._total_obs // self.batch_size
+        if not self.drop_last and self._total_obs % self.batch_size:
             n += 1
-        return max(1, n)
+        return max(1, min(n, self._n_hkls))
 
 
 class GroupedAsuIdSampler(Sampler[int]):
