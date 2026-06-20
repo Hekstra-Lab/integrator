@@ -478,6 +478,7 @@ def main():
         save_last="link",
         monitor=ckpt_monitor if save_top_k > 0 else None,
         mode=ckpt_mode if save_top_k > 0 else "min",
+        save_on_train_epoch_end=save_top_k <= 0,
     )
     logger.info(
         "Checkpoints: dir=%s save_top_k=%d every_n_epochs=%d monitor=%s",
