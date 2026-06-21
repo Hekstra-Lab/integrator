@@ -1,0 +1,156 @@
+"""Submit a SLURM array that evaluates every checkpoint of a merging run.
+
+Analogue of refltorch's dials_output/submit_jobs.py: reads
+`<run_dir>/merging_eval_cfg.yaml` (from create_config.py), launches one array
+task per checkpoint running process_single_ckpt.py (finalize merge -> MTZ ->
+phenix.refine -> rs.find_peaks), then a dependent aggregation job running
+compare_checkpoints.py. No DIALS.
+
+Usage:
+    python create_config.py --run-dir RUN --eff-template EFF --pdb PDB
+    python submit_jobs.py   --run-dir RUN --script-dir $(pwd)
+"""
+
+import argparse
+import subprocess
+import textwrap
+from pathlib import Path
+
+import yaml
+
+
+def parse_args():
+    p = argparse.ArgumentParser(
+        description="Submit per-checkpoint phenix evaluation SLURM array."
+    )
+    p.add_argument("--run-dir", type=Path, required=True)
+    p.add_argument(
+        "--script-dir",
+        type=str,
+        default=str(Path(__file__).resolve().parent),
+        help="Dir holding process_single_ckpt.py + compare_checkpoints.py "
+        "(default: this script's dir).",
+    )
+    p.add_argument("--log-dir", type=str, default="merging_eval_logs")
+    # SLURM knobs (worker array runs the model -> default to a GPU).
+    p.add_argument("--partition", type=str, default="gpu")
+    p.add_argument("--gpus", type=str, default="1", help="--gres=gpu:N (0=cpu)")
+    p.add_argument("--time", type=str, default="04:00:00")
+    p.add_argument("--mem", type=str, default="16G")
+    p.add_argument("--cpus", type=str, default="4")
+    p.add_argument("--agg-partition", type=str, default="shared")
+    p.add_argument(
+        "--max-concurrent",
+        type=int,
+        default=0,
+        help="Throttle the array to N concurrent tasks (0 = no limit). Useful "
+        "to avoid hogging GPUs.",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Write the job scripts but don't sbatch.",
+    )
+    return p.parse_args()
+
+
+def main():
+    args = parse_args()
+    run_dir = args.run_dir.resolve()
+    cfg_file = run_dir / "merging_eval_cfg.yaml"
+    if not cfg_file.exists():
+        raise FileNotFoundError(f"{cfg_file} (run create_config.py first)")
+
+    cfg = yaml.safe_load(cfg_file.read_text())
+    n = len(cfg["checkpoints"])
+    if n == 0:
+        raise ValueError("no checkpoints in config")
+
+    script_dir = Path(args.script_dir)
+    worker = (script_dir / "process_single_ckpt.py").as_posix()
+    aggregator = (script_dir / "compare_checkpoints.py").as_posix()
+    mamba_setup = cfg.get("mamba_setup", "")
+    python_env = cfg.get("python_env", "integrator-dev")
+
+    logs_dir = Path(args.log_dir)
+    logs_dir.mkdir(exist_ok=True)
+
+    activate = (
+        f"source {mamba_setup}\nmicromamba activate {python_env}"
+        if mamba_setup
+        else ""
+    )
+
+    worker_sh = textwrap.dedent(
+        f"""\
+        #!/bin/bash
+        echo "Job $SLURM_JOB_ID  task $SLURM_ARRAY_TASK_ID on $HOSTNAME"
+        echo "Started: $(date)"
+        {activate}
+        python {worker} --config "{cfg_file}" --index $SLURM_ARRAY_TASK_ID
+        echo "Finished: $(date)"
+        """
+    )
+    worker_path = run_dir / "merging_eval_job.sh"
+    worker_path.write_text(worker_sh)
+    worker_path.chmod(0o755)
+
+    agg_sh = textwrap.dedent(
+        f"""\
+        #!/bin/bash
+        echo "Aggregating checkpoint evaluations. Started: $(date)"
+        {activate}
+        python {aggregator} --run-dir "{run_dir}"
+        echo "Finished: $(date)"
+        """
+    )
+    agg_path = run_dir / "merging_eval_aggregate.sh"
+    agg_path.write_text(agg_sh)
+    agg_path.chmod(0o755)
+
+    array = f"0-{n - 1}"
+    if args.max_concurrent > 0:
+        array += f"%{args.max_concurrent}"
+    sbatch = [
+        "sbatch", "--parsable",
+        "--job-name=merging_eval",
+        f"--output={logs_dir}/eval_%A_%a.out",
+        f"--error={logs_dir}/eval_%A_%a.err",
+        f"--time={args.time}",
+        f"--mem={args.mem}",
+        f"--partition={args.partition}",
+        f"--cpus-per-task={args.cpus}",
+        f"--array={array}",
+    ]
+    if args.gpus and args.gpus != "0":
+        sbatch.append(f"--gres=gpu:{args.gpus}")
+    sbatch.append(str(worker_path))
+
+    agg_cmd_tail = [
+        "sbatch", "--parsable",
+        "--job-name=merging_eval_agg",
+        f"--output={logs_dir}/aggregate_%j.out",
+        f"--error={logs_dir}/aggregate_%j.err",
+        "--time=01:00:00", "--mem=16G",
+        f"--partition={args.agg_partition}", "--cpus-per-task=1",
+    ]
+
+    print(f"Array: {array}  ({n} checkpoints x {len(cfg['variants'])} variants)")
+    print("worker sbatch:", " ".join(sbatch))
+    if args.dry_run:
+        print("[dry-run] not submitting. Scripts written to", run_dir)
+        return
+
+    job_id = subprocess.check_output(sbatch, text=True).strip()
+    print(f"Submitted array job {job_id} (tasks {array})")
+
+    agg_cmd = agg_cmd_tail[:2] + [
+        f"--dependency=afterany:{job_id}"
+    ] + agg_cmd_tail[2:] + [str(agg_path)]
+    agg_id = subprocess.check_output(agg_cmd, text=True).strip()
+    print(f"Submitted aggregation job {agg_id} (after {job_id})")
+    print("Status: squeue -u $USER")
+
+
+if __name__ == "__main__":
+    main()
