@@ -39,7 +39,7 @@ def parse_args():
     # SLURM knobs (worker array runs the model -> default to a GPU).
     p.add_argument("--partition", type=str, default="gpu")
     p.add_argument("--gpus", type=str, default="1", help="--gres=gpu:N (0=cpu)")
-    p.add_argument("--time", type=str, default="04:00:00")
+    p.add_argument("--time", type=str, default="0:30:00")
     p.add_argument("--mem", type=str, default="16G")
     p.add_argument("--cpus", type=str, default="4")
     p.add_argument("--agg-partition", type=str, default="shared")
