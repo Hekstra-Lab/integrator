@@ -13,7 +13,6 @@ Usage:
 
 import argparse
 import subprocess
-import textwrap
 from pathlib import Path
 
 import yaml
@@ -31,7 +30,12 @@ def parse_args():
         help="Dir holding process_single_ckpt.py + compare_checkpoints.py "
         "(default: this script's dir).",
     )
-    p.add_argument("--log-dir", type=str, default="merging_eval_logs")
+    p.add_argument(
+        "--log-dir",
+        type=str,
+        default=None,
+        help="SLURM log dir (default: <run_dir>/ckpt_eval_logs).",
+    )
     # SLURM knobs (worker array runs the model -> default to a GPU).
     p.add_argument("--partition", type=str, default="gpu")
     p.add_argument("--gpus", type=str, default="1", help="--gres=gpu:N (0=cpu)")
@@ -72,40 +76,42 @@ def main():
     mamba_setup = cfg.get("mamba_setup", "")
     python_env = cfg.get("python_env", "integrator-dev")
 
-    logs_dir = Path(args.log_dir)
-    logs_dir.mkdir(exist_ok=True)
+    # Absolute, so sbatch --output works regardless of the submitting cwd.
+    logs_dir = (
+        Path(args.log_dir).resolve()
+        if args.log_dir
+        else run_dir / "ckpt_eval_logs"
+    )
+    logs_dir.mkdir(parents=True, exist_ok=True)
 
+    # Build line by line (no dedent): the multi-line activate block would
+    # otherwise defeat dedent and leave #! indented, which sbatch rejects.
     activate = (
-        f"source {mamba_setup}\nmicromamba activate {python_env}"
+        ["source " + mamba_setup, "micromamba activate " + python_env]
         if mamba_setup
-        else ""
+        else []
     )
 
-    worker_sh = textwrap.dedent(
-        f"""\
-        #!/bin/bash
-        echo "Job $SLURM_JOB_ID  task $SLURM_ARRAY_TASK_ID on $HOSTNAME"
-        echo "Started: $(date)"
-        {activate}
-        python {worker} --config "{cfg_file}" --index $SLURM_ARRAY_TASK_ID
-        echo "Finished: $(date)"
-        """
-    )
+    def _script(*body: str) -> str:
+        return "\n".join(["#!/bin/bash", *activate, *body, ""])
+
     worker_path = run_dir / "merging_eval_job.sh"
-    worker_path.write_text(worker_sh)
+    worker_path.write_text(
+        _script(
+            'echo "task $SLURM_ARRAY_TASK_ID on $HOSTNAME ($(date))"',
+            f'python {worker} --config "{cfg_file}" '
+            "--index $SLURM_ARRAY_TASK_ID",
+        )
+    )
     worker_path.chmod(0o755)
 
-    agg_sh = textwrap.dedent(
-        f"""\
-        #!/bin/bash
-        echo "Aggregating checkpoint evaluations. Started: $(date)"
-        {activate}
-        python {aggregator} --run-dir "{run_dir}"
-        echo "Finished: $(date)"
-        """
-    )
     agg_path = run_dir / "merging_eval_aggregate.sh"
-    agg_path.write_text(agg_sh)
+    agg_path.write_text(
+        _script(
+            'echo "aggregating ($(date))"',
+            f'python {aggregator} --run-dir "{run_dir}"',
+        )
+    )
     agg_path.chmod(0o755)
 
     array = f"0-{n - 1}"
