@@ -38,10 +38,12 @@ def parse_args():
     )
     # SLURM knobs (worker array runs the model -> default to a GPU).
     p.add_argument("--partition", type=str, default="gpu")
-    p.add_argument("--gpus", type=str, default="1", help="--gres=gpu:N (0=cpu)")
-    p.add_argument("--time", type=str, default="0:30:00")
-    p.add_argument("--mem", type=str, default="16G")
-    p.add_argument("--cpus", type=str, default="4")
+    p.add_argument(
+        "--gpus", type=str, default="1", help="--gres=gpu:N (0=cpu)"
+    )
+    p.add_argument("--time", type=str, default="0:15:00")
+    p.add_argument("--mem", type=str, default="100G")
+    p.add_argument("--cpus", type=str, default="16")
     p.add_argument("--agg-partition", type=str, default="shared")
     p.add_argument(
         "--max-concurrent",
@@ -118,7 +120,8 @@ def main():
     if args.max_concurrent > 0:
         array += f"%{args.max_concurrent}"
     sbatch = [
-        "sbatch", "--parsable",
+        "sbatch",
+        "--parsable",
         "--job-name=merging_eval",
         f"--output={logs_dir}/eval_%A_%a.out",
         f"--error={logs_dir}/eval_%A_%a.err",
@@ -133,15 +136,20 @@ def main():
     sbatch.append(str(worker_path))
 
     agg_cmd_tail = [
-        "sbatch", "--parsable",
+        "sbatch",
+        "--parsable",
         "--job-name=merging_eval_agg",
         f"--output={logs_dir}/aggregate_%j.out",
         f"--error={logs_dir}/aggregate_%j.err",
-        "--time=01:00:00", "--mem=16G",
-        f"--partition={args.agg_partition}", "--cpus-per-task=1",
+        "--time=01:00:00",
+        "--mem=16G",
+        f"--partition={args.agg_partition}",
+        "--cpus-per-task=1",
     ]
 
-    print(f"Array: {array}  ({n} checkpoints x {len(cfg['variants'])} variants)")
+    print(
+        f"Array: {array}  ({n} checkpoints x {len(cfg['variants'])} variants)"
+    )
     print("worker sbatch:", " ".join(sbatch))
     if args.dry_run:
         print("[dry-run] not submitting. Scripts written to", run_dir)
@@ -150,9 +158,12 @@ def main():
     job_id = subprocess.check_output(sbatch, text=True).strip()
     print(f"Submitted array job {job_id} (tasks {array})")
 
-    agg_cmd = agg_cmd_tail[:2] + [
-        f"--dependency=afterany:{job_id}"
-    ] + agg_cmd_tail[2:] + [str(agg_path)]
+    agg_cmd = (
+        agg_cmd_tail[:2]
+        + [f"--dependency=afterany:{job_id}"]
+        + agg_cmd_tail[2:]
+        + [str(agg_path)]
+    )
     agg_id = subprocess.check_output(agg_cmd, text=True).strip()
     print(f"Submitted aggregation job {agg_id} (after {job_id})")
     print("Status: squeue -u $USER")
