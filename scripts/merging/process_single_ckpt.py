@@ -66,38 +66,36 @@ def parse_args():
         help="Index into the config's `checkpoints` list (SLURM array task id).",
     )
     p.add_argument(
-        "--skip-phenix",
-        action="store_true",
-        help="Write the MTZ but don't run phenix/find_peaks.",
+        "--stage",
+        choices=["all", "finalize", "phenix"],
+        default="all",
+        help="all = finalize + phenix in one task (GPU). finalize = GPU MTZ "
+        "only. phenix = CPU refine on an existing MTZ. Split frees the GPU "
+        "before refinement.",
     )
     return p.parse_args()
 
 
-def main():
-    args = parse_args()
-    eval_cfg = yaml.safe_load(args.config.read_text())
-
+def _select_checkpoint(eval_cfg: dict, index: int) -> tuple[Path, int, Path]:
+    """Return (checkpoint, epoch, work_root) for this array index."""
     checkpoints = eval_cfg["checkpoints"]
-    if not 0 <= args.index < len(checkpoints):
+    if not 0 <= index < len(checkpoints):
         raise IndexError(
-            f"--index {args.index} out of range (0..{len(checkpoints) - 1})"
+            f"--index {index} out of range (0..{len(checkpoints) - 1})"
         )
-    ckpt = Path(checkpoints[args.index])
+    ckpt = Path(checkpoints[index])
     epoch = dm._epoch_of(ckpt)
-    logger.info("Checkpoint %d/%d: %s (epoch %d)",
-                args.index, len(checkpoints) - 1, ckpt, epoch)
-
-    # phenix env -> picked up by dm.run_phenix_refine / dm.run_find_peaks.
-    os.environ["PHENIX_ENV"] = eval_cfg["phenix_env"]
-
-    out_root = Path(eval_cfg["out_root"])
-    work_root = out_root / f"epoch{epoch:04d}"
+    work_root = Path(eval_cfg["out_root"]) / f"epoch{epoch:04d}"
     work_root.mkdir(parents=True, exist_ok=True)
+    return ckpt, epoch, work_root
 
-    run_dir = Path(eval_cfg["run_dir"])
-    cfg, _ = dm.load_run_metadata(run_dir)
 
-    # Load + finalize the merge for THIS checkpoint.
+def run_finalize(eval_cfg: dict, index: int) -> dict:
+    """GPU stage: finalize the merge for this checkpoint and write the MTZ."""
+    ckpt, epoch, work_root = _select_checkpoint(eval_cfg, index)
+    logger.info("Finalize checkpoint %d epoch %d: %s", index, epoch, ckpt)
+
+    cfg, _ = dm.load_run_metadata(Path(eval_cfg["run_dir"]))
     integrator = dm.load_integrator(cfg, ckpt)
     dm.finalize_merge_over_dataset(integrator, cfg)
     alpha, beta, seen = dm.extract_merged_posterior(integrator)
@@ -105,24 +103,38 @@ def main():
     data_dir = Path(eval_cfg["data_dir"])
     cell, sg = dm.load_crystal(data_dir)
     hkl = dm.load_hkl_table(data_dir, cfg, cell, sg)
-
     mtz_path = work_root / "merged.mtz"
     dm.write_merged_mtz(alpha, beta, seen, hkl, cell, sg, mtz_path)
 
     result = {
         "epoch": epoch,
         "checkpoint": str(ckpt),
-        "index": args.index,
+        "index": index,
         "n_hkl_seen": int(seen.sum()),
         "n_hkl_total": int(len(alpha)),
         "mtz": str(mtz_path),
         "variants": {},
     }
+    (work_root / "result.json").write_text(json.dumps(result, indent=2))
+    logger.info("Wrote MTZ + partial result: %s", work_root)
+    return result
 
-    if args.skip_phenix:
-        (work_root / "result.json").write_text(json.dumps(result, indent=2))
-        logger.info("Wrote MTZ only (--skip-phenix): %s", work_root)
-        return
+
+def run_phenix(eval_cfg: dict, index: int) -> dict:
+    """CPU stage: refine + find peaks on an already-written MTZ."""
+    _, epoch, work_root = _select_checkpoint(eval_cfg, index)
+    os.environ["PHENIX_ENV"] = eval_cfg["phenix_env"]
+
+    result_path = work_root / "result.json"
+    if result_path.exists():
+        result = json.loads(result_path.read_text())
+    else:
+        result = {"epoch": epoch, "index": index, "variants": {}}
+    mtz_path = work_root / "merged.mtz"
+    if not mtz_path.exists():
+        raise FileNotFoundError(
+            f"{mtz_path} missing; run the finalize stage first."
+        )
 
     template = Path(eval_cfg["eff_template"]).read_text()
     for vname in eval_cfg["variants"]:
@@ -155,8 +167,18 @@ def main():
             top_peak, n_peaks,
         )
 
-    (work_root / "result.json").write_text(json.dumps(result, indent=2))
-    logger.info("Wrote %s", work_root / "result.json")
+    result_path.write_text(json.dumps(result, indent=2))
+    logger.info("Wrote %s", result_path)
+    return result
+
+
+def main():
+    args = parse_args()
+    eval_cfg = yaml.safe_load(args.config.read_text())
+    if args.stage in ("all", "finalize"):
+        run_finalize(eval_cfg, args.index)
+    if args.stage in ("all", "phenix"):
+        run_phenix(eval_cfg, args.index)
 
 
 if __name__ == "__main__":

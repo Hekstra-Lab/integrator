@@ -36,7 +36,13 @@ def parse_args():
         default=None,
         help="SLURM log dir (default: <run_dir>/ckpt_eval_logs).",
     )
-    # SLURM knobs (worker array runs the model -> default to a GPU).
+    p.add_argument(
+        "--split",
+        action="store_true",
+        help="Two phases: a GPU array writes MTZs, then a dependent CPU array "
+        "runs phenix (frees the GPU before refinement). Default: one array.",
+    )
+    # Finalize/coupled array runs the model -> default to a GPU.
     p.add_argument("--partition", type=str, default="gpu")
     p.add_argument(
         "--gpus", type=str, default="1", help="--gres=gpu:N (0=cpu)"
@@ -44,6 +50,11 @@ def parse_args():
     p.add_argument("--time", type=str, default="0:15:00")
     p.add_argument("--mem", type=str, default="100G")
     p.add_argument("--cpus", type=str, default="16")
+    # Phenix array (CPU) knobs, used only with --split.
+    p.add_argument("--phenix-partition", type=str, default="shared")
+    p.add_argument("--phenix-time", type=str, default="02:00:00")
+    p.add_argument("--phenix-mem", type=str, default="16G")
+    p.add_argument("--phenix-cpus", type=str, default="4")
     p.add_argument("--agg-partition", type=str, default="shared")
     p.add_argument(
         "--max-concurrent",
@@ -97,12 +108,13 @@ def main():
     def _script(*body: str) -> str:
         return "\n".join(["#!/bin/bash", *activate, *body, ""])
 
+    # One worker script; the stage (all|finalize|phenix) is positional arg $1.
     worker_path = run_dir / "merging_eval_job.sh"
     worker_path.write_text(
         _script(
-            'echo "task $SLURM_ARRAY_TASK_ID on $HOSTNAME ($(date))"',
+            'echo "stage $1 task $SLURM_ARRAY_TASK_ID on $HOSTNAME ($(date))"',
             f'python {worker} --config "{cfg_file}" '
-            "--index $SLURM_ARRAY_TASK_ID",
+            "--index $SLURM_ARRAY_TASK_ID --stage $1",
         )
     )
     worker_path.chmod(0o755)
@@ -119,54 +131,80 @@ def main():
     array = f"0-{n - 1}"
     if args.max_concurrent > 0:
         array += f"%{args.max_concurrent}"
-    sbatch = [
-        "sbatch",
-        "--parsable",
-        "--job-name=merging_eval",
-        f"--output={logs_dir}/eval_%A_%a.out",
-        f"--error={logs_dir}/eval_%A_%a.err",
-        f"--time={args.time}",
-        f"--mem={args.mem}",
-        f"--partition={args.partition}",
-        f"--cpus-per-task={args.cpus}",
-        f"--array={array}",
-    ]
-    if args.gpus and args.gpus != "0":
-        sbatch.append(f"--gres=gpu:{args.gpus}")
-    sbatch.append(str(worker_path))
 
-    agg_cmd_tail = [
-        "sbatch",
-        "--parsable",
-        "--job-name=merging_eval_agg",
-        f"--output={logs_dir}/aggregate_%j.out",
-        f"--error={logs_dir}/aggregate_%j.err",
-        "--time=01:00:00",
-        "--mem=16G",
-        f"--partition={args.agg_partition}",
-        "--cpus-per-task=1",
-    ]
+    def _array_cmd(name, partition, time, mem, cpus, gpus, stage, dependency):
+        cmd = [
+            "sbatch", "--parsable",
+            f"--job-name={name}",
+            f"--output={logs_dir}/{name}_%A_%a.out",
+            f"--error={logs_dir}/{name}_%A_%a.err",
+            f"--time={time}",
+            f"--mem={mem}",
+            f"--partition={partition}",
+            f"--cpus-per-task={cpus}",
+            f"--array={array}",
+        ]
+        if gpus and gpus != "0":
+            cmd.append(f"--gres=gpu:{gpus}")
+        if dependency:
+            cmd.append(f"--dependency={dependency}")
+        return cmd + [str(worker_path), stage]
+
+    def _submit(cmd, label):
+        print(f"{label}:", " ".join(cmd))
+        if args.dry_run:
+            return "DRYRUN"
+        jid = subprocess.check_output(cmd, text=True).strip()
+        print(f"  -> job {jid}")
+        return jid
 
     print(
         f"Array: {array}  ({n} checkpoints x {len(cfg['variants'])} variants)"
+        f"  {'split (GPU finalize -> CPU phenix)' if args.split else 'coupled'}"
     )
-    print("worker sbatch:", " ".join(sbatch))
+
+    if args.split:
+        # Phase 1 (GPU): write MTZs. Phase 2 (CPU): phenix, element-wise after 1.
+        j1 = _submit(
+            _array_cmd(
+                "merge_finalize", args.partition, args.time, args.mem,
+                args.cpus, args.gpus, "finalize", None,
+            ),
+            "finalize array",
+        )
+        j2 = _submit(
+            _array_cmd(
+                "merge_phenix", args.phenix_partition, args.phenix_time,
+                args.phenix_mem, args.phenix_cpus, "0", "phenix",
+                f"aftercorr:{j1}",
+            ),
+            "phenix array",
+        )
+        last = j2
+    else:
+        last = _submit(
+            _array_cmd(
+                "merging_eval", args.partition, args.time, args.mem,
+                args.cpus, args.gpus, "all", None,
+            ),
+            "eval array",
+        )
+
+    agg_cmd = [
+        "sbatch", "--parsable",
+        "--job-name=merging_eval_agg",
+        f"--output={logs_dir}/aggregate_%j.out",
+        f"--error={logs_dir}/aggregate_%j.err",
+        "--time=01:00:00", "--mem=16G",
+        f"--partition={args.agg_partition}", "--cpus-per-task=1",
+        f"--dependency=afterany:{last}",
+        str(agg_path),
+    ]
+    _submit(agg_cmd, "aggregation")
     if args.dry_run:
         print("[dry-run] not submitting. Scripts written to", run_dir)
-        return
-
-    job_id = subprocess.check_output(sbatch, text=True).strip()
-    print(f"Submitted array job {job_id} (tasks {array})")
-
-    agg_cmd = (
-        agg_cmd_tail[:2]
-        + [f"--dependency=afterany:{job_id}"]
-        + agg_cmd_tail[2:]
-        + [str(agg_path)]
-    )
-    agg_id = subprocess.check_output(agg_cmd, text=True).strip()
-    print(f"Submitted aggregation job {agg_id} (after {job_id})")
-    print("Status: squeue -u $USER")
+    else:
+        print("Status: squeue -u $USER")
 
 
 if __name__ == "__main__":
