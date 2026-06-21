@@ -73,7 +73,23 @@ def parse_args():
         "only. phenix = CPU refine on an existing MTZ. Split frees the GPU "
         "before refinement.",
     )
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="Redo work even if outputs already exist (default: skip done).",
+    )
     return p.parse_args()
+
+
+def _read_result(work_root: Path) -> dict | None:
+    """Existing result.json for this checkpoint, or None if absent/unreadable."""
+    p = work_root / "result.json"
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text())
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _select_checkpoint(eval_cfg: dict, index: int) -> tuple[Path, int, Path]:
@@ -90,11 +106,22 @@ def _select_checkpoint(eval_cfg: dict, index: int) -> tuple[Path, int, Path]:
     return ckpt, epoch, work_root
 
 
-def run_finalize(eval_cfg: dict, index: int) -> dict:
+def run_finalize(eval_cfg: dict, index: int, force: bool = False) -> dict:
     """GPU stage: finalize the merge for this checkpoint and write the MTZ."""
     ckpt, epoch, work_root = _select_checkpoint(eval_cfg, index)
-    logger.info("Finalize checkpoint %d epoch %d: %s", index, epoch, ckpt)
 
+    # Skip the expensive merge pass if a valid MTZ + result already exist.
+    existing = _read_result(work_root)
+    if (
+        not force
+        and (work_root / "merged.mtz").exists()
+        and existing is not None
+        and existing.get("n_hkl_seen")
+    ):
+        logger.info("Skip finalize epoch %d: MTZ already present", epoch)
+        return existing
+
+    logger.info("Finalize checkpoint %d epoch %d: %s", index, epoch, ckpt)
     cfg, _ = dm.load_run_metadata(Path(eval_cfg["run_dir"]))
     integrator = dm.load_integrator(cfg, ckpt)
     dm.finalize_merge_over_dataset(integrator, cfg)
@@ -120,16 +147,18 @@ def run_finalize(eval_cfg: dict, index: int) -> dict:
     return result
 
 
-def run_phenix(eval_cfg: dict, index: int) -> dict:
+def run_phenix(eval_cfg: dict, index: int, force: bool = False) -> dict:
     """CPU stage: refine + find peaks on an already-written MTZ."""
     _, epoch, work_root = _select_checkpoint(eval_cfg, index)
     os.environ["PHENIX_ENV"] = eval_cfg["phenix_env"]
 
     result_path = work_root / "result.json"
-    if result_path.exists():
-        result = json.loads(result_path.read_text())
-    else:
-        result = {"epoch": epoch, "index": index, "variants": {}}
+    result = _read_result(work_root) or {
+        "epoch": epoch,
+        "index": index,
+        "variants": {},
+    }
+    result.setdefault("variants", {})
     mtz_path = work_root / "merged.mtz"
     if not mtz_path.exists():
         raise FileNotFoundError(
@@ -138,6 +167,12 @@ def run_phenix(eval_cfg: dict, index: int) -> dict:
 
     template = Path(eval_cfg["eff_template"]).read_text()
     for vname in eval_cfg["variants"]:
+        # Skip variants that already refined successfully.
+        done = result["variants"].get(vname)
+        if not force and done and done.get("phenix_ok"):
+            logger.info("Skip %s epoch %d: already refined", vname, epoch)
+            continue
+
         _, labels, star_token, fw = _VARIANT_BY_NAME[vname]
         work_dir = work_root / vname
         work_dir.mkdir(exist_ok=True)
@@ -166,6 +201,8 @@ def run_phenix(eval_cfg: dict, index: int) -> dict:
             vname, ok, r.get("r_work_final"), r.get("r_free_final"),
             top_peak, n_peaks,
         )
+        # Write after each variant so a crash keeps finished variants.
+        result_path.write_text(json.dumps(result, indent=2))
 
     result_path.write_text(json.dumps(result, indent=2))
     logger.info("Wrote %s", result_path)
@@ -176,9 +213,9 @@ def main():
     args = parse_args()
     eval_cfg = yaml.safe_load(args.config.read_text())
     if args.stage in ("all", "finalize"):
-        run_finalize(eval_cfg, args.index)
+        run_finalize(eval_cfg, args.index, args.force)
     if args.stage in ("all", "phenix"):
-        run_phenix(eval_cfg, args.index)
+        run_phenix(eval_cfg, args.index, args.force)
 
 
 if __name__ == "__main__":

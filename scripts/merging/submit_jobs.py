@@ -22,7 +22,11 @@ def parse_args():
     p = argparse.ArgumentParser(
         description="Submit per-checkpoint phenix evaluation SLURM array."
     )
-    p.add_argument("--run-dir", type=Path, required=True)
+    p.add_argument(
+        "--run-dir",
+        type=Path,
+        required=True,
+    )
     p.add_argument(
         "--script-dir",
         type=str,
@@ -100,6 +104,11 @@ def parse_args():
         "to avoid hogging GPUs.",
     )
     p.add_argument(
+        "--force",
+        action="store_true",
+        help="Redo checkpoints even if outputs already exist (default: skip).",
+    )
+    p.add_argument(
         "--dry-run",
         action="store_true",
         help="Write the job scripts but don't sbatch.",
@@ -155,12 +164,13 @@ def main():
         return "\n".join(["#!/bin/bash", *activate, *body, ""])
 
     # One worker script; the stage (all|finalize|phenix) is positional arg $1.
+    force_flag = " --force" if args.force else ""
     worker_path = run_dir / "merging_eval_job.sh"
     worker_path.write_text(
         _script(
             'echo "stage $1 task $SLURM_ARRAY_TASK_ID on $HOSTNAME ($(date))"',
             f'python {worker} --config "{cfg_file}" '
-            "--index $SLURM_ARRAY_TASK_ID --stage $1",
+            f"--index $SLURM_ARRAY_TASK_ID --stage $1{force_flag}",
         )
     )
     worker_path.chmod(0o755)
