@@ -43,19 +43,55 @@ def parse_args():
         "runs phenix (frees the GPU before refinement). Default: one array.",
     )
     # Finalize/coupled array runs the model -> default to a GPU.
-    p.add_argument("--partition", type=str, default="gpu")
+    p.add_argument(
+        "--partition",
+        type=str,
+        default="gpu",
+    )
     p.add_argument(
         "--gpus", type=str, default="1", help="--gres=gpu:N (0=cpu)"
     )
-    p.add_argument("--time", type=str, default="0:15:00")
-    p.add_argument("--mem", type=str, default="100G")
-    p.add_argument("--cpus", type=str, default="16")
+    p.add_argument(
+        "--time",
+        type=str,
+        default="0:15:00",
+    )
+    p.add_argument(
+        "--mem",
+        type=str,
+        default="100G",
+    )
+    p.add_argument(
+        "--cpus",
+        type=str,
+        default="16",
+    )
     # Phenix array (CPU) knobs, used only with --split.
-    p.add_argument("--phenix-partition", type=str, default="shared")
-    p.add_argument("--phenix-time", type=str, default="02:00:00")
-    p.add_argument("--phenix-mem", type=str, default="16G")
-    p.add_argument("--phenix-cpus", type=str, default="4")
-    p.add_argument("--agg-partition", type=str, default="shared")
+    p.add_argument(
+        "--phenix-partition",
+        type=str,
+        default="shared",
+    )
+    p.add_argument(
+        "--phenix-time",
+        type=str,
+        default="02:00:00",
+    )
+    p.add_argument(
+        "--phenix-mem",
+        type=str,
+        default="16G",
+    )
+    p.add_argument(
+        "--phenix-cpus",
+        type=str,
+        default="4",
+    )
+    p.add_argument(
+        "--agg-partition",
+        type=str,
+        default="shared",
+    )
     p.add_argument(
         "--max-concurrent",
         type=int,
@@ -76,18 +112,28 @@ def main():
     run_dir = args.run_dir.resolve()
     cfg_file = run_dir / "merging_eval_cfg.yaml"
     if not cfg_file.exists():
-        raise FileNotFoundError(f"{cfg_file} (run create_config.py first)")
+        raise FileNotFoundError(
+            f"{cfg_file} (run create_config.py first)",
+        )
 
     cfg = yaml.safe_load(cfg_file.read_text())
     n = len(cfg["checkpoints"])
     if n == 0:
-        raise ValueError("no checkpoints in config")
+        raise ValueError(
+            "no checkpoints in config",
+        )
 
     script_dir = Path(args.script_dir)
     worker = (script_dir / "process_single_ckpt.py").as_posix()
     aggregator = (script_dir / "compare_checkpoints.py").as_posix()
-    mamba_setup = cfg.get("mamba_setup", "")
-    python_env = cfg.get("python_env", "integrator-dev")
+    mamba_setup = cfg.get(
+        "mamba_setup",
+        "",
+    )
+    python_env = cfg.get(
+        "python_env",
+        "integrator-dev",
+    )
 
     # Absolute, so sbatch --output works regardless of the submitting cwd.
     logs_dir = (
@@ -134,7 +180,8 @@ def main():
 
     def _array_cmd(name, partition, time, mem, cpus, gpus, stage, dependency):
         cmd = [
-            "sbatch", "--parsable",
+            "sbatch",
+            "--parsable",
             f"--job-name={name}",
             f"--output={logs_dir}/{name}_%A_%a.out",
             f"--error={logs_dir}/{name}_%A_%a.err",
@@ -145,9 +192,13 @@ def main():
             f"--array={array}",
         ]
         if gpus and gpus != "0":
-            cmd.append(f"--gres=gpu:{gpus}")
+            cmd.append(
+                f"--gres=gpu:{gpus}",
+            )
         if dependency:
-            cmd.append(f"--dependency={dependency}")
+            cmd.append(
+                f"--dependency={dependency}",
+            )
         return cmd + [str(worker_path), stage]
 
     def _submit(cmd, label):
@@ -155,7 +206,9 @@ def main():
         if args.dry_run:
             return "DRYRUN"
         jid = subprocess.check_output(cmd, text=True).strip()
-        print(f"  -> job {jid}")
+        print(
+            f"  -> job {jid}",
+        )
         return jid
 
     print(
@@ -167,15 +220,26 @@ def main():
         # Phase 1 (GPU): write MTZs. Phase 2 (CPU): phenix, element-wise after 1.
         j1 = _submit(
             _array_cmd(
-                "merge_finalize", args.partition, args.time, args.mem,
-                args.cpus, args.gpus, "finalize", None,
+                "merge_finalize",
+                args.partition,
+                args.time,
+                args.mem,
+                args.cpus,
+                args.gpus,
+                "finalize",
+                None,
             ),
             "finalize array",
         )
         j2 = _submit(
             _array_cmd(
-                "merge_phenix", args.phenix_partition, args.phenix_time,
-                args.phenix_mem, args.phenix_cpus, "0", "phenix",
+                "merge_phenix",
+                args.phenix_partition,
+                args.phenix_time,
+                args.phenix_mem,
+                args.phenix_cpus,
+                "0",
+                "phenix",
                 f"aftercorr:{j1}",
             ),
             "phenix array",
@@ -184,27 +248,41 @@ def main():
     else:
         last = _submit(
             _array_cmd(
-                "merging_eval", args.partition, args.time, args.mem,
-                args.cpus, args.gpus, "all", None,
+                "merging_eval",
+                args.partition,
+                args.time,
+                args.mem,
+                args.cpus,
+                args.gpus,
+                "all",
+                None,
             ),
             "eval array",
         )
 
     agg_cmd = [
-        "sbatch", "--parsable",
+        "sbatch",
+        "--parsable",
         "--job-name=merging_eval_agg",
         f"--output={logs_dir}/aggregate_%j.out",
         f"--error={logs_dir}/aggregate_%j.err",
-        "--time=01:00:00", "--mem=16G",
-        f"--partition={args.agg_partition}", "--cpus-per-task=1",
+        "--time=01:00:00",
+        "--mem=16G",
+        f"--partition={args.agg_partition}",
+        "--cpus-per-task=1",
         f"--dependency=afterany:{last}",
         str(agg_path),
     ]
-    _submit(agg_cmd, "aggregation")
+    _submit(
+        agg_cmd,
+        "aggregation",
+    )
     if args.dry_run:
         print("[dry-run] not submitting. Scripts written to", run_dir)
     else:
-        print("Status: squeue -u $USER")
+        print(
+            "Status: squeue -u $USER",
+        )
 
 
 if __name__ == "__main__":
