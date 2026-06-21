@@ -145,6 +145,9 @@ class AmortizedMergingIntegrator(ScalingLightningModule):
             persistent=False,
         )
 
+        # Extra metadata columns fed to the MLP scale as additional inputs.
+        self.scale_extra_features = list(cfg.scale_extra_features or [])
+
         # Scale field: MLP (production) or a frame-only Chebyshev fallback.
         if cfg.scale_mlp:
             n_abs_sh = 0
@@ -162,6 +165,9 @@ class AmortizedMergingIntegrator(ScalingLightningModule):
                 head_init_std=cfg.scale_head_init_std,
                 n_abs_sh=n_abs_sh,
                 absorption_even_only=cfg.scale_mlp_absorption_even_only,
+                n_extra=len(self.scale_extra_features),
+                extra_loc=cfg.scale_extra_loc,
+                extra_scale=cfg.scale_extra_scale,
             )
         else:
             self.scale_fn = ChebyshevScale(
@@ -186,8 +192,19 @@ class AmortizedMergingIntegrator(ScalingLightningModule):
                         "reference at the SH-augmented metadata file."
                     )
                 a = metadata["absorption_sh"].to(device).float()
+            extra = None
+            if self.scale_extra_features:
+                cols = []
+                for key in self.scale_extra_features:
+                    if key not in metadata:
+                        raise KeyError(
+                            f"scale_extra_features needs '{key}' in metadata; "
+                            "not found in the loader's reference file."
+                        )
+                    cols.append(metadata[key].to(device).float().reshape(-1))
+                extra = torch.stack(cols, dim=-1)  # (B, n_extra)
             # The MLP owns the LP correction (lp is an input), so no `/lp` here.
-            return self.scale_fn(frame, x_det, y_det, lp, d, a)
+            return self.scale_fn(frame, x_det, y_det, lp, d, a, extra)
         return self.scale_fn(frame) / lp
 
     def _cond_mid(self, metadata: dict, device: torch.device) -> Tensor:

@@ -1,17 +1,17 @@
-# Structured-VAE per-HKL merging (svae_merging integrator).
+# Structured-VAE per-HKL merging (svae_merging) -- analogue of
+# amortized_merging_friedel_hewl.yaml for the new SVAE model.
 #
-# A standalone sibling of amortized_merging: instead of a learned per-obs
-# potential head + a background surrogate, the profile logits are shared and a
-# per-obs gate forms a per-pixel signal responsibility
-#     r_p = sigmoid(profile_logit_p + gate_i)
+# Difference from amortized_merging: instead of a learned per-obs potential head
+# + a background surrogate, the profile logits are SHARED and a per-obs gate
+# forms a per-pixel signal responsibility  r_p = sigmoid(profile_logit_p + gate_i)
 # that drives BOTH conjugate readouts in one pass (Cemgil augmentation):
 #     I_h ~ Gamma(alpha_W + sum_i sum_p r*c,   tau_h + sum_i s_i*sum_p prf)
 #     b_i ~ Gamma(a_bg    + sum_p (1-r)*c,      b_bg + P_i)
 # Signal + background = total count, so photons are conserved (robust to the
-# bg-eats-signal collapse). Only the profile + k_i encoders and the qp surrogate
-# are needed; the background prior is the loss's per-bin Gamma (n_bins).
-#
-# Pair with group_by_asu_id so each batch holds complete HKL groups.
+# bg-eats-signal collapse). Consequences for this YAML vs amortized_merging:
+#   - only the profile + k_i encoders are used (the gate reads k_i) -> 2 encoders
+#   - the background is conjugate, not a surrogate -> qp is the only surrogate
+#   - n_bins is now the Gamma PRIOR for the conjugate background posterior
 
 integrator:
   name: svae_merging
@@ -22,44 +22,45 @@ integrator:
     w: 21
     encoder_out: 64
     mc_samples: 100
-    log_intensity_scatter: true
-    log_background_scatter: true
-
     anomalous: true           # merge on miller_idx_unfriedelized (I(+) != I(-))
     wilson_alpha: 1.0
     merge_kl_weight: 1.0
-    scaling_lr: 0.005
+    scaling_lr: 0.005         # decoupled LR for the slow scale field
 
     responsibility_gate_init: -2.0   # gate-head bias: r starts ~sigmoid(-2)=0.12
 
-    # anomalous-preserving aux losses off for a clean first SVAE run
+    # --- anomalous-preserving auxiliary losses ---
     consistency_weight: 0.0
     consistency_pool_friedel: false
     double_wilson_weight: 0.0
     wilson_centric_prior: false
 
-    # --- MLP scale (carries LP) ---
+    # --- MLP scale (carries LP; with even-l crystal-frame absorption) ---
     dmin: 1.0
     scale_mlp: true
     scale_mlp_hidden: 128
     scale_mlp_layers: 4
     scale_head_init_std: 0.05
-    scale_sh_lmax: 4
-    scale_mlp_absorption: false
+
+    scale_sh_lmax: 4                      # needs absorption_sh in metadata
+    scale_mlp_absorption: false  # even-l SH (Friedel-safe); false = no SH
     scale_mlp_absorption_even_only: true
     predict_keys: [refl_ids, is_test, qi_mean, qi_var, qbg_mean, qbg_var,
       intensity.prf.value, intensity.prf.variance, background.mean, d,
       group_label, qp_mean, qp_loc, qp_scale,
       miller_idx_unfriedelized, miller_idx_friedelized]
+    log_intensity_scatter: true   # epoch scatters: model scale*I vs DIALS I
+    log_background_scatter: true
+
 
 optimizer:
   lr: 0.001
   weight_decay: 0.0
   decoder_weight_decay: 0.0
-  lr_schedule: null
+  lr_schedule: null          # set to step_linear_warmup to enable the warmup
   warmup_steps: 1000
 
-# Only two encoders: the profile shape and the k_i (intensity) features that
+# Only two encoders: the profile shape, and the k_i (intensity) features that
 # drive the per-obs gate. (svae_merging.REQUIRED_ENCODERS = profile, k_i.)
 encoders:
 - name: profile_encoder
@@ -83,12 +84,11 @@ surrogates:
       latent_dim: 12
       init_std: 0.5
       prior_scale: 3.0
-      smoothness_weight: 0.02
-
+      smoothness_weight: 0.02   # was integrator.args.qp_smoothness_weight
 loss:
   name: merging_wilson
   args:
-    lp_correction: false
+    lp_correction: false        # MLP scale already carries LP
     n_bins: 30                  # per-resolution-bin background prior (the Gamma
                                 # prior for the conjugate background posterior)
     use_gb: false
@@ -107,15 +107,17 @@ data_loader:
     resolution_cutoff: null
     transform: anscombe
     group_by_asu_id: true
-    group_by_key: miller_idx_friedelized
-    split_by_miller_idx: true
-    test_split: 0.1
+    group_by_key: miller_idx_friedelized   # co-batch I(+)/I(-) mates
+    split_by_miller_idx: true   # free-set holdout by reflection (not random obs)
+    test_split: 0.1             # fraction of reflections held out as test
     max_obs_per_hkl: null
-    ice_ring_ranges: null
+    ice_ring_ranges: null #[[1.34, 1.42]]
     shoebox_file_names:
       data_dir: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/scaling_dataset
       counts: counts.npy
       masks: masks.npy
+      # make_shoeboxes output; must also carry absorption_sh if
+      # scale_mlp_absorption is true.
       reference: metadata.npy
 
 trainer:

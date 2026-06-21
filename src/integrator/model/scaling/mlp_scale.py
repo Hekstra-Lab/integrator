@@ -63,6 +63,9 @@ class MLPScale(nn.Module):
         head_init_std: float = 0.0,
         n_abs_sh: int = 0,
         absorption_even_only: bool = True,
+        n_extra: int = 0,
+        extra_loc: list[float] | None = None,
+        extra_scale: list[float] | None = None,
     ):
         super().__init__()
 
@@ -104,8 +107,28 @@ class MLPScale(nn.Module):
             )
             n_abs_in = int(keep.sum())
 
-        # Input: [frame_norm, radius_norm, d_norm, lp] + selected SH features.
-        n_input = 4 + n_abs_in
+        # Extra metadata features
+        # standardized by loc, scale): feat = (raw - loc) / scale.
+        self.n_extra = int(n_extra)
+        if self.n_extra > 0:
+            loc = extra_loc if extra_loc is not None else [0.0] * self.n_extra
+            scl = (
+                extra_scale
+                if extra_scale is not None
+                else [1.0] * self.n_extra
+            )
+            if len(loc) != self.n_extra or len(scl) != self.n_extra:
+                raise ValueError(
+                    f"extra_loc/extra_scale must have length n_extra={self.n_extra}"
+                )
+            self.register_buffer("extra_loc", torch.tensor(loc).float())
+            self.register_buffer(
+                "extra_scale",
+                torch.tensor(scl).float().clamp(min=1e-8),
+            )
+
+        # Input: [frame_norm, radius_norm, d_norm, lp] + SH features + extras.
+        n_input = 4 + n_abs_in + self.n_extra
         layers = []
         in_dim = n_input
         for _ in range(n_layers):
@@ -115,10 +138,6 @@ class MLPScale(nn.Module):
         layers.append(nn.Linear(in_dim, 1))
         self.net = nn.Sequential(*layers)
 
-        # Bias 0 so softplus(0) ~ 0.69 (flat constant scale) at init. The output
-        # weight is zero by default (legacy: hidden layers get zero gradient on
-        # step 0); a small head_init_std seeds the spatial scale structure so it
-        # develops from the first step without changing the init scale level.
         nn.init.zeros_(self.net[-1].bias)
         if head_init_std > 0.0:
             nn.init.normal_(self.net[-1].weight, std=head_init_std)
@@ -133,6 +152,7 @@ class MLPScale(nn.Module):
         lp: Tensor,
         d: Tensor,
         absorption_sh: Tensor | None = None,
+        extra: Tensor | None = None,
     ) -> Tensor:
         frame_norm = (frame - self.frame_mid) / self.frame_half
         r = torch.sqrt((x - self.beam_cx).pow(2) + (y - self.beam_cy).pow(2))
@@ -155,4 +175,17 @@ class MLPScale(nn.Module):
             features = torch.cat(
                 [features, absorption_sh[:, self.abs_cols]], dim=-1
             )
+        if self.n_extra > 0:
+            if extra is None:
+                raise ValueError(
+                    "MLPScale was built with extra metadata features but "
+                    "`extra` was not provided; check scale_extra_features."
+                )
+            if extra.shape[-1] != self.n_extra:
+                raise ValueError(
+                    f"extra has {extra.shape[-1]} features, expected "
+                    f"{self.n_extra} (scale_extra_features mismatch)."
+                )
+            extra = (extra - self.extra_loc) / self.extra_scale
+            features = torch.cat([features, extra], dim=-1)
         return F.softplus(self.net(features).squeeze(-1))

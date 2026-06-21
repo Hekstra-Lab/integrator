@@ -648,6 +648,60 @@ def load_config(resource: str | Path) -> dict:
     return raw
 
 
+def _resolve_scale_standardization(
+    iargs: dict, data_dir: str, reference: str
+) -> None:
+    """Flatten scale_extra_features and auto-fill loc/scale from the dataset.
+
+    A nested entry is a vector standardized together with one shared scale; a
+    bare name is a scalar (its own mean/std). Manual loc/scale or
+    scale_standardize=False skip the auto pass.
+    """
+    feats = iargs.get("scale_extra_features")
+    if not feats:
+        return
+
+    # Group structure decides the shared scale; flat list is what forward reads.
+    groups = [[f] if isinstance(f, str) else list(f) for f in feats]
+    flat = [col for g in groups for col in g]
+    iargs["scale_extra_features"] = flat
+
+    has_manual = (
+        iargs.get("scale_extra_loc") is not None
+        or iargs.get("scale_extra_scale") is not None
+    )
+    if has_manual or not iargs.get("scale_standardize", True):
+        return
+
+    from integrator.io import data_path, load_metadata
+
+    path = data_path(Path(data_dir) / reference) or (Path(data_dir) / reference)
+    meta = load_metadata(path)
+
+    import numpy as np
+
+    loc: list[float] = []
+    scale: list[float] = []
+    for g in groups:
+        cols = []
+        for col in g:
+            if col not in meta:
+                raise KeyError(
+                    f"scale_extra_features '{col}' not in {path}"
+                )
+            cols.append(meta[col].reshape(-1).float().numpy())
+        # One shared scale per group keeps a vector's directions undistorted.
+        means = [float(c.mean()) for c in cols]
+        pooled = float(np.mean([c.var() for c in cols]))
+        s = pooled**0.5
+        s = s if s > 1e-8 else 1.0
+        loc.extend(means)
+        scale.extend([s] * len(cols))
+
+    iargs["scale_extra_loc"] = loc
+    iargs["scale_extra_scale"] = scale
+
+
 def apply_dataset_defaults(cfg: dict) -> dict:
     """Fill dataset-derived values from <data_dir>/dataset.yaml where unset in cfg."""
     from integrator.io import data_dim_for, read_dataset_spec
@@ -710,6 +764,14 @@ def apply_dataset_defaults(cfg: dict) -> dict:
     ):
         if key in accepted and value is not None:
             fill(iargs, key, value)
+
+    # Auto-standardize the extra scale features from the dataset metadata.
+    if "scale_extra_features" in accepted and iargs.get("scale_extra_features"):
+        files = spec.get("files", {})
+        ref = (dl_args.get("shoebox_file_names") or {}).get("reference") or (
+            files.get("reference", "metadata.npy")
+        )
+        _resolve_scale_standardization(iargs, data_dir, ref)
 
     input_shape = [h, w] if data_dim == "2d" else [d, h, w]
     for enc in cfg.get("encoders", []) or []:

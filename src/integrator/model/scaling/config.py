@@ -41,6 +41,13 @@ class MergingIntegratorCfg:
         scale_sh_lmax: Max spherical-harmonic order for crystal-frame absorption.
         scale_mlp_absorption: Feed crystal-frame SH absorption to the MLP scale.
         scale_mlp_absorption_even_only: Keep only even-l (Friedel-safe) harmonics.
+        scale_extra_features: Extra metadata.npy columns to feed the MLP scale.
+            A bare name is one scalar; a nested list is a vector standardized
+            together with one shared scale, e.g. `[[s1.0, s1.1, s1.2], d]`.
+        scale_standardize: Auto-compute loc/scale from the dataset at build
+            time (per feature, shared within a group). Off passes columns raw.
+        scale_extra_loc: Manual standardization offsets; overrides auto.
+        scale_extra_scale: Manual standardization scales; overrides auto.
     """
 
     data_dim: Literal["2d", "3d"]
@@ -86,6 +93,13 @@ class MergingIntegratorCfg:
     scale_sh_lmax: int = 4
     scale_mlp_absorption: bool = False
     scale_mlp_absorption_even_only: bool = True
+
+    # Extra metadata.npy columns fed to the MLP scale (flattened by the
+    # factory; nested entries become one shared-scale group).
+    scale_extra_features: list[str] | None = None
+    scale_standardize: bool = True
+    scale_extra_loc: list[float] | None = None
+    scale_extra_scale: list[float] | None = None
 
     # Model-vs-DIALS epoch scatter logging (intensity / background); off by
     # default. Needs intensity.{sum,prf}.* in the metadata for the intensity one.
