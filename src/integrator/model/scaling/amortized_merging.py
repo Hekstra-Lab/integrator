@@ -203,7 +203,6 @@ class AmortizedMergingIntegrator(ScalingLightningModule):
                         )
                     cols.append(metadata[key].to(device).float().reshape(-1))
                 extra = torch.stack(cols, dim=-1)  # (B, n_extra)
-            # The MLP owns the LP correction (lp is an input), so no `/lp` here.
             return self.scale_fn(frame, x_det, y_det, lp, d, a, extra)
         return self.scale_fn(frame) / lp
 
@@ -234,7 +233,9 @@ class AmortizedMergingIntegrator(ScalingLightningModule):
         ids present.
         """
         d_sum, inverse, unique = _scatter_sum_compact(d_per_obs, miller_idx)
-        cnt, _, _ = _scatter_sum_compact(torch.ones_like(d_per_obs), miller_idx)
+        cnt, _, _ = _scatter_sum_compact(
+            torch.ones_like(d_per_obs), miller_idx
+        )
         tau_h = self._wilson_tau((d_sum / cnt.clamp(min=1.0)).clamp(min=1e-6))
 
         cond = torch.stack(
@@ -288,7 +289,13 @@ class AmortizedMergingIntegrator(ScalingLightningModule):
                 self.encoders["profile"](sr), mc_samples=1
             ).mean_profile
             _, alpha_h, beta_h, _, unique, _ = self._merge(
-                x_k_i, x_r_i, scale, profile_mean, mask, miller_idx, d_obs,
+                x_k_i,
+                x_r_i,
+                scale,
+                profile_mean,
+                mask,
+                miller_idx,
+                d_obs,
                 cond_mid,
             )
             if bool(seen[unique].any()):
@@ -343,7 +350,14 @@ class AmortizedMergingIntegrator(ScalingLightningModule):
         cond_mid = self._cond_mid(metadata, device)
 
         qi_h, alpha_h, beta_h, inverse, unique_hkls, tau_h = self._merge(
-            x_k_i, x_r_i, scale, profile_mean, mask, miller_idx, d_obs, cond_mid
+            x_k_i,
+            x_r_i,
+            scale,
+            profile_mean,
+            mask,
+            miller_idx,
+            d_obs,
+            cond_mid,
         )
 
         # Sample I_h once per HKL, broadcast to its observations.
