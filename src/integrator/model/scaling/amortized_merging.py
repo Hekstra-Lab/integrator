@@ -578,6 +578,12 @@ class AmortizedMergingIntegrator(ScalingLightningModule):
         )[valid]
         return diff.pow(2).sum(), int(valid.sum())
 
+    def _extra_loss_terms(
+        self, outputs: dict, metadata: dict
+    ) -> tuple[Tensor, dict[str, Tensor]]:
+        """Extra ELBO terms added in `_step`; no-op base (subclasses override)."""
+        return outputs["scale"].new_zeros(()), {}
+
     def _step(self, batch, step: Literal["train", "val"]):
         counts, shoebox, mask, metadata = batch
         outputs = self(counts, shoebox, mask, metadata)
@@ -647,6 +653,13 @@ class AmortizedMergingIntegrator(ScalingLightningModule):
                 self.log(
                     f"{step} double_wilson", dw_mean.detach(), on_epoch=True
                 )
+
+        # Subclass hook for extra ELBO terms (e.g. the difference-as-latent
+        # delta KL); a no-op here so amortized/svae are unchanged.
+        extra_loss, extra_logs = self._extra_loss_terms(outputs, metadata)
+        total_loss = total_loss + extra_loss
+        for name, value in extra_logs.items():
+            self.log(f"{step} {name}", value, on_epoch=True)
 
         _log_loss(
             self,

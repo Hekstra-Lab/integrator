@@ -15,10 +15,10 @@ integrator:
     merge_kl_weight: 1.0
     scaling_lr: 0.005         
 
-    # --- anomalous auxiliary losses ---
-    consistency_weight: 0.5
-    consistency_pool_friedel: true
-    double_wilson_weight: 1.0
+    # --- anomalous auxiliary losses (off: audited as anomalous-signal leaks) ---
+    consistency_weight: 0.0
+    consistency_pool_friedel: false
+    double_wilson_weight: 0.0
     wilson_centric_prior: true
 
     # --- MLP scale ---
@@ -36,8 +36,8 @@ integrator:
     scale_sh_lmax: 4                      # needs absorption_sh in metadata
     scale_mlp_absorption: false  # even-l SH (Friedel-safe); false = no SH
     scale_mlp_absorption_even_only: true
-    # Extra scale inputs; nested = one shared scale, loc/scale auto-fit at build.
-    scale_extra_features: [[s1.0, s1.1, s1.2]]   # diffracted-beam direction
+    # s1 is Friedel-antisymmetric -> lets the scale absorb the Bijvoet signal.
+    # Off as the clean anomalous baseline. scale_extra_features: []
     predict_keys: [refl_ids, is_test, qi_mean, qi_var, qbg_mean, qbg_var,
       intensity.prf.value, intensity.prf.variance, background.mean, d,
       group_label, qp_mean, qp_loc, qp_scale,

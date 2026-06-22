@@ -71,6 +71,14 @@ class MergingIntegratorCfg:
 
     responsibility_gate_init: float = -2.0
 
+    # Difference-as-latent (difference_merging integrator): the merge emits a
+    # common-mode q(I0) [Wilson prior] and a signed anomalous fraction q(delta)
+    # [N(0, sigma_delta(shell)^2)], with I(+/-) = I0 (1 +/- delta).
+    delta_kl_weight: float = 1.0
+    sigma_delta_init: float = 0.05  # initial per-shell anomalous-fraction std
+    sigma_delta_learn: bool = True  # learn sigma_delta(shell) (in-model EB)
+    delta_head_hidden: int = 16
+
     # Optimization
     scaling_lr: float | None = None
 

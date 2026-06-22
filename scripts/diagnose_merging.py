@@ -241,6 +241,76 @@ def extract_merged_posterior(
     return alpha, beta, seen
 
 
+def eb_shrink_anomalous(
+    alpha: np.ndarray,
+    beta: np.ndarray,
+    seen: np.ndarray,
+    hkl: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Empirical-Bayes (James-Stein) shrink the Bijvoet difference toward zero.
+
+    The Wilson prior, written on the mates (I+, I-), shrinks their difference as
+    a side effect of regularizing the magnitude. This instead works in the
+    (I0, delta) coordinate: per Friedel pair the common mode I0 = (I+ + I-)/2 is
+    preserved and only the signed anomalous fraction delta = (I+ - I-)/(I+ + I-)
+    is shrunk, by its own per-pair precision. sigma_delta^2 is estimated by method
+    of moments over acentric pairs (E[delta_hat^2] - E[v]); the shrinkage weight
+    is w = sigma_delta^2 / (sigma_delta^2 + v). Centrics (no Friedel-split mate in
+    the anomalous table) are left unchanged. The Gamma shape alpha is kept and
+    only beta is rescaled to the shrunk mean, so sigmas track consistently.
+    """
+    a = alpha.astype(np.float64).copy()
+    b = beta.astype(np.float64).copy()
+    mean = np.where(b > 0, a / np.clip(b, 1e-12, None), 0.0)
+    inv_alpha = np.where(a > 0, 1.0 / np.clip(a, 1e-12, None), np.inf)
+
+    # Pair mates by canonical (h,k,l) <-> (-h,-k,-l); each pair once (i < j).
+    index = {tuple(int(v) for v in hkl[i]): i for i in range(len(hkl))}
+    ip, im = [], []
+    for i in range(len(hkl)):
+        if not seen[i]:
+            continue
+        h, k, ll = int(hkl[i, 0]), int(hkl[i, 1]), int(hkl[i, 2])
+        j = index.get((-h, -k, -ll))
+        if j is None or j <= i or not seen[j]:
+            continue
+        ip.append(i)
+        im.append(j)
+    if not ip:
+        logger.warning("EB shrink: no Friedel pairs found; returning unchanged")
+        return alpha, beta
+
+    ip = np.asarray(ip)
+    im = np.asarray(im)
+    mp, mm = mean[ip], mean[im]
+    tot = np.clip(mp + mm, 1e-12, None)
+    i0 = 0.5 * (mp + mm)
+    delta = (mp - mm) / tot
+    # Var(delta) by the delta method: Var(I)=mean^2/alpha (Gamma CV^2 = 1/alpha).
+    v = 4.0 * mp**2 * mm**2 / tot**4 * (inv_alpha[ip] + inv_alpha[im])
+
+    sig2 = float(np.mean(delta**2 - v))
+    sig2 = max(sig2, 1e-8)  # floor against the low-multiplicity underflow
+    w = sig2 / (sig2 + np.clip(v, 1e-12, None))
+    delta_eb = w * delta
+
+    mp_eb = i0 * (1.0 + delta_eb)
+    mm_eb = i0 * (1.0 - delta_eb)
+    b[ip] = a[ip] / np.clip(mp_eb, 1e-12, None)
+    b[im] = a[im] / np.clip(mm_eb, 1e-12, None)
+
+    logger.info(
+        "EB shrink: %d acentric pairs, sigma_delta=%.4f, mean weight=%.3f, "
+        "median |delta| %.4f -> %.4f",
+        len(ip),
+        sig2**0.5,
+        float(w.mean()),
+        float(np.median(np.abs(delta))),
+        float(np.median(np.abs(delta_eb))),
+    )
+    return a, b
+
+
 # ====================================================================
 # MTZ assembly
 # ====================================================================
@@ -841,6 +911,13 @@ def main():
         "skipping yields the Wilson prior (garbage) - only meaningful for "
         "legacy checkpoints whose merge buffers were persisted.",
     )
+    parser.add_argument(
+        "--eb-shrink",
+        action="store_true",
+        help="Empirical-Bayes shrink the Bijvoet difference (delta) per Friedel "
+        "pair before writing the MTZ; preserves the common mode. Raises CCanom / "
+        "peak detectability at the cost of shrunk |dF| magnitude.",
+    )
     args = parser.parse_args()
 
     run_dir = args.run_dir.resolve()
@@ -914,6 +991,9 @@ def main():
     data_dir = Path(cfg["data_loader"]["args"]["data_dir"])
     cell, sg = load_crystal(data_dir)
     hkl = load_hkl_table(data_dir, cfg, cell, sg)
+
+    if args.eb_shrink:
+        alpha, beta = eb_shrink_anomalous(alpha, beta, seen, hkl)
 
     mtz_path = diag_dir / "merged.mtz"
     ds_raw = write_merged_mtz(alpha, beta, seen, hkl, cell, sg, mtz_path)
