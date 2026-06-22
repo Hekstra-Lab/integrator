@@ -1,40 +1,18 @@
 import argparse
 import csv
-import json
 import logging
 from pathlib import Path
 
 import yaml
 
+# Plotting + ckpt_eval loading live in the standalone plotter; this script just
+# adds the summary.csv + W&B logging on top.
+from plot_ckpt_eval import load_results, make_all_plots, resolve_ckpt_eval
+
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s | %(levelname)-7s | %(message)s"
 )
 logger = logging.getLogger(__name__)
-
-
-def _load_results(out_root: Path) -> list[dict]:
-    """Flatten every epoch*/result.json into one row per (epoch, variant)."""
-    rows = []
-    for rj in sorted(out_root.glob("epoch*/result.json")):
-        try:
-            res = json.loads(rj.read_text())
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("skip %s: %s", rj, exc)
-            continue
-        for vname, v in (res.get("variants") or {}).items():
-            rows.append(
-                {
-                    "epoch": res.get("epoch"),
-                    "variant": vname,
-                    "n_hkl_seen": res.get("n_hkl_seen"),
-                    "r_work": v.get("r_work"),
-                    "r_free": v.get("r_free"),
-                    "top_anom_peak": v.get("top_anom_peak"),
-                    "n_anom_peaks": v.get("n_anom_peaks"),
-                    "phenix_ok": v.get("phenix_ok"),
-                }
-            )
-    return sorted(rows, key=lambda r: (r["variant"] or "", r["epoch"] or -1))
 
 
 def _write_csv(rows: list[dict], path: Path) -> None:
@@ -60,65 +38,6 @@ def _best(rows, key, prefer_min):
         if prefer_min
         else max(cand, key=lambda r: r[key])
     )
-
-
-def _plot(rows: list[dict], out_root: Path) -> list[Path]:
-    try:
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except Exception:
-        logger.warning("matplotlib unavailable; skipping plots")
-        return []
-
-    variants = sorted({r["variant"] for r in rows if r["variant"]})
-
-    def series(variant, key):
-        pts = [
-            (r["epoch"], r[key])
-            for r in rows
-            if r["variant"] == variant
-            and isinstance(r.get(key), (int, float))
-            and r[key] == r[key]
-        ]
-        pts.sort()
-        return [p[0] for p in pts], [p[1] for p in pts]
-
-    saved = []
-    # R-factors vs epoch
-    fig, ax = plt.subplots(figsize=(7, 5))
-    for variant in variants:
-        for key, ls in (("r_work", "-"), ("r_free", "--")):
-            xs, ys = series(variant, key)
-            if xs:
-                ax.plot(xs, ys, ls, marker="o", ms=3, label=f"{variant} {key}")
-    ax.set_xlabel("epoch")
-    ax.set_ylabel("R-factor")
-    ax.set_title("Refinement R-factors vs checkpoint")
-    ax.legend(fontsize=8)
-    fig.tight_layout()
-    p = out_root / "r_factors_vs_epoch.png"
-    fig.savefig(p, dpi=120)
-    plt.close(fig)
-    saved.append(p)
-
-    # Top anomalous peak vs epoch
-    fig, ax = plt.subplots(figsize=(7, 5))
-    for variant in variants:
-        xs, ys = series(variant, "top_anom_peak")
-        if xs:
-            ax.plot(xs, ys, marker="o", ms=3, label=variant)
-    ax.set_xlabel("epoch")
-    ax.set_ylabel("top anomalous peak (sigma)")
-    ax.set_title("Top anomalous peak vs checkpoint")
-    ax.legend(fontsize=8)
-    fig.tight_layout()
-    p = out_root / "anom_peak_vs_epoch.png"
-    fig.savefig(p, dpi=120)
-    plt.close(fig)
-    saved.append(p)
-    return saved
 
 
 def _maybe_log_wandb(run_dir: Path, csv_path: Path, pngs: list[Path]) -> None:
@@ -179,42 +98,23 @@ def parse_args():
     return p.parse_args()
 
 
-def _resolve_out_root(run_dir: Path, arg_out_root: Path | None) -> Path:
-    """Where the per-checkpoint workers wrote (netscratch for a W&B run).
-
-    Prefers the eval config's out_root (written by create_config), then the
-    run's output_root from run_paths.yaml, then the local run_dir.
-    """
-    if arg_out_root:
-        return Path(arg_out_root)
-    cfg_file = run_dir / "merging_eval_cfg.yaml"
-    if cfg_file.exists():
-        c = yaml.safe_load(cfg_file.read_text()) or {}
-        if c.get("out_root"):
-            return Path(c["out_root"])
-    meta_path = run_dir / "run_paths.yaml"
-    if meta_path.exists():
-        m = yaml.safe_load(meta_path.read_text()) or {}
-        if m.get("output_root"):
-            return Path(m["output_root"]) / "ckpt_eval"
-    return run_dir / "ckpt_eval"
-
-
 def main():
     args = parse_args()
     run_dir = args.run_dir.resolve()
-    out_root = _resolve_out_root(run_dir, args.out_root)
+    out_root = resolve_ckpt_eval(run_dir, args.out_root)
     if not out_root.exists():
         raise FileNotFoundError(f"no eval outputs at {out_root}")
 
-    rows = _load_results(out_root)
+    rows, _ = load_results(out_root)
     if not rows:
         raise FileNotFoundError(f"no result.json under {out_root}")
     logger.info("Aggregated %d (epoch, variant) results", len(rows))
 
     csv_path = out_root / "summary.csv"
     _write_csv(rows, csv_path)
-    pngs = _plot(rows, out_root)
+    # Plotting lives in the standalone plot_ckpt_eval (per-site needs --pdb /
+    # --anom-atom-sel there; the auto pipeline makes the rest).
+    pngs = make_all_plots(out_root)
 
     best_rfree = _best(rows, "r_free", prefer_min=True)
     best_peak = _best(rows, "top_anom_peak", prefer_min=False)
