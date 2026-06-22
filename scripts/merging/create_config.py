@@ -142,7 +142,11 @@ def main():
     )
     pdb = _resolve(args.pdb, output_cfg.get("pdb"), "PDB", "pdb")
 
-    out_root = args.out_root or str(run_dir / "ckpt_eval")
+    # Outputs land under the run's output_root (the netscratch W&B run dir for
+    # a W&B run, else the run_dir itself) so eval results sit beside the heavy
+    # outputs, not in the submitting directory. run_paths.yaml records it.
+    output_root = meta.get("output_root") or str(run_dir)
+    out_root = args.out_root or os.path.join(output_root, "ckpt_eval")
 
     config = MergingEvalConfig(
         run_dir=str(run_dir),

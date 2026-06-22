@@ -131,13 +131,28 @@ def _maybe_log_wandb(run_dir: Path, csv_path: Path, pngs: list[Path]) -> None:
     if not wb:
         return
     try:
+        import os
+        import shutil
+
         import wandb
+
+        # Stage wandb in ONE fixed netscratch dir under the run's output_root and
+        # clear it first, so reruns reuse the same folder instead of dropping a
+        # new run-<timestamp>-<id> in the submitting directory each time. Resume
+        # pulls run state from the server, so clearing local staging is safe; the
+        # same run_id keeps it the same W&B run.
+        out = meta.get("output_root") or str(run_dir)
+        eval_wb = Path(out) / "eval_wandb"
+        shutil.rmtree(eval_wb / "wandb", ignore_errors=True)
+        eval_wb.mkdir(parents=True, exist_ok=True)
+        os.environ["WANDB_DIR"] = str(eval_wb)
 
         run = wandb.init(
             project=wb.get("project"),
             id=wb.get("run_id"),
             entity=wb.get("entity"),
             resume="allow",
+            dir=str(eval_wb),
         )
         run.log({Path(p).stem: wandb.Image(str(p)) for p in pngs})
         art = wandb.Artifact("ckpt_eval", type="evaluation")
@@ -164,10 +179,31 @@ def parse_args():
     return p.parse_args()
 
 
+def _resolve_out_root(run_dir: Path, arg_out_root: Path | None) -> Path:
+    """Where the per-checkpoint workers wrote (netscratch for a W&B run).
+
+    Prefers the eval config's out_root (written by create_config), then the
+    run's output_root from run_paths.yaml, then the local run_dir.
+    """
+    if arg_out_root:
+        return Path(arg_out_root)
+    cfg_file = run_dir / "merging_eval_cfg.yaml"
+    if cfg_file.exists():
+        c = yaml.safe_load(cfg_file.read_text()) or {}
+        if c.get("out_root"):
+            return Path(c["out_root"])
+    meta_path = run_dir / "run_paths.yaml"
+    if meta_path.exists():
+        m = yaml.safe_load(meta_path.read_text()) or {}
+        if m.get("output_root"):
+            return Path(m["output_root"]) / "ckpt_eval"
+    return run_dir / "ckpt_eval"
+
+
 def main():
     args = parse_args()
     run_dir = args.run_dir.resolve()
-    out_root = args.out_root or (run_dir / "ckpt_eval")
+    out_root = _resolve_out_root(run_dir, args.out_root)
     if not out_root.exists():
         raise FileNotFoundError(f"no eval outputs at {out_root}")
 

@@ -145,10 +145,13 @@ def main():
     )
 
     # Absolute, so sbatch --output works regardless of the submitting cwd.
+    # Default beside ckpt_eval under the run's output_root (netscratch W&B dir
+    # for a W&B run), not the submitting directory.
+    out_root = cfg.get("out_root") or str(run_dir / "ckpt_eval")
     logs_dir = (
         Path(args.log_dir).resolve()
         if args.log_dir
-        else run_dir / "ckpt_eval_logs"
+        else Path(out_root).parent / "ckpt_eval_logs"
     )
     logs_dir.mkdir(parents=True, exist_ok=True)
 

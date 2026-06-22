@@ -9,6 +9,7 @@ integrator.train \
 
 import argparse
 import logging
+import os
 from copy import deepcopy
 from pathlib import Path
 
@@ -243,10 +244,13 @@ def _make_wandb_logger(args, tags):
         )
         return None
 
-    Path(args.save_dir).mkdir(parents=True, exist_ok=True)
-    wb_kwargs = dict(
-        project=args.wb_project, save_dir=args.save_dir, tags=tags
-    )
+    # Force wandb to write under save_dir, not the cwd. WandbLogger(save_dir=...)
+    # alone still lets wandb create a ./wandb cache dir in the launch directory;
+    # WANDB_DIR (absolute) takes precedence and keeps everything on scratch.
+    save_dir = os.path.abspath(args.save_dir)
+    Path(save_dir).mkdir(parents=True, exist_ok=True)
+    os.environ["WANDB_DIR"] = save_dir
+    wb_kwargs = dict(project=args.wb_project, save_dir=save_dir, tags=tags)
     if args.wandb_resume_id:
         wb_kwargs["id"] = args.wandb_resume_id
         wb_kwargs["resume"] = "must"
@@ -291,7 +295,6 @@ def _log_git_info(pl_logger):
 
 
 def main():
-    import os
 
     import torch
     from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
