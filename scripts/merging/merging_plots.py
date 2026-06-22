@@ -179,12 +179,14 @@ def plot_anom_sites_vs_epoch(site_rows, *, title=None, figsize=(6, 4)):
 
 
 def get_anom_peak_heights(
-    mtz_filename, pdb_filename, atom_sel, f_col="ANOM", phi_col="PHANOM"
+    mtz_filename, pdb_filename, atom_sel, f_col=None, phi_col=None
 ):
     """Anomalous-difference-map peak height (sigma) at each anomalous atom site.
 
-    Builds the ANOM/PHANOM map (normalized to sigma), then samples it at each
-    selected atom and its symmetry equivalents (averaged). Returns
+    Builds the anomalous-difference map (normalized to sigma), then samples it at
+    each selected atom and its symmetry equivalents (averaged). The amplitude /
+    phase column names are auto-detected (phenix names them ANOM/PANOM; older
+    versions ANOM/PHANOM), or pass `f_col`/`phi_col` to override. Returns
     `(labels, heights)`. Ported from refltorch's anomalous_peak_heights.
     """
     import gemmi
@@ -192,6 +194,25 @@ def get_anom_peak_heights(
 
     mtz = gemmi.read_mtz_file(str(mtz_filename))
     st = gemmi.read_pdb(str(pdb_filename))
+
+    labels_present = {c.label for c in mtz.columns}
+
+    def _pick(given, candidates):
+        if given and given in labels_present:
+            return given
+        for c in candidates:
+            if c in labels_present:
+                return c
+        return None
+
+    f_col = _pick(f_col, ("ANOM", "ANOMALOUS", "DANO"))
+    phi_col = _pick(phi_col, ("PANOM", "PHANOM", "PHIANOM", "PHANOMALOUS"))
+    if f_col is None or phi_col is None:
+        raise KeyError(
+            "no anomalous amplitude/phase columns in "
+            f"{mtz_filename}; have {sorted(labels_present)}"
+        )
+
     grid = mtz.transform_f_phi_to_map(f_col, phi_col, sample_rate=3.0)
     grid.normalize()
 
