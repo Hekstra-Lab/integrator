@@ -43,7 +43,9 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
         self.delta_kl_weight = float(getattr(cfg, "delta_kl_weight", 1.0))
         self.n_shells = max(1, int(getattr(self.loss, "n_bins", 1) or 1))
         raw0 = _inv_softplus(float(getattr(cfg, "sigma_delta_init", 0.05)))
-        self.sigma_delta_form = str(getattr(cfg, "sigma_delta_form", "loglinear"))
+        self.sigma_delta_form = str(
+            getattr(cfg, "sigma_delta_form", "loglinear")
+        )
         self._build_sigma_delta(cfg, raw0)
 
         # delta head: per-pair sign-split signal stats -> (mu residual, log sd).
@@ -97,9 +99,9 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
             self.register_buffer("sigma_delta_raw", p)
 
     def _s2_norm(self, s2: Tensor) -> Tensor:
-        return (2.0 * (s2 - self._s2_lo) / (self._s2_hi - self._s2_lo) - 1.0).clamp(
-            -1.0, 1.0
-        )
+        return (
+            2.0 * (s2 - self._s2_lo) / (self._s2_hi - self._s2_lo) - 1.0
+        ).clamp(-1.0, 1.0)
 
     def _sigma_delta(self, shell_pooled: Tensor, s2_pooled: Tensor) -> Tensor:
         """Prior sd of the anomalous fraction per pooled id (the chosen form)."""
@@ -111,7 +113,9 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
             a, b = self.sigma_delta_raw[0], self.sigma_delta_raw[1]
             return F.softplus(a + b * s2_pooled) + eps
         if form == "cheby":
-            basis = _chebyshev(self._s2_norm(s2_pooled), self.sigma_delta_raw.numel() - 1)
+            basis = _chebyshev(
+                self._s2_norm(s2_pooled), self.sigma_delta_raw.numel() - 1
+            )
             return F.softplus(basis @ self.sigma_delta_raw) + eps
         # mlp
         x = self._s2_norm(s2_pooled).unsqueeze(-1)
@@ -216,7 +220,9 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
             shell_pooled[inverse0] = gl
         # Mean d per pooled id (constant within a pooled id) -> s^2 for the
         # continuous sigma_delta(s^2) forms.
-        d_sum = torch.zeros(n_pooled, device=device).scatter_add(0, inverse0, d_obs)
+        d_sum = torch.zeros(n_pooled, device=device).scatter_add(
+            0, inverse0, d_obs
+        )
         cnt = torch.zeros(n_pooled, device=device).scatter_add(
             0, inverse0, torch.ones_like(d_obs)
         )
@@ -271,7 +277,12 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
             metadata, inverse0, n_pooled, d_obs, device
         )
         mu_delta, sd_delta, sigma_delta_shell = self._delta_posterior(
-            potential, inverse0, n_pooled, plus, centric_pooled, shell_pooled,
+            potential,
+            inverse0,
+            n_pooled,
+            plus,
+            centric_pooled,
+            shell_pooled,
             s2_pooled,
         )
 
@@ -367,6 +378,55 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
         }
         return kl_delta, logs
 
+    def _write_mate_buffers(
+        self,
+        alpha0: Tensor,
+        beta0: Tensor,
+        mu_delta: Tensor,
+        sd_delta: Tensor,
+        inverse0: Tensor,
+        n_pooled: int,
+        plus: Tensor,
+        centric_pooled: Tensor,
+        metadata: dict,
+        seen: Tensor,
+        device,
+    ) -> None:
+        """Expand (I0, delta) per pooled id into per-mate Gamma buffers."""
+        uf = metadata[self.merge_key].long().to(device)
+        uf_plus = torch.full((n_pooled,), -1, dtype=torch.long, device=device)
+        uf_minus = torch.full_like(uf_plus, -1)
+        uf_plus[inverse0[plus]] = uf[plus]
+        uf_minus[inverse0[~plus]] = uf[~plus]
+        uf_centric = torch.maximum(uf_plus, uf_minus)  # the single shared id
+        acentric = ~centric_pooled
+
+        mean0 = (alpha0 / beta0.clamp(min=1e-12)).clamp(min=1e-10)
+        var0 = (alpha0 / beta0.clamp(min=1e-12).pow(2)).clamp(min=1e-20)
+
+        def write(uf_id: Tensor, factor: Tensor, rows: Tensor) -> None:
+            sel = (uf_id >= 0) & rows
+            ids = uf_id[sel]
+            if bool(seen[ids].any()):
+                raise RuntimeError(
+                    "finalize_merge needs a grouped (group_by_asu_id) loader so "
+                    "each Friedel pair is complete in one batch; found an id "
+                    "spanning batches. Use predict_dataloader(grouped=True)."
+                )
+            mean = (mean0[sel] * factor[sel]).clamp(min=1e-10)
+            var = (
+                var0[sel] * factor[sel].pow(2)
+                + mean0[sel].pow(2) * sd_delta[sel].pow(2)
+            ).clamp(min=1e-20)
+            self.alpha_buffer[ids] = (mean.pow(2) / var).clamp(min=1e-6)
+            self.beta_buffer[ids] = (mean / var).clamp(min=1e-12)
+            seen[ids] = True
+
+        ones = torch.ones_like(mu_delta)
+        write(uf_plus, 1.0 + mu_delta, acentric)
+        write(uf_minus, 1.0 - mu_delta, acentric)
+        write(uf_centric, ones, centric_pooled)  # delta = 0
+
     @torch.no_grad()
     def finalize_merge(self, dataloader) -> None:
         """Merge over the dataset, then expand (I0, delta) into per-mate buffers.
@@ -412,8 +472,10 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
             potential = self._per_obs_potential(
                 x_k_i, x_r_i, scale, cond_mid, d_obs
             )
-            plus, centric_pooled, shell_pooled, s2_pooled = self._pooled_context(
-                metadata, inverse0, n_pooled, d_obs, device
+            plus, centric_pooled, shell_pooled, s2_pooled = (
+                self._pooled_context(
+                    metadata, inverse0, n_pooled, d_obs, device
+                )
             )
             mu_delta, sd_delta, _ = self._delta_posterior(
                 potential,
@@ -425,42 +487,17 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
                 s2_pooled,
             )
 
-            # Map each pooled id to its +/- mate's Friedel-separate (buffer) id.
-            # Centrics are NOT split: their + and - observations share one id, so
-            # write them once (delta = 0); only acentrics get a true +/- split.
-            uf = metadata[self.merge_key].long().to(device)
-            uf_plus = torch.full(
-                (n_pooled,), -1, dtype=torch.long, device=device
+            self._write_mate_buffers(
+                alpha0,
+                beta0,
+                mu_delta,
+                sd_delta,
+                inverse0,
+                n_pooled,
+                plus,
+                centric_pooled,
+                metadata,
+                seen,
+                device,
             )
-            uf_minus = torch.full_like(uf_plus, -1)
-            uf_plus[inverse0[plus]] = uf[plus]
-            uf_minus[inverse0[~plus]] = uf[~plus]
-            uf_centric = torch.maximum(uf_plus, uf_minus)  # the single shared id
-            acentric = ~centric_pooled
-
-            mean0 = (alpha0 / beta0.clamp(min=1e-12)).clamp(min=1e-10)
-            var0 = (alpha0 / beta0.clamp(min=1e-12).pow(2)).clamp(min=1e-20)
-
-            def write(uf_id: Tensor, factor: Tensor, rows: Tensor) -> None:
-                sel = (uf_id >= 0) & rows
-                ids = uf_id[sel]
-                if bool(seen[ids].any()):
-                    raise RuntimeError(
-                        "finalize_merge needs a grouped (group_by_asu_id) loader "
-                        "so each Friedel pair is complete in one batch; found an "
-                        "id spanning batches. Use predict_dataloader(grouped=True)."
-                    )
-                mean = (mean0[sel] * factor[sel]).clamp(min=1e-10)
-                var = (
-                    var0[sel] * factor[sel].pow(2)
-                    + mean0[sel].pow(2) * sd_delta[sel].pow(2)
-                ).clamp(min=1e-20)
-                self.alpha_buffer[ids] = (mean.pow(2) / var).clamp(min=1e-6)
-                self.beta_buffer[ids] = (mean / var).clamp(min=1e-12)
-                seen[ids] = True
-
-            ones = torch.ones_like(mu_delta)
-            write(uf_plus, 1.0 + mu_delta, acentric)
-            write(uf_minus, 1.0 - mu_delta, acentric)
-            write(uf_centric, ones, centric_pooled)  # delta = 0
         self.buffer_seen.copy_(seen)

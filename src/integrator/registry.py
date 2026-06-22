@@ -24,6 +24,7 @@ from integrator.model.scaling import (
     AmortizedMergingIntegrator,
     DifferenceMergingIntegrator,
     MergingWilsonLoss,
+    SVAEDifferenceMergingIntegrator,
     SVAEMergingIntegrator,
 )
 
@@ -43,6 +44,7 @@ REGISTRY = {
         "amortized_merging": AmortizedMergingIntegrator,
         "svae_merging": SVAEMergingIntegrator,
         "difference_merging": DifferenceMergingIntegrator,
+        "svae_difference_merging": SVAEDifferenceMergingIntegrator,
     },
     "surrogates": {
         "gamma": build_gamma,
