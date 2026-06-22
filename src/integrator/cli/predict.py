@@ -197,9 +197,20 @@ def main():
             )
         else:
             integrator = construct_integrator(config)
-            integrator.load_state_dict(
-                torch.load(ckpt.as_posix())["state_dict"]
+            # Tolerant load: a checkpoint trained under a different delta_mode
+            # (free head vs empirical-Bayes) has different delta params, but the
+            # per-obs predictions (qi/qbg/scale) are unaffected. Warn on any
+            # mismatch instead of crashing.
+            incompat = integrator.load_state_dict(
+                torch.load(ckpt.as_posix())["state_dict"], strict=False
             )
+            if incompat.missing_keys or incompat.unexpected_keys:
+                logger.warning(
+                    "state_dict mismatch (loaded non-strict): missing=%s "
+                    "unexpected=%s",
+                    list(incompat.missing_keys),
+                    list(incompat.unexpected_keys),
+                )
             if torch.cuda.is_available():
                 integrator.to(torch.device("cuda"))
             integrator.eval()

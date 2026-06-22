@@ -84,23 +84,41 @@ _MONO = {"intensity": ("intensity.prf.value", "qi_mean"),
          "background": ("background.mean", "qbg_mean")}
 
 
-def _find_pred_parquet(ckpt_eval: Path) -> Path | None:
-    """The latest-epoch per-obs predictions parquet, under output_root/predictions."""
+def _find_pred_files(ckpt_eval: Path) -> list[Path]:
+    """Per-obs prediction parquet(s) for the latest checkpoint dir.
+
+    integrator.predict writes <output_root>/predictions/<ckpt>/ holding either a
+    single pred.parquet or sharded preds_epoch_*_rank=*_flush=*.parquet (when
+    qp_mean is a predict_key). Return all parquet shards in the newest such dir.
+    """
     pred_dir = ckpt_eval.parent / "predictions"
     if not pred_dir.exists():
-        return None
-    # integrator.predict writes epoch_NNNN/{pred.parquet | preds_epoch_*}.
-    cands = sorted(pred_dir.glob("**/pred.parquet")) + sorted(
-        pred_dir.glob("**/preds_epoch_*")
+        return []
+    dirs = sorted(
+        {
+            p.parent
+            for p in list(pred_dir.glob("**/pred.parquet"))
+            + list(pred_dir.glob("**/preds_epoch_*.parquet"))
+        }
     )
-    return cands[-1] if cands else None
+    if not dirs:
+        return []
+    return sorted(dirs[-1].glob("*.parquet"))
 
 
-def _scatter_plots(ckpt_eval: Path, pred_path: Path) -> list[Path]:
+def _scatter_plots(ckpt_eval: Path, pred_files: list[Path]) -> list[Path]:
     """Per-obs model-vs-DIALS intensity (log) + background (linear) scatters."""
     import pandas as pd
 
-    df = pd.read_parquet(pred_path)
+    # Read only the scatter columns (avoid loading the large qp_mean vector).
+    cols = [c for pair in _MONO.values() for c in pair]
+    frames = []
+    for f in pred_files:
+        try:
+            frames.append(pd.read_parquet(f, columns=cols))
+        except (ValueError, KeyError):
+            frames.append(pd.read_parquet(f))
+    df = pd.concat(frames, ignore_index=True)
     if len(df) > 50000:
         df = df.sample(50000, random_state=0)
     saved = []
@@ -212,16 +230,19 @@ def make_all_plots(
     saved += _anomalous_plots(ckpt_eval, ref_peaks)
 
     # (1, 2) Per-obs model-vs-DIALS intensity + background scatters.
-    pred_path = pred_path or _find_pred_parquet(ckpt_eval)
-    if pred_path and Path(pred_path).exists():
+    pred_files = (
+        [Path(pred_path)] if pred_path else _find_pred_files(ckpt_eval)
+    )
+    if pred_files:
         try:
-            saved += _scatter_plots(ckpt_eval, Path(pred_path))
+            saved += _scatter_plots(ckpt_eval, pred_files)
         except Exception as exc:  # noqa: BLE001
             logger.warning("scatter plots skipped: %s", exc)
     else:
         logger.warning(
-            "no predictions parquet (run integrator.predict); "
-            "skipping intensity/background scatters"
+            "no predictions parquet under %s/predictions (did integrator."
+            "predict finish? check the pred job log); skipping scatters",
+            ckpt_eval.parent,
         )
     return saved
 
