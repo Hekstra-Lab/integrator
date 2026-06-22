@@ -1,19 +1,22 @@
-"""Make anomalous / refinement / scatter plots from a finished ckpt_eval dir.
+"""Model-vs-DIALS plots for a finished merging run.
 
-Standalone post-processor: it acts on the final `ckpt_eval/` directory (produced
-by submit_jobs.py -> process_single_ckpt.py), pulling from each `epoch*/`
-subdir only the files each plot needs:
+Standalone post-processor. Makes the four comparison plots, pulling each plot's
+inputs from where the eval / prediction wrote them:
 
-    result.json          -> R-work/R-free + top anomalous peak vs epoch
-    <variant>/*[0-9].mtz  -> per-site anomalous peak heights vs epoch (needs a
-                             PDB + an anomalous-atom selection)
-    merged.mtz           -> F(+) vs F(-) Friedel scatter
+    intensity scatter   model qi_mean   vs DIALS intensity.prf.value  (per-obs,
+    background scatter   model qbg_mean  vs DIALS background.mean       log/linear
+                         <- predictions parquet (integrator.predict)
+    R-factors vs epoch   r_work / r_free per checkpoint
+                         <- ckpt_eval/epoch*/result.json
+    anomalous peakz      per-residue peakz over epoch, with the DIALS reference
+      vs epoch           <- ckpt_eval/epoch*/<variant>/peaks.csv (rs.find_peaks)
+                            + a reference peaks.csv (--ref-peaks)
 
-Decoupled from the submission / worker scripts so plots can be (re)made or
-tweaked without rerunning phenix. Usage:
+Decoupled from the submission / worker scripts so plots can be (re)made without
+rerunning phenix. Usage:
 
-    python plot_ckpt_eval.py --run-dir RUN_DIR [--pdb ref.pdb --anom-atom-sel '[S]']
-    python plot_ckpt_eval.py --ckpt-eval-dir /path/ckpt_eval --anom-atom-sel '[S]'
+    python plot_ckpt_eval.py --run-dir RUN_DIR --ref-peaks reference_peaks.csv
+    python plot_ckpt_eval.py --ckpt-eval-dir /path/ckpt_eval
 """
 
 import argparse
@@ -77,98 +80,156 @@ def load_results(ckpt_eval: Path) -> tuple[list[dict], list[dict]]:
     return rows, results
 
 
-def _site_rows(results, pdb, anom_sel):
-    """Per-site anomalous peak heights vs epoch, computed from the refined MTZs.
+_MONO = {"intensity": ("intensity.prf.value", "qi_mean"),
+         "background": ("background.mean", "qbg_mean")}
 
-    For each checkpoint and variant, finds the phenix-refined map MTZ
-    (`<variant>/*[0-9].mtz`) and samples the ANOM/PHANOM map at the selected
-    atom sites. Done here (post-hoc), not in the worker.
-    """
+
+def _find_pred_parquet(ckpt_eval: Path) -> Path | None:
+    """The latest-epoch per-obs predictions parquet, under output_root/predictions."""
+    pred_dir = ckpt_eval.parent / "predictions"
+    if not pred_dir.exists():
+        return None
+    # integrator.predict writes epoch_NNNN/{pred.parquet | preds_epoch_*}.
+    cands = sorted(pred_dir.glob("**/pred.parquet")) + sorted(
+        pred_dir.glob("**/preds_epoch_*")
+    )
+    return cands[-1] if cands else None
+
+
+def _scatter_plots(ckpt_eval: Path, pred_path: Path) -> list[Path]:
+    """Per-obs model-vs-DIALS intensity (log) + background (linear) scatters."""
+    import pandas as pd
+
+    df = pd.read_parquet(pred_path)
+    if len(df) > 50000:
+        df = df.sample(50000, random_state=0)
+    saved = []
+    specs = [
+        ("intensity", "intensity_scatter.png", True, "model qi_mean",
+         "DIALS intensity.prf.value"),
+        ("background", "background_scatter.png", False, "model qbg_mean",
+         "DIALS background.mean"),
+    ]
+    for key, fname, log, xlab, ylab in specs:
+        dials_col, model_col = _MONO[key]
+        if dials_col not in df.columns or model_col not in df.columns:
+            logger.warning("scatter %s skipped: missing %s/%s", key, dials_col,
+                           model_col)
+            continue
+        fig, _ = mp.plot_scatter_identity(
+            df[model_col].to_numpy(), df[dials_col].to_numpy(),
+            xlabel=xlab, ylabel=ylab, title=f"{key}: model vs DIALS", log=log,
+        )
+        saved.append(mp.save_figure(fig, ckpt_eval / fname))
+    return saved
+
+
+def _peak_rows(ckpt_eval: Path) -> list[dict]:
+    """Per-(epoch, variant, seqid) anomalous peakz from each find_peaks CSV."""
+    import pandas as pd
+
     rows = []
-    for res in results:
-        ep = res.get("epoch")
-        work_root = Path(res["_dir"])
-        for vname in (res.get("variants") or {}):
-            mtzs = sorted((work_root / vname).glob("*[0-9].mtz"))
-            if not mtzs:
-                continue
-            try:
-                labels, heights = mp.get_anom_peak_heights(
-                    mtzs[-1], pdb, anom_sel
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("site peaks skipped for %s/%s: %s", ep, vname, exc)
-                continue
-            for site, h in zip(labels, heights):
-                rows.append(
-                    {"epoch": ep, "site": f"{vname}:{site}", "height": h}
-                )
+    for pc in sorted(ckpt_eval.glob("epoch*/*/peaks.csv")):
+        epoch = _epoch_of(pc.parent.parent.name)
+        variant = pc.parent.name
+        try:
+            df = pd.read_csv(pc)
+        except Exception:  # noqa: BLE001
+            continue
+        if "seqid" not in df.columns or "peakz" not in df.columns:
+            continue
+        for _, r in df.iterrows():
+            rows.append({"epoch": epoch, "variant": variant,
+                         "seqid": int(r["seqid"]), "peakz": float(r["peakz"])})
     return rows
 
 
+def _epoch_of(name: str) -> int:
+    import re
+    m = re.search(r"epoch0*(\d+)", name)
+    return int(m.group(1)) if m else -1
+
+
+def _anomalous_plots(ckpt_eval: Path, ref_peaks: str | None) -> list[Path]:
+    """Per-residue anomalous peakz over epoch (one PNG per site), DIALS ref line."""
+    import pandas as pd
+
+    peaks = _peak_rows(ckpt_eval)
+    if not peaks:
+        logger.warning("no per-epoch peaks.csv found; skipping anomalous plots")
+        return []
+    ref = {}
+    if ref_peaks and Path(ref_peaks).exists():
+        rdf = pd.read_csv(ref_peaks)
+        if {"seqid", "peakz"} <= set(rdf.columns):
+            ref = {int(s): float(z) for s, z in zip(rdf["seqid"], rdf["peakz"])}
+
+    # Sites to plot: the reference sites if given, else those seen in the model.
+    seqids = sorted(ref) if ref else sorted({p["seqid"] for p in peaks})
+    variants = sorted({p["variant"] for p in peaks})
+    pal = mp._palette(variants)
+    saved = []
+    for s in seqids:
+        series = []
+        for v in variants:
+            pts = sorted(
+                (p["epoch"], p["peakz"]) for p in peaks
+                if p["seqid"] == s and p["variant"] == v
+            )
+            if pts:
+                series.append(
+                    (v, [a for a, _ in pts], [b for _, b in pts], pal[v])
+                )
+        if not series:
+            continue
+        fig, _ = mp.plot_metric_over_epoch(
+            series, ref_value=ref.get(s), ref_label="DIALS",
+            y_label="anomalous peakz (sigma)",
+            title=f"Anomalous peak at residue {s} vs checkpoint",
+        )
+        saved.append(mp.save_figure(fig, ckpt_eval / f"anom_peakz_{s}.png"))
+    return saved
+
+
 def make_all_plots(
-    ckpt_eval: Path, *, pdb: str | None = None, anom_sel: str = ""
+    ckpt_eval: Path, *, ref_peaks: str | None = None,
+    pred_path: Path | None = None,
 ) -> list[Path]:
-    """Write all eval plots into `ckpt_eval`; returns the saved paths."""
+    """Write the four model-vs-DIALS plots into `ckpt_eval`; returns the paths."""
     rows, results = load_results(ckpt_eval)
     if not rows:
         raise FileNotFoundError(f"no result.json under {ckpt_eval}")
     logger.info("Loaded %d (epoch, variant) results", len(rows))
 
     saved = []
+    # (3) Refinement R-work/R-free vs epoch.
     fig, _ = mp.plot_r_values_vs_epoch(
         rows, title="Refinement R-factors vs checkpoint"
     )
     saved.append(mp.save_figure(fig, ckpt_eval / "r_factors_vs_epoch.png"))
 
-    fig, _ = mp.plot_metric_vs_epoch(
-        rows, "top_anom_peak", ylabel="top anomalous peak (sigma)",
-        title="Top anomalous peak vs checkpoint",
-    )
-    saved.append(mp.save_figure(fig, ckpt_eval / "anom_peak_vs_epoch.png"))
+    # (4) Per-residue anomalous peakz over epoch vs the DIALS reference.
+    saved += _anomalous_plots(ckpt_eval, ref_peaks)
 
-    if pdb and anom_sel:
-        site_rows = _site_rows(results, pdb, anom_sel)
-        if site_rows:
-            fig, _ = mp.plot_anom_sites_vs_epoch(
-                site_rows, title="Anomalous peak height at sites vs checkpoint"
-            )
-            saved.append(
-                mp.save_figure(fig, ckpt_eval / "anom_sites_vs_epoch.png")
-            )
-
-    # Friedel scatter from the latest checkpoint's merged MTZ.
-    mtzs = sorted(
-        (r.get("mtz") for r in results if r.get("mtz")), key=lambda p: p or ""
-    )
-    if mtzs and Path(mtzs[-1]).exists():
+    # (1, 2) Per-obs model-vs-DIALS intensity + background scatters.
+    pred_path = pred_path or _find_pred_parquet(ckpt_eval)
+    if pred_path and Path(pred_path).exists():
         try:
-            fig, _ = mp.friedel_scatter_from_mtz(
-                mtzs[-1], title="Friedel pairs (latest checkpoint)"
-            )
-            if fig is not None:
-                saved.append(
-                    mp.save_figure(fig, ckpt_eval / "friedel_scatter.png")
-                )
+            saved += _scatter_plots(ckpt_eval, Path(pred_path))
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Friedel scatter skipped: %s", exc)
+            logger.warning("scatter plots skipped: %s", exc)
+    else:
+        logger.warning(
+            "no predictions parquet (run integrator.predict); "
+            "skipping intensity/background scatters"
+        )
     return saved
-
-
-def _resolve_pdb(run_dir: Path, cli_pdb: str | None) -> str | None:
-    """PDB from --pdb, else the eval config's pdb."""
-    if cli_pdb:
-        return cli_pdb
-    cfg = run_dir / "merging_eval_cfg.yaml"
-    if cfg.exists():
-        return (yaml.safe_load(cfg.read_text()) or {}).get("pdb") or None
-    return None
 
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="Plot a finished ckpt_eval directory (anomalous / "
-        "refinement / scatter)."
+        description="Plot a finished ckpt_eval directory (refinement / "
+        "anomalous / scatter)."
     )
     p.add_argument("--run-dir", type=Path, default=None)
     p.add_argument(
@@ -178,17 +239,18 @@ def parse_args():
         help="The ckpt_eval directory directly (else resolved from --run-dir).",
     )
     p.add_argument(
-        "--pdb",
+        "--ref-peaks",
         type=str,
         default=None,
-        help="Reference PDB for per-site anomalous peaks (else eval config pdb).",
+        help="Reference peaks.csv (seqid, peakz) for the DIALS anomalous "
+        "reference line on the per-residue peak plots.",
     )
     p.add_argument(
-        "--anom-atom-sel",
+        "--pred-parquet",
         type=str,
-        default="",
-        help="gemmi selection of anomalous scatterers, e.g. '[S]'. Needed for "
-        "the per-site anomalous-peak-height plot.",
+        default=None,
+        help="Per-obs predictions parquet for the scatters (else auto-found "
+        "under <output_root>/predictions).",
     )
     return p.parse_args()
 
@@ -197,17 +259,16 @@ def main():
     args = parse_args()
     if not args.run_dir and not args.ckpt_eval_dir:
         raise SystemExit("pass --run-dir or --ckpt-eval-dir")
-    run_dir = args.run_dir.resolve() if args.run_dir else None
-    ckpt_eval = (
-        Path(args.ckpt_eval_dir).resolve()
-        if args.ckpt_eval_dir
-        else resolve_ckpt_eval(run_dir, None)
-    )
+    if args.ckpt_eval_dir:
+        ckpt_eval = Path(args.ckpt_eval_dir).resolve()
+    else:
+        ckpt_eval = resolve_ckpt_eval(args.run_dir.resolve(), None)
     if not ckpt_eval.exists():
         raise FileNotFoundError(f"no ckpt_eval at {ckpt_eval}")
-    pdb = args.pdb or (_resolve_pdb(run_dir, None) if run_dir else None)
 
-    saved = make_all_plots(ckpt_eval, pdb=pdb, anom_sel=args.anom_atom_sel)
+    saved = make_all_plots(
+        ckpt_eval, ref_peaks=args.ref_peaks, pred_path=args.pred_parquet
+    )
     print("\n".join(["Wrote:"] + [f"  {p}" for p in saved]))
 
 

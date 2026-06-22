@@ -122,136 +122,31 @@ def plot_r_values_vs_epoch(rows, *, ref_vals=None, title=None, figsize=(6, 4)):
     return fig, ax
 
 
-def plot_metric_vs_epoch(
-    rows, key, *, ylabel=None, title=None, figsize=(6, 4)
+def plot_metric_over_epoch(
+    series,
+    *,
+    ref_value=None,
+    ref_label="DIALS",
+    x_label="epoch",
+    y_label="value",
+    title=None,
+    figsize=(6, 4),
 ):
-    """A per-variant metric (e.g. top_anom_peak) vs epoch."""
-    variants = sorted({r["variant"] for r in rows if r.get("variant")})
-    pal = _palette(variants)
+    """Per-model metric curves over epoch, with an optional reference line.
+
+    `series`: iterable of (label, x_epochs, y_values, color). `ref_value`: a
+    scalar (e.g. the DIALS anomalous peakz for this site) drawn as a horizontal
+    line. Mirrors refltorch.plots.metric_plots.plot_metric_over_epoch.
+    """
     fig, ax = plt.subplots(figsize=figsize)
-    for v in variants:
-        pts = sorted(
-            (r["epoch"], r.get(key))
-            for r in rows
-            if r["variant"] == v and isinstance(r.get(key), (int, float))
-        )
-        if pts:
-            ax.plot(
-                [p[0] for p in pts], [p[1] for p in pts],
-                marker="o", ms=3, color=pal[v], label=v,
-            )
-    ax.set_xlabel("epoch")
-    ax.set_ylabel(ylabel or key)
+    for label, x, y, color in series:
+        ax.plot(x, y, marker="o", ms=3, color=color, label=label)
+    if ref_value is not None:
+        ax.axhline(ref_value, color="red", lw=1, ls="--", label=ref_label)
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
     if title:
         ax.set_title(title)
     ax.grid(True, alpha=0.3)
     ax.legend(loc="best", fontsize=8)
     return fig, ax
-
-
-def plot_anom_sites_vs_epoch(site_rows, *, title=None, figsize=(6, 4)):
-    """Per-site anomalous peak height (sigma) vs epoch.
-
-    `site_rows`: list of dicts {epoch, site, height}.
-    """
-    sites = sorted({r["site"] for r in site_rows})
-    pal = _palette(sites)
-    fig, ax = plt.subplots(figsize=figsize)
-    for site in sites:
-        pts = sorted(
-            (r["epoch"], r["height"])
-            for r in site_rows
-            if r["site"] == site and isinstance(r.get("height"), (int, float))
-        )
-        if pts:
-            ax.plot(
-                [p[0] for p in pts], [p[1] for p in pts],
-                marker="o", ms=3, color=pal[site], label=site,
-            )
-    ax.axhline(0, color="#bbb", lw=0.8)
-    ax.set_xlabel("epoch")
-    ax.set_ylabel("anomalous peak height (sigma)")
-    if title:
-        ax.set_title(title)
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="best", fontsize=7, ncol=2)
-    return fig, ax
-
-
-def get_anom_peak_heights(
-    mtz_filename, pdb_filename, atom_sel, f_col=None, phi_col=None
-):
-    """Anomalous-difference-map peak height (sigma) at each anomalous atom site.
-
-    Builds the anomalous-difference map (normalized to sigma), then samples it at
-    each selected atom and its symmetry equivalents (averaged). The amplitude /
-    phase column names are auto-detected (phenix names them ANOM/PANOM; older
-    versions ANOM/PHANOM), or pass `f_col`/`phi_col` to override. Returns
-    `(labels, heights)`. Ported from refltorch's anomalous_peak_heights.
-    """
-    import gemmi
-    import numpy as np
-
-    mtz = gemmi.read_mtz_file(str(mtz_filename))
-    st = gemmi.read_pdb(str(pdb_filename))
-
-    labels_present = {c.label for c in mtz.columns}
-
-    def _pick(given, candidates):
-        if given and given in labels_present:
-            return given
-        for c in candidates:
-            if c in labels_present:
-                return c
-        return None
-
-    f_col = _pick(f_col, ("ANOM", "ANOMALOUS", "DANO"))
-    phi_col = _pick(phi_col, ("PANOM", "PHANOM", "PHIANOM", "PHANOMALOUS"))
-    if f_col is None or phi_col is None:
-        raise KeyError(
-            "no anomalous amplitude/phase columns in "
-            f"{mtz_filename}; have {sorted(labels_present)}"
-        )
-
-    grid = mtz.transform_f_phi_to_map(f_col, phi_col, sample_rate=3.0)
-    grid.normalize()
-
-    sel = gemmi.Selection(str(atom_sel))
-    atoms = list(sel.copy_model_selection(st[0]).all())
-
-    labels, heights = [], []
-    ops = grid.spacegroup.operations()
-    for cra in atoms:
-        vals = []
-        for op in ops:
-            m = op.apply_to_xyz(st.cell.fractionalize(cra.atom.pos).tolist())
-            frac = np.array(m) - np.floor(np.array(m))
-            vals.append(
-                grid.get_value(
-                    round(frac[0] * grid.nu),
-                    round(frac[1] * grid.nv),
-                    round(frac[2] * grid.nw),
-                )
-            )
-        labels.append(f"{cra.residue.name}{cra.residue.seqid.num}")
-        heights.append(round(float(np.average(vals)), 3))
-    return labels, heights
-
-
-def friedel_scatter_from_mtz(mtz_path, *, title=None):
-    """F(+) vs F(-) scatter from a merged anomalous MTZ (the anomalous signal)."""
-    import reciprocalspaceship as rs
-
-    ds = rs.read_mtz(str(mtz_path))
-    cols = {"F(+)", "F(-)"} if {"F(+)", "F(-)"}.issubset(ds.columns) else None
-    if cols is None:
-        return None, None
-    pair = ds[["F(+)", "F(-)"]].dropna()
-    return plot_scatter_identity(
-        pair["F(+)"].to_numpy(),
-        pair["F(-)"].to_numpy(),
-        xlabel="F(+)",
-        ylabel="F(-)",
-        title=title or "Friedel pairs",
-        log=True,
-    )

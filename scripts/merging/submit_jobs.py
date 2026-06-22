@@ -109,13 +109,6 @@ def parse_args():
         help="Redo checkpoints even if outputs already exist (default: skip).",
     )
     p.add_argument(
-        "--anom-atom-sel",
-        type=str,
-        default="",
-        help="gemmi selection (e.g. '[S]') forwarded to the aggregation step "
-        "so it also makes the per-site anomalous-peak plot.",
-    )
-    p.add_argument(
         "--dry-run",
         action="store_true",
         help="Write the job scripts but don't sbatch.",
@@ -185,12 +178,11 @@ def main():
     )
     worker_path.chmod(0o755)
 
-    agg_sel = f' --anom-atom-sel "{args.anom_atom_sel}"' if args.anom_atom_sel else ""
     agg_path = run_dir / "merging_eval_aggregate.sh"
     agg_path.write_text(
         _script(
             'echo "aggregating ($(date))"',
-            f'python {aggregator} --run-dir "{run_dir}"{agg_sel}',
+            f'python {aggregator} --run-dir "{run_dir}"',
         )
     )
     agg_path.chmod(0o755)
