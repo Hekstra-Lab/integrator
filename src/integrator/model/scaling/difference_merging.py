@@ -1,27 +1,3 @@
-"""Difference-as-latent per-HKL merging (anomalous signal in its own coordinate).
-
-Sibling of `AmortizedMergingIntegrator`. The leak that washes out the anomalous
-signal is the coordinate the Wilson prior acts in: written on the two mates
-(I+, I-), it shrinks their difference as a side effect of regularizing the
-magnitude. This model reparameterizes each Friedel pair into a common mode and a
-signed anomalous fraction,
-
-    I(+/-) = I0 * (1 +/- delta),
-
-merges the common mode q(I0) on the Friedel-POOLED id with the inherited
-conjugate `_merge` (so the Wilson prior acts on I0 only), and gives delta its own
-variational posterior q(delta) = Normal with prior N(0, sigma_delta(shell)^2).
-sigma_delta is learned per resolution shell (in-model empirical Bayes), so the
-shrinkage strength is fit from the data and is precision-weighted automatically;
-centrics are pinned to delta = 0 (exact gauge anchors) and calibrate the noise
-floor. Because the (I0, delta) axes are Fisher-orthogonal at delta = 0, the
-common-mode prior cannot attenuate the difference.
-
-The per-mate buffers stay keyed on `miller_idx_unfriedelized`, so `finalize_merge`
-expands (I0, delta) back into per-mate Gammas by moment matching and the MTZ
-writer / `get_merged_qi` are unchanged.
-"""
-
 import math
 from typing import Any
 
@@ -39,6 +15,7 @@ from integrator.model.scaling.merge_utils import (
     _assemble_outputs,
     _sample_profile,
 )
+from integrator.model.scaling.mlp_scale import _chebyshev
 
 _DELTA_CLAMP = 0.95  # keep 1 +/- delta strictly positive
 
@@ -64,14 +41,10 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
             )
 
         self.delta_kl_weight = float(getattr(cfg, "delta_kl_weight", 1.0))
-        # One sigma_delta per resolution shell (reuse the loss's bin count).
         self.n_shells = max(1, int(getattr(self.loss, "n_bins", 1) or 1))
         raw0 = _inv_softplus(float(getattr(cfg, "sigma_delta_init", 0.05)))
-        raw = torch.full((self.n_shells,), raw0)
-        if bool(getattr(cfg, "sigma_delta_learn", True)):
-            self.sigma_delta_raw = nn.Parameter(raw)
-        else:
-            self.register_buffer("sigma_delta_raw", raw)
+        self.sigma_delta_form = str(getattr(cfg, "sigma_delta_form", "loglinear"))
+        self._build_sigma_delta(cfg, raw0)
 
         # delta head: per-pair sign-split signal stats -> (mu residual, log sd).
         # zero-init so mu starts at the raw data estimate and sd at sigma_delta_init.
@@ -83,8 +56,66 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
         with torch.no_grad():
             self.delta_head[-1].bias.copy_(torch.tensor([0.0, raw0]))
 
-    def _sigma_delta(self) -> Tensor:
-        return F.softplus(self.sigma_delta_raw) + 1e-6
+    def _build_sigma_delta(self, cfg, raw0: float) -> None:
+        """Parameterize the sigma_delta(d) prior; all init flat at sigma_delta_init.
+
+        `loglinear` softplus(a + b s^2) (2 params), `binned` per shell, `cheby`
+        low-order Chebyshev in s^2, `mlp` a tiny net. Continuous forms read s^2
+        directly (no binning). s^2 is normalized to [-1, 1] over [dmin, d_max].
+        """
+        form = self.sigma_delta_form
+        learn = bool(getattr(cfg, "sigma_delta_learn", True))
+        d_max = 60.0
+        s2_hi = 1.0 / (4.0 * float(cfg.dmin) ** 2)
+        s2_lo = 1.0 / (4.0 * d_max**2)
+        self.register_buffer("_s2_lo", torch.tensor(s2_lo))
+        self.register_buffer("_s2_hi", torch.tensor(max(s2_hi, s2_lo + 1e-6)))
+
+        if form == "binned":
+            p = torch.full((self.n_shells,), raw0)
+        elif form == "loglinear":
+            p = torch.tensor([raw0, 0.0])  # [a, b]; b=0 -> flat start
+        elif form == "cheby":
+            deg = int(getattr(cfg, "sigma_delta_cheby_degree", 4))
+            p = torch.zeros(deg + 1)
+            p[0] = raw0
+        elif form == "mlp":
+            net = nn.Sequential(nn.Linear(1, 16), nn.Tanh(), nn.Linear(16, 1))
+            nn.init.zeros_(net[-1].weight)
+            nn.init.constant_(net[-1].bias, raw0)
+            self.sigma_delta_mlp = net
+            if not learn:
+                for prm in net.parameters():
+                    prm.requires_grad_(False)
+            return
+        else:
+            raise ValueError(f"unknown sigma_delta_form {form!r}")
+
+        if learn:
+            self.sigma_delta_raw = nn.Parameter(p)
+        else:
+            self.register_buffer("sigma_delta_raw", p)
+
+    def _s2_norm(self, s2: Tensor) -> Tensor:
+        return (2.0 * (s2 - self._s2_lo) / (self._s2_hi - self._s2_lo) - 1.0).clamp(
+            -1.0, 1.0
+        )
+
+    def _sigma_delta(self, shell_pooled: Tensor, s2_pooled: Tensor) -> Tensor:
+        """Prior sd of the anomalous fraction per pooled id (the chosen form)."""
+        form = self.sigma_delta_form
+        eps = 1e-6
+        if form == "binned":
+            return F.softplus(self.sigma_delta_raw)[shell_pooled] + eps
+        if form == "loglinear":
+            a, b = self.sigma_delta_raw[0], self.sigma_delta_raw[1]
+            return F.softplus(a + b * s2_pooled) + eps
+        if form == "cheby":
+            basis = _chebyshev(self._s2_norm(s2_pooled), self.sigma_delta_raw.numel() - 1)
+            return F.softplus(basis @ self.sigma_delta_raw) + eps
+        # mlp
+        x = self._s2_norm(s2_pooled).unsqueeze(-1)
+        return F.softplus(self.sigma_delta_mlp(x).squeeze(-1)) + eps
 
     def _per_obs_potential(
         self,
@@ -114,6 +145,7 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
         plus: Tensor,
         centric_pooled: Tensor,
         shell_pooled: Tensor,
+        s2_pooled: Tensor,
     ) -> tuple[Tensor, Tensor, Tensor]:
         """Variational q(delta) per pooled id and its prior sd.
 
@@ -146,18 +178,25 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
         sd_delta = F.softplus(out[:, 1]) + eps
 
         # Centrics: delta = 0 exactly.
-        mu_delta = torch.where(centric_pooled, torch.zeros_like(mu_delta), mu_delta)
+        mu_delta = torch.where(
+            centric_pooled, torch.zeros_like(mu_delta), mu_delta
+        )
         sd_delta = torch.where(
             centric_pooled, torch.full_like(sd_delta, eps), sd_delta
         )
 
-        sigma_delta_shell = self._sigma_delta()[shell_pooled]
+        sigma_delta_shell = self._sigma_delta(shell_pooled, s2_pooled)
         return mu_delta, sd_delta, sigma_delta_shell
 
     def _pooled_context(
-        self, metadata: dict, inverse0: Tensor, n_pooled: int, device
-    ) -> tuple[Tensor, Tensor, Tensor]:
-        """Per-pooled-id sign mask helpers: (plus_obs, centric_pooled, shell_pooled)."""
+        self,
+        metadata: dict,
+        inverse0: Tensor,
+        n_pooled: int,
+        d_obs: Tensor,
+        device,
+    ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+        """Per-pooled-id helpers: (plus_obs, centric_pooled, shell_pooled, s2_pooled)."""
         plus = metadata["friedel_plus"].bool().to(device)
         centric_obs = (
             metadata["centric"].bool().to(device)
@@ -168,11 +207,22 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
         centric_pooled[inverse0[centric_obs]] = True
         shell_pooled = torch.zeros(n_pooled, dtype=torch.long, device=device)
         if "group_label" in metadata:
-            gl = metadata["group_label"].long().to(device).clamp(
-                0, self.n_shells - 1
+            gl = (
+                metadata["group_label"]
+                .long()
+                .to(device)
+                .clamp(0, self.n_shells - 1)
             )
             shell_pooled[inverse0] = gl
-        return plus, centric_pooled, shell_pooled
+        # Mean d per pooled id (constant within a pooled id) -> s^2 for the
+        # continuous sigma_delta(s^2) forms.
+        d_sum = torch.zeros(n_pooled, device=device).scatter_add(0, inverse0, d_obs)
+        cnt = torch.zeros(n_pooled, device=device).scatter_add(
+            0, inverse0, torch.ones_like(d_obs)
+        )
+        d_pooled = (d_sum / cnt.clamp(min=1.0)).clamp(min=1e-6)
+        s2_pooled = 1.0 / (4.0 * d_pooled.pow(2))
+        return plus, centric_pooled, shell_pooled, s2_pooled
 
     def _forward_impl(
         self,
@@ -202,7 +252,14 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
         # Common mode q(I0) on the Friedel-POOLED id (inherited conjugate merge).
         pooled_idx = metadata[self.friedel_key].long().to(device)
         qi0_h, alpha0, beta0, inverse0, unique0, tau0 = self._merge(
-            x_k_i, x_r_i, scale, profile_mean, mask, pooled_idx, d_obs, cond_mid
+            x_k_i,
+            x_r_i,
+            scale,
+            profile_mean,
+            mask,
+            pooled_idx,
+            d_obs,
+            cond_mid,
         )
         n_pooled = unique0.shape[0]
 
@@ -210,15 +267,18 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
         potential = self._per_obs_potential(
             x_k_i, x_r_i, scale, cond_mid, d_obs
         )
-        plus, centric_pooled, shell_pooled = self._pooled_context(
-            metadata, inverse0, n_pooled, device
+        plus, centric_pooled, shell_pooled, s2_pooled = self._pooled_context(
+            metadata, inverse0, n_pooled, d_obs, device
         )
         mu_delta, sd_delta, sigma_delta_shell = self._delta_posterior(
-            potential, inverse0, n_pooled, plus, centric_pooled, shell_pooled
+            potential, inverse0, n_pooled, plus, centric_pooled, shell_pooled,
+            s2_pooled,
         )
 
         # Sample I0 and delta (reparam), expand to observations, build the rate.
-        zI0_h = qi0_h.rsample([self.mc_samples]).clamp(min=1e-10)  # (S, n_pooled)
+        zI0_h = qi0_h.rsample([self.mc_samples]).clamp(
+            min=1e-10
+        )  # (S, n_pooled)
         z_delta_h = Normal(mu_delta, sd_delta).rsample([self.mc_samples])
         z_delta_h = torch.where(
             centric_pooled.unsqueeze(0),
@@ -230,7 +290,9 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
         z_delta = z_delta_h[:, inverse0]  # (S, B)
         zI_mate = (zI0 * (1.0 + sign.unsqueeze(0) * z_delta)).clamp(min=1e-10)
 
-        zI_scaled = (scale.unsqueeze(0) * zI_mate).unsqueeze(-1).permute(1, 0, 2)
+        zI_scaled = (
+            (scale.unsqueeze(0) * zI_mate).unsqueeze(-1).permute(1, 0, 2)
+        )
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
         zp = _sample_profile(qp, self.mc_samples)
         rate = zI_scaled * zp + zbg
@@ -337,23 +399,37 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
 
             pooled_idx = metadata[self.friedel_key].long().to(device)
             _, alpha0, beta0, inverse0, unique0, _ = self._merge(
-                x_k_i, x_r_i, scale, profile_mean, mask, pooled_idx, d_obs,
+                x_k_i,
+                x_r_i,
+                scale,
+                profile_mean,
+                mask,
+                pooled_idx,
+                d_obs,
                 cond_mid,
             )
             n_pooled = unique0.shape[0]
             potential = self._per_obs_potential(
                 x_k_i, x_r_i, scale, cond_mid, d_obs
             )
-            plus, centric_pooled, shell_pooled = self._pooled_context(
-                metadata, inverse0, n_pooled, device
+            plus, centric_pooled, shell_pooled, s2_pooled = self._pooled_context(
+                metadata, inverse0, n_pooled, d_obs, device
             )
             mu_delta, sd_delta, _ = self._delta_posterior(
-                potential, inverse0, n_pooled, plus, centric_pooled, shell_pooled
+                potential,
+                inverse0,
+                n_pooled,
+                plus,
+                centric_pooled,
+                shell_pooled,
+                s2_pooled,
             )
 
             # Map each pooled id to its +/- mate's Friedel-separate (buffer) id.
             uf = metadata[self.merge_key].long().to(device)
-            uf_plus = torch.full((n_pooled,), -1, dtype=torch.long, device=device)
+            uf_plus = torch.full(
+                (n_pooled,), -1, dtype=torch.long, device=device
+            )
             uf_minus = torch.full_like(uf_plus, -1)
             uf_plus[inverse0[plus]] = uf[plus]
             uf_minus[inverse0[~plus]] = uf[~plus]
