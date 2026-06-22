@@ -426,6 +426,8 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
             )
 
             # Map each pooled id to its +/- mate's Friedel-separate (buffer) id.
+            # Centrics are NOT split: their + and - observations share one id, so
+            # write them once (delta = 0); only acentrics get a true +/- split.
             uf = metadata[self.merge_key].long().to(device)
             uf_plus = torch.full(
                 (n_pooled,), -1, dtype=torch.long, device=device
@@ -433,27 +435,32 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
             uf_minus = torch.full_like(uf_plus, -1)
             uf_plus[inverse0[plus]] = uf[plus]
             uf_minus[inverse0[~plus]] = uf[~plus]
+            uf_centric = torch.maximum(uf_plus, uf_minus)  # the single shared id
+            acentric = ~centric_pooled
 
             mean0 = (alpha0 / beta0.clamp(min=1e-12)).clamp(min=1e-10)
             var0 = (alpha0 / beta0.clamp(min=1e-12).pow(2)).clamp(min=1e-20)
 
-            def write(uf_id: Tensor, factor: Tensor) -> None:
-                m = uf_id >= 0
-                ids = uf_id[m]
+            def write(uf_id: Tensor, factor: Tensor, rows: Tensor) -> None:
+                sel = (uf_id >= 0) & rows
+                ids = uf_id[sel]
                 if bool(seen[ids].any()):
                     raise RuntimeError(
                         "finalize_merge needs a grouped (group_by_asu_id) loader "
                         "so each Friedel pair is complete in one batch; found an "
                         "id spanning batches. Use predict_dataloader(grouped=True)."
                     )
-                mean = (mean0 * factor).clamp(min=1e-10)
+                mean = (mean0[sel] * factor[sel]).clamp(min=1e-10)
                 var = (
-                    var0 * factor.pow(2) + mean0.pow(2) * sd_delta.pow(2)
+                    var0[sel] * factor[sel].pow(2)
+                    + mean0[sel].pow(2) * sd_delta[sel].pow(2)
                 ).clamp(min=1e-20)
-                self.alpha_buffer[ids] = (mean.pow(2) / var).clamp(min=1e-6)[m]
-                self.beta_buffer[ids] = (mean / var).clamp(min=1e-12)[m]
+                self.alpha_buffer[ids] = (mean.pow(2) / var).clamp(min=1e-6)
+                self.beta_buffer[ids] = (mean / var).clamp(min=1e-12)
                 seen[ids] = True
 
-            write(uf_plus, 1.0 + mu_delta)
-            write(uf_minus, 1.0 - mu_delta)
+            ones = torch.ones_like(mu_delta)
+            write(uf_plus, 1.0 + mu_delta, acentric)
+            write(uf_minus, 1.0 - mu_delta, acentric)
+            write(uf_centric, ones, centric_pooled)  # delta = 0
         self.buffer_seen.copy_(seen)
