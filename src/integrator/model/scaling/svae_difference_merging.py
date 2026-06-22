@@ -99,7 +99,10 @@ class SVAEDifferenceMergingIntegrator(DifferenceMergingIntegrator):
             (bg_a0 + bg_counts).clamp(min=1e-6),
             (bg_b0 + n_pix).clamp(min=1e-12),
         )
-        return qi0, alpha0, beta0, inverse0, unique0, tau0, qbg, sig_counts
+        return (
+            qi0, alpha0, beta0, inverse0, unique0, tau0, qbg, sig_counts,
+            delta_beta,
+        )
 
     def _forward_impl(
         self,
@@ -135,6 +138,7 @@ class SVAEDifferenceMergingIntegrator(DifferenceMergingIntegrator):
             tau0,
             qbg,
             sig_counts,
+            exposure,
         ) = self._responsibility_common_mode(
             x_k_i,
             qp.mean_logits,
@@ -151,9 +155,12 @@ class SVAEDifferenceMergingIntegrator(DifferenceMergingIntegrator):
         plus, centric_pooled, shell_pooled, s2_pooled = self._pooled_context(
             metadata, inverse0, n_pooled, d_obs, device
         )
-        # The signed anomalous fraction reads the sign-split SIGNAL counts.
+        # The signed anomalous fraction reads the sign-split SIGNAL counts +
+        # exposure (the same statistics that build the common mode).
         mu_delta, sd_delta, sigma_delta_shell = self._delta_posterior(
             sig_counts,
+            exposure,
+            tau0,
             inverse0,
             n_pooled,
             plus,
@@ -258,9 +265,10 @@ class SVAEDifferenceMergingIntegrator(DifferenceMergingIntegrator):
                 beta0,
                 inverse0,
                 unique0,
-                _,
+                tau0,
                 _,
                 sig_counts,
+                exposure,
             ) = self._responsibility_common_mode(
                 x_k_i,
                 qp.mean_logits,
@@ -280,6 +288,8 @@ class SVAEDifferenceMergingIntegrator(DifferenceMergingIntegrator):
             )
             mu_delta, sd_delta, _ = self._delta_posterior(
                 sig_counts,
+                exposure,
+                tau0,
                 inverse0,
                 n_pooled,
                 plus,

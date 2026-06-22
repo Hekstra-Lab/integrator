@@ -42,21 +42,34 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
 
         self.delta_kl_weight = float(getattr(cfg, "delta_kl_weight", 1.0))
         self.n_shells = max(1, int(getattr(self.loss, "n_bins", 1) or 1))
-        raw0 = _inv_softplus(float(getattr(cfg, "sigma_delta_init", 0.05)))
-        self.sigma_delta_form = str(
-            getattr(cfg, "sigma_delta_form", "loglinear")
-        )
-        self._build_sigma_delta(cfg, raw0)
+        sigma0 = float(getattr(cfg, "sigma_delta_init", 0.05))
+        raw0 = _inv_softplus(sigma0)
+        # `eb` (default): closed-form precision-weighted empirical-Bayes delta --
+        # the in-model version of the post-hoc EB shrink, robust to the
+        # over-training decay of the free head. `head`: the legacy free
+        # amortized head (kept for ablation; decays over training).
+        self.delta_mode = str(getattr(cfg, "delta_mode", "eb"))
 
-        # delta head: per-pair sign-split signal stats -> (mu residual, log sd).
-        # zero-init so mu starts at the raw data estimate and sd at sigma_delta_init.
-        h = int(getattr(cfg, "delta_head_hidden", 16))
-        self.delta_head = nn.Sequential(
-            nn.Linear(4, h), nn.ReLU(), nn.Linear(h, 2)
-        )
-        nn.init.zeros_(self.delta_head[-1].weight)
-        with torch.no_grad():
-            self.delta_head[-1].bias.copy_(torch.tensor([0.0, raw0]))
+        if self.delta_mode == "eb":
+            # sigma_delta^2 by DETACHED method-of-moments (EMA buffer), NOT
+            # learned through the ELBO -- learning it collapses sigma -> 0.
+            self.sigma_delta_ema = float(getattr(cfg, "sigma_delta_ema", 0.99))
+            self.register_buffer(
+                "sigma_delta_sq", torch.tensor(sigma0**2), persistent=True
+            )
+        else:
+            self.sigma_delta_form = str(
+                getattr(cfg, "sigma_delta_form", "loglinear")
+            )
+            self._build_sigma_delta(cfg, raw0)
+            # zero-init so mu starts at the raw data estimate, sd at sigma_init.
+            h = int(getattr(cfg, "delta_head_hidden", 16))
+            self.delta_head = nn.Sequential(
+                nn.Linear(4, h), nn.ReLU(), nn.Linear(h, 2)
+            )
+            nn.init.zeros_(self.delta_head[-1].weight)
+            with torch.no_grad():
+                self.delta_head[-1].bias.copy_(torch.tensor([0.0, raw0]))
 
     def _build_sigma_delta(self, cfg, raw0: float) -> None:
         """Parameterize the sigma_delta(d) prior; all init flat at sigma_delta_init.
@@ -141,9 +154,76 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
         feat = torch.cat([x_k_i, x_r_i, cond], dim=-1)
         return F.softplus(self.alpha_head(feat)).squeeze(-1)
 
+    def _eb_delta(
+        self,
+        potential: Tensor,
+        exposure: Tensor,
+        tau_pooled: Tensor,
+        inverse0: Tensor,
+        n_pooled: int,
+        plus: Tensor,
+        centric_pooled: Tensor,
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """Closed-form precision-weighted empirical-Bayes delta (no free head).
+
+        Sign-split the SAME per-obs signal potential and exposure that build the
+        common mode into per-mate Gammas (splitting alpha_W and tau_h in half),
+        form delta_hat = (m+ - m-)/(m+ + m-) and its precision-derived variance
+        v_h, and shrink: mu = w*delta_hat, w = sigma^2/(sigma^2 + v_h),
+        sd = sqrt(sigma^2 v_h/(sigma^2 + v_h)). sigma^2 is a DETACHED
+        method-of-moments EMA over acentric pairs, so the estimator has no free
+        capacity to drift onto per-batch noise. Centrics are pinned to 0.
+        """
+        device = potential.device
+        eps = 1e-6
+
+        def scatter(vals: Tensor, mask: Tensor) -> Tensor:
+            out = torch.zeros(n_pooled, device=device, dtype=vals.dtype)
+            return out.scatter_add(0, inverse0[mask], vals[mask])
+
+        a_plus = 0.5 * self.alpha_W + scatter(potential, plus)
+        a_minus = 0.5 * self.alpha_W + scatter(potential, ~plus)
+        b_plus = 0.5 * tau_pooled + scatter(exposure, plus) + eps
+        b_minus = 0.5 * tau_pooled + scatter(exposure, ~plus) + eps
+        m_plus = a_plus / b_plus
+        m_minus = a_minus / b_minus
+        tot = (m_plus + m_minus).clamp(min=eps)
+        delta_hat = (m_plus - m_minus) / tot
+        # delta-method variance from the per-mate Gamma precisions (1/alpha).
+        v_h = (
+            4.0 * m_plus.pow(2) * m_minus.pow(2) / tot.pow(4)
+            * (1.0 / a_plus.clamp(min=eps) + 1.0 / a_minus.clamp(min=eps))
+        )
+
+        acentric = ~centric_pooled
+        with torch.no_grad():
+            if self.training and bool(acentric.any()):
+                s2 = (
+                    delta_hat[acentric].pow(2) - v_h[acentric]
+                ).mean().clamp(min=1e-8)
+                self.sigma_delta_sq.mul_(self.sigma_delta_ema).add_(
+                    (1.0 - self.sigma_delta_ema) * s2
+                )
+            sig2 = self.sigma_delta_sq.clamp(min=1e-8)
+
+        w = sig2 / (sig2 + v_h.clamp(min=eps))
+        mu_delta = (w * delta_hat).clamp(-_DELTA_CLAMP, _DELTA_CLAMP)
+        sd_delta = (sig2 * v_h / (sig2 + v_h)).clamp(min=1e-12).sqrt() + eps
+
+        mu_delta = torch.where(
+            centric_pooled, torch.zeros_like(mu_delta), mu_delta
+        )
+        sd_delta = torch.where(
+            centric_pooled, torch.full_like(sd_delta, eps), sd_delta
+        )
+        sigma_delta_shell = sig2.sqrt().expand(n_pooled)
+        return mu_delta, sd_delta, sigma_delta_shell
+
     def _delta_posterior(
         self,
         potential: Tensor,
+        exposure: Tensor,
+        tau_pooled: Tensor,
         inverse0: Tensor,
         n_pooled: int,
         plus: Tensor,
@@ -151,11 +231,14 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
         shell_pooled: Tensor,
         s2_pooled: Tensor,
     ) -> tuple[Tensor, Tensor, Tensor]:
-        """Variational q(delta) per pooled id and its prior sd.
+        """q(delta) per pooled id + its prior sd. `eb` mode = closed-form EB;
+        `head` mode = the legacy free amortized head. Centrics get delta = 0."""
+        if self.delta_mode == "eb":
+            return self._eb_delta(
+                potential, exposure, tau_pooled, inverse0, n_pooled, plus,
+                centric_pooled,
+            )
 
-        Returns `(mu_delta, sd_delta, sigma_delta_shell)`. Centrics get
-        mu = 0, sd -> 0 (delta pinned to 0).
-        """
         device = potential.device
         eps = 1e-6
 
@@ -269,15 +352,20 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
         )
         n_pooled = unique0.shape[0]
 
-        # Signed anomalous fraction q(delta) per pooled id.
+        # Signed anomalous fraction q(delta) per pooled id. The EB delta needs
+        # the same per-obs signal potential + exposure that build the common
+        # mode (delta_beta = scale * profile mass), split by sign.
         potential = self._per_obs_potential(
             x_k_i, x_r_i, scale, cond_mid, d_obs
         )
+        exposure = scale * (profile_mean * mask).sum(dim=-1)
         plus, centric_pooled, shell_pooled, s2_pooled = self._pooled_context(
             metadata, inverse0, n_pooled, d_obs, device
         )
         mu_delta, sd_delta, sigma_delta_shell = self._delta_posterior(
             potential,
+            exposure,
+            tau0,
             inverse0,
             n_pooled,
             plus,
@@ -356,7 +444,8 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
     def _extra_loss_terms(
         self, outputs: dict, metadata: dict
     ) -> tuple[Tensor, dict[str, Tensor]]:
-        """Per-pair KL[q(delta) || N(0, sigma_delta(shell)^2)] over acentric pairs."""
+        """delta regularization. `eb`: none (the EB shrink IS the posterior and
+        sigma is method-of-moments); `head`: per-pair KL[q || N(0, sigma^2)]."""
         mu = outputs["mu_delta"]
         sd = outputs["sd_delta"]
         sig = outputs["sigma_delta_shell"]
@@ -364,18 +453,23 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
         if not bool(acentric.any()):
             return mu.new_zeros(()), {}
 
+        logs = {
+            "abs_delta": mu[acentric].abs().mean().detach(),
+            "sigma_delta": sig[acentric].mean().detach(),
+        }
+        if self.delta_mode == "eb":
+            return mu.new_zeros(()), logs
+
         kl = (
             (sig / sd).log()
             + (sd.pow(2) + mu.pow(2)) / (2.0 * sig.pow(2))
             - 0.5
         )
-        n_obs = outputs["forward_out"]["counts"].shape[0]
-        kl_delta = kl[acentric].sum() / n_obs * self.delta_kl_weight
-        logs = {
-            "kl_delta": kl_delta.detach(),
-            "abs_delta": mu[acentric].abs().mean().detach(),
-            "sigma_delta": sig[acentric].mean().detach(),
-        }
+        # Per-pair normalization (once per acentric pooled id, on the same
+        # footing as the likelihood), not /n_obs which is ~1/obs-per-HKL weaker.
+        n_pairs = int(acentric.sum())
+        kl_delta = kl[acentric].sum() / max(n_pairs, 1) * self.delta_kl_weight
+        logs["kl_delta"] = kl_delta.detach()
         return kl_delta, logs
 
     def _write_mate_buffers(
@@ -458,7 +552,7 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
             ).mean_profile
 
             pooled_idx = metadata[self.friedel_key].long().to(device)
-            _, alpha0, beta0, inverse0, unique0, _ = self._merge(
+            _, alpha0, beta0, inverse0, unique0, tau0 = self._merge(
                 x_k_i,
                 x_r_i,
                 scale,
@@ -472,6 +566,7 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
             potential = self._per_obs_potential(
                 x_k_i, x_r_i, scale, cond_mid, d_obs
             )
+            exposure = scale * (profile_mean * mask).sum(dim=-1)
             plus, centric_pooled, shell_pooled, s2_pooled = (
                 self._pooled_context(
                     metadata, inverse0, n_pooled, d_obs, device
@@ -479,6 +574,8 @@ class DifferenceMergingIntegrator(AmortizedMergingIntegrator):
             )
             mu_delta, sd_delta, _ = self._delta_posterior(
                 potential,
+                exposure,
+                tau0,
                 inverse0,
                 n_pooled,
                 plus,

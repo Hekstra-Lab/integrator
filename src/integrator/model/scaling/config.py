@@ -71,6 +71,13 @@ class MergingIntegratorCfg:
 
     responsibility_gate_init: float = -2.0
 
+    # delta (anomalous fraction): "eb" = closed-form precision-weighted
+    # empirical-Bayes (default; robust to over-training decay), "head" = legacy
+    # free amortized head. sigma_delta_ema: decay for the EB method-of-moments
+    # sigma^2 buffer. The sigma_delta_*/delta_head_hidden knobs below apply only
+    # to "head" mode.
+    delta_mode: str = "eb"
+    sigma_delta_ema: float = 0.99
     delta_kl_weight: float = 1.0
     sigma_delta_init: float = 0.05
     sigma_delta_learn: bool = True
