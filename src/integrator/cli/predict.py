@@ -213,6 +213,13 @@ def main():
                 )
             if torch.cuda.is_available():
                 integrator.to(torch.device("cuda"))
+            else:
+                # No GPU on this node (e.g. a CPU partition): force the trainer
+                # to CPU regardless of what the training config requested.
+                config.setdefault("trainer", {})
+                config["trainer"]["accelerator"] = "cpu"
+                config["trainer"]["devices"] = 1
+                logger.info("No CUDA: running prediction on CPU")
             integrator.eval()
 
             # qp_mean is a large per-pixel vector:
