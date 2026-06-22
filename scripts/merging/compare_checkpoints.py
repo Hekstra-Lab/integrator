@@ -7,7 +7,12 @@ import yaml
 
 # Plotting + ckpt_eval loading live in the standalone plotter; this script just
 # adds the summary.csv + W&B logging on top.
-from plot_ckpt_eval import load_results, make_all_plots, resolve_ckpt_eval
+from plot_ckpt_eval import (
+    _resolve_pdb,
+    load_results,
+    make_all_plots,
+    resolve_ckpt_eval,
+)
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s | %(levelname)-7s | %(message)s"
@@ -95,6 +100,13 @@ def parse_args():
         help="Per-checkpoint output root (default: <run_dir>/ckpt_eval).",
     )
     p.add_argument("--no-wandb", action="store_true", help="Don't log to W&B.")
+    p.add_argument(
+        "--anom-atom-sel",
+        type=str,
+        default="",
+        help="gemmi selection (e.g. '[S]') to also make the per-site "
+        "anomalous-peak plot (needs the eval config's pdb).",
+    )
     return p.parse_args()
 
 
@@ -112,9 +124,10 @@ def main():
 
     csv_path = out_root / "summary.csv"
     _write_csv(rows, csv_path)
-    # Plotting lives in the standalone plot_ckpt_eval (per-site needs --pdb /
-    # --anom-atom-sel there; the auto pipeline makes the rest).
-    pngs = make_all_plots(out_root)
+    # Plotting lives in the standalone plot_ckpt_eval; pass pdb (from the eval
+    # config) + the atom selection so the per-site anomalous plot is made too.
+    pdb = _resolve_pdb(run_dir, None)
+    pngs = make_all_plots(out_root, pdb=pdb, anom_sel=args.anom_atom_sel)
 
     best_rfree = _best(rows, "r_free", prefer_min=True)
     best_peak = _best(rows, "top_anom_peak", prefer_min=False)
