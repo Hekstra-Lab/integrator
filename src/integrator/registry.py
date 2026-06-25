@@ -21,8 +21,6 @@ from integrator.model.loss import (
     PolychromaticWilsonLoss,
 )
 from integrator.model.scaling import (
-    AmortizedMergingIntegrator,
-    DifferenceMergingIntegrator,
     MergingWilsonLoss,
     SVAEDifferenceMergingIntegrator,
     SVAEMergingIntegrator,
@@ -41,9 +39,7 @@ REGISTRY = {
     "integrator": {
         "hierarchical": HierarchicalIntegrator,
         "hierarchical_3enc": HierarchicalIntegrator3Enc,
-        "amortized_merging": AmortizedMergingIntegrator,
         "svae_merging": SVAEMergingIntegrator,
-        "difference_merging": DifferenceMergingIntegrator,
         "svae_difference_merging": SVAEDifferenceMergingIntegrator,
     },
     "surrogates": {

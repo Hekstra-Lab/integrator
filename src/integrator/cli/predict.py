@@ -19,8 +19,7 @@ def parse_args():
         required=False,
         help="Run dir with run_paths.yaml (config + checkpoints + predictions)",
     )
-    # explicit overrides: use these to run without a --run-dir, or to override
-    # individual pieces of one
+    # explicit overrides: use these to run without a --run-dir
     parser.add_argument(
         "--config",
         type=str,
@@ -123,6 +122,65 @@ def _resolve_sources(args):
     return config, checkpoints, pred_dir
 
 
+def _run_merging_predict(integrator, config, ckpt_dir, epoch, data_loader):
+    """Merging path: grouped finalize_merge -> merged.mtz + result.json, plus
+    the per-obs pred.parquet over the SAME grouped pass
+
+    A grouped (group_by_asu_id) loader is mandatory
+    """
+    import json
+    from pathlib import Path
+
+    from integrator.callbacks import BatchPredWriter
+    from integrator.io import (
+        extract_merged_posterior,
+        load_crystal,
+        load_hkl_table,
+        write_merged_mtz,
+    )
+    from integrator.utils import construct_trainer
+
+    grouped_loader = data_loader.predict_dataloader(
+        grouped=True, lightning_safe=True
+    )
+
+    pred_writer = BatchPredWriter(
+        output_dir=ckpt_dir,
+        write_interval="batch",
+        epoch=epoch,
+        partition=False,
+    )
+    trainer = construct_trainer(
+        config,
+        callbacks=[pred_writer],
+        logger=False,
+        use_distributed_sampler=False,
+    )
+    trainer.predict(
+        integrator,
+        return_predictions=False,
+        dataloaders=grouped_loader,
+    )
+
+    integrator.finalize_merge(data_loader.predict_dataloader(grouped=True))
+    alpha, beta, seen = extract_merged_posterior(integrator)
+
+    data_dir = Path(config["data_loader"]["args"]["data_dir"])
+    cell, sg = load_crystal(data_dir)
+    hkl = load_hkl_table(data_dir, config, cell, sg)
+    mtz_path = ckpt_dir / "merged.mtz"
+    write_merged_mtz(alpha, beta, seen, hkl, cell, sg, mtz_path)
+
+    result = {
+        "epoch": epoch,
+        "n_hkl_seen": int(seen.sum()),
+        "n_hkl_total": int(len(alpha)),
+        "mtz": str(mtz_path),
+        "variants": {},  # filled by the downstream phenix/peaks eval
+    }
+    (ckpt_dir / "result.json").write_text(json.dumps(result, indent=2))
+
+
 def main():
     from pathlib import Path
 
@@ -184,8 +242,7 @@ def main():
 
         ckpt_dir.mkdir(parents=True, exist_ok=True)
 
-        # Skip prediction if outputs already exist, but still
-        # run post-processing (write-refl, write-mtz) below.
+        # Skip prediction if outputs already exist, but still run post-processing
         has_preds = (
             any(ckpt_dir.glob("preds_epoch_*"))
             or (ckpt_dir / "pred.parquet").exists()
@@ -197,10 +254,8 @@ def main():
             )
         else:
             integrator = construct_integrator(config)
-            # Tolerant load: a checkpoint trained under a different delta_mode
-            # (free head vs empirical-Bayes) has different delta params, but the
-            # per-obs predictions (qi/qbg/scale) are unaffected. Warn on any
-            # mismatch instead of crashing.
+
+            # handle extra/missing keys
             incompat = integrator.load_state_dict(
                 torch.load(ckpt.as_posix())["state_dict"], strict=False
             )
@@ -214,34 +269,38 @@ def main():
             if torch.cuda.is_available():
                 integrator.to(torch.device("cuda"))
             else:
-                # No GPU on this node (e.g. a CPU partition): force the trainer
-                # to CPU regardless of what the training config requested.
+                # No GPU node
                 config.setdefault("trainer", {})
                 config["trainer"]["accelerator"] = "cpu"
                 config["trainer"]["devices"] = 1
                 logger.info("No CUDA: running prediction on CPU")
             integrator.eval()
 
-            # qp_mean is a large per-pixel vector:
-            # shard to manage memory;
-            # otherwise everything fits in one pred.parquet
-            partition = "qp_mean" in integrator.predict_keys
-            pred_writer = BatchPredWriter(
-                output_dir=ckpt_dir,
-                write_interval="batch",
-                epoch=epoch,
-                partition=partition,
-            )
-            trainer = construct_trainer(
-                config,
-                callbacks=[pred_writer],
-                logger=False,
-            )
-            trainer.predict(
-                integrator,
-                return_predictions=False,
-                dataloaders=data_loader.predict_dataloader(),
-            )
+            if hasattr(integrator, "finalize_merge"):
+                # Merging integrator: one grouped pass -> pred.parquet + merge.
+                _run_merging_predict(
+                    integrator, config, ckpt_dir, epoch, data_loader
+                )
+            else:
+                # qp_mean is a large per-pixel vector:
+                # shard to manage memory
+                partition = "qp_mean" in integrator.predict_keys
+                pred_writer = BatchPredWriter(
+                    output_dir=ckpt_dir,
+                    write_interval="batch",
+                    epoch=epoch,
+                    partition=partition,
+                )
+                trainer = construct_trainer(
+                    config,
+                    callbacks=[pred_writer],
+                    logger=False,
+                )
+                trainer.predict(
+                    integrator,
+                    return_predictions=False,
+                    dataloaders=data_loader.predict_dataloader(),
+                )
 
         if args.write_refl:
             logger.info("Writing .refl output for epoch %d", epoch)

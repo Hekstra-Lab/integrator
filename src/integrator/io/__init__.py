@@ -17,7 +17,13 @@ from .metadata import (
     refl_as_pt,
     save_data,
 )
-from .mtz_io import write_mtz_from_preds
+from .mtz_io import (
+    extract_merged_posterior,
+    load_crystal,
+    load_hkl_table,
+    write_merged_mtz,
+    write_mtz_from_preds,
+)
 from .pred_io import get_pred_files, write_refl_from_preds
 from .refl_io import unstack_preds, write_refl_with_predictions
 
@@ -33,6 +39,10 @@ __all__ = [
     "refl_as_pt",
     "miller_index_columns",
     "write_mtz_from_preds",
+    "extract_merged_posterior",
+    "load_crystal",
+    "load_hkl_table",
+    "write_merged_mtz",
     "get_pred_files",
     "write_refl_from_preds",
     "unstack_preds",

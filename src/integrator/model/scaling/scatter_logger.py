@@ -1,30 +1,9 @@
-"""End-of-epoch model-vs-DIALS scatter logging for the scaling/merging models.
-
-A self-contained `LightningModule` mixin (no `BaseIntegrator` dependency). Each
-train batch stashes a subsample of (model, DIALS) pairs for every enabled
-scatter; at epoch end each is plotted with its log-CC, logged to W&B as
-`<name>_vs_dials` / `<name>_logCC`, and saved under `<run>/<name>_scatter/`.
-
-Built-in scatters (each gated on its `log_*_scatter` cfg flag AND the needed
-keys being present, so they no-op safely):
-
-  - "intensity":  model `scale * qi.mean` vs DIALS `intensity.sum.value`.
-  - "intensity_prf": same model x vs DIALS `intensity.prf.value`.
-  - "intensity_var": model `scale^2 * Var[I]` vs DIALS `intensity.prf.variance`.
-  - "background": model `qbg.mean` (per-pixel) vs the per-shoebox masked median.
-
-Host modules call `self._init_scatter_logger(cfg)` in `__init__` and, in the
-train branch of `_step`, `self._collect_scatters(outputs, metadata, mask,
-counts)`. `on_train_epoch_end` chains to `super()`, so list the mixin BEFORE the
-LightningModule base.
-"""
-
 import torch
 from torch import Tensor
 
 
-class ScatterLoggerMixin:
-    """Log-log scatters of model vs DIALS quantities (merge-quality readouts)."""
+class ScatterLogger:
+    """Log-log scatters of model vs DIALS"""
 
     def _init_scatter_logger(self, cfg) -> None:
         self.log_intensity_scatter = bool(
@@ -99,8 +78,7 @@ class ScatterLoggerMixin:
     def _collect_variance_scatter(
         self, outputs: dict, metadata: dict, max_per_batch: int = 64
     ) -> None:
-        """Stash (model scale^2 * Var[I], DIALS intensity.prf.variance) -- a
-        sigma(I) calibration check (Var[s*I] = s^2 Var[I]), model on x."""
+        """Stash (model scale^2 * Var[I], DIALS intensity.prf.variance)"""
         if "intensity.prf.variance" not in metadata or "qi" not in outputs:
             return
         model_v = outputs["qi"].variance
@@ -124,13 +102,6 @@ class ScatterLoggerMixin:
         counts: Tensor,
         max_per_batch: int = 64,
     ) -> None:
-        """Stash (model per-pixel bg, data per-pixel bg) -- a per-pixel check.
-
-        The model `qbg.mean` is a per-pixel background rate, so the reference is
-        a per-pixel background from the data: the robust per-shoebox median of
-        the masked counts (the small Bragg peak does not move the median in a
-        mostly-background box).
-        """
         if "qbg" not in outputs or counts is None:
             return
         bg = outputs["qbg"].mean.reshape(-1)
@@ -212,7 +183,9 @@ class ScatterLoggerMixin:
         log_cc = float(np.corrcoef(np.log(mi), np.log(di))[0, 1])
 
         fig, ax = plt.subplots(figsize=(5, 5))
-        ax.scatter(mi, di, s=4, alpha=0.3, edgecolors="none")  # model x, DIALS y
+        ax.scatter(
+            mi, di, s=4, alpha=0.3, edgecolors="none"
+        )  # model x, DIALS y
         lo, hi = float(min(di.min(), mi.min())), float(max(di.max(), mi.max()))
         ax.plot([lo, hi], [lo, hi], "r--", lw=1, label="y = x")
         ax.set_xscale("log")

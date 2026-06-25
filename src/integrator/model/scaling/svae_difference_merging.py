@@ -6,10 +6,7 @@ from torch import Tensor
 from torch.distributions import Gamma, Normal
 
 from integrator import configs
-from integrator.model.scaling.difference_merging import (
-    _DELTA_CLAMP,
-    DifferenceMergingIntegrator,
-)
+from integrator.model.scaling.base import ScalingLightningModule
 from integrator.model.scaling.merge_utils import (
     IntegratorBaseOutputs,
     _assemble_outputs,
@@ -17,8 +14,12 @@ from integrator.model.scaling.merge_utils import (
     _scatter_sum_compact,
 )
 
+_DELTA_CLAMP = 0.95  # keep 1 +/- delta strictly positive
 
-class SVAEDifferenceMergingIntegrator(DifferenceMergingIntegrator):
+
+class SVAEDifferenceMergingIntegrator(ScalingLightningModule):
+    """Difference SVAE: per-pixel signal probability + empirical-Bayes anomalous delta."""
+
     REQUIRED_ENCODERS = {
         "profile": ("profile_encoder", configs.ProfileEncoderArgs),
         "k_i": ("intensity_encoder", configs.IntensityEncoderArgs),
@@ -33,34 +34,110 @@ class SVAEDifferenceMergingIntegrator(DifferenceMergingIntegrator):
 
     def __init__(self, cfg, loss, encoders, surrogates, optimizer=None):
         super().__init__(cfg, loss, encoders, surrogates, optimizer)
-        # Signal photons come from the responsibility, not a potential head.
-        if hasattr(self, "alpha_head"):
-            del self.alpha_head
+        if not self.anomalous:
+            raise ValueError(
+                "SVAEDifferenceMergingIntegrator needs anomalous: true (per-mate "
+                "buffers keyed on miller_idx_unfriedelized)."
+            )
+        # sigma_delta^2 by detached method-of-moments (EMA buffer).
+        sigma0 = float(getattr(cfg, "sigma_delta_init", 0.05))
+        self.sigma_delta_ema = float(getattr(cfg, "sigma_delta_ema", 0.99))
+        self.register_buffer(
+            "sigma_delta_sq", torch.tensor(sigma0**2), persistent=True
+        )
+        # Signal photons come from the per-pixel signal_probability gate.
         d = cfg.encoder_out
         self.gate_head = nn.Sequential(
             nn.Linear(d, d), nn.ReLU(), nn.Linear(d, 1)
         )
         nn.init.constant_(
             self.gate_head[-1].bias,
-            float(getattr(cfg, "responsibility_gate_init", -2.0)),
+            float(getattr(cfg, "signal_probability_gate_init", -2.0)),
         )
 
-    def _bg_prior(
-        self, group_labels: Tensor | None, n: int, device: torch.device
-    ) -> tuple[Tensor, Tensor]:
-        """Per-obs background Gamma prior (concentration, rate) from the loss."""
-        conc = self.loss.bg_concentration.to(device)
-        rate = self.loss.bg_rate.to(device)
-        if conc.ndim == 1:  # per-resolution-bin priors
-            g = (
-                torch.zeros(n, dtype=torch.long, device=device)
-                if group_labels is None
-                else group_labels.to(device).long()
-            )
-            return conc[g], rate[g]
-        return conc.expand(n), rate.expand(n)
+    def _eb_delta(
+        self,
+        potential: Tensor,
+        exposure: Tensor,
+        tau_pooled: Tensor,
+        inverse0: Tensor,
+        n_pooled: int,
+        plus: Tensor,
+        centric_pooled: Tensor,
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """Closed-form precision-weighted empirical-Bayes delta (no free head)."""
+        device = potential.device
+        eps = 1e-6
 
-    def _responsibility_common_mode(
+        def scatter(vals: Tensor, mask: Tensor) -> Tensor:
+            out = torch.zeros(n_pooled, device=device, dtype=vals.dtype)
+            return out.scatter_add(0, inverse0[mask], vals[mask])
+
+        a_plus = 0.5 * self.alpha_W + scatter(potential, plus)
+        a_minus = 0.5 * self.alpha_W + scatter(potential, ~plus)
+        b_plus = 0.5 * tau_pooled + scatter(exposure, plus) + eps
+        b_minus = 0.5 * tau_pooled + scatter(exposure, ~plus) + eps
+
+        m_plus = a_plus / b_plus
+        m_minus = a_minus / b_minus
+        tot = (m_plus + m_minus).clamp(min=eps)
+        delta_hat = (m_plus - m_minus) / tot
+
+        # delta-method variance from the per-mate Gamma term 1/alpha
+        v_h = (
+            4.0
+            * m_plus.pow(2)
+            * m_minus.pow(2)
+            / tot.pow(4)
+            * (1.0 / a_plus.clamp(min=eps) + 1.0 / a_minus.clamp(min=eps))
+        )
+
+        acentric = ~centric_pooled
+        with torch.no_grad():
+            if self.training and bool(acentric.any()):
+                s2 = (
+                    (delta_hat[acentric].pow(2) - v_h[acentric])
+                    .mean()
+                    .clamp(min=1e-8)
+                )
+                self.sigma_delta_sq.mul_(self.sigma_delta_ema).add_(
+                    (1.0 - self.sigma_delta_ema) * s2
+                )
+            sig2 = self.sigma_delta_sq.clamp(min=1e-8)
+
+        w = sig2 / (sig2 + v_h.clamp(min=eps))
+        mu_delta = (w * delta_hat).clamp(-_DELTA_CLAMP, _DELTA_CLAMP)
+        sd_delta = (sig2 * v_h / (sig2 + v_h)).clamp(min=1e-12).sqrt() + eps
+
+        mu_delta = torch.where(
+            centric_pooled, torch.zeros_like(mu_delta), mu_delta
+        )
+        sd_delta = torch.where(
+            centric_pooled, torch.full_like(sd_delta, eps), sd_delta
+        )
+
+        sigma_delta_shell = sig2.sqrt().expand(n_pooled)
+        return mu_delta, sd_delta, sigma_delta_shell
+
+    def _pooled_context(
+        self,
+        metadata: dict,
+        inverse0: Tensor,
+        n_pooled: int,
+        device,
+    ) -> tuple[Tensor, Tensor]:
+        """Per-pooled-id helpers: (plus_obs, centric_pooled)."""
+        plus = metadata["friedel_plus"].bool().to(device)
+        centric_obs = (
+            metadata["centric"].bool().to(device)
+            if "centric" in metadata
+            else torch.zeros_like(plus)
+        )
+        centric_pooled = torch.zeros(n_pooled, dtype=torch.bool, device=device)
+        centric_pooled[inverse0[centric_obs]] = True
+        return plus, centric_pooled
+
+    def _signal_probability_common_mode(
         self,
         x_k_i: Tensor,
         logits: Tensor,
@@ -72,16 +149,16 @@ class SVAEDifferenceMergingIntegrator(DifferenceMergingIntegrator):
         d_obs: Tensor,
         group_labels: Tensor | None,
     ) -> tuple:
-        """Conjugate common mode q(I0) + background from the responsibility."""
+        """Conjugate common mode q(I0) + background from the signal probability."""
         device = counts.device
         b = counts.shape[0]
         m = mask.reshape(b, -1).float()
         c = counts.clamp(min=0).reshape(b, -1).float() * m
         r = torch.sigmoid(logits + self.gate_head(x_k_i)) * m  # (B, P)
 
-        total = c.sum(dim=-1)
+        total_counts = c.sum(dim=-1)
         sig_counts = (r * c).sum(dim=-1)  # sum_p r*c   (signal)
-        bg_counts = total - sig_counts  # sum_p (1-r)*c
+        bg_counts = total_counts - sig_counts  # sum_p (1-r)*c
         n_pix = m.sum(dim=-1).clamp(min=1.0)
 
         d_sum, inverse0, unique0 = _scatter_sum_compact(d_obs, pooled_idx)
@@ -100,7 +177,14 @@ class SVAEDifferenceMergingIntegrator(DifferenceMergingIntegrator):
             (bg_b0 + n_pix).clamp(min=1e-12),
         )
         return (
-            qi0, alpha0, beta0, inverse0, unique0, tau0, qbg, sig_counts,
+            qi0,
+            alpha0,
+            beta0,
+            inverse0,
+            unique0,
+            tau0,
+            qbg,
+            sig_counts,
             delta_beta,
         )
 
@@ -121,6 +205,7 @@ class SVAEDifferenceMergingIntegrator(DifferenceMergingIntegrator):
         qp = self.surrogates["qp"](x_profile, mc_samples=self.mc_samples)
         profile_mean = qp.mean_profile
         scale = self._get_scale(metadata, device)
+
         d_obs = metadata["d"].to(device).float()
         pooled_idx = metadata[self.friedel_key].long().to(device)
         group_labels = (
@@ -139,7 +224,7 @@ class SVAEDifferenceMergingIntegrator(DifferenceMergingIntegrator):
             qbg,
             sig_counts,
             exposure,
-        ) = self._responsibility_common_mode(
+        ) = self._signal_probability_common_mode(
             x_k_i,
             qp.mean_logits,
             counts,
@@ -152,12 +237,11 @@ class SVAEDifferenceMergingIntegrator(DifferenceMergingIntegrator):
         )
         n_pooled = unique0.shape[0]
 
-        plus, centric_pooled, shell_pooled, s2_pooled = self._pooled_context(
-            metadata, inverse0, n_pooled, d_obs, device
+        plus, centric_pooled = self._pooled_context(
+            metadata, inverse0, n_pooled, device
         )
-        # The signed anomalous fraction reads the sign-split SIGNAL counts +
-        # exposure (the same statistics that build the common mode).
-        mu_delta, sd_delta, sigma_delta_shell = self._delta_posterior(
+        # signed anomalous fraction from the sign-split signal counts + exposure
+        mu_delta, sd_delta, sigma_delta_shell = self._eb_delta(
             sig_counts,
             exposure,
             tau0,
@@ -165,8 +249,6 @@ class SVAEDifferenceMergingIntegrator(DifferenceMergingIntegrator):
             n_pooled,
             plus,
             centric_pooled,
-            shell_pooled,
-            s2_pooled,
         )
 
         zI0_h = qi0_h.rsample([self.mc_samples]).clamp(min=1e-10)
@@ -211,12 +293,16 @@ class SVAEDifferenceMergingIntegrator(DifferenceMergingIntegrator):
         )
         out = _assemble_outputs(out)
         out[self.merge_key] = metadata[self.merge_key].long().to(device)
+        # Model merged intensity on the observed scale (DIALS cols pass through).
+        out["scaled_intensity"] = scale * qi.mean
 
         return {
             "forward_out": out,
             "qp": qp,
             "qi": qi,
             "qbg": qbg,
+            # qi_h / tau_h / inverse / unique are the COMMON MODE, so the
+            # base Wilson KL in _step acts on I0 only (the whole point).
             "qi_h": qi0_h,
             "alpha_h": alpha0,
             "beta_h": beta0,
@@ -228,11 +314,79 @@ class SVAEDifferenceMergingIntegrator(DifferenceMergingIntegrator):
             "sd_delta": sd_delta,
             "sigma_delta_shell": sigma_delta_shell,
             "centric_pooled": centric_pooled,
+            # per-obs sufficient statistics for validation merging stats.
+            "signal_counts": sig_counts,
+            "exposure": exposure,
         }
+
+    def _extra_loss_terms(
+        self, outputs: dict, metadata: dict
+    ) -> tuple[Tensor, dict[str, Tensor]]:
+        """No delta KL: the EB shrink IS the posterior and sigma is MoM."""
+        mu = outputs["mu_delta"]
+        acentric = ~outputs["centric_pooled"]
+        if not bool(acentric.any()):
+            return mu.new_zeros(()), {}
+        logs = {
+            "abs_delta": mu[acentric].abs().mean().detach(),
+            "sigma_delta": outputs["sigma_delta_shell"][acentric]
+            .mean()
+            .detach(),
+        }
+        return mu.new_zeros(()), logs
+
+    def _write_mate_buffers(
+        self,
+        alpha0: Tensor,
+        beta0: Tensor,
+        mu_delta: Tensor,
+        sd_delta: Tensor,
+        inverse0: Tensor,
+        n_pooled: int,
+        plus: Tensor,
+        centric_pooled: Tensor,
+        metadata: dict,
+        seen: Tensor,
+        device,
+    ) -> None:
+        """Expand (I0, delta) per pooled id into per-mate Gamma buffers."""
+        uf = metadata[self.merge_key].long().to(device)
+        uf_plus = torch.full((n_pooled,), -1, dtype=torch.long, device=device)
+        uf_minus = torch.full_like(uf_plus, -1)
+        uf_plus[inverse0[plus]] = uf[plus]
+        uf_minus[inverse0[~plus]] = uf[~plus]
+        uf_centric = torch.maximum(uf_plus, uf_minus)  # the single shared id
+        acentric = ~centric_pooled
+
+        mean0 = (alpha0 / beta0.clamp(min=1e-12)).clamp(min=1e-10)
+        var0 = (alpha0 / beta0.clamp(min=1e-12).pow(2)).clamp(min=1e-20)
+
+        def write(uf_id: Tensor, factor: Tensor, rows: Tensor) -> None:
+            sel = (uf_id >= 0) & rows
+            ids = uf_id[sel]
+            if bool(seen[ids].any()):
+                raise RuntimeError(
+                    "finalize_merge needs a grouped (group_by_asu_id) loader so "
+                    "each Friedel pair is complete in one batch; found an id "
+                    "spanning batches. Use predict_dataloader(grouped=True)."
+                )
+            mean = (mean0[sel] * factor[sel]).clamp(min=1e-10)
+            var = (
+                var0[sel] * factor[sel].pow(2)
+                + mean0[sel].pow(2) * sd_delta[sel].pow(2)
+            ).clamp(min=1e-20)
+            self.alpha_buffer[ids] = (mean.pow(2) / var).clamp(min=1e-6)
+            self.beta_buffer[ids] = (mean / var).clamp(min=1e-12)
+            seen[ids] = True
+
+        ones = torch.ones_like(mu_delta)
+        write(uf_plus, 1.0 + mu_delta, acentric)
+        write(uf_minus, 1.0 - mu_delta, acentric)
+        write(uf_centric, ones, centric_pooled)  # delta = 0
 
     @torch.no_grad()
     def finalize_merge(self, dataloader) -> None:
-        """Merge over the dataset (responsibility), expand (I0, delta) per mate."""
+        """Merge over the dataset (signal probability), expand (I0, delta) per mate."""
         self.eval()
         device = self.alpha_buffer.device
         seen = torch.zeros(self.n_hkl, dtype=torch.bool, device=device)
@@ -269,7 +423,7 @@ class SVAEDifferenceMergingIntegrator(DifferenceMergingIntegrator):
                 _,
                 sig_counts,
                 exposure,
-            ) = self._responsibility_common_mode(
+            ) = self._signal_probability_common_mode(
                 x_k_i,
                 qp.mean_logits,
                 counts,
@@ -281,12 +435,10 @@ class SVAEDifferenceMergingIntegrator(DifferenceMergingIntegrator):
                 group_labels,
             )
             n_pooled = unique0.shape[0]
-            plus, centric_pooled, shell_pooled, s2_pooled = (
-                self._pooled_context(
-                    metadata, inverse0, n_pooled, d_obs, device
-                )
+            plus, centric_pooled = self._pooled_context(
+                metadata, inverse0, n_pooled, device
             )
-            mu_delta, sd_delta, _ = self._delta_posterior(
+            mu_delta, sd_delta, _ = self._eb_delta(
                 sig_counts,
                 exposure,
                 tau0,
@@ -294,8 +446,6 @@ class SVAEDifferenceMergingIntegrator(DifferenceMergingIntegrator):
                 n_pooled,
                 plus,
                 centric_pooled,
-                shell_pooled,
-                s2_pooled,
             )
             self._write_mate_buffers(
                 alpha0,

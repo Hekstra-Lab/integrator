@@ -6,11 +6,6 @@ from typing import Literal
 class MergingIntegratorCfg:
     """Architecture and inference hyperparameters for the amortized merger.
 
-    The scaling sibling of `IntegratorCfg`: it carries the same shoebox/encoder
-    fields plus the merge- and scale-specific knobs the merger needs. The
-    factory selects this dataclass via the integrator's `CFG_CLASS` attribute,
-    so `main`'s `IntegratorCfg` stays free of scaling-only fields.
-
     Attributes:
         data_dim: Shoebox dimensionality, `2d` or `3d`.
         d: Shoebox depth in pixels (z-slices).
@@ -23,12 +18,8 @@ class MergingIntegratorCfg:
         wilson_alpha: Wilson prior shape (`1.0` -> acentric exponential).
         merge_kl_weight: Weight on the per-HKL Wilson intensity KL.
         scaling_lr: Decoupled learning rate for the scale field; `None` -> `lr`.
-        consistency_weight: Weight on the data-only scaling-consistency loss.
-        consistency_pool_friedel: Pool the consistency target over Friedel mates.
-        centric_anchor_weight: Weight on the centric zero-anomalous scale anchor.
-        double_wilson_weight: Weight on the double-Wilson Friedel coupling.
         wilson_centric_prior: Give centric reflections the chi^2_1 Wilson prior.
-        dmin: Minimum d-spacing (used to normalize the scale's d input).
+        d_min: Minimum d-spacing (used to normalize the scale's d input).
         scale_mlp: Use the MLP scale; otherwise a frame-only Chebyshev scale.
         scale_degree: Chebyshev degree (frame-only fallback scale).
         scale_mlp_hidden: MLP scale hidden width.
@@ -38,9 +29,6 @@ class MergingIntegratorCfg:
         scale_frame_max: Maximum rotation frame.
         scale_beam_center: Detector beam center `[cx, cy]` in pixels.
         scale_r_max: Maximum detector radius (for radius normalization).
-        scale_sh_lmax: Max spherical-harmonic order for crystal-frame absorption.
-        scale_mlp_absorption: Feed crystal-frame SH absorption to the MLP scale.
-        scale_mlp_absorption_even_only: Keep only even-l (Friedel-safe) harmonics.
         scale_extra_features: Extra metadata.npy columns to feed the MLP scale.
             A bare name is one scalar; a nested list is a vector standardized
             together with one shared scale, e.g. `[[s1.0, s1.1, s1.2], d]`.
@@ -54,8 +42,6 @@ class MergingIntegratorCfg:
     d: int
     h: int
     w: int
-    # Number of unique merge reflections; sizes the merge buffers. Auto-filled
-    # from dataset.yaml's `n_hkl` block by the factory when omitted.
     n_hkl: int | None = None
     encoder_out: int = 64
     mc_samples: int = 4
@@ -65,36 +51,22 @@ class MergingIntegratorCfg:
     wilson_alpha: float = 1.0
     merge_kl_weight: float = 1.0
     wilson_centric_prior: bool = False
-    # Anomalous: merge on the Friedel-SEPARATE id (`miller_idx_unfriedelized`)
-    # so I(+) != I(-). If false, merge on the pooled `miller_idx_friedelized`.
     anomalous: bool = True
 
-    responsibility_gate_init: float = -2.0
+    signal_probability_gate_init: float = -2.0
 
-    # delta (anomalous fraction): "eb" = closed-form precision-weighted
-    # empirical-Bayes (default; robust to over-training decay), "head" = legacy
-    # free amortized head. sigma_delta_ema: decay for the EB method-of-moments
-    # sigma^2 buffer. The sigma_delta_*/delta_head_hidden knobs below apply only
-    # to "head" mode.
-    delta_mode: str = "eb"
-    sigma_delta_ema: float = 0.99
-    delta_kl_weight: float = 1.0
+    # delta (anomalous fraction): closed-form empirical-Bayes
     sigma_delta_init: float = 0.05
-    sigma_delta_learn: bool = True
-    delta_head_hidden: int = 16
-    sigma_delta_form: str = "loglinear"
-    sigma_delta_cheby_degree: int = 4
+    sigma_delta_ema: float = 0.99
+
+    log_merging_stats: bool = False
+    merging_stats_bins: int = 10
 
     # Optimization
     scaling_lr: float | None = None
 
-    consistency_weight: float = 0.0
-    consistency_pool_friedel: bool = False
-    centric_anchor_weight: float = 0.0
-    double_wilson_weight: float = 0.0
-
     # Scale field
-    dmin: float = 1.0
+    d_min: float = 1.0
     scale_mlp: bool = True
     scale_degree: int = 5
     scale_mlp_hidden: int = 64
@@ -104,19 +76,14 @@ class MergingIntegratorCfg:
     scale_frame_max: float = 1000.0
     scale_beam_center: list[float] | None = None
     scale_r_max: float = 1500.0
-    scale_sh_lmax: int = 4
-    scale_mlp_absorption: bool = False
-    scale_mlp_absorption_even_only: bool = True
 
-    # Extra metadata.npy columns fed to the MLP scale (flattened by the
-    # factory; nested entries become one shared-scale group).
+    # Extra metadata.npy columns
     scale_extra_features: list[str] | None = None
     scale_standardize: bool = True
     scale_extra_loc: list[float] | None = None
     scale_extra_scale: list[float] | None = None
 
-    # Model-vs-DIALS epoch scatter logging (intensity / background); off by
-    # default. Needs intensity.{sum,prf}.* in the metadata for the intensity one.
+    # Model-vs-DIALS epoch scatter logging
     log_intensity_scatter: bool = False
     log_background_scatter: bool = False
 

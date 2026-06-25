@@ -95,6 +95,10 @@ _MODE_DEFAULTS: dict[str, dict[str, str]] = {
         "loss": "polychromatic_wilson",
         "data_loader": "polychromatic_data",
     },
+    "merging": {
+        "loss": "merging_wilson",
+        "data_loader": "rotation_data",
+    },
 }
 
 # fail at import if a mode preset points at an unregistered component
@@ -143,6 +147,22 @@ _DEFAULT_PREDICT_KEYS: dict[str, list[str]] = {
         "H",
         "K",
         "L",
+    ],
+    "merging": [
+        "refl_ids",
+        "is_test",
+        "qi_mean",
+        "qi_var",
+        "qbg_mean",
+        "qbg_var",
+        "scaled_intensity",
+        "intensity.prf.value",
+        "intensity.prf.variance",
+        "background.mean",
+        "d",
+        "group_label",
+        "miller_idx_friedelized",
+        "miller_idx_unfriedelized",
     ],
 }
 
@@ -490,6 +510,7 @@ def construct_trainer(
     cfg: dict,
     logger: Logger | bool | None = False,
     callbacks: list[Callback] | Callback | None = None,
+    use_distributed_sampler: bool | None = None,
 ) -> pl.Trainer:
     # trainer section is optional; TrainerConfig defaults cover an empty one
     tr_cfg = configs.TrainerConfig(**(cfg.get("trainer") or {}))
@@ -507,6 +528,10 @@ def construct_trainer(
         callbacks=callbacks,
         enable_progress_bar=True,
     )
+    # Custom batch samplers (GroupedAsuIdBatchSampler) must NOT be re-resolved by
+    # Lightning, which would re-instantiate them positionally and break them.
+    if use_distributed_sampler is not None:
+        trainer_kwargs["use_distributed_sampler"] = use_distributed_sampler
 
     if tr_cfg.gradient_clip_val is not None:
         trainer_kwargs["gradient_clip_val"] = tr_cfg.gradient_clip_val
@@ -651,17 +676,11 @@ def load_config(resource: str | Path) -> dict:
 def _resolve_scale_standardization(
     iargs: dict, data_dir: str, reference: str
 ) -> None:
-    """Flatten scale_extra_features and auto-fill loc/scale from the dataset.
-
-    A nested entry is a vector standardized together with one shared scale; a
-    bare name is a scalar (its own mean/std). Manual loc/scale or
-    scale_standardize=False skip the auto pass.
-    """
+    """Flatten scale_extra_features"""
     feats = iargs.get("scale_extra_features")
     if not feats:
         return
 
-    # Group structure decides the shared scale; flat list is what forward reads.
     groups = [[f] if isinstance(f, str) else list(f) for f in feats]
     flat = [col for g in groups for col in g]
     iargs["scale_extra_features"] = flat
@@ -675,7 +694,9 @@ def _resolve_scale_standardization(
 
     from integrator.io import data_path, load_metadata
 
-    path = data_path(Path(data_dir) / reference) or (Path(data_dir) / reference)
+    path = data_path(Path(data_dir) / reference) or (
+        Path(data_dir) / reference
+    )
     meta = load_metadata(path)
 
     import numpy as np
@@ -686,11 +707,8 @@ def _resolve_scale_standardization(
         cols = []
         for col in g:
             if col not in meta:
-                raise KeyError(
-                    f"scale_extra_features '{col}' not in {path}"
-                )
+                raise KeyError(f"scale_extra_features '{col}' not in {path}")
             cols.append(meta[col].reshape(-1).float().numpy())
-        # One shared scale per group keeps a vector's directions undistorted.
         means = [float(c.mean()) for c in cols]
         pooled = float(np.mean([c.var() for c in cols]))
         s = pooled**0.5
@@ -730,9 +748,7 @@ def apply_dataset_defaults(cfg: dict) -> dict:
     fill(iargs, "h", h)
     fill(iargs, "w", w)
 
-    # Defaults for the merging model: fill only fields the integrator's config
-    # dataclass declares, so non-merging integrators (plain IntegratorCfg) are
-    # unaffected.
+    # Defaults for the merging model
     import dataclasses
 
     name = cfg.get("integrator", {}).get("name")
@@ -741,8 +757,7 @@ def apply_dataset_defaults(cfg: dict) -> dict:
         {f.name for f in dataclasses.fields(cfg_cls)} if cfg_cls else set()
     )
 
-    # n_hkl from the recorded unique-reflection counts (anomalous -> the
-    # Friedel-separate count, else the pooled count).
+    # n_hkl from the recorded unique-reflection counts
     nh = spec.get("n_hkl", {})
     if "n_hkl" in accepted and nh:
         anomalous = iargs.get("anomalous", True)
@@ -754,7 +769,7 @@ def apply_dataset_defaults(cfg: dict) -> dict:
             else nh.get("n_friedelized"),
         )
 
-    # MLP-scale normalization geometry.
+    # MLP-scale normalization geometry
     scale = spec.get("scale", {})
     for key, value in (
         ("scale_beam_center", scale.get("beam_center_px")),
@@ -766,7 +781,9 @@ def apply_dataset_defaults(cfg: dict) -> dict:
             fill(iargs, key, value)
 
     # Auto-standardize the extra scale features from the dataset metadata.
-    if "scale_extra_features" in accepted and iargs.get("scale_extra_features"):
+    if "scale_extra_features" in accepted and iargs.get(
+        "scale_extra_features"
+    ):
         files = spec.get("files", {})
         ref = (dl_args.get("shoebox_file_names") or {}).get("reference") or (
             files.get("reference", "metadata.npy")

@@ -454,9 +454,9 @@ class RotationDataModule(pl.LightningDataModule):
         else:
             return None
 
-    def predict_dataloader(self, grouped: bool | None = None):
-        # Default to grouped batching when the module was configured for it, so
-        # `finalize_merge` sees each HKL complete in one batch.
+    def predict_dataloader(
+        self, grouped: bool | None = None, lightning_safe: bool = False
+    ):
         if grouped is None:
             grouped = self.group_by_asu_id
         if grouped:
@@ -464,6 +464,21 @@ class RotationDataModule(pl.LightningDataModule):
                 raise RuntimeError(
                     "grouped predict requires group_by_asu_id=True so the asu "
                     "ids are loaded."
+                )
+            if lightning_safe:
+                from integrator.data_loaders.grouped_sampler import (
+                    GroupedAsuIdSampler,
+                )
+
+                sampler = GroupedAsuIdSampler(
+                    miller_idx=self._miller_idx, indices=None, shuffle=False
+                )
+                return DataLoader(
+                    self.full_dataset,
+                    sampler=sampler,
+                    batch_size=self.batch_size,
+                    num_workers=self.num_workers,
+                    pin_memory=True,
                 )
             from integrator.data_loaders.grouped_sampler import (
                 GroupedAsuIdBatchSampler,

@@ -1,5 +1,3 @@
-"""Standalone Lightning base for the scaling/merging models."""
-
 import logging
 import math
 from abc import abstractmethod
@@ -9,14 +7,17 @@ import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 from torch import Tensor
+from torch.distributions import Gamma, kl_divergence
 
 from integrator.configs import OptimizerConfig
 from integrator.model.scaling.config import MergingIntegratorCfg
-from integrator.model.scaling.scatter_logger import ScatterLoggerMixin
+from integrator.model.scaling.merge_utils import _log_loss
+from integrator.model.scaling.mlp_scale import ChebyshevScale, MLPScale
+from integrator.model.scaling.scatter_logger import ScatterLogger
 
 _logger = logging.getLogger(__name__)
 
-# default keys to write out during prediction
+# Per-obs columns written during prediction (model + passed-through DIALS)
 DEFAULT_PREDICT_KEYS = [
     "refl_ids",
     "is_test",
@@ -24,18 +25,19 @@ DEFAULT_PREDICT_KEYS = [
     "qi_var",
     "qbg_mean",
     "qbg_var",
+    "scaled_intensity",
+    "intensity.prf.value",
+    "intensity.prf.variance",
     "background.mean",
     "d",
-    "miller_idx_unfriedelized",
     "group_label",
-    "H",
-    "K",
-    "L",
+    "miller_idx_friedelized",
+    "miller_idx_unfriedelized",
 ]
 
 
-class ScalingLightningModule(ScatterLoggerMixin, pl.LightningModule):
-    """Lightning base for the merging integrators (no `BaseIntegrator` parent)."""
+class ScalingLightningModule(ScatterLogger, pl.LightningModule):
+    """Lightning base for the merging integrators."""
 
     REQUIRED_ENCODERS: dict[str, tuple[str, type]] = {}
     DEFAULT_SURROGATES: dict[str, dict] = {}
@@ -61,6 +63,7 @@ class ScalingLightningModule(ScatterLoggerMixin, pl.LightningModule):
         self.warmup_epochs = opt.warmup_epochs
         self.warmup_steps = opt.warmup_steps
         self.lr_min = opt.lr_min
+
         # Decoupled scale-field LR lives on the merger's own cfg.
         self.scaling_lr = getattr(cfg, "scaling_lr", None)
 
@@ -83,6 +86,143 @@ class ScalingLightningModule(ScatterLoggerMixin, pl.LightningModule):
         self._init_scatter_logger(cfg)
         self.automatic_optimization = True
 
+        self._init_merge(cfg)
+
+    def _init_merge(self, cfg: MergingIntegratorCfg) -> None:
+        """Shared merge setup: Wilson prior, merge buffers, and the scale field.
+
+        The merging integrators apply LP through the scale, so I_h is the LP-corrected intensity.
+        """
+        if cfg.n_hkl is None:
+            raise ValueError(
+                "n_hkl is required: set integrator.args.n_hkl, or ensure "
+                "<data_dir>/dataset.yaml has an `n_hkl` block."
+            )
+        self.n_hkl = cfg.n_hkl
+        self.alpha_W = float(cfg.wilson_alpha)
+        self.merge_kl_weight = float(cfg.merge_kl_weight)
+        self.wilson_centric_prior = bool(cfg.wilson_centric_prior)
+
+        # Anomalous run merges on the Friedel-SEPARATE id; non-anomalous on the
+        # pooled id.
+        self.anomalous = bool(getattr(cfg, "anomalous", True))
+        self.merge_key = (
+            "miller_idx_unfriedelized"
+            if self.anomalous
+            else "miller_idx_friedelized"
+        )
+        self.friedel_key = "miller_idx_friedelized"
+
+        # Final merged per-HKL posterior, populated by `finalize_merge`.
+        self.register_buffer(
+            "alpha_buffer",
+            torch.full((cfg.n_hkl,), self.alpha_W),
+            persistent=False,
+        )
+        self.register_buffer(
+            "beta_buffer", torch.ones(cfg.n_hkl), persistent=False
+        )
+        self.register_buffer(
+            "buffer_seen",
+            torch.zeros(cfg.n_hkl, dtype=torch.bool),
+            persistent=False,
+        )
+
+        # Extra metadata columns fed to the MLP scale as additional inputs.
+        self.scale_extra_features = list(cfg.scale_extra_features or [])
+
+        # Scale field: MLP (production) or a frame-only Chebyshev fallback.
+        if cfg.scale_mlp:
+            self.scale_fn = MLPScale(
+                hidden_dim=cfg.scale_mlp_hidden,
+                n_layers=cfg.scale_mlp_layers,
+                frame_min=cfg.scale_frame_min,
+                frame_max=cfg.scale_frame_max,
+                beam_center=cfg.scale_beam_center,
+                r_max=cfg.scale_r_max,
+                d_min=cfg.d_min,
+                d_max=60.0,
+                head_init_std=cfg.scale_head_init_std,
+                n_extra=len(self.scale_extra_features),
+                extra_loc=cfg.scale_extra_loc,
+                extra_scale=cfg.scale_extra_scale,
+            )
+        else:
+            self.scale_fn = ChebyshevScale(
+                degree=cfg.scale_degree,
+                frame_min=cfg.scale_frame_min,
+                frame_max=cfg.scale_frame_max,
+            )
+
+    def _get_scale(self, metadata: dict, device: torch.device) -> Tensor:
+        frame = metadata["xyzcal.px.2"].to(device).float()
+        lp = metadata["lp"].to(device).float().clamp(min=1e-8)
+        if isinstance(self.scale_fn, MLPScale):
+            x_det = metadata["xyzcal.px.0"].to(device).float()
+            y_det = metadata["xyzcal.px.1"].to(device).float()
+            d = metadata["d"].to(device).float()
+            extra = None
+            if self.scale_extra_features:
+                cols = []
+                for key in self.scale_extra_features:
+                    if key not in metadata:
+                        raise KeyError(
+                            f"scale_extra_features needs '{key}' in metadata; "
+                            "not found in the loader's reference file."
+                        )
+                    cols.append(metadata[key].to(device).float().reshape(-1))
+                extra = torch.stack(cols, dim=-1)  # (B, n_extra)
+            return self.scale_fn(frame, x_det, y_det, lp, d, extra)
+        return self.scale_fn(frame) / lp
+
+    def _wilson_tau(self, d: Tensor) -> Tensor:
+        """Wilson prior rate tau from resolution d (lp lives in the scale)."""
+        s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))
+        return self.loss._get_tau({"d": d}, s_sq, d.device)
+
+    def _bg_prior(
+        self, group_labels: Tensor | None, n: int, device: torch.device
+    ) -> tuple[Tensor, Tensor]:
+        """Per-obs background Gamma prior (concentration, rate) from the loss."""
+        conc = self.loss.bg_concentration.to(device)
+        rate = self.loss.bg_rate.to(device)
+        if conc.ndim == 1:  # per-resolution-bin priors
+            g = (
+                torch.zeros(n, dtype=torch.long, device=device)
+                if group_labels is None
+                else group_labels.to(device).long()
+            )
+            return conc[g], rate[g]
+        return conc.expand(n), rate.expand(n)
+
+    def get_merged_qi(self) -> Gamma:
+        """Per-HKL Gamma posterior from the merge buffers (for MTZ output)."""
+        return Gamma(
+            self.alpha_buffer.clamp(min=1e-6),
+            self.beta_buffer.clamp(min=1e-12),
+        )
+
+    def _wilson_kl_per_hkl(
+        self, qi_h: Gamma, tau_h: Tensor, centric: Tensor | None = None
+    ) -> Tensor:
+        """KL(q(I_h) || Wilson prior), counted once per HKL.
+
+        Acentric reflections follow Gamma(alpha_W, tau_h) (mean 1/tau_h = Sigma);
+        centric reflections follow the chi^2_1 form Gamma(alpha_W/2,
+        (alpha_W/2)*tau_h) -- half the shape, mean-preserving rate.
+        """
+        alpha = self.alpha_W * torch.ones_like(tau_h)
+        if centric is not None:
+            alpha = torch.where(centric, alpha * 0.5, alpha)
+        p_i = Gamma(alpha, (alpha * tau_h).clamp(min=1e-12))
+        return kl_divergence(qi_h, p_i)
+
+    def _extra_loss_terms(
+        self, outputs: dict, metadata: dict
+    ) -> tuple[Tensor, dict[str, Tensor]]:
+        """Extra ELBO terms added in `_step`"""
+        return outputs["scale"].new_zeros(()), {}
+
     def forward(
         self,
         counts: Tensor,
@@ -101,8 +241,102 @@ class ScalingLightningModule(ScatterLoggerMixin, pl.LightningModule):
         metadata: dict,
     ) -> dict[str, Any]: ...
 
-    @abstractmethod
-    def _step(self, batch, step: Literal["train", "val"]): ...
+    def _step(self, batch, step: Literal["train", "val"]):
+        counts, shoebox, mask, metadata = batch
+        outputs = self(counts, shoebox, mask, metadata)
+        forward_out = outputs["forward_out"]
+        qi_h = outputs["qi_h"]
+
+        group_labels = (
+            metadata["group_label"].long()
+            if "group_label" in metadata
+            else None
+        )
+
+        # Per-observation terms: Poisson NLL + profile KL + background KL.
+        loss_dict = self.loss(
+            rate=forward_out["rates"],
+            counts=forward_out["counts"],
+            qp=outputs["qp"],
+            qbg=outputs["qbg"],
+            mask=forward_out["mask"],
+            group_labels=group_labels,
+            metadata=metadata,
+        )
+        total_loss = loss_dict["loss"]
+
+        # Per-HKL Wilson intensity KL, put on the per-observation scale by dividing the sum by the obs count.
+        row_centric = None
+        if self.wilson_centric_prior and "centric" in metadata:
+            tau_h = outputs["tau_h"]
+            centric_obs = metadata["centric"].bool().to(tau_h.device)
+            row_centric = torch.zeros(
+                tau_h.shape[0], dtype=torch.bool, device=tau_h.device
+            )
+            row_centric[outputs["inverse"]] = centric_obs
+        kl_i_per_hkl = self._wilson_kl_per_hkl(
+            qi_h, outputs["tau_h"], row_centric
+        )
+        kl_i = kl_i_per_hkl.sum() / counts.shape[0] * self.merge_kl_weight
+        total_loss = total_loss + kl_i
+
+        extra_loss, extra_logs = self._extra_loss_terms(outputs, metadata)
+        total_loss = total_loss + extra_loss
+        for name, value in extra_logs.items():
+            self.log(f"{step} {name}", value, on_epoch=True)
+
+        _log_loss(
+            self,
+            kl=loss_dict["kl_mean"] + kl_i,
+            nll=loss_dict["neg_ll_mean"],
+            total_loss=total_loss,
+            step=step,
+            kl_components={
+                "prf": loss_dict["kl_prf_mean"],
+                "bg": loss_dict["kl_bg_mean"],
+                "i_hkl": kl_i.detach(),
+            },
+        )
+
+        penalty, penalty_components = self._profile_basis_penalty()
+        for name, value in penalty_components.items():
+            self.log(f"{step} {name}", value, on_step=False, on_epoch=True)
+        total_loss = total_loss + penalty
+
+        with torch.no_grad():
+            self.log(f"{step} qi_h_mean", qi_h.mean.mean(), on_epoch=True)
+            self.log(f"{step} qi_h_var", qi_h.variance.mean(), on_epoch=True)
+            self.log(
+                f"{step} qi_h_k", qi_h.concentration.mean(), on_epoch=True
+            )
+            self.log(f"{step} qi_h_rate", qi_h.rate.mean(), on_epoch=True)
+            n_unique = len(outputs["unique_hkls"])
+            self.log(
+                f"{step} n_unique_hkl",
+                torch.tensor(float(n_unique)),
+                on_epoch=True,
+            )
+            self.log(
+                f"{step} obs_per_hkl",
+                torch.tensor(counts.shape[0] / max(n_unique, 1)),
+                on_epoch=True,
+            )
+
+        if step == "train":
+            self._collect_scatters(outputs, metadata, mask, counts)
+
+        return {
+            "loss": total_loss,
+            "forward_out": forward_out,
+            "loss_components": {
+                "loss": total_loss.detach(),
+                "nll": loss_dict["neg_ll_mean"].detach(),
+                "kl": (loss_dict["kl_mean"] + kl_i).detach(),
+                "kl_prf": loss_dict["kl_prf_mean"].detach(),
+                "kl_i": kl_i.detach(),
+                "kl_bg": loss_dict["kl_bg_mean"].detach(),
+            },
+        }
 
     def training_step(self, batch, _batch_idx):
         return self._step(batch, step="train")
@@ -164,7 +398,7 @@ class ScalingLightningModule(ScatterLoggerMixin, pl.LightningModule):
         return total, components
 
     def on_after_backward(self) -> None:
-        for sname in ("qi", "qbg"):
+        for sname in ("qbg",):
             if sname not in self.surrogates:
                 continue
             for pname, p in self.surrogates[sname].named_parameters():
@@ -177,13 +411,7 @@ class ScalingLightningModule(ScatterLoggerMixin, pl.LightningModule):
                     )
 
     def _build_optimizer(self) -> torch.optim.Optimizer:
-        """Adam; with `scaling_lr` set, the scale field gets its own group.
-
-        The per-frame scale is the slowest-identified field, so a decoupled
-        `scaling_lr` lets it equilibrate without raising the encoder LR.
-        `scaling_lr=None` falls back to the standard (optionally decoder-split)
-        optimizer. Any LambdaLR warmup scales all groups uniformly.
-        """
+        """Adam; with `scaling_lr` set, the scale field gets its own group."""
         decoder_split = self.decoder_weight_decay is not None
 
         if self.scaling_lr is None and not decoder_split:

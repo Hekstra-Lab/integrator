@@ -1,29 +1,3 @@
-"""Structured-VAE per-HKL merging via a per-pixel signal responsibility.
-
-Sibling of `AmortizedMergingIntegrator`. Instead of a learned per-observation
-potential head and a background surrogate, the profile logits are SHARED: a
-per-observation gate forms a per-pixel signal responsibility
-
-    r_p = sigmoid(profile_logit_p + gate_i)
-
-(Cemgil's Poisson data augmentation, in one pass). The SAME r drives both
-conjugate readouts:
-
-    I_h ~ Gamma(alpha_W + sum_i sum_p r*c,   tau_h + sum_i s_i*sum_p prf)
-    b_i ~ Gamma(a_bg    + sum_p (1-r)*c,      b_bg + P_i)
-
-so signal + background = total count -- photons are conserved and the bg/signal
-split is a partition, not two competing heads (robust to the bg-eats-signal
-collapse). The background prior is the loss's per-resolution-bin Gamma; the gate
-is a small head on the `k_i` features (initialized negative so r starts low and
-signal emerges as the profile sharpens).
-
-Subclasses `AmortizedMergingIntegrator` to reuse the scale field, the per-HKL
-Wilson KL, the anomalous-preserving auxiliary losses and the train/finalize
-plumbing; it overrides only the forward / merge and needs just the profile +
-k_i encoders and the qp surrogate.
-"""
-
 from typing import Any
 
 import torch
@@ -32,9 +6,7 @@ from torch import Tensor
 from torch.distributions import Gamma
 
 from integrator import configs
-from integrator.model.scaling.amortized_merging import (
-    AmortizedMergingIntegrator,
-)
+from integrator.model.scaling.base import ScalingLightningModule
 from integrator.model.scaling.merge_utils import (
     IntegratorBaseOutputs,
     _assemble_outputs,
@@ -43,11 +15,11 @@ from integrator.model.scaling.merge_utils import (
 )
 
 
-class SVAEMergingIntegrator(AmortizedMergingIntegrator):
-    """Per-HKL merging via a shared-logit per-pixel responsibility (structured VAE).
+class SVAEMergingIntegrator(ScalingLightningModule):
+    """Per-HKL merging via a shared-logit per-pixel probability (structured VAE).
 
-    See the module docstring. Background is a conjugate readout (no surrogate),
-    so only the profile + k_i encoders and the qp surrogate are needed.
+    Background is derived analytically, so only the profile + k_i encoders and
+    the qp surrogate are needed.
     """
 
     REQUIRED_ENCODERS = {
@@ -64,39 +36,17 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
 
     def __init__(self, cfg, loss, encoders, surrogates, optimizer=None):
         super().__init__(cfg, loss, encoders, surrogates, optimizer)
-        # The potential head is replaced by the responsibility gate; drop it so
-        # it does not sit unused in the optimizer.
-        if hasattr(self, "alpha_head"):
-            del self.alpha_head
+        # Signal photons come from the per-pixel signal_probability gate.
         d = cfg.encoder_out
         self.gate_head = nn.Sequential(
             nn.Linear(d, d), nn.ReLU(), nn.Linear(d, 1)
         )
         nn.init.constant_(
             self.gate_head[-1].bias,
-            float(getattr(cfg, "responsibility_gate_init", -2.0)),
+            float(getattr(cfg, "signal_probability_gate_init", -2.0)),
         )
 
-    def _bg_prior(
-        self, group_labels: Tensor | None, n: int, device: torch.device
-    ) -> tuple[Tensor, Tensor]:
-        """Per-obs background Gamma prior (concentration, rate) from the loss.
-
-        Reuses the loss's per-resolution-bin background prior buffers (fit by
-        prepare_per_bin_priors); indexes by `group_label` when per-bin, else
-        broadcasts the shared scalar to all `n` observations.
-        """
-        conc = self.loss.bg_concentration.to(device)
-        rate = self.loss.bg_rate.to(device)
-        if conc.ndim == 1:  # per-resolution-bin priors
-            if group_labels is None:
-                g = torch.zeros(n, dtype=torch.long, device=device)
-            else:
-                g = group_labels.to(device).long()
-            return conc[g], rate[g]
-        return conc.expand(n), rate.expand(n)
-
-    def _responsibility_merge(
+    def _signal_probability_merge(
         self,
         logits: Tensor,
         gate: Tensor,
@@ -107,31 +57,45 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
         miller_idx: Tensor,
         d_per_obs: Tensor,
         group_labels: Tensor | None,
-    ) -> tuple[Gamma, Tensor, Tensor, Tensor, Tensor, Tensor, Gamma, Tensor]:
-        """Conjugate merge via a per-pixel signal responsibility.
+    ) -> tuple[
+        Gamma,
+        Tensor,
+        Tensor,
+        Tensor,
+        Tensor,
+        Tensor,
+        Gamma,
+        Tensor,
+        Tensor,
+        Tensor,
+    ]:
+        """Conjugate merge via a per-pixel signal probability.
 
         r_p = sigmoid(profile_logit_p + gate_i) splits each pixel's count into
         signal (r_p) and background (1-r_p). The same r feeds both conjugate
-        readouts (signal -> alpha_h, background -> per-obs Gamma); signal +
-        background = total count, so photons are conserved.
+        distributions.
 
-        Returns `(qi_h, alpha_h, beta_h, inverse, unique, tau_h, qbg, r)`.
+        Returns `(qi_h, alpha_h, beta_h, inverse, unique, tau_h, qbg, r,
+        sig_counts, delta_beta)`.
         """
+
         device = counts.device
         b = counts.shape[0]
         m = mask.reshape(b, -1).float()
         c = counts.clamp(min=0).reshape(b, -1).float() * m
+
+        # per pixel signal probability
         r = torch.sigmoid(logits + gate.unsqueeze(-1)) * m  # (B, P), masked
-
         total_counts = c.sum(dim=-1)
-        sig_counts = (r * c).sum(dim=-1)            # sum_p r*c   (signal)
-        bg_counts = total_counts - sig_counts       # sum_p (1-r)*c (conservation)
-        n_pix = m.sum(dim=-1).clamp(min=1.0)        # background exposure P_i
+        sig_counts = (r * c).sum(dim=-1)  # sum_p r*c
+        bg_counts = total_counts - sig_counts  # sum_p (1-r)*c
+        n_pix = m.sum(dim=-1).clamp(min=1.0)  # background exposure P_i
 
-        # Per-HKL intensity posterior (conjugate): signal counts -> alpha,
-        # scale*profile-mass exposure -> beta.
+        # per-HKL conjugate intensity posterior
         d_sum, inverse, unique = _scatter_sum_compact(d_per_obs, miller_idx)
-        cnt, _, _ = _scatter_sum_compact(torch.ones_like(d_per_obs), miller_idx)
+        cnt, _, _ = _scatter_sum_compact(
+            torch.ones_like(d_per_obs), miller_idx
+        )
         tau_h = self._wilson_tau((d_sum / cnt.clamp(min=1.0)).clamp(min=1e-6))
         delta_beta = scale * (profile_mean * m).sum(dim=-1)
         alpha_sig, _, _ = _scatter_sum_compact(sig_counts, miller_idx)
@@ -140,13 +104,24 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
         beta_h = tau_h + beta_sum
         qi_h = Gamma(alpha_h.clamp(min=1e-6), beta_h.clamp(min=1e-12))
 
-        # Per-obs background posterior (conjugate) from the (1-r) counts.
         bg_a0, bg_b0 = self._bg_prior(group_labels, b, device)
         qbg = Gamma(
             (bg_a0 + bg_counts).clamp(min=1e-6),
             (bg_b0 + n_pix).clamp(min=1e-12),
         )
-        return qi_h, alpha_h, beta_h, inverse, unique, tau_h, qbg, r
+
+        return (
+            qi_h,
+            alpha_h,
+            beta_h,
+            inverse,
+            unique,
+            tau_h,
+            qbg,
+            r,
+            sig_counts,
+            delta_beta,
+        )
 
     def _forward_impl(
         self,
@@ -159,12 +134,12 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
         b = shoebox.shape[0]
         device = shoebox.device
         sr = (shoebox * mask).reshape(b, 1, *self.shoebox_shape)
-
         x_profile = self.encoders["profile"](sr)
         x_k_i = self.encoders["k_i"](sr)
         qp = self.surrogates["qp"](x_profile, mc_samples=self.mc_samples)
         profile_mean = qp.mean_profile
         scale = self._get_scale(metadata, device)
+
         miller_idx = metadata[self.merge_key].long().to(device)
         d_obs = metadata["d"].to(device).float()
         group_labels = (
@@ -173,8 +148,7 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
             else None
         )
 
-        # Shared profile logits + a per-obs gate -> per-pixel responsibility;
-        # I_h and the per-obs background are both conjugate readouts of it.
+        # shared profile logits + per-obs gate -> per-pixel signal
         gate = self.gate_head(x_k_i).squeeze(-1)
         (
             qi_h,
@@ -184,8 +158,10 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
             unique_hkls,
             tau_h,
             qbg,
-            responsibility,
-        ) = self._responsibility_merge(
+            signal_probability,
+            sig_counts,
+            exposure,
+        ) = self._signal_probability_merge(
             qp.mean_logits,
             gate,
             counts,
@@ -197,7 +173,7 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
             group_labels,
         )
 
-        # Sample I_h once per HKL (broadcast to obs) and form the Poisson rate.
+        # sample I_h once per HKL (broadcast to obs) -> Poisson rate
         zI_h = qi_h.rsample([self.mc_samples]).clamp(min=1e-10)
         zI = zI_h[:, inverse]
         zI_scaled = (scale.unsqueeze(0) * zI).unsqueeze(-1).permute(1, 0, 2)
@@ -205,6 +181,7 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
         zp = _sample_profile(qp, self.mc_samples)
         rate = zI_scaled * zp + zbg
 
+        # If using coset data
         if "is_coset" in metadata:
             coset = metadata["is_coset"].bool().view(-1, 1, 1)
             rate = torch.where(coset, zbg, rate)
@@ -227,6 +204,8 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
         )
         out = _assemble_outputs(out)
         out[self.merge_key] = miller_idx
+        # Model merged intensity on the observed scale
+        out["scaled_intensity"] = scale * qi.mean
 
         return {
             "forward_out": out,
@@ -240,16 +219,14 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
             "inverse": inverse,
             "unique_hkls": unique_hkls,
             "scale": scale,
-            "responsibility": responsibility,
+            "signal_probability": signal_probability,
+            "signal_counts": sig_counts,
+            "exposure": exposure,
         }
 
     @torch.no_grad()
     def finalize_merge(self, dataloader) -> None:
-        """Recompute the per-HKL posterior over the full dataset (responsibility).
-
-        Like the parent, needs a loader that yields COMPLETE HKL groups per batch
-        (`predict_dataloader(grouped=True)`); a guard raises otherwise.
-        """
+        """Recompute the per-HKL posterior over the full dataset ."""
         self.eval()
         device = self.alpha_buffer.device
         seen = torch.zeros(self.n_hkl, dtype=torch.bool, device=device)
@@ -275,8 +252,8 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
                 else None
             )
             gate = self.gate_head(self.encoders["k_i"](sr)).squeeze(-1)
-            _, alpha_h, beta_h, _, unique, _, _, _ = (
-                self._responsibility_merge(
+            _, alpha_h, beta_h, _, unique, _, _, _, _, _ = (
+                self._signal_probability_merge(
                     qp.mean_logits,
                     gate,
                     counts,

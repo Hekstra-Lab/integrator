@@ -1,5 +1,3 @@
-"""ELBO loss for the amortized merging integrator."""
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -17,10 +15,10 @@ _DEFAULT_PROFILE_PRIOR_SCALE = 3.0
 class MergingWilsonLoss(nn.Module):
     """Profile KL + background KL + Poisson NLL, with a learnable Wilson G/B.
 
-    The Wilson prior rate is `tau(d) = (1/G) * exp(2 * B * s_sq)` with `s_sq =
-    (sin(theta)/lambda)^2 = 1/(4 d^2)`. The merger queries `_get_tau` to build
-    its per-HKL prior; with the MLP scale carrying LP, `lp_correction` should be
-    `false` so the prior is not LP-corrected twice.
+    The Wilson prior rate is:
+    tau(d) = (1/G) * exp(2 * B * s_sq),
+    where s_sq = (sin(theta)/lambda)^2 = 1/(4 d^2)
+
     """
 
     def __init__(
@@ -31,17 +29,11 @@ class MergingWilsonLoss(nn.Module):
         init_log_B: float = 3.0,
         b_min: float = 0.0,
         init_log_G: float = 0.0,
-        # When False, the Wilson prior rate is a fixed Exponential (tau = 1):
-        # the learned G/B envelope is removed and the scale field owns the
-        # overall/resolution scale. For the B/G-vs-no-B/G ablation.
-        use_gb: bool = True,
         n_bins: int = 1,
         lp_correction: bool = False,
         profile_kl_weight: float = 1.0,
         background_kl_weight: float = 1.0,
-        # Accepted for factory compatibility (LossArgs always passes the three
-        # prior cfgs); the intensity prior is applied by the integrator, so
-        # pi_cfg is unused here.
+        # Accepted for factory compatibility
         pprf_cfg=None,
         pbg_cfg=None,
         pi_cfg=None,
@@ -72,37 +64,21 @@ class MergingWilsonLoss(nn.Module):
             pbg_cfg.weight if pbg_cfg is not None else background_kl_weight
         )
 
-        # Learned point-estimate Wilson scale (G) and B-factor. With
-        # use_gb=False they are removed entirely (tau = 1, fixed Exponential).
-        self.use_gb = use_gb
-        if use_gb:
-            self.raw_B = nn.Parameter(torch.tensor(float(init_log_B)))
-            self.raw_G = nn.Parameter(torch.tensor(float(init_log_G)))
+        # Learned point-estimate Wilson scale (G) and B-factor
+        self.raw_B = nn.Parameter(torch.tensor(float(init_log_B)))
+        self.raw_G = nn.Parameter(torch.tensor(float(init_log_G)))
 
     def get_B(self) -> Tensor:
-        # B = 0 / G = 1 when the envelope is off (tau = 1). Kept callable so the
-        # WilsonParamLogger can record them without special-casing use_gb.
-        if not self.use_gb:
-            return torch.zeros(())
         return F.softplus(self.raw_B) + self.b_min
 
     def get_G(self) -> Tensor:
-        if not self.use_gb:
-            return torch.ones(())
         return F.softplus(self.raw_G)
 
     def _get_tau(
         self, metadata: dict, s_sq: Tensor, device: torch.device
     ) -> Tensor:
-        """Wilson prior rate tau.
-
-        use_gb=True:  tau = (1/G) * exp(2 * B * s_sq)  (learned envelope).
-        use_gb=False: tau = 1                          (fixed Exponential; B/G off).
-        """
-        if self.use_gb:
-            tau = (1.0 / self.get_G()) * torch.exp(2.0 * self.get_B() * s_sq)
-        else:
-            tau = torch.ones_like(s_sq)
+        """Wilson prior rate tau."""
+        tau = (1.0 / self.get_G()) * torch.exp(2.0 * self.get_B() * s_sq)
         if self._apply_lp:
             lp = metadata["lp"].to(device).clamp(min=1e-8)
             tau = tau * lp
@@ -122,7 +98,7 @@ class MergingWilsonLoss(nn.Module):
         counts = counts.to(device)
         mask = mask.to(device)
 
-        # Profile KL toward the surrogate's own prior scale.
+        # Profile KL
         prf_prior_scale = getattr(
             qp, "prior_scale", _DEFAULT_PROFILE_PRIOR_SCALE
         )
@@ -145,12 +121,15 @@ class MergingWilsonLoss(nn.Module):
         p_bg = Gamma(concentration=bg_conc, rate=bg_rate)
         kl_bg = kl_divergence(qbg, p_bg) * self.background_kl_weight
 
+        # Background & profile KL
         kl = kl_prf + kl_bg
 
+        # Negative log-likelihood
         ll = Poisson(rate.clamp(min=1e-12)).log_prob(counts.unsqueeze(1))
         ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
         neg_ll = (-ll_mean).sum(1)
 
+        # full loss
         loss = (neg_ll + kl).mean()
 
         return {

@@ -2,9 +2,8 @@ from dataclasses import dataclass
 from typing import Any
 
 import torch
-from torch import Tensor, nn
+from torch import Tensor
 
-from integrator.configs.integrator import IntegratorCfg
 from integrator.model.distributions.profile_surrogates import (
     ProfileSurrogateOutput,
 )
@@ -21,14 +20,6 @@ class IntegratorBaseOutputs:
     zp: Tensor
     zbg: Tensor
     metadata: dict[str, torch.Tensor]
-
-
-@dataclass
-class IntegratorModelArgs:
-    cfg: IntegratorCfg
-    loss: nn.Module
-    surrogates: dict[str, nn.Module]
-    encoders: dict[str, nn.Module]
 
 
 def _assemble_outputs(
