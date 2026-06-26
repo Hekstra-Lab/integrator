@@ -337,7 +337,6 @@ def main():
     tags = [
         cfg["integrator"]["name"],
         cfg["integrator"]["args"]["data_dim"],
-        # SVAE-style integrators derive q(I) and carry no qi surrogate
         cfg.get("surrogates", {}).get("qi", {}).get("name", "derived"),
     ]
 
