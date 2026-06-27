@@ -65,7 +65,7 @@ def main():
         echo "Working dir: {run_dir}"
 
         source /n/hekstra_lab/people/aldama/micromamba/etc/profile.d/mamba.sh
-        micromamba activate refltorch
+        micromamba activate integrator-cuda-dev
 
         python {proc_py} --config "{cfg_file}" --index $SLURM_ARRAY_TASK_ID
 

@@ -1,5 +1,6 @@
 import argparse
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 from integrator.utils import load_config
