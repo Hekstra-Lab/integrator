@@ -2,8 +2,23 @@ import argparse
 import subprocess
 from pathlib import Path
 
-from out_utils import DialsPhenixConfig as RunPaths
-from refltorch.io import load_config
+from integrator.utils import load_config
+
+
+@dataclass
+class Config:
+    """Schema for `dials_phenix_cfg.yaml`"""
+
+    refl_files: list  # list of refl files to process
+    expt_file: str  # dials.expt file for data used to make dataset
+    dials_env: str  # environment with dials
+    phenix_env: str  # path to phenix
+    phenix_eff: str  # phenix.eff file used on reference data
+    pdb: str  # reference pdb file
+    columns: str = "intensity"
+    merged_mtz: list | None = None
+    user_selected_labels: str = ""
+    french_wilson_scale: bool = True
 
 
 def parse_args():
@@ -209,7 +224,7 @@ def main():
     file_index = args.index
 
     config = load_config(cfg_path)
-    paths = RunPaths(**config)
+    paths = Config(**config)
 
     if file_index >= len(paths.refl_files):
         raise ValueError(f"file_index out of range: file_index={file_index}")
