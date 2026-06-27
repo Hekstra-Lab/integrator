@@ -3,7 +3,7 @@ import subprocess
 import textwrap
 from pathlib import Path
 
-from refltorch.io import load_config
+from integrator.utils import load_config
 
 
 def parse_args():
