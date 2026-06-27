@@ -85,6 +85,12 @@ class SVAEIntegrator(BaseIntegrator):
         beta_ = beta_I + (mean_prf * m).sum(-1)
         return torch.distributions.Gamma(alpha_, beta_)
 
+    def _background_posterior(
+        self, *, shoebox, x_signal, bg_prob, raw_counts, mask, metadata
+    ):
+        """q(B). Base SVAE: conjugate Poisson-Gamma update from the gate."""
+        return self._get_qbg(bg_prob, raw_counts, metadata, mask)
+
     def _forward_impl(
         self,
         counts: Tensor,
@@ -92,7 +98,6 @@ class SVAEIntegrator(BaseIntegrator):
         mask: Tensor,
         metadata: dict,
     ) -> dict[str, Any]:
-
         # counts
         counts = torch.clamp(counts, min=0)
 
@@ -113,9 +118,17 @@ class SVAEIntegrator(BaseIntegrator):
         x_signal = self.encoders["signal"](shoebox_reshaped)
         i_prob, bg_prob, mean_prf = self._get_pixel_probs(qp, x_signal)
 
-        # get I/bg posteriors
+        # intensity: conjugate Poisson-Gamma update.
+        # background: dispatched -- conjugate here, variational in the hybrid.
         qi = self._get_qi(i_prob, counts, metadata, mean_prf, mask)
-        qbg = self._get_qbg(bg_prob, counts, metadata, mask)
+        qbg = self._background_posterior(
+            shoebox=shoebox_reshaped,
+            x_signal=x_signal,
+            bg_prob=bg_prob,
+            raw_counts=counts,
+            mask=mask,
+            metadata=metadata,
+        )
 
         # samples
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
@@ -149,3 +162,29 @@ class SVAEIntegrator(BaseIntegrator):
             "qi": qi,
             "qbg": qbg,
         }
+
+
+class SVAEHybridIntegrator(SVAEIntegrator):
+    """Hybrid SVAE: conjugate intensity, amortized (variational) background.
+
+    Keeps the conjugate q(I) update but replaces the conjugate q(B) -- whose
+    sufficient statistic sum_p (1 - g_p) c_p is dominated by the gate's behavior
+    at the bright peak -- with a learned Gamma surrogate. The background gets its
+    own dedicated k_bg/r_bg intensity encoders (as in HierarchicalIntegrator), so
+    it is fully decoupled from the responsibility gate's signal encoder: gate
+    error at the peak no longer biases B (and through it, the Bijvoet difference).
+    """
+
+    REQUIRED_ENCODERS = {
+        "profile": ("profile_encoder", configs.ProfileEncoderArgs),
+        "signal": ("intensity_encoder", configs.IntensityEncoderArgs),
+        "k_bg": ("intensity_encoder", configs.IntensityEncoderArgs),
+        "r_bg": ("intensity_encoder", configs.IntensityEncoderArgs),
+    }
+
+    def _background_posterior(
+        self, *, shoebox, x_signal, bg_prob, raw_counts, mask, metadata
+    ):
+        x_k_bg = self.encoders["k_bg"](shoebox)
+        x_r_bg = self.encoders["r_bg"](shoebox)
+        return self.surrogates["qbg"](x_k_bg, x_r_bg)

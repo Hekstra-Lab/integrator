@@ -15,6 +15,7 @@ from integrator.model.encoders import (
 from integrator.model.integrators import (
     HierarchicalIntegrator,
     HierarchicalIntegrator3Enc,
+    SVAEHybridIntegrator,
     SVAEIntegrator,
 )
 from integrator.model.loss import (
@@ -35,6 +36,7 @@ REGISTRY = {
         "hierarchical": HierarchicalIntegrator,
         "hierarchical_3enc": HierarchicalIntegrator3Enc,
         "svae": SVAEIntegrator,
+        "svae_hybrid": SVAEHybridIntegrator,
     },
     "surrogates": {
         "gamma": build_gamma,
