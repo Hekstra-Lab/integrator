@@ -154,17 +154,17 @@ def process_single_refl(
     run_shell(scale_command)
 
     # Extract refl_ids flagged as outlier_in_scaling -> scaling_outliers.parquet
-    outliers_out = output_dir / "scaling_outliers.parquet"
-    extract_script = (
-        Path(__file__).resolve().parent / "extract_scaling_outliers.py"
-    )
-    outliers_command = (
-        f"dials.python '{extract_script}' "
-        f"--refl '{scaled_refl_out}' "
-        f"--output '{outliers_out}'"
-    )
-    print("Executing outlier extraction:", outliers_command)
-    run_shell(outliers_command)
+    # outliers_out = output_dir / "scaling_outliers.parquet"
+    # extract_script = (
+    #     Path(__file__).resolve().parent / "extract_scaling_outliers.py"
+    # )
+    # outliers_command = (
+    #     f"dials.python '{extract_script}' "
+    #     f"--refl '{scaled_refl_out}' "
+    #     f"--output '{outliers_out}'"
+    # )
+    # print("Executing outlier extraction:", outliers_command)
+    # run_shell(outliers_command)
 
     # Run dials.merge
     merge_mtz_out = output_dir / "merged.mtz"
