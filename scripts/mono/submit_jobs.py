@@ -50,7 +50,7 @@ def main():
 
     # Script directory
     script_dir = Path(args.script_dir)
-    proc_py = (script_dir / "process_single_refl.py").as_posix()
+    proc_py = (script_dir / "process_single.py").as_posix()
 
     # dials_phenix_job.sh
     dials_script = textwrap.dedent(
