@@ -12,7 +12,6 @@ class Config:
 
     refl_files: list  # list of refl files to process
     expt_file: str  # dials.expt file for data used to make dataset
-    dials_env: str  # environment with dials
     phenix_env: str  # path to phenix
     phenix_eff: str  # phenix.eff file used on reference data
     pdb: str  # reference pdb file
@@ -37,31 +36,6 @@ def parse_args():
     )
 
     return parser.parse_args()
-
-
-def run_dials(
-    dials_env: str,
-    command: str,
-):
-    command = f"source {dials_env} && {command}"
-    try:
-        result = subprocess.run(
-            command,
-            shell=True,
-            executable="/bin/bash",
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return result
-
-    except subprocess.CalledProcessError as e:
-        print(f"Command failed with error code: {e.returncode}")
-        print("Standard Output (stdout):")
-        print(e.stdout if e.stdout else "No stdout output")
-        print("Standard Error (stderr):")
-        print(e.stderr if e.stderr else "No stderr output")
-        raise
 
 
 def run_phenix(
@@ -149,7 +123,6 @@ def run_shell(cmd: str, *, cwd: Path | None = None):
 def process_single_refl(
     refl_file,
     expt_file,
-    dials_env,
     phenix_env,
     phenix_eff,
     paired_ref_eff: str | None = None,
@@ -178,7 +151,7 @@ def process_single_refl(
         f"output.log='{output_dir}/scaling.log' "
     )
     print("Executing scale command:", scale_command)
-    run_dials(dials_env, scale_command)
+    run_shell(scale_command)
 
     # Extract refl_ids flagged as outlier_in_scaling -> scaling_outliers.parquet
     outliers_out = output_dir / "scaling_outliers.parquet"
@@ -191,7 +164,7 @@ def process_single_refl(
         f"--output '{outliers_out}'"
     )
     print("Executing outlier extraction:", outliers_command)
-    run_dials(dials_env, outliers_command)
+    run_shell(outliers_command)
 
     # Run dials.merge
     merge_mtz_out = output_dir / "merged.mtz"
@@ -202,7 +175,7 @@ def process_single_refl(
         f"output.mtz='{merge_mtz_out}'"
     )
     print("Executing merge command:", merge_command)
-    run_dials(dials_env, merge_command)
+    run_shell(merge_command)
 
     # Update phenix.eff and run phenix
     updated_phenix_eff = output_dir / "phenix_updated.eff"
@@ -234,7 +207,6 @@ def main():
     process_single_refl(
         refl_file=refl_file,
         expt_file=paths.expt_file,
-        dials_env=paths.dials_env,
         phenix_env=paths.phenix_env,
         phenix_eff=paths.phenix_eff,
     )

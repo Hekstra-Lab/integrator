@@ -24,7 +24,6 @@ class Config:
 
     refl_files: list  # list of refl files to process
     expt_file: str  # dials.expt file for data used to make dataset
-    dials_env: str  # environment with dials
     phenix_env: str  # path to phenix
     phenix_eff: str  # phenix.eff file used on reference data
     pdb: str  # reference pdb file
@@ -105,8 +104,7 @@ def parse_args():
     parser.add_argument("--paired-ref-eff", type=str, default=None)
     parser.add_argument("--paired-model-eff", type=str, default=None)
 
-    # Tool paths — override env vars DIALS_ENV / PHENIX_ENV
-    parser.add_argument("--dials-env", type=str, default=None)
+    # Tool path — override env var PHENIX_ENV
     parser.add_argument("--phenix-env", type=str, default=None)
     return parser.parse_args()
 
@@ -278,12 +276,6 @@ def main():
             output_cfg.get("expt_file"),
             None,
             "expt_file",
-        ),
-        dials_env=_resolve(
-            args.dials_env,
-            output_cfg.get("dials_env"),
-            "DIALS_ENV",
-            "dials_env",
         ),
         phenix_env=_resolve(
             args.phenix_env,
