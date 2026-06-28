@@ -144,3 +144,37 @@ class ChebyshevScale(nn.Module):
         x = (frame - self.frame_mid) / self.frame_half
         basis = _chebyshev(x, self.degree)
         return F.softplus(basis @ self.coeffs)
+
+
+class CoarseScale(nn.Module):
+    """K(phi) * exp(2 B(phi) s^2); LP applied outside."""
+
+    def __init__(
+        self,
+        frame_min: float = 0.0,
+        frame_max: float = 1000.0,
+        k_degree: int = 5,
+        decay_degree: int = 0,
+        init_scale: float = 1.0,
+    ):
+        super().__init__()
+        self.k_degree = k_degree
+        self.decay_degree = decay_degree
+        frame_mid = (frame_min + frame_max) / 2.0
+        frame_half = max((frame_max - frame_min) / 2.0, 1.0)
+        self.register_buffer("frame_mid", torch.tensor(frame_mid))
+        self.register_buffer("frame_half", torch.tensor(frame_half))
+
+        # log K(phi): T_0 seeds log(init_scale) so K starts at init_scale.
+        k = torch.zeros(k_degree + 1)
+        k[0] = math.log(init_scale)
+        self.k_coeffs = nn.Parameter(k)
+        # B(phi): starts at zero (no decay at init); degree 0 -> one global B.
+        self.b_coeffs = nn.Parameter(torch.zeros(decay_degree + 1))
+
+    def forward(self, frame: Tensor, s_sq: Tensor) -> Tensor:
+        x = ((frame - self.frame_mid) / self.frame_half).clamp(-1.0, 1.0)
+        log_k = _chebyshev(x, self.k_degree) @ self.k_coeffs
+        b = _chebyshev(x, self.decay_degree) @ self.b_coeffs
+        log_scale = (log_k + 2.0 * b * s_sq).clamp(-8.0, 8.0)
+        return torch.exp(log_scale)

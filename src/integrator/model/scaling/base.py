@@ -12,7 +12,11 @@ from torch.distributions import Gamma, kl_divergence
 from integrator.configs import OptimizerConfig
 from integrator.model.scaling.config import MergingIntegratorCfg
 from integrator.model.scaling.merge_utils import _log_loss
-from integrator.model.scaling.mlp_scale import ChebyshevScale, MLPScale
+from integrator.model.scaling.mlp_scale import (
+    ChebyshevScale,
+    CoarseScale,
+    MLPScale,
+)
 from integrator.model.scaling.scatter_logger import ScatterLogger
 
 _logger = logging.getLogger(__name__)
@@ -131,8 +135,8 @@ class ScalingLightningModule(ScatterLogger, pl.LightningModule):
         # Extra metadata columns fed to the MLP scale as additional inputs.
         self.scale_extra_features = list(cfg.scale_extra_features or [])
 
-        # Scale field: MLP (production) or a frame-only Chebyshev fallback.
-        if cfg.scale_mlp:
+        scale_mode = cfg.scale_mode or ("mlp" if cfg.scale_mlp else "chebyshev")
+        if scale_mode == "mlp":
             self.scale_fn = MLPScale(
                 hidden_dim=cfg.scale_mlp_hidden,
                 n_layers=cfg.scale_mlp_layers,
@@ -147,11 +151,23 @@ class ScalingLightningModule(ScatterLogger, pl.LightningModule):
                 extra_loc=cfg.scale_extra_loc,
                 extra_scale=cfg.scale_extra_scale,
             )
-        else:
+        elif scale_mode == "coarse":
+            self.scale_fn = CoarseScale(
+                frame_min=cfg.scale_frame_min,
+                frame_max=cfg.scale_frame_max,
+                k_degree=cfg.scale_degree,
+                decay_degree=cfg.scale_decay_degree,
+            )
+        elif scale_mode == "chebyshev":
             self.scale_fn = ChebyshevScale(
                 degree=cfg.scale_degree,
                 frame_min=cfg.scale_frame_min,
                 frame_max=cfg.scale_frame_max,
+            )
+        else:
+            raise ValueError(
+                f"Unknown scale_mode {scale_mode!r}; expected "
+                "'mlp', 'coarse', or 'chebyshev'."
             )
 
     def _get_scale(self, metadata: dict, device: torch.device) -> Tensor:
@@ -173,6 +189,10 @@ class ScalingLightningModule(ScatterLogger, pl.LightningModule):
                     cols.append(metadata[key].to(device).float().reshape(-1))
                 extra = torch.stack(cols, dim=-1)  # (B, n_extra)
             return self.scale_fn(frame, x_det, y_det, lp, d, extra)
+        if isinstance(self.scale_fn, CoarseScale):
+            d = metadata["d"].to(device).float()
+            s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))
+            return self.scale_fn(frame, s_sq) / lp
         return self.scale_fn(frame) / lp
 
     def _wilson_tau(self, d: Tensor) -> Tensor:

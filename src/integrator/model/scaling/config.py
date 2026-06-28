@@ -68,6 +68,9 @@ class MergingIntegratorCfg:
     # Scale field
     d_min: float = 1.0
     scale_mlp: bool = True
+
+    scale_mode: Literal["mlp", "chebyshev", "coarse"] | None = None
+    scale_decay_degree: int = 0  # B(phi) Chebyshev degree (0 = global B)
     scale_degree: int = 5
     scale_mlp_hidden: int = 64
     scale_mlp_layers: int = 2
