@@ -16,6 +16,7 @@ from integrator.model.scaling.mlp_scale import (
     ChebyshevScale,
     CoarseScale,
     MLPScale,
+    SolvedScale,
 )
 from integrator.model.scaling.scatter_logger import ScatterLogger
 
@@ -164,11 +165,20 @@ class ScalingLightningModule(ScatterLogger, pl.LightningModule):
                 frame_min=cfg.scale_frame_min,
                 frame_max=cfg.scale_frame_max,
             )
+        elif scale_mode == "solved":
+            self.scale_fn = SolvedScale(
+                frame_min=cfg.scale_frame_min,
+                frame_max=cfg.scale_frame_max,
+                k_degree=cfg.scale_degree,
+                decay_degree=cfg.scale_decay_degree,
+                ridge=getattr(cfg, "scale_ridge", 1e-3),
+            )
         else:
             raise ValueError(
                 f"Unknown scale_mode {scale_mode!r}; expected "
-                "'mlp', 'coarse', or 'chebyshev'."
+                "'mlp', 'coarse', 'chebyshev', or 'solved'."
             )
+        self.scale_solve_warmup = int(getattr(cfg, "scale_solve_warmup", 2))
 
     def _get_scale(self, metadata: dict, device: torch.device) -> Tensor:
         frame = metadata["xyzcal.px.2"].to(device).float()
@@ -189,7 +199,7 @@ class ScalingLightningModule(ScatterLogger, pl.LightningModule):
                     cols.append(metadata[key].to(device).float().reshape(-1))
                 extra = torch.stack(cols, dim=-1)  # (B, n_extra)
             return self.scale_fn(frame, x_det, y_det, lp, d, extra)
-        if isinstance(self.scale_fn, CoarseScale):
+        if isinstance(self.scale_fn, (CoarseScale, SolvedScale)):
             d = metadata["d"].to(device).float()
             s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))
             return self.scale_fn(frame, s_sq) / lp
@@ -266,6 +276,14 @@ class ScalingLightningModule(ScatterLogger, pl.LightningModule):
         outputs = self(counts, shoebox, mask, metadata)
         forward_out = outputs["forward_out"]
         qi_h = outputs["qi_h"]
+
+        # EM M-step accumulation for the solved (analytical) scale.
+        if (
+            step == "train"
+            and isinstance(self.scale_fn, SolvedScale)
+            and self.current_epoch >= self.scale_solve_warmup
+        ):
+            self._accumulate_scale(outputs, metadata)
 
         group_labels = (
             metadata["group_label"].long()
@@ -363,6 +381,40 @@ class ScalingLightningModule(ScatterLogger, pl.LightningModule):
 
     def validation_step(self, batch, _batch_idx):
         return self._step(batch, step="val")
+
+    def on_train_epoch_end(self) -> None:
+        # EM: solve the scale from this epoch's accumulated normal equations.
+        # (single-GPU; multi-GPU would need an all-reduce of the accumulators.)
+        if (
+            isinstance(self.scale_fn, SolvedScale)
+            and self.current_epoch >= self.scale_solve_warmup
+        ):
+            self.scale_fn.solve()
+
+    @torch.no_grad()
+    def _accumulate_scale(self, outputs: dict, metadata: dict) -> None:
+        """Add this batch's targets to the solved-scale normal equations.
+
+        `J_o = sig_counts / exposure` is the per-shoebox intensity, `I_h` the
+        current merged intensity. The total scale is `exp(Phi @ theta) / lp`, and
+        at the EM fixed point `scale * I_h ~ J_o`, so the target for `Phi @ theta`
+        is `log(J_o) - log(I_h) + log(lp)` -- the `+log(lp)` cancels the LP baked
+        into `J` (LP is the known `/lp` factor, not fit), leaving the smooth
+        `K(phi)*decay(s^2)` residual. Weighted by signal counts.
+        """
+        sig = outputs["signal_counts"]
+        device = sig.device
+        scale = outputs["scale"].clamp(min=1e-12)
+        e_o = (outputs["exposure"] / scale).clamp(min=1e-6)  # = sum_p prf
+        j = (sig / e_o).clamp(min=1e-12)
+        i_h = outputs["alpha_h"] / outputs["beta_h"].clamp(min=1e-6)
+        i_o = i_h[outputs["inverse"]].clamp(min=1e-12)
+        lp = metadata["lp"].to(device).float().clamp(min=1e-8)
+        y = j.log() - i_o.log() + lp.log()
+        d = metadata["d"].to(device).float()
+        s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))
+        frame = metadata["xyzcal.px.2"].to(device).float()
+        self.scale_fn.accumulate(frame, s_sq, y, sig.clamp(min=0.0))
 
     def predict_step(self, batch, _batch_idx):
         counts, shoebox, mask, metadata = batch

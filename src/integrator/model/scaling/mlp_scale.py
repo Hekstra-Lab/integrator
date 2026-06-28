@@ -178,3 +178,81 @@ class CoarseScale(nn.Module):
         b = _chebyshev(x, self.decay_degree) @ self.b_coeffs
         log_scale = (log_k + 2.0 * b * s_sq).clamp(-8.0, 8.0)
         return torch.exp(log_scale)
+
+
+class SolvedScale(nn.Module):
+    """Scale coefficients are solved by weighted least squares (EM)."""
+
+    def __init__(
+        self,
+        frame_min: float = 0.0,
+        frame_max: float = 1000.0,
+        k_degree: int = 5,
+        decay_degree: int = 0,
+        ridge: float = 1e-3,
+    ):
+        super().__init__()
+        self.k_degree = k_degree
+        self.decay_degree = decay_degree
+        self.ridge = ridge
+        frame_mid = (frame_min + frame_max) / 2.0
+        frame_half = max((frame_max - frame_min) / 2.0, 1.0)
+        self.register_buffer("frame_mid", torch.tensor(frame_mid))
+        self.register_buffer("frame_half", torch.tensor(frame_half))
+
+        n = (k_degree + 1) + (decay_degree + 1)
+        self.n_basis = n
+        self.register_buffer("theta", torch.zeros(n))  # solved coefficients
+        self.register_buffer("_AtA", torch.zeros(n, n))
+        self.register_buffer("_Atb", torch.zeros(n))
+        self.register_buffer("_sum_wphi", torch.zeros(n))
+        self.register_buffer("_sum_w", torch.zeros(()))
+        self.residual: nn.Module | None = None
+
+    def _phi(self, frame: Tensor, s_sq: Tensor) -> Tensor:
+        x = ((frame - self.frame_mid) / self.frame_half).clamp(-1.0, 1.0)
+        tk = _chebyshev(
+            x, self.k_degree
+        )  # (B, k+1) -> K(phi); col 0 is T_0 = 1
+        tb = _chebyshev(x, self.decay_degree) * s_sq.unsqueeze(-1)  # (B, m+1)
+        return torch.cat([tk, tb], dim=-1)  # (B, n_basis)
+
+    def forward(self, frame: Tensor, s_sq: Tensor) -> Tensor:
+        log_scale = self._phi(frame, s_sq) @ self.theta
+        if self.residual is not None:
+            log_scale = log_scale + self.residual(frame, s_sq)
+        return torch.exp(log_scale.clamp(-8.0, 8.0))
+
+    @torch.no_grad()
+    def accumulate(
+        self, frame: Tensor, s_sq: Tensor, log_target: Tensor, weight: Tensor
+    ) -> None:
+        """Add a batch to the normal equations for `log scale ~ log(J/I_h)`."""
+        phi = self._phi(frame, s_sq)
+        w = weight.clamp(min=0.0)
+        wphi = phi * w.unsqueeze(-1)
+        self._AtA += wphi.transpose(0, 1) @ phi
+        self._Atb += wphi.transpose(0, 1) @ log_target
+        self._sum_wphi += wphi.sum(0)
+        self._sum_w += w.sum()
+
+    @torch.no_grad()
+    def solve(self) -> None:
+        """Ridge-regularized weighted LS, gauge-fixed to geom-mean scale = 1."""
+        n = self.n_basis
+        eye = torch.eye(n, device=self.theta.device, dtype=self.theta.dtype)
+        theta = torch.linalg.solve(self._AtA + self.ridge * eye, self._Atb)
+
+        if float(self._sum_w) > 0:
+            mu = (self._sum_wphi / self._sum_w) @ theta
+            theta = theta.clone()
+            theta[0] = theta[0] - mu
+        self.theta.copy_(theta)
+        self.reset_accumulators()
+
+    @torch.no_grad()
+    def reset_accumulators(self) -> None:
+        self._AtA.zero_()
+        self._Atb.zero_()
+        self._sum_wphi.zero_()
+        self._sum_w.zero_()
