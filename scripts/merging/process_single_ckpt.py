@@ -131,11 +131,11 @@ def write_obs_pred(integrator, cfg: dict, epoch: int, work_root: Path) -> None:
         epoch=epoch,
         partition=False,
     )
-    # Match the predict CLI's _run_merging_predict: keep our grouped batch
-    # sampler intact, else Lightning re-wraps it with a SequentialSampler ->
-    # "'SequentialSampler' object is not subscriptable".
     trainer = construct_trainer(
-        cfg, callbacks=[pred_writer], logger=False, use_distributed_sampler=False
+        cfg,
+        callbacks=[pred_writer],
+        logger=False,
+        use_distributed_sampler=False,
     )
     trainer.predict(integrator, return_predictions=False, dataloaders=loader)
 
@@ -144,7 +144,6 @@ def run_finalize(eval_cfg: dict, index: int, force: bool = False) -> dict:
     """GPU stage: finalize the merge, write the MTZ + per-obs pred.parquet."""
     ckpt, epoch, work_root = _select_checkpoint(eval_cfg, index)
 
-    # Skip the expensive merge pass if a valid MTZ + result already exist.
     existing = _read_result(work_root)
     if (
         not force
@@ -153,7 +152,9 @@ def run_finalize(eval_cfg: dict, index: int, force: bool = False) -> dict:
         and existing is not None
         and existing.get("n_hkl_seen")
     ):
-        logger.info("Skip finalize epoch %d: MTZ + preds already present", epoch)
+        logger.info(
+            "Skip finalize epoch %d: MTZ + preds already present", epoch
+        )
         return existing
 
     logger.info("Finalize checkpoint %d epoch %d: %s", index, epoch, ckpt)
@@ -237,8 +238,12 @@ def run_phenix(eval_cfg: dict, index: int, force: bool = False) -> dict:
         }
         logger.info(
             "[%s] phenix_ok=%s Rwork=%s Rfree=%s top_peak=%.2f n_peaks=%d",
-            vname, ok, r.get("r_work_final"), r.get("r_free_final"),
-            top_peak, n_peaks,
+            vname,
+            ok,
+            r.get("r_work_final"),
+            r.get("r_free_final"),
+            top_peak,
+            n_peaks,
         )
         # Write after each variant so a crash keeps finished variants.
         result_path.write_text(json.dumps(result, indent=2))

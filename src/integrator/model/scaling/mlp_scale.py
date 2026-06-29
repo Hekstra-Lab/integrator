@@ -23,8 +23,10 @@ class MLPScale(nn.Module):
         n_extra: int = 0,
         extra_loc: list[float] | None = None,
         extra_scale: list[float] | None = None,
+        friedel_safe: bool = False,
     ):
         super().__init__()
+        self.friedel_safe = bool(friedel_safe)
 
         frame_mid = (frame_min + frame_max) / 2.0
         frame_half = max((frame_max - frame_min) / 2.0, 1.0)
@@ -59,8 +61,7 @@ class MLPScale(nn.Module):
                 torch.tensor(scl).float().clamp(min=1e-8),
             )
 
-        # Input: [frame_norm, radius_norm, d_norm, lp] + extras.
-        n_input = 4 + self.n_extra
+        n_input = (2 if self.friedel_safe else 4) + self.n_extra
         layers = []
         in_dim = n_input
         for _ in range(n_layers):
@@ -86,11 +87,16 @@ class MLPScale(nn.Module):
         extra: Tensor | None = None,
     ) -> Tensor:
         frame_norm = (frame - self.frame_mid) / self.frame_half
-        r = torch.sqrt((x - self.beam_cx).pow(2) + (y - self.beam_cy).pow(2))
-        r_norm = r / self.r_max
         d_norm = (d - self.d_min) / (self.d_max - self.d_min)
 
-        features = torch.stack([frame_norm, r_norm, d_norm, lp], dim=-1)
+        if self.friedel_safe:
+            features = torch.stack([frame_norm, d_norm], dim=-1)
+        else:
+            r = torch.sqrt(
+                (x - self.beam_cx).pow(2) + (y - self.beam_cy).pow(2)
+            )
+            r_norm = r / self.r_max
+            features = torch.stack([frame_norm, r_norm, d_norm, lp], dim=-1)
         if self.n_extra > 0:
             if extra is None:
                 raise ValueError(

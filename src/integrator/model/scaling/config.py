@@ -77,6 +77,9 @@ class MergingIntegratorCfg:
     scale_mlp_hidden: int = 64
     scale_mlp_layers: int = 2
     scale_head_init_std: float = 0.0
+    # MLP over Friedel-safe inputs only (rotation + resolution + even-l SH
+    # extras); detector position dropped and LP applied as /lp.
+    scale_mlp_friedel_safe: bool = False
     scale_frame_min: float = 0.0
     scale_frame_max: float = 1000.0
     scale_beam_center: list[float] | None = None

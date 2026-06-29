@@ -151,6 +151,7 @@ class ScalingLightningModule(ScatterLogger, pl.LightningModule):
                 n_extra=len(self.scale_extra_features),
                 extra_loc=cfg.scale_extra_loc,
                 extra_scale=cfg.scale_extra_scale,
+                friedel_safe=cfg.scale_mlp_friedel_safe,
             )
         elif scale_mode == "coarse":
             self.scale_fn = CoarseScale(
@@ -198,7 +199,10 @@ class ScalingLightningModule(ScatterLogger, pl.LightningModule):
                         )
                     cols.append(metadata[key].to(device).float().reshape(-1))
                 extra = torch.stack(cols, dim=-1)  # (B, n_extra)
-            return self.scale_fn(frame, x_det, y_det, lp, d, extra)
+            scale = self.scale_fn(frame, x_det, y_det, lp, d, extra)
+            if self.scale_fn.friedel_safe:
+                scale = scale / lp  # LP as the known fixed factor, not learned
+            return scale
         if isinstance(self.scale_fn, (CoarseScale, SolvedScale)):
             d = metadata["d"].to(device).float()
             s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))
