@@ -73,12 +73,13 @@ class MergingIntegratorCfg:
     scale_decay_degree: int = 0  # B(phi) Chebyshev degree (0 = global B)
     scale_ridge: float = 1.0e-3  # ridge for the solved-scale least squares
     scale_solve_warmup: int = 2  # epochs before the first EM scale solve
+
+    scale_absorption_lmax: int = 0
+    scale_absorption_even_only: bool = True
     scale_degree: int = 5
     scale_mlp_hidden: int = 64
     scale_mlp_layers: int = 2
     scale_head_init_std: float = 0.0
-    # MLP over Friedel-safe inputs only (rotation + resolution + even-l SH
-    # extras); detector position dropped and LP applied as /lp.
     scale_mlp_friedel_safe: bool = False
     scale_frame_min: float = 0.0
     scale_frame_max: float = 1000.0

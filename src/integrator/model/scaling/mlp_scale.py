@@ -196,17 +196,19 @@ class SolvedScale(nn.Module):
         k_degree: int = 5,
         decay_degree: int = 0,
         ridge: float = 1e-3,
+        n_absorption: int = 0,
     ):
         super().__init__()
         self.k_degree = k_degree
         self.decay_degree = decay_degree
         self.ridge = ridge
+        self.n_absorption = int(n_absorption)
         frame_mid = (frame_min + frame_max) / 2.0
         frame_half = max((frame_max - frame_min) / 2.0, 1.0)
         self.register_buffer("frame_mid", torch.tensor(frame_mid))
         self.register_buffer("frame_half", torch.tensor(frame_half))
 
-        n = (k_degree + 1) + (decay_degree + 1)
+        n = (k_degree + 1) + (decay_degree + 1) + self.n_absorption
         self.n_basis = n
         self.register_buffer("theta", torch.zeros(n))  # solved coefficients
         self.register_buffer("_AtA", torch.zeros(n, n))
@@ -215,26 +217,45 @@ class SolvedScale(nn.Module):
         self.register_buffer("_sum_w", torch.zeros(()))
         self.residual: nn.Module | None = None
 
-    def _phi(self, frame: Tensor, s_sq: Tensor) -> Tensor:
+    def _phi(
+        self, frame: Tensor, s_sq: Tensor, absorption: Tensor | None = None
+    ) -> Tensor:
         x = ((frame - self.frame_mid) / self.frame_half).clamp(-1.0, 1.0)
         tk = _chebyshev(
             x, self.k_degree
         )  # (B, k+1) -> K(phi); col 0 is T_0 = 1
         tb = _chebyshev(x, self.decay_degree) * s_sq.unsqueeze(-1)  # (B, m+1)
-        return torch.cat([tk, tb], dim=-1)  # (B, n_basis)
+        parts = [tk, tb]
+        if self.n_absorption:
+            if absorption is None or absorption.shape[-1] != self.n_absorption:
+                got = None if absorption is None else absorption.shape[-1]
+                raise ValueError(
+                    f"SolvedScale expects {self.n_absorption} absorption columns, "
+                    f"got {got}; check scale_absorption_lmax / the absorption_sh "
+                    "metadata."
+                )
+            parts.append(absorption)
+        return torch.cat(parts, dim=-1)  # (B, n_basis)
 
-    def forward(self, frame: Tensor, s_sq: Tensor) -> Tensor:
-        log_scale = self._phi(frame, s_sq) @ self.theta
+    def forward(
+        self, frame: Tensor, s_sq: Tensor, absorption: Tensor | None = None
+    ) -> Tensor:
+        log_scale = self._phi(frame, s_sq, absorption) @ self.theta
         if self.residual is not None:
             log_scale = log_scale + self.residual(frame, s_sq)
         return torch.exp(log_scale.clamp(-8.0, 8.0))
 
     @torch.no_grad()
     def accumulate(
-        self, frame: Tensor, s_sq: Tensor, log_target: Tensor, weight: Tensor
+        self,
+        frame: Tensor,
+        s_sq: Tensor,
+        log_target: Tensor,
+        weight: Tensor,
+        absorption: Tensor | None = None,
     ) -> None:
         """Add a batch to the normal equations for `log scale ~ log(J/I_h)`."""
-        phi = self._phi(frame, s_sq)
+        phi = self._phi(frame, s_sq, absorption)
         w = weight.clamp(min=0.0)
         wphi = phi * w.unsqueeze(-1)
         self._AtA += wphi.transpose(0, 1) @ phi

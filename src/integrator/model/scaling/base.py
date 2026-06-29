@@ -22,6 +22,25 @@ from integrator.model.scaling.scatter_logger import ScatterLogger
 
 _logger = logging.getLogger(__name__)
 
+
+def _sh_n_cols(use_lmax: int, even_only: bool) -> int:
+    """Number of `absorption_sh` columns kept for `l=1..use_lmax` (+even filter)."""
+    return sum(
+        2 * l + 1
+        for l in range(1, use_lmax + 1)
+        if (not even_only or l % 2 == 0)
+    )
+
+
+def _sh_select_idx(extract_lmax: int, use_lmax: int, even_only: bool) -> list[int]:
+    idx, c = [], 0
+    for l in range(1, extract_lmax + 1):
+        for _m in range(-l, l + 1):
+            if l <= use_lmax and (not even_only or l % 2 == 0):
+                idx.append(c)
+            c += 1
+    return idx
+
 # Per-obs columns written during prediction (model + passed-through DIALS)
 DEFAULT_PREDICT_KEYS = [
     "refl_ids",
@@ -167,12 +186,23 @@ class ScalingLightningModule(ScatterLogger, pl.LightningModule):
                 frame_max=cfg.scale_frame_max,
             )
         elif scale_mode == "solved":
+            self._absorption_lmax = int(getattr(cfg, "scale_absorption_lmax", 0))
+            self._absorption_even_only = bool(
+                getattr(cfg, "scale_absorption_even_only", True)
+            )
+            n_abs = (
+                _sh_n_cols(self._absorption_lmax, self._absorption_even_only)
+                if self._absorption_lmax > 0
+                else 0
+            )
+            self._absorption_idx: Tensor | None = None  # built on first batch
             self.scale_fn = SolvedScale(
                 frame_min=cfg.scale_frame_min,
                 frame_max=cfg.scale_frame_max,
                 k_degree=cfg.scale_degree,
                 decay_degree=cfg.scale_decay_degree,
                 ridge=getattr(cfg, "scale_ridge", 1e-3),
+                n_absorption=n_abs,
             )
         else:
             raise ValueError(
@@ -203,11 +233,54 @@ class ScalingLightningModule(ScatterLogger, pl.LightningModule):
             if self.scale_fn.friedel_safe:
                 scale = scale / lp  # LP as the known fixed factor, not learned
             return scale
-        if isinstance(self.scale_fn, (CoarseScale, SolvedScale)):
+        if isinstance(self.scale_fn, SolvedScale):
+            d = metadata["d"].to(device).float()
+            s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))
+            absn = self._absorption(metadata, device)
+            return self.scale_fn(frame, s_sq, absn) / lp
+        if isinstance(self.scale_fn, CoarseScale):
             d = metadata["d"].to(device).float()
             s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))
             return self.scale_fn(frame, s_sq) / lp
         return self.scale_fn(frame) / lp
+
+    def _absorption(
+        self, metadata: dict, device: torch.device
+    ) -> Tensor | None:
+        """Select the crystal-frame SH absorption columns for the solved scale.
+
+        """
+        if getattr(self, "_absorption_lmax", 0) <= 0:
+            return None
+        if "absorption_sh" not in metadata:
+            raise KeyError(
+                "scale_absorption_lmax > 0 needs 'absorption_sh' in the metadata; "
+                "run scripts/extract_crystal_frame_sh.py and point the loader's "
+                "reference: at the resulting metadata_sh file."
+            )
+        a = metadata["absorption_sh"].to(device).float()
+        if a.ndim == 1:
+            a = a.unsqueeze(-1)
+        idx_t = self._absorption_idx
+        if idx_t is None:
+            width = a.shape[-1]
+            extract_lmax = int(round((width + 1) ** 0.5)) - 1
+            if (extract_lmax + 1) ** 2 - 1 != width:
+                raise ValueError(
+                    f"absorption_sh width {width} is not (lmax+1)^2-1 for any lmax"
+                )
+            if extract_lmax < self._absorption_lmax:
+                raise ValueError(
+                    f"absorption_sh has lmax={extract_lmax} < requested "
+                    f"scale_absorption_lmax={self._absorption_lmax}; re-extract "
+                    "with a higher --lmax."
+                )
+            idx = _sh_select_idx(
+                extract_lmax, self._absorption_lmax, self._absorption_even_only
+            )
+            idx_t = torch.tensor(idx, dtype=torch.long)
+            self._absorption_idx = idx_t
+        return a.index_select(-1, idx_t.to(a.device))
 
     def _wilson_tau(self, d: Tensor) -> Tensor:
         """Wilson prior rate tau from resolution d (lp lives in the scale)."""
@@ -418,7 +491,8 @@ class ScalingLightningModule(ScatterLogger, pl.LightningModule):
         d = metadata["d"].to(device).float()
         s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))
         frame = metadata["xyzcal.px.2"].to(device).float()
-        self.scale_fn.accumulate(frame, s_sq, y, sig.clamp(min=0.0))
+        absn = self._absorption(metadata, device)
+        self.scale_fn.accumulate(frame, s_sq, y, sig.clamp(min=0.0), absn)
 
     def predict_step(self, batch, _batch_idx):
         counts, shoebox, mask, metadata = batch
