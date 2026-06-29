@@ -119,14 +119,24 @@ def write_obs_pred(integrator, cfg: dict, epoch: int, work_root: Path) -> None:
     data_loader = construct_data_loader(cfg)
     data_loader.setup()
     try:
-        loader = data_loader.predict_dataloader(grouped=True)
+        loader = data_loader.predict_dataloader(
+            grouped=True, lightning_safe=True
+        )
     except TypeError:
         loader = data_loader.predict_dataloader()
 
     pred_writer = BatchPredWriter(
-        output_dir=work_root, epoch=epoch, partition=False
+        output_dir=work_root,
+        write_interval="batch",
+        epoch=epoch,
+        partition=False,
     )
-    trainer = construct_trainer(cfg, callbacks=[pred_writer], logger=False)
+    # Match the predict CLI's _run_merging_predict: keep our grouped batch
+    # sampler intact, else Lightning re-wraps it with a SequentialSampler ->
+    # "'SequentialSampler' object is not subscriptable".
+    trainer = construct_trainer(
+        cfg, callbacks=[pred_writer], logger=False, use_distributed_sampler=False
+    )
     trainer.predict(integrator, return_predictions=False, dataloaders=loader)
 
 
