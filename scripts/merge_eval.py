@@ -17,6 +17,8 @@ import yaml
 from integrator.io import (  # merged-MTZ helpers now live in the package
     extract_merged_posterior,
     load_crystal,
+    load_hkl_table,
+    write_merged_mtz,
 )
 
 # gemmi 0.7.x compat
