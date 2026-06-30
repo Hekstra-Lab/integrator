@@ -70,8 +70,10 @@ class MergingIntegratorCfg:
     scale_mlp: bool = True
 
     scale_mode: (
-        Literal["mlp", "chebyshev", "coarse", "solved", "linear"] | None
+        Literal["mlp", "chebyshev", "coarse", "solved", "linear", "resnet"] | None
     ) = None
+    scale_resnet_blocks: int = 4  # residual blocks for scale_mode: resnet
+    scale_resnet_use_xy: bool = True  # feed detector x,y to the resnet scale
     scale_decay_degree: int = 0  # B(phi) Chebyshev degree (0 = global B)
     scale_ridge: float = 1.0e-3  # ridge for the solved-scale least squares
     scale_solve_warmup: int = 2  # epochs before the first EM scale solve

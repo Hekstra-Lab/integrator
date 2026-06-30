@@ -113,6 +113,103 @@ class MLPScale(nn.Module):
         return F.softplus(self.net(features).squeeze(-1))
 
 
+class _ResBlock(nn.Module):
+    """Pre-activation residual MLP block: x + W2 act(W1 act(x))."""
+
+    def __init__(self, dim: int):
+        super().__init__()
+        self.lin1 = nn.Linear(dim, dim)
+        self.lin2 = nn.Linear(dim, dim)
+        self.act = nn.SiLU()
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.act(x + self.lin2(self.act(self.lin1(x))))
+
+
+class ResNetScale(nn.Module):
+    """Deep residual-MLP scale over an EXPLICIT metadata feature set.
+
+    Features: rotation frame, resolution d, lp, optional detector x,y, and the
+    even-l crystal-frame SH absorption. `lp` is fed as an INPUT FEATURE -- it is
+    NOT applied as a multiplicative `/lp` factor; the network learns the full
+    scale (any lp dependence included) end to end. x,y are fed directly (not as a
+    radius) so azimuthal / mate-distinguishing structure survives.
+    """
+
+    def __init__(
+        self,
+        hidden_dim: int = 128,
+        n_blocks: int = 4,
+        frame_min: float = 0.0,
+        frame_max: float = 1000.0,
+        beam_center: list[float] | None = None,
+        r_max: float = 1500.0,
+        d_min: float = 1.0,
+        d_max: float = 60.0,
+        n_absorption: int = 0,
+        use_xy: bool = True,
+        lp_loc: float = 1.5,
+        lp_scale: float = 1.5,
+        head_init_std: float = 0.0,
+    ):
+        super().__init__()
+        self.use_xy = bool(use_xy)
+        self.n_absorption = int(n_absorption)
+
+        frame_mid = (frame_min + frame_max) / 2.0
+        frame_half = max((frame_max - frame_min) / 2.0, 1.0)
+        self.register_buffer("frame_mid", torch.tensor(frame_mid))
+        self.register_buffer("frame_half", torch.tensor(frame_half))
+        cx, cy = beam_center or [0.0, 0.0]
+        self.register_buffer("beam_cx", torch.tensor(cx))
+        self.register_buffer("beam_cy", torch.tensor(cy))
+        self.register_buffer("r_max", torch.tensor(max(r_max, 1.0)))
+        self.register_buffer("d_min", torch.tensor(d_min))
+        self.register_buffer("d_max", torch.tensor(max(d_max, d_min + 1.0)))
+        self.register_buffer("lp_loc", torch.tensor(lp_loc))
+        self.register_buffer("lp_scale", torch.tensor(max(lp_scale, 1e-6)))
+
+        n_input = 3 + (2 if self.use_xy else 0) + self.n_absorption  # frame,d,lp[,x,y][,SH]
+        layers: list[nn.Module] = [nn.Linear(n_input, hidden_dim), nn.SiLU()]
+        for _ in range(n_blocks):
+            layers.append(_ResBlock(hidden_dim))
+        head = nn.Linear(hidden_dim, 1)
+        nn.init.zeros_(head.bias)
+        if head_init_std > 0.0:
+            nn.init.normal_(head.weight, std=head_init_std)
+        else:
+            nn.init.zeros_(head.weight)
+        layers.append(head)
+        self.net = nn.Sequential(*layers)
+
+    def forward(
+        self,
+        frame: Tensor,
+        x: Tensor,
+        y: Tensor,
+        lp: Tensor,
+        d: Tensor,
+        absorption: Tensor | None = None,
+    ) -> Tensor:
+        feats = [
+            ((frame - self.frame_mid) / self.frame_half).unsqueeze(-1),
+            ((d - self.d_min) / (self.d_max - self.d_min)).unsqueeze(-1),
+            ((lp - self.lp_loc) / self.lp_scale).unsqueeze(-1),
+        ]
+        if self.use_xy:
+            feats.append(((x - self.beam_cx) / self.r_max).unsqueeze(-1))
+            feats.append(((y - self.beam_cy) / self.r_max).unsqueeze(-1))
+        if self.n_absorption:
+            if absorption is None or absorption.shape[-1] != self.n_absorption:
+                got = None if absorption is None else absorption.shape[-1]
+                raise ValueError(
+                    f"ResNetScale expects {self.n_absorption} absorption columns, "
+                    f"got {got}; check scale_absorption_lmax / absorption_sh."
+                )
+            feats.append(absorption)
+        return F.softplus(self.net(torch.cat(feats, dim=-1)).squeeze(-1))
+
+
 def _chebyshev(x: Tensor, degree: int) -> Tensor:
     """Chebyshev-T basis `T_0..T_degree` evaluated at `x` in `[-1, 1]`.
 

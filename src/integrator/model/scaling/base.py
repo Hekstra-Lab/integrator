@@ -17,6 +17,7 @@ from integrator.model.scaling.mlp_scale import (
     CoarseScale,
     LinearScale,
     MLPScale,
+    ResNetScale,
     SolvedScale,
 )
 from integrator.model.scaling.scatter_logger import ScatterLogger
@@ -173,6 +174,30 @@ class ScalingLightningModule(ScatterLogger, pl.LightningModule):
                 extra_scale=cfg.scale_extra_scale,
                 friedel_safe=cfg.scale_mlp_friedel_safe,
             )
+        elif scale_mode == "resnet":
+            self._absorption_lmax = int(getattr(cfg, "scale_absorption_lmax", 0))
+            self._absorption_even_only = bool(
+                getattr(cfg, "scale_absorption_even_only", True)
+            )
+            n_abs = (
+                _sh_n_cols(self._absorption_lmax, self._absorption_even_only)
+                if self._absorption_lmax > 0
+                else 0
+            )
+            self._absorption_idx: Tensor | None = None
+            self.scale_fn = ResNetScale(
+                hidden_dim=cfg.scale_mlp_hidden,
+                n_blocks=int(getattr(cfg, "scale_resnet_blocks", 4)),
+                frame_min=cfg.scale_frame_min,
+                frame_max=cfg.scale_frame_max,
+                beam_center=cfg.scale_beam_center,
+                r_max=cfg.scale_r_max,
+                d_min=cfg.d_min,
+                d_max=60.0,
+                n_absorption=n_abs,
+                use_xy=bool(getattr(cfg, "scale_resnet_use_xy", True)),
+                head_init_std=cfg.scale_head_init_std,
+            )
         elif scale_mode == "coarse":
             self.scale_fn = CoarseScale(
                 frame_min=cfg.scale_frame_min,
@@ -232,14 +257,21 @@ class ScalingLightningModule(ScatterLogger, pl.LightningModule):
             )
         else:
             raise ValueError(
-                f"Unknown scale_mode {scale_mode!r}; expected "
-                "'mlp', 'coarse', 'chebyshev', 'solved', or 'linear'."
+                f"Unknown scale_mode {scale_mode!r}; expected 'mlp', 'coarse', "
+                "'chebyshev', 'solved', 'linear', or 'resnet'."
             )
         self.scale_solve_warmup = int(getattr(cfg, "scale_solve_warmup", 2))
 
     def _get_scale(self, metadata: dict, device: torch.device) -> Tensor:
         frame = metadata["xyzcal.px.2"].to(device).float()
         lp = metadata["lp"].to(device).float().clamp(min=1e-8)
+        if isinstance(self.scale_fn, ResNetScale):
+            x_det = metadata["xyzcal.px.0"].to(device).float()
+            y_det = metadata["xyzcal.px.1"].to(device).float()
+            d = metadata["d"].to(device).float()
+            absn = self._absorption(metadata, device)
+            # lp is an input FEATURE here -- the net learns the full scale, no /lp.
+            return self.scale_fn(frame, x_det, y_det, lp, d, absn)
         if isinstance(self.scale_fn, MLPScale):
             x_det = metadata["xyzcal.px.0"].to(device).float()
             y_det = metadata["xyzcal.px.1"].to(device).float()
