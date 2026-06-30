@@ -308,6 +308,7 @@ def main():
         construct_trainer,
         inject_binning_labels,
         load_config,
+        prepare_global_priors,
         prepare_per_bin_priors,
         resolve_config,
         save_run_artifacts,
@@ -327,8 +328,9 @@ def main():
     logger.info("Starting Training")
 
     # Auto-generate prior distribution files if needed by the loss
-    # (prepare_per_bin_priors logs each file action itself)
+    # (each prepare_* call logs its file actions itself)
     prepare_per_bin_priors(cfg)
+    prepare_global_priors(cfg)
 
     data_loader = construct_data_loader(cfg)
     data_loader.setup()

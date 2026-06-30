@@ -126,6 +126,98 @@ def prepare_per_bin_priors(
             )
 
 
+def prepare_global_priors(cfg: dict, *, force: bool = False) -> None:
+    """Fit the global Gamma intensity/background priors for the global-prior loss.
+
+    Unlike the Wilson prior, the global-prior baseline regularizes `q(I)` and
+    `q(bg)` toward single resolution-independent `Gamma` distributions. This fits
+    each by Gamma MLE on the dataset (`intensity.sum.value` and `background.mean`)
+    and injects the `(concentration, rate)` pairs into the loss args so they are
+    recorded in the resolved config. A single-bin `group_labels` file is also
+    written so the data module always exposes `group_label` (the integrator reads
+    it unconditionally, even though the global prior does not bin by resolution).
+
+    Args:
+        cfg: Full YAML config dict (mutated in place).
+        force: Refit and overwrite even when prior args are already present.
+    """
+    if cfg.get("loss", {}).get("name") != "global_prior":
+        return
+
+    data_dir = Path(cfg["data_loader"]["args"]["data_dir"])
+    loss_args = cfg["loss"].setdefault("args", {})
+
+    ref_path = _resolve_reference_path(data_dir, cfg)
+    if data_path(ref_path) is None:
+        logger.warning(
+            "global_prior: no metadata at %s; using default priors", ref_path
+        )
+        return
+    metadata = load_data(ref_path)
+
+    # Single-bin group labels so metadata always carries `group_label`.
+    gl_path = _nbins_path("group_labels.npy", 1, data_dir)
+    if force or data_path(gl_path) is None:
+        n = len(metadata["d"])
+        p = save_data(torch.zeros(n, dtype=torch.long), gl_path)
+        logger.info("Saved %s (single-bin labels for global prior)", p.name)
+
+    # Global intensity Gamma prior.
+    if force or (
+        "i_concentration" not in loss_args and "i_rate" not in loss_args
+    ):
+        i_vals = metadata.get(
+            "intensity.sum.value", metadata.get("intensity.prf.value")
+        )
+        a, r = _fit_global_gamma(i_vals, "intensity")
+        if a is not None:
+            loss_args.setdefault("i_concentration", a)
+            loss_args.setdefault("i_rate", r)
+            logger.info(
+                "Global intensity Gamma MLE: concentration=%.4g rate=%.4g",
+                a,
+                r,
+            )
+
+    # Global background Gamma prior.
+    if force or (
+        "bg_concentration" not in loss_args and "bg_rate" not in loss_args
+    ):
+        bg_vals = metadata.get(
+            "background.mean", metadata.get("background.sum.value")
+        )
+        a, r = _fit_global_gamma(bg_vals, "background")
+        if a is not None:
+            loss_args.setdefault("bg_concentration", a)
+            loss_args.setdefault("bg_rate", r)
+            logger.info(
+                "Global background Gamma MLE: concentration=%.4g rate=%.4g",
+                a,
+                r,
+            )
+
+
+def _fit_global_gamma(
+    vals: Tensor | None,
+    label: str,
+    min_samples: int = 10,
+) -> tuple[float | None, float | None]:
+    """Gamma MLE on the strictly-positive entries of `vals`."""
+    if vals is None:
+        logger.warning("global_prior: no %s column for MLE", label)
+        return None, None
+    pos = vals[vals > 0]
+    if pos.numel() < min_samples:
+        logger.warning(
+            "global_prior: too few positive %s values (%d) for MLE",
+            label,
+            int(pos.numel()),
+        )
+        return None, None
+    a, r = _fit_gamma_mle(pos.float())
+    return float(a), float(r)
+
+
 def inject_binning_labels(data_loader, cfg: dict) -> None:
     """Load binning label files and inject into the dataset's metadata."""
 

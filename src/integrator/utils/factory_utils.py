@@ -107,6 +107,8 @@ for _m, _preset in _MODE_DEFAULTS.items():
 
 # reverse lookup: a loss name implies its mode (configs may set loss.name directly)
 _MODE_BY_LOSS = {p["loss"]: m for m, p in _MODE_DEFAULTS.items()}
+# The global-prior baseline is a monochromatic loss with no dedicated mode preset.
+_MODE_BY_LOSS["global_prior"] = "monochromatic"
 
 # Minimal per-mode prediction columns
 _DEFAULT_PREDICT_KEYS: dict[str, list[str]] = {

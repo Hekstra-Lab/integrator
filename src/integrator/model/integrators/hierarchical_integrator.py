@@ -106,6 +106,166 @@ class HierarchicalIntegrator(BaseIntegrator):
         }
 
 
+class HierarchicalIntegrator2Enc(BaseIntegrator):
+    """Hierarchical integrator with 2 encoders: profile and a shared intensity.
+
+    The single intensity encoder produces one representation from which every
+    intensity/background distribution parameter is derived (both heads of `qi`
+    and `qbg` read the same embedding). This is the original two-encoder design
+    and the least-decoupled end of the encoder ablation; `HierarchicalIntegrator`
+    (5 encoders) gives each parameter its own encoder.
+    """
+
+    REQUIRED_ENCODERS = {
+        "profile": ("profile_encoder", configs.ProfileEncoderArgs),
+        "intensity": ("intensity_encoder", configs.IntensityEncoderArgs),
+    }
+
+    def _forward_impl(
+        self,
+        counts: Tensor,
+        shoebox: Tensor,
+        mask: Tensor,
+        metadata: dict,
+    ) -> dict[str, Any]:
+        counts = torch.clamp(counts, min=0)
+
+        b = shoebox.shape[0]
+        shoebox_masked = shoebox * mask
+        shoebox_reshaped = shoebox_masked.reshape(b, 1, *self.shoebox_shape)
+
+        x_profile = self.encoders["profile"](shoebox_reshaped)
+        x_int = self.encoders["intensity"](shoebox_reshaped)
+
+        qbg = self.surrogates["qbg"](x_int, x_int)
+        qi = self.surrogates["qi"](x_int, x_int)
+
+        prf_labels = metadata.get(
+            "profile_group_label", metadata.get("group_label")
+        )
+        prf_labels = prf_labels.long() if prf_labels is not None else None
+        qp = self.surrogates["qp"](
+            x_profile,
+            mc_samples=self.mc_samples,
+            group_labels=prf_labels,
+            metadata=metadata,
+        )
+
+        zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        zp = _sample_profile(qp, self.mc_samples)
+        zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+
+        rate = zI * zp + zbg
+
+        if "is_coset" in metadata:
+            coset = metadata["is_coset"].bool().view(-1, 1, 1)
+            rate = torch.where(coset, zbg, rate)
+
+        out = IntegratorBaseOutputs(
+            rates=rate,
+            counts=counts,
+            mask=mask,
+            qbg=qbg,
+            qp=qp,
+            qi=qi,
+            zp=zp,
+            zbg=zbg,
+            metadata=metadata,
+        )
+        out = _assemble_outputs(out)
+        _add_group_outputs(out, metadata, self.loss)
+
+        return {
+            "forward_out": out,
+            "qp": qp,
+            "qi": qi,
+            "qbg": qbg,
+        }
+
+
+class HierarchicalIntegrator3EncIB(BaseIntegrator):
+    """Hierarchical integrator with 3 encoders: profile, intensity, background.
+
+    The middle rung of the encoder-decoupling ablation. One intensity encoder
+    feeds both heads of `qi` and one background encoder feeds both heads of
+    `qbg`, so intensity and background no longer share a representation (as in
+    the 2-encoder version) but the two heads within each still do (unlike the
+    5-encoder version, which gives every parameter its own encoder).
+
+    This splits by intensity/background; the separate `HierarchicalIntegrator3Enc`
+    (`hierarchical_3enc`) instead splits by the Gamma heads k/r, sharing those
+    across intensity and background.
+    """
+
+    REQUIRED_ENCODERS = {
+        "profile": ("profile_encoder", configs.ProfileEncoderArgs),
+        "intensity": ("intensity_encoder", configs.IntensityEncoderArgs),
+        "background": ("intensity_encoder", configs.IntensityEncoderArgs),
+    }
+
+    def _forward_impl(
+        self,
+        counts: Tensor,
+        shoebox: Tensor,
+        mask: Tensor,
+        metadata: dict,
+    ) -> dict[str, Any]:
+        counts = torch.clamp(counts, min=0)
+
+        b = shoebox.shape[0]
+        shoebox_masked = shoebox * mask
+        shoebox_reshaped = shoebox_masked.reshape(b, 1, *self.shoebox_shape)
+
+        x_profile = self.encoders["profile"](shoebox_reshaped)
+        x_int = self.encoders["intensity"](shoebox_reshaped)
+        x_bg = self.encoders["background"](shoebox_reshaped)
+
+        qbg = self.surrogates["qbg"](x_bg, x_bg)
+        qi = self.surrogates["qi"](x_int, x_int)
+
+        prf_labels = metadata.get(
+            "profile_group_label", metadata.get("group_label")
+        )
+        prf_labels = prf_labels.long() if prf_labels is not None else None
+        qp = self.surrogates["qp"](
+            x_profile,
+            mc_samples=self.mc_samples,
+            group_labels=prf_labels,
+            metadata=metadata,
+        )
+
+        zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        zp = _sample_profile(qp, self.mc_samples)
+        zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+
+        rate = zI * zp + zbg
+
+        if "is_coset" in metadata:
+            coset = metadata["is_coset"].bool().view(-1, 1, 1)
+            rate = torch.where(coset, zbg, rate)
+
+        out = IntegratorBaseOutputs(
+            rates=rate,
+            counts=counts,
+            mask=mask,
+            qbg=qbg,
+            qp=qp,
+            qi=qi,
+            zp=zp,
+            zbg=zbg,
+            metadata=metadata,
+        )
+        out = _assemble_outputs(out)
+        _add_group_outputs(out, metadata, self.loss)
+
+        return {
+            "forward_out": out,
+            "qp": qp,
+            "qi": qi,
+            "qbg": qbg,
+        }
+
+
 class HierarchicalIntegrator3Enc(BaseIntegrator):
     """Hierarchical integrator with 3 encoders: profile, k, r."""
 

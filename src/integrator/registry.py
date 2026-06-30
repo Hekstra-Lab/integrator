@@ -14,11 +14,14 @@ from integrator.model.encoders import (
 )
 from integrator.model.integrators import (
     HierarchicalIntegrator,
+    HierarchicalIntegrator2Enc,
     HierarchicalIntegrator3Enc,
+    HierarchicalIntegrator3EncIB,
     SVAEHybridIntegrator,
     SVAEIntegrator,
 )
 from integrator.model.loss import (
+    GlobalPriorLoss,
     MonochromaticWilsonLoss,
     PolychromaticWilsonLoss,
 )
@@ -29,12 +32,15 @@ REGISTRY = {
         "intensity_encoder": IntensityEncoder,
     },
     "loss": {
+        "global_prior": GlobalPriorLoss,
         "monochromatic_wilson": MonochromaticWilsonLoss,
         "polychromatic_wilson": PolychromaticWilsonLoss,
     },
     "integrator": {
         "hierarchical": HierarchicalIntegrator,
+        "hierarchical_2enc": HierarchicalIntegrator2Enc,
         "hierarchical_3enc": HierarchicalIntegrator3Enc,
+        "hierarchical_3enc_ib": HierarchicalIntegrator3EncIB,
         "svae": SVAEIntegrator,
         "svae_hybrid": SVAEHybridIntegrator,
     },
