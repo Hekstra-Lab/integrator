@@ -15,6 +15,7 @@ from integrator.model.scaling.merge_utils import _log_loss
 from integrator.model.scaling.mlp_scale import (
     ChebyshevScale,
     CoarseScale,
+    LinearScale,
     MLPScale,
     SolvedScale,
 )
@@ -204,10 +205,35 @@ class ScalingLightningModule(ScatterLogger, pl.LightningModule):
                 ridge=getattr(cfg, "scale_ridge", 1e-3),
                 n_absorption=n_abs,
             )
+        elif scale_mode == "linear":
+            self._absorption_lmax = int(getattr(cfg, "scale_absorption_lmax", 0))
+            self._absorption_even_only = bool(
+                getattr(cfg, "scale_absorption_even_only", True)
+            )
+            n_abs = (
+                _sh_n_cols(self._absorption_lmax, self._absorption_even_only)
+                if self._absorption_lmax > 0
+                else 0
+            )
+            self._absorption_idx: Tensor | None = None
+            self.scale_fn = LinearScale(
+                frame_min=cfg.scale_frame_min,
+                frame_max=cfg.scale_frame_max,
+                k_degree=cfg.scale_degree,
+                decay_degree=cfg.scale_decay_degree,
+                n_absorption=n_abs,
+                hidden=int(getattr(cfg, "scale_linear_hidden", 0)),
+                n_layers=int(getattr(cfg, "scale_linear_layers", 2)),
+                n_images=int(getattr(cfg, "scale_n_images", 0)),
+                lambda_modes=int(getattr(cfg, "scale_lambda_modes", 0)),
+                lambda_min=float(getattr(cfg, "scale_lambda_min", 0.0)),
+                lambda_max=float(getattr(cfg, "scale_lambda_max", 1.0)),
+                head_init_std=cfg.scale_head_init_std,
+            )
         else:
             raise ValueError(
                 f"Unknown scale_mode {scale_mode!r}; expected "
-                "'mlp', 'coarse', 'chebyshev', or 'solved'."
+                "'mlp', 'coarse', 'chebyshev', 'solved', or 'linear'."
             )
         self.scale_solve_warmup = int(getattr(cfg, "scale_solve_warmup", 2))
 
@@ -233,6 +259,25 @@ class ScalingLightningModule(ScatterLogger, pl.LightningModule):
             if self.scale_fn.friedel_safe:
                 scale = scale / lp  # LP as the known fixed factor, not learned
             return scale
+        if isinstance(self.scale_fn, LinearScale):
+            d = metadata["d"].to(device).float()
+            s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))
+            absn = self._absorption(metadata, device)
+            image = None
+            if self.scale_fn.n_images > 0:
+                if "imageset_id" not in metadata:
+                    raise KeyError(
+                        "scale_n_images>0 needs 'imageset_id' in the metadata."
+                    )
+                image = metadata["imageset_id"].to(device).long().reshape(-1)
+            wavelength = None
+            if self.scale_fn.lambda_modes > 0:
+                if "wavelength" not in metadata:
+                    raise KeyError(
+                        "scale_lambda_modes>0 needs 'wavelength' in the metadata."
+                    )
+                wavelength = metadata["wavelength"].to(device).float().reshape(-1)
+            return self.scale_fn(frame, s_sq, absn, image, wavelength) / lp
         if isinstance(self.scale_fn, SolvedScale):
             d = metadata["d"].to(device).float()
             s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))

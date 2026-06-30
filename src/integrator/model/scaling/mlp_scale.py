@@ -283,3 +283,129 @@ class SolvedScale(nn.Module):
         self._Atb.zero_()
         self._sum_wphi.zero_()
         self._sum_w.zero_()
+
+
+class LinearScale(nn.Module):
+    """Learnable Friedel-safe scale trained by joint SGD (NOT the EM solve).
+
+    Shares `SolvedScale`'s design -- K(phi) Chebyshev + B(phi) s^2 decay + even-l
+    SH absorption -- but the coefficients are `nn.Parameter`s fit by the optimizer
+    (log-link; LP applied as `/lp` outside). All features are even/granularity-safe,
+    so the scale cannot absorb the Bijvoet difference at any capacity.
+
+    With `hidden > 0` the linear head is replaced by an MLP over the SAME even
+    features: a conditioned even-by-construction nonlinear scale (stabilize it with
+    trainer gradient clipping + the zero-init head here -- the sim's load-bearing
+    knobs). Optional ADDITIVE terms supply the exotic coordinates the smooth EM
+    solve structurally cannot represent: a per-image embedding (serial/stills) and
+    Fourier(wavelength) modes (Laue/pink-beam). Both are Friedel-neutral (mates
+    share an image; the wavelength term is shared by the linear head).
+    """
+
+    def __init__(
+        self,
+        frame_min: float = 0.0,
+        frame_max: float = 1000.0,
+        k_degree: int = 6,
+        decay_degree: int = 2,
+        n_absorption: int = 0,
+        hidden: int = 0,
+        n_layers: int = 2,
+        n_images: int = 0,
+        lambda_modes: int = 0,
+        lambda_min: float = 0.0,
+        lambda_max: float = 1.0,
+        head_init_std: float = 0.0,
+    ):
+        super().__init__()
+        self.k_degree = k_degree
+        self.decay_degree = decay_degree
+        self.n_absorption = int(n_absorption)
+        self.n_images = int(n_images)
+        self.lambda_modes = int(lambda_modes)
+
+        frame_mid = (frame_min + frame_max) / 2.0
+        frame_half = max((frame_max - frame_min) / 2.0, 1.0)
+        self.register_buffer("frame_mid", torch.tensor(frame_mid))
+        self.register_buffer("frame_half", torch.tensor(frame_half))
+
+        n_feat = (k_degree + 1) + (decay_degree + 1) + self.n_absorption
+        self.n_feat = n_feat
+        if hidden > 0:
+            layers: list[nn.Module] = []
+            in_dim = n_feat
+            for _ in range(n_layers):
+                layers += [nn.Linear(in_dim, hidden), nn.SiLU()]
+                in_dim = hidden
+            layers.append(nn.Linear(in_dim, 1))
+            self.head = nn.Sequential(*layers)
+            last = self.head[-1]
+            nn.init.zeros_(last.bias)
+        else:
+            self.head = nn.Linear(n_feat, 1, bias=False)
+            last = self.head
+        # Zero-init the output head so log_scale starts at 0 -> scale starts at the
+        # known 1/lp; per-HKL mu is fit first (the sim's stable trajectory).
+        if head_init_std > 0.0:
+            nn.init.normal_(last.weight, std=head_init_std)
+        else:
+            nn.init.zeros_(last.weight)
+
+        if self.n_images > 0:
+            self.image_embed = nn.Embedding(self.n_images, 1)
+            nn.init.zeros_(self.image_embed.weight)
+        if self.lambda_modes > 0:
+            self.register_buffer("lambda_min", torch.tensor(float(lambda_min)))
+            self.register_buffer(
+                "lambda_span", torch.tensor(max(lambda_max - lambda_min, 1e-6))
+            )
+            self.lambda_head = nn.Linear(2 * self.lambda_modes, 1, bias=False)
+            nn.init.zeros_(self.lambda_head.weight)
+
+    def _features(
+        self, frame: Tensor, s_sq: Tensor, absorption: Tensor | None
+    ) -> Tensor:
+        x = ((frame - self.frame_mid) / self.frame_half).clamp(-1.0, 1.0)
+        tk = _chebyshev(x, self.k_degree)
+        tb = _chebyshev(x, self.decay_degree) * s_sq.unsqueeze(-1)
+        parts = [tk, tb]
+        if self.n_absorption:
+            if absorption is None or absorption.shape[-1] != self.n_absorption:
+                got = None if absorption is None else absorption.shape[-1]
+                raise ValueError(
+                    f"LinearScale expects {self.n_absorption} absorption columns, "
+                    f"got {got}; check scale_absorption_lmax / absorption_sh."
+                )
+            parts.append(absorption)
+        return torch.cat(parts, dim=-1)
+
+    def _lambda_features(self, wavelength: Tensor) -> Tensor:
+        lam = ((wavelength - self.lambda_min) / self.lambda_span).clamp(0.0, 1.0)
+        lam = lam * (2.0 * math.pi)
+        feats = []
+        for k in range(1, self.lambda_modes + 1):
+            feats += [torch.sin(k * lam), torch.cos(k * lam)]
+        return torch.stack(feats, dim=-1)
+
+    def forward(
+        self,
+        frame: Tensor,
+        s_sq: Tensor,
+        absorption: Tensor | None = None,
+        image: Tensor | None = None,
+        wavelength: Tensor | None = None,
+    ) -> Tensor:
+        log_scale = self.head(self._features(frame, s_sq, absorption)).squeeze(-1)
+        if self.n_images > 0:
+            if image is None:
+                raise ValueError("LinearScale needs an image id (scale_n_images>0)")
+            log_scale = log_scale + self.image_embed(image).squeeze(-1)
+        if self.lambda_modes > 0:
+            if wavelength is None:
+                raise ValueError(
+                    "LinearScale needs a wavelength (scale_lambda_modes>0)"
+                )
+            log_scale = log_scale + self.lambda_head(
+                self._lambda_features(wavelength)
+            ).squeeze(-1)
+        return torch.exp(log_scale.clamp(-8.0, 8.0))

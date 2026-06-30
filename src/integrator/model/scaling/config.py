@@ -69,13 +69,27 @@ class MergingIntegratorCfg:
     d_min: float = 1.0
     scale_mlp: bool = True
 
-    scale_mode: Literal["mlp", "chebyshev", "coarse", "solved"] | None = None
+    scale_mode: (
+        Literal["mlp", "chebyshev", "coarse", "solved", "linear"] | None
+    ) = None
     scale_decay_degree: int = 0  # B(phi) Chebyshev degree (0 = global B)
     scale_ridge: float = 1.0e-3  # ridge for the solved-scale least squares
     scale_solve_warmup: int = 2  # epochs before the first EM scale solve
 
     scale_absorption_lmax: int = 0
     scale_absorption_even_only: bool = True
+
+    # Learnable (SGD-trained) "linear" scale: the solved design fit by Adam.
+    # hidden=0 -> linear GLM (recommended default); hidden>0 -> a conditioned
+    # even-MLP head over the same Friedel-safe features. Exotic coordinates:
+    # n_images>0 adds a per-image embedding (stills, keyed on imageset_id);
+    # lambda_modes>0 adds Fourier(wavelength) terms (Laue, needs a wavelength col).
+    scale_linear_hidden: int = 0
+    scale_linear_layers: int = 2
+    scale_n_images: int = 0
+    scale_lambda_modes: int = 0
+    scale_lambda_min: float = 0.0
+    scale_lambda_max: float = 1.0
     scale_degree: int = 5
     scale_mlp_hidden: int = 64
     scale_mlp_layers: int = 2
