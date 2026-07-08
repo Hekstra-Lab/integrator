@@ -318,7 +318,6 @@ workflows/mfx101555026/
     diagnostics/
       compare_qi_25files.py
       plot_qi_meeting_25files.py
-      compare_qp_mean_three_models_25files.py
       inspect_mfx_shoeboxes.py
       inspect_qp_mean_profiles.py
 ```
