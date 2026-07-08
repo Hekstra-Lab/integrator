@@ -52,10 +52,14 @@ class ChebyshevSpectrum(nn.Module):
 
     def design_matrix(self, wavelength: Tensor) -> Tensor:
         """(B,) -> (B, degree+1)"""
-        x = ((wavelength - self.lam_mid) / self.lam_scale).clamp(-1.0, 1.0)
+
+        lam_mid = self.lam_mid.to(device=wavelength.device, dtype=wavelength.dtype)
+        lam_scale = self.lam_scale.to(device=wavelength.device, dtype=wavelength.dtype)
+        x = ((wavelength - lam_mid) / lam_scale).clamp(-1.0, 1.0)
         return torch.stack(self._chebyshev(x, self.degree), dim=-1)
 
     def get_log_G(self, wavelength: Tensor) -> Tensor:
         """(B,) -> (B,)"""
         phi = self.design_matrix(wavelength)
-        return phi @ self.c
+        c = self.c.to(device=phi.device, dtype=phi.dtype)
+        return phi @ c
