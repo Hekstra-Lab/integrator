@@ -1,0 +1,37 @@
+mode: monochromatic
+
+integrator:
+  name: hierarchical
+  args:
+    encoder_out: 32
+    mc_samples: 20
+
+optimizer:
+  lr: 0.001
+  weight_decay: 0.0
+
+data_loader:
+  args:
+    data_dir: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_r0269_012_rg058_with_d_125
+    batch_size: 1024
+    validation_split: 0.2
+    num_workers: 4
+    transform: standardization
+    resolution_cutoff: null
+
+loss:
+  name: monochromatic_wilson
+  args:
+    observation_likelihood: student_t
+    init_obs_scale: 10.0
+    student_t_df: 4.0
+
+trainer:
+  max_epochs: 25
+  accelerator: gpu
+  devices: 1
+  gradient_clip_val: 1.0
+  check_val_every_n_epoch: 1
+
+checkpoint:
+  save_top_k: -1

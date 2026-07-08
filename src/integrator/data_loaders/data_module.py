@@ -222,9 +222,22 @@ class RotationDataModule(pl.LightningDataModule):
         masks = masks[~all_dead]
         reference = {k: v[~all_dead] for k, v in reference.items()}
 
-        counts, masks, reference = _remove_flagged_variance(
-            counts, masks, reference
-        )
+        if "intensity.prf.variance" in reference:
+            counts, masks, reference = _remove_flagged_variance(
+                counts,
+                masks,
+                reference,
+                filter_key="intensity.prf.variance",
+            )
+        elif "intensity.sum.variance" in reference:
+            counts, masks, reference = _remove_flagged_variance(
+                counts,
+                masks,
+                reference,
+                filter_key="intensity.sum.variance",
+            )
+        else:
+            logger.info("No intensity variance key found; skipping variance filtering")
 
         # Apply resolution cutoff before standardization
         if self.resolution_cutoff is not None:

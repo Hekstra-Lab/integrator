@@ -35,10 +35,15 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
-import torch
 from numpy.lib.format import open_memmap
 
+try:
+    import torch
+except ModuleNotFoundError:
+    torch = None
+
 from integrator.io import refl_as_pt, save_data
+from dials.array_family import flex
 
 # re to parse image numbers from laue-dials filenames
 _TRAILING_INT_RE = re.compile(r"_(\d+)\.[A-Za-z0-9]+$")
@@ -59,6 +64,50 @@ def parse_args():
         action="store_true",
         help="extract from laue-dials single-frame stills instead of a "
         "rotation sequence",
+    )
+
+    
+    #Thao: added MFX mode to process cctbx.xfel integrated refl/expt pairs for stills.
+    parser.add_argument(
+        "--mfx",
+        action="store_true",
+        help="Process MFX/cctbx.xfel serial stills output using *_integrated.refl/expt pairs.",
+    )
+
+    parser.add_argument(
+        "--mfx-pattern",
+        default="idx-data_*_integrated.refl",
+        help="Glob pattern for MFX integrated reflection files inside data_dir.",
+    )
+
+    #Thao: Added start and max file arguments to allow batching of MFX integrated files for large datasets.
+    parser.add_argument(
+        "--start-file",
+        type=int,
+        default=0,
+        help="Starting index in the sorted MFX integrated file list.",
+    )
+
+    #Thao: Added max-files argument to allow batching of MFX integrated files for large datasets.
+    parser.add_argument(
+        "--max-files",
+        type=int,
+        default=None,
+        help="Maximum number of MFX integrated files to process.",
+    )
+
+    #Thao: Added detector-mask argument to allow users to provide a cctbx/DIALS detector mask file for MFX mode.
+    parser.add_argument(
+        "--detector-mask",
+        "--mask",
+        dest="detector_mask",
+        default=None,
+        help=(
+            "Optional cctbx/DIALS detector mask file for MFX mode. "
+            "Example: hot_lines_combined5.mask. The file is loaded with "
+            "libtbx.easy_pickle and should contain one boolean mask per panel, "
+            "where True means good pixel and False means bad/masked pixel."
+        ),
     )
 
     common = parser.add_argument_group("common options")
@@ -162,6 +211,17 @@ def parse_args():
         type=int,
         default=10_000,
     )
+
+    #Thao: Added write-chunk-size argument to control how many shoeboxes are kept in memory before writing a chunk folder to disk in MFX mode.
+    common.add_argument(
+        "--write-chunk-size",
+        type=int,
+        default=10_000,
+        help=(
+            "MFX mode: number of shoeboxes to keep in memory before "
+            "writing one chunk folder to disk."
+        ),
+    )
     common.add_argument(
         "--test-fraction",
         type=float,
@@ -193,21 +253,781 @@ def _require(args, names):
 
 def main():
     args = parse_args()
-    if args.laue:
+
+    if args.mfx: 
+        run_mfx(args)
+    elif args.laue:
         run_laue(args)
     else:
         run_dials(args)
 
+
+# Example MFX test command used during development.
+#
+# cd /sdf/home/t/thaoh/s3df_practice/integrator
+# export PYTHONPATH=/sdf/home/t/thaoh/s3df_practice/integrator/src:$PYTHONPATH
+#
+# dials.python src/integrator/cli/make_shoeboxes.py \
+#   --mfx \
+#   --data-dir /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/outputs/r0269/012_rg058/out \
+#   --out-dir /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_test_masked \
+#   --mfx-pattern "idx-data_36001_integrated.refl" \
+#   --detector-mask /sdf/data/lcls/ds/mfx/mfx101555026/results/pam/hot_lines_combined5.mask \
+#   --w 25 \
+#   --h 25 \
+#   --d 1 \
+#   --counts-dtype float32 \
+#   --no-mask-overlap \
+#   --no-stats
+#
+# Why dials.python? It runs Python with the DIALS/cctbx environment loaded.
+# Why PYTHONPATH? It lets Python find this local integrator source tree.
+
+
+def run_mfx(args):
+    """Create an integrator-style shoebox dataset from MFX/cctbx.xfel outputs.
+
+    Expected input folder:
+        args.data_dir should point to a cctbx.xfel `out/` folder, for example:
+
+            /.../outputs/r0269/012_rg058/out
+
+    Expected files inside data_dir:
+        idx-data_XXXXX_integrated.refl
+        idx-data_XXXXX_integrated.expt
+
+    Main idea:
+        - The .refl file gives reflection metadata: panel, bbox, Miller index,
+          intensity, background, etc.
+        - The .expt file lets dxtbx load the actual detector pixels.
+        - For a fixed-size integrator dataset, we crop a fixed window centered
+          on xyzcal.px from the correct detector panel.
+
+    Notes for this first prototype:
+        - MFX still images should use --d 1.
+        - Existing MFX integrated bbox values can have different sizes, so this
+          function uses --w/--h fixed windows around xyzcal.px instead of
+          stacking variable-size integration bboxes.
+        - Edge reflections are padded with zeros and masked False where pixels
+          fall outside the panel boundary.
+
+    Streaming/chunking update:
+        - Instead of storing every shoebox in Python lists until the end, this
+          version writes chunk folders such as chunk_00000, chunk_00001, ...
+          during extraction.
+        - After all files are processed, the chunk folders are merged into final
+          counts.npy, masks.npy, and metadata.npy.
+        - This keeps memory lower during the MFX extraction loop.
+    """
+    # To read cctbx.xfel integrated .refl/.expt files, we need DIALS and dxtbx.
+    # flex provides the DIALS array objects used by reflection tables.
+    from dials.array_family import flex
+
+    # ExperimentListFactory loads the .expt experiment list and lets us access
+    # the underlying imageset/raw pixel data for the MFX stills.
+    from dxtbx.model.experiment_list import ExperimentListFactory
+
+    from integrator.io import write_dataset_yaml
+
+    # MFX/cctbx.xfel output files are still images, so depth should be 1.
+    if args.d != 1:
+        raise ValueError(f"--d must be 1 for MFX still-image extraction (got {args.d})")
+
+    # Fixed-size windows need a clear center pixel.
+    if args.w % 2 == 0 or args.h % 2 == 0:
+        raise ValueError(f"--w and --h must be odd (got w={args.w}, h={args.h})")
+
+    # MFX mode only needs a folder of integrated refl/expt pairs.
+    _require(args, ["data_dir"])
+
+    # Convert input/output paths from strings to Path objects.
+    data_dir = Path(args.data_dir)
+    out_dir = Path(args.out_dir or "out_dir")
+
+    # Create output folder if needed.
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Find all integrated reflection tables in the cctbx.xfel out/ folder.
+    # Example exact match: "idx-data_36001_integrated.refl"
+    # Example wildcard match: "idx-data_*_integrated.refl"
+    #
+    # Path.glob(...) searches only inside data_dir for names matching the pattern.
+    # sorted(...) makes the order deterministic.
+    refl_paths = sorted(data_dir.glob(args.mfx_pattern))
+    if not refl_paths:
+        raise SystemExit(f"No MFX integrated reflection files found in {data_dir}")
+
+    # Process only a slice of the sorted file list when batching MFX jobs.
+    # Example: --start-file 25 --max-files 25 processes files 25 through 49.
+    start = args.start_file
+    stop = None if args.max_files is None else start + args.max_files
+    refl_paths = refl_paths[start:stop]
+    if not refl_paths:
+        raise SystemExit(
+            f"No MFX integrated reflection files selected after slicing "
+            f"start={args.start_file}, max_files={args.max_files}"
+        )
+
+    # Storage dtype. Use float32 by default because Jungfrau/cctbx raw pixels can
+    # be floating point and may include negative values.
+    counts_dtype = np.dtype(args.counts_dtype or "float32")
+
+    # Optional real detector mask for MFX data.
+    #
+    # Pam's/cctbx mask file loads as a tuple of 32 flex.bool arrays, one per
+    # Jungfrau panel. Each panel mask has the same shape as the corresponding
+    # raw detector panel, e.g. (514, 1030). In the inspected file, about 98.7%
+    # of pixels were True, so we treat True as good/usable and False as
+    # bad/hot/masked.
+    #
+    # If no detector mask is supplied, the MFX path falls back to the simpler
+    # finite/padding mask: True for finite pixels inside the panel, False for
+    # outside-panel padding or NaN/inf.
+    detector_masks = None
+    if args.detector_mask is not None:
+        from libtbx import easy_pickle
+
+        detector_masks = easy_pickle.load(args.detector_mask)
+        print(f"loaded detector mask with {len(detector_masks)} panel mask(s): {args.detector_mask}")
+
+    # Chunk buffers.
+    # These replace the old full-run lists:
+    #   counts = []
+    #   masks = []
+    #   metadata_rows = []
+    #
+    # Each buffer stores only up to args.write_chunk_size shoeboxes. When the
+    # chunk is full, flush_chunk() writes it to disk and clears memory.
+    chunk_counts = []
+    chunk_masks = []
+    chunk_metadata_rows = []
+
+    # List of chunk folders written to disk. Used later by merge_mfx_chunks().
+    chunk_dirs = []
+
+    # Chunk counter: chunk_00000, chunk_00001, ...
+    chunk_id = 0
+
+    # Global row counter across the final merged dataset.
+    # This keeps refl_ids unique across chunks.
+    global_row = 0
+
+    # Number of shoeboxes to hold in memory before writing one chunk.
+    write_chunk_size = int(getattr(args, "write_chunk_size", 10_000))
+
+    def flush_chunk():
+        """Write current chunk buffers to disk and clear them from memory."""
+        nonlocal chunk_id, global_row
+        nonlocal chunk_counts, chunk_masks, chunk_metadata_rows
+
+        # Nothing to write.
+        if not chunk_counts:
+            return
+
+        # Create folder like chunk_00000.
+        chunk_dir = out_dir / f"chunk_{chunk_id:05d}"
+        chunk_dir.mkdir(parents=True, exist_ok=True)
+
+        # Stack chunk lists into arrays.
+        # counts_chunk shape: (n_chunk, d*h*w), usually (n_chunk, 625)
+        # masks_chunk shape:  (n_chunk, d*h*w), usually (n_chunk, 625)
+        counts_chunk = np.stack(chunk_counts)
+        masks_chunk = np.stack(chunk_masks).astype(np.bool_)
+
+        # Convert this chunk's row metadata into Luis-style dict.
+        # global_start tells the metadata helper where this chunk begins in the
+        # final merged dataset, so refl_ids stay unique after merging.
+        metadata_chunk = _mfx_metadata_rows_to_luis_dict(
+            chunk_metadata_rows,
+            args.test_fraction,
+            global_start=global_row,
+        )
+
+        # Save this chunk to disk.
+        np.save(chunk_dir / args.counts_fname, counts_chunk)
+        np.save(chunk_dir / args.masks_fname, masks_chunk)
+        np.save(chunk_dir / "metadata.npy", metadata_chunk)
+
+        # Remember this chunk for final merge.
+        chunk_dirs.append(chunk_dir)
+
+        n_chunk = counts_chunk.shape[0]
+        print(f"wrote chunk {chunk_id}: {n_chunk} shoeboxes")
+
+        # Advance global row counter.
+        global_row += n_chunk
+
+        # Move to next chunk ID.
+        chunk_id += 1
+
+        # Clear memory for next chunk.
+        chunk_counts = []
+        chunk_masks = []
+        chunk_metadata_rows = []
+
+    n_files = 0
+    n_reflections_seen = 0
+    n_reflections_saved = 0
+
+    for refl_path in refl_paths:
+        # Each integrated .refl should have a matching integrated .expt.
+        expt_path = _matching_mfx_expt(refl_path)
+        n_files += 1
+
+        # Load reflection table metadata.
+        #
+        # A single integrated .refl file can contain many reflection rows.
+        # In the first test file, idx-data_36001_integrated.refl had 415 rows.
+        # Example row information looked like:
+        #   row 0: panel=31, xyzcal.px=(777.30, 384.75, 0.0),
+        #          intensity.sum.value=16.07, ...
+        reflections = flex.reflection_table.from_file(str(refl_path))
+
+        # Count reflection rows, not files. One file may add hundreds of rows.
+        n_reflections_seen += len(reflections)
+
+        # Check required columns early so errors are easier to understand.
+        required_cols = [
+            "panel",
+            "xyzcal.px",
+            "miller_index",
+            "intensity.sum.value",
+            "intensity.sum.variance",
+            "background.sum.value",
+            "background.sum.variance",
+        ]
+        missing = [col for col in required_cols if col not in reflections]
+        if missing:
+            raise SystemExit(f"{refl_path} is missing required column(s): {missing}")
+
+        # Load experiment and connect to underlying image source.
+        # check_format=True is what lets dxtbx read the real pixels through the
+        # imageset/data.loc mechanism.
+        experiments = ExperimentListFactory.from_json_file(
+            str(expt_path),
+            check_format=True,
+        )
+
+        if len(experiments) != 1:
+            raise SystemExit(
+                f"MFX prototype expects exactly 1 experiment per file, got "
+                f"{len(experiments)} in {expt_path}"
+            )
+
+        # raw is a tuple of panel images for one event/image:
+        #   raw[0], raw[1], ..., raw[31]
+        #
+        # Mental model:
+        #   imageset = the book / file access instructions
+        #   raw      = one page/image loaded from that book
+        #   panel    = one detector tile/region on that page
+        #   pixel    = one number inside that tile
+        #
+        # experiments[0].imageset is a loader/access object, not pixels yet.
+        # get_raw_data(0) loads the actual pixels for image index 0 inside this
+        # one-image imageset. For this MFX Jungfrau data, it returns 32 panel
+        # flex arrays, each with shape about (514, 1030).
+        raw = experiments[0].imageset.get_raw_data(0)
+
+        # If a detector mask was provided, it should have one mask per raw
+        # detector panel. For this MFX Jungfrau case, both should have length 32.
+        if detector_masks is not None and len(detector_masks) != len(raw):
+            raise SystemExit(
+                f"detector mask panel count ({len(detector_masks)}) does not "
+                f"match raw panel count ({len(raw)}) for {expt_path}"
+            )
+
+        # Try to record the event/image index stored in the ImageSet, if present.
+        # For example, idx-data_36001_integrated.expt had single_file_indices=[36001].
+        image_index = _mfx_image_index_from_expt_json(expt_path)
+
+        # retrieve wavelength from the beam object in the experiment. If it fails, set wavelength to NaN.
+        try:
+            wavelength = float(experiments[0].beam.get_wavelength())
+        except Exception:
+            wavelength = np.nan
+
+        # Loop over reflections in this event.
+        for i in range(len(reflections)):
+            panel_id = int(reflections["panel"][i])
+
+            # xyzcal.px is the DIALS/cctbx calculated pixel position from the
+            # refined geometry/model. It is not an ML prediction from integrator.
+            # We use it as the center of the fixed shoebox crop.
+            xyz = reflections["xyzcal.px"][i]
+            x_center = float(xyz[0])
+            y_center = float(xyz[1])
+
+            if panel_id < 0 or panel_id >= len(raw):
+                # Bad panel ID; skip this reflection.
+                continue
+
+            panel_image = raw[panel_id]
+
+            # If a detector mask was supplied, select the mask for this same
+            # panel. The raw pixel panel and mask panel should have matching
+            # shapes, e.g. both (514, 1030).
+            panel_mask_np = None
+            if detector_masks is not None:
+                panel_mask_np = detector_masks[panel_id].as_numpy_array().astype(
+                    bool,
+                    copy=False,
+                )
+
+            # Crop a fixed-size window centered on xyzcal.px.
+            # Returns a 2D counts array with shape (args.h, args.w) and a mask.
+            # If panel_mask_np is provided, the mask combines:
+            #   finite pixel values AND detector-good pixels.
+            # If panel_mask_np is None, the mask only checks finite pixels and
+            # outside-panel padding.
+            shoebox, mask, fixed_bbox = _crop_mfx_fixed_shoebox(
+                panel_image=panel_image,
+                x_center=x_center,
+                y_center=y_center,
+                width=args.w,
+                height=args.h,
+                panel_mask_np=panel_mask_np,
+            )
+
+            # Flatten the fixed-size 2D shoebox/mask into one 1D row.
+            # Pixel values stay the same; only the shape changes.
+            # Example: (25, 25) -> (625,).
+            #
+            # Streaming update:
+            #   append to the current chunk buffer, not to a full-run list.
+            chunk_counts.append(shoebox.reshape(-1).astype(counts_dtype, copy=False))
+            chunk_masks.append(mask.reshape(-1))
+            n_reflections_saved += 1
+
+            # Existing integration bbox is useful metadata, but it may not have
+            # the fixed --w/--h shape. Keep it if the column exists.
+            integration_bbox = tuple(reflections["bbox"][i]) if "bbox" in reflections else None
+
+            # MFX metadata is built manually, so compute d-spacing here from
+            # the experiment crystal/unit cell and the reflection Miller index.
+            miller_index = tuple(int(v) for v in reflections["miller_index"][i])
+            d_spacing = _mfx_d_spacing(experiments[0], miller_index)
+
+            # Add one metadata row for this shoebox.
+            # background.mean is optional in general, but your checked MFX
+            # integrated.refl files contain it, so copy it when present.
+            chunk_metadata_rows.append(
+                {
+                    "source_refl": refl_path.name,
+                    "source_expt": expt_path.name,
+                    "image_index": image_index,
+                    "reflection_id": i,
+                    "panel": panel_id,
+                    "fixed_bbox": tuple(fixed_bbox),
+                    "integration_bbox": integration_bbox,
+                    "detector_mask": str(args.detector_mask) if args.detector_mask else None,
+                    "xyzcal_px": tuple(float(v) for v in reflections["xyzcal.px"][i]),
+                    "xyzobs_px_value": tuple(float(v) for v in reflections["xyzobs.px.value"][i])
+                    if "xyzobs.px.value" in reflections
+                    else None,
+                    "miller_index": miller_index,
+                    "d": d_spacing,
+                    "intensity_sum_value": float(reflections["intensity.sum.value"][i]),
+                    "intensity_sum_variance": float(reflections["intensity.sum.variance"][i]),
+                    "background_sum_value": float(reflections["background.sum.value"][i]),
+                    "background_sum_variance": float(reflections["background.sum.variance"][i]),
+                    "background.mean": (
+                        float(reflections["background.mean"][i])
+                        if "background.mean" in reflections
+                        else np.nan
+                    ),
+                    "wavelength": wavelength,
+                }
+            )
+
+            # If the current chunk is full, write it to disk and clear memory.
+            if len(chunk_counts) >= write_chunk_size:
+                flush_chunk()
+
+        # imageset is the loader/cache object. clear_cache() tells it to forget
+        # loaded image pixels after we finish this event, so memory does not grow
+        # while processing many .refl/.expt pairs.
+        experiments[0].imageset.clear_cache()
+
+    # Write the final partial chunk, if any.
+    flush_chunk()
+
+    if not chunk_dirs:
+        raise SystemExit("No MFX shoeboxes were extracted; check input files and bbox/panel data.")
+
+    counts_path = out_dir / args.counts_fname
+    masks_path = out_dir / args.masks_fname
+    metadata_path = out_dir / "metadata.npy"
+
+    # Merge all chunk folders into final counts.npy, masks.npy, metadata.npy.
+    # merge_mfx_chunks writes counts/masks through memmap so the final merge does
+    # not need to hold all pixel arrays in memory at once.
+    n_saved = merge_mfx_chunks(
+        chunk_dirs=chunk_dirs,
+        out_dir=out_dir,
+        counts_fname=args.counts_fname,
+        masks_fname=args.masks_fname,
+    )
+
+    stats = None
+
+    # concentration.npy is created only when we do NOT use: --no-stats
+    if not args.no_stats:
+        stats = _raw_stats_from_memmap(counts_path, masks_path, chunk=args.stats_chunk)
+
+        _save_concentration_from_memmap(
+            counts_path=counts_path,
+            out_dir=out_dir,
+            chunk=args.stats_chunk,
+        )
+        print("wrote concentration.npy")
+
+    # Write a simple dataset.yaml so the output folder has the expected dataset
+    # description. The metadata format may still need to be aligned with Luis's
+    # final data-loader expectations.
+    write_dataset_yaml(
+        out_dir,
+        geometry={"d": args.d, "h": args.h, "w": args.w},
+        n_reflections=n_saved,
+        polychromatic=False,
+        anscombe=False,
+        files={
+            "counts": args.counts_fname,
+            "masks": args.masks_fname,
+            "reference": "metadata.npy",
+        },
+        crystal=None,
+        stats=stats,
+        refl_file=None,
+    )
+
+    print(f"processed {n_files} MFX integrated file(s)")
+    print(f"seen {n_reflections_seen} reflection(s)")
+    print(f"saved {n_reflections_saved} fixed-size shoebox(es)")
+    print(f"wrote {counts_path}")
+    print(f"wrote {masks_path}")
+    print(f"wrote {metadata_path}")
+    print(f"wrote dataset.yaml under {out_dir}")
+
+#Thao: Added a helper function to find the matching .expt file for a given MFX integrated reflection table path.
+def _matching_mfx_expt(refl_path: Path) -> Path:
+    # Given an MFX integrated reflection table path, return the matching .expt path.
+    # Example:
+    #   idx-data_36001_integrated.refl -> idx-data_36001_integrated.expt
+    expt_path = refl_path.with_suffix(".expt")
+    if not expt_path.exists():
+        raise SystemExit(
+            f"could not find matching .expt for {refl_path} (expected {expt_path})"
+        )
+    return expt_path
+
+#Thao: added a helper function to extract the first single_file_indices value from an MFX .expt file. 
+# This is only metadata for tracking/debugging. dxtbx can still load the pixels through ExperimentListFactory even if this value is absent.
+def _mfx_image_index_from_expt_json(expt_path: Path):
+    """Return the first single_file_indices value from an MFX .expt file.
+
+    This is only metadata for tracking/debugging. dxtbx can still load the
+    pixels through ExperimentListFactory even if this value is absent.
+    """
+    import json
+
+    # A DIALS .expt file is stored in a JSON-like text format. We only read it
+    # here to record metadata such as the event/image index; pixel loading still
+    # happens through ExperimentListFactory above.
+    with open(expt_path) as f:
+        data = json.load(f)
+
+    # Example .expt structure:
+    #   {
+    #     "imageset": [
+    #       {
+    #         "images": ["/.../data.loc"],
+    #         "single_file_indices": [36001]
+    #       }
+    #     ]
+    #   }
+    try:
+        # Example return value: 36001 from {"single_file_indices": [36001]}.
+        return int(data["imageset"][0]["single_file_indices"][0])
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
+def _mfx_d_spacing(experiment, miller_index):
+    """Compute d-spacing for one MFX reflection from the experiment crystal."""
+    
+    #Example expt file:
+    # {
+    #   "experiment": [
+    #     {
+    #       "crystal": 0,
+    #       "detector": 0,
+    #       "beam": 0,
+    #       "imageset": 0
+    #     }
+    #   ],
+    #
+    #   "crystal": [
+    #     {
+    #       "real_space_a": [...],
+    #       "real_space_b": [...],
+    #       "real_space_c": [...],
+    #       "space_group_hall_symbol": "..."
+    #     }
+    #   ],
+        
+
+    unit_cell = experiment.crystal.get_unit_cell()
+
+    #converts miller_index into a clean tuple of three integers: (h,k,l)
+    hkl = tuple(int(v) for v in miller_index)
+    return float(unit_cell.d(hkl))
+
+
+def _crop_mfx_fixed_shoebox(
+    panel_image,
+    x_center,
+    y_center,
+    width,
+    height,
+    panel_mask_np=None,
+):
+    """Crop/pad one fixed-size MFX shoebox from one detector panel.
+
+    Parameters
+    ----------
+    panel_image
+        scitbx/DIALS flex 2D array for one detector panel. Use
+        panel_image.all() to get shape because this is not a NumPy array.
+    
+    x_center, y_center
+        Predicted reflection center in pixel coordinates from xyzcal.px.
+    
+    width, height
+        Desired fixed output size from --w and --h.
+    
+    panel_mask_np
+        Optional NumPy boolean detector mask for the same panel as panel_image.
+        Shape should match panel_image.as_numpy_array().shape.
+
+        Convention used here:
+            True  = good/usable detector pixel
+            False = bad/hot/masked detector pixel
+
+        If panel_mask_np is provided, the output shoebox mask is:
+            finite detector pixel && good detector-mask pixel
+
+        If panel_mask_np is None, the output shoebox mask is only:
+            finite detector pixel inside the panel
+
+    Returns
+    -------
+    shoebox : np.ndarray
+        2D pixel array with shape (height, width). Pixels outside the panel are
+        zero-padded.
+    mask : np.ndarray
+        Boolean array with shape (height, width).
+
+        True means this output pixel is valid for training/integration.
+        False means this pixel is outside-panel padding, NaN/inf, or marked bad
+        by the detector mask.
+    fixed_bbox : tuple[int, int, int, int, int, int]
+        The full requested bbox in DIALS order: (x0, x1, y0, y1, z0, z1).
+    """
+
+    """
+            Full detector panel image
+        example shape: 514 x 1030
+        ↓
+
+        Predicted reflection center
+        from xyzcal.px: x_center, y_center
+        ↓
+
+        Request fixed 25 x 25 crop around center
+        ↓
+
+        Check if requested crop is fully inside detector panel
+        ↓
+
+        If fully inside:
+        copy real 25 x 25 detector pixels
+        mask = True for finite/good pixels
+
+        If near detector edge:
+        requested 25 x 25 box partly falls outside panel
+        only copy available real detector pixels
+        missing outside-panel pixels stay zero
+        mask = False for missing/outside pixels
+        ↓
+
+        Output fixed shoebox
+        counts[i] shape: 25 x 25 or flattened 625
+        mask[i] shape: 25 x 25 or flattened 625
+        ↓
+
+        Encoder
+        reads the 25 x 25 shoebox
+        ↓
+
+        Feature vector
+        32 learned numbers
+        ↓
+
+        Posterior / surrogate distributions applied here:
+
+        qp branch:
+            learned_basis_profile
+            predicts spot/profile shape
+
+        qi branch:
+            Gamma / LogNormal / FoldedNormal
+            predicts reflection intensity
+
+        qbg branch:
+            Gamma / LogNormal / FoldedNormal
+            predicts background
+        ↓
+
+        Combine qp + qi + qbg
+        ↓
+
+        Predicted pixels / predicted shoebox
+        ↓
+
+        Observation likelihood applied here:
+        Normal / Poisson / StudentT
+        compares predicted pixels with real input pixels
+        ↓
+
+        Loss
+    
+    """
+    # flex arrays use .all() for shape. For this data: (514, 1030).
+    panel_h, panel_w = panel_image.all()
+
+    # Convert once to NumPy so ordinary slicing/assignment works.
+    panel_np = panel_image.as_numpy_array()
+
+    # If a detector mask is supplied, make sure it lines up with this panel.
+    # This catches mistakes such as using a mask from a different detector size.
+    if panel_mask_np is not None and panel_mask_np.shape != panel_np.shape:
+        raise ValueError(
+            "panel mask shape does not match panel image shape: "
+            f"mask={panel_mask_np.shape}, image={panel_np.shape}"
+        )
+
+    # Example: for a 25x25 shoebox, nx=12 and ny=12.
+    nx = width // 2
+    ny = height // 2
+
+    # Center the fixed window on the predicted centroid.
+    xc = int(np.floor(x_center))
+    yc = int(np.floor(y_center))
+
+    x0 = xc - nx
+    x1 = x0 + width
+    y0 = yc - ny
+    y1 = y0 + height
+
+    fixed_bbox = (x0, x1, y0, y1, 0, 1)
+
+    # Clip source coordinates to the actual panel bounds.
+    # This avoids negative or out-of-range NumPy indexing.
+    # Example requested y range: -3:22 -> clipped source y range: 0:22.
+    xs0 = max(0, x0)
+    xs1 = min(panel_w, x1)
+    ys0 = max(0, y0)
+    ys1 = min(panel_h, y1)
+
+    # Allocate full fixed-size output. Areas outside the detector stay zero and
+    # mask False.
+    shoebox = np.zeros((height, width), dtype=panel_np.dtype)
+    mask = np.zeros((height, width), dtype=bool)
+
+    # If the requested box has no overlap with the panel at all, return all-zero data
+    # and an all-False mask.
+    if xs0 >= xs1 or ys0 >= ys1:
+        return shoebox, mask, fixed_bbox
+    
+    # Destination offsets inside the fixed-size shoebox.
+    #
+    # x0/y0 are the requested crop start coordinates.
+    # xs0/ys0 are the clipped crop start coordinates inside the real detector panel.
+    #
+    # Normal case:
+    #   x0 = 100, xs0 = 100
+    #   xd0 = 100 - 100 = 0
+    #   Real pixels start at column 0 in the 25x25 shoebox.
+    #
+    # Edge case:
+    #   x0 = -5, xs0 = 0
+    #   xd0 = 0 - (-5) = 5
+    #   The first 5 columns are outside-panel padding.
+    #   Real pixels start at column 5 in the 25x25 shoebox.
+
+    xd0 = xs0 - x0
+    yd0 = ys0 - y0
+
+    # panel_np is the full detector panel image as a NumPy array.
+    # Example panel shape: (y, x) = (514, 1030).
+    #
+    # patch is the cropped region of the panel that fits within the fixed bbox.
+    # Example: panel_np[372:397, 765:790] -> patch.shape == (25, 25).
+    patch = panel_np[ys0:ys1, xs0:xs1]
+
+    # Place the available real pixels into the fixed-size shoebox. Any area that
+    # was outside the panel remains zero padding.
+    #
+    # Edge example:
+    #   shoebox[3:25, 0:25] = patch
+    #   rows 0:3 stay zero padding; rows 3:25 contain real detector pixels.
+
+
+    #paste the available real detector pixels into the correct location inside the fixed 25×25 shoebox.
+    shoebox[yd0 : yd0 + patch.shape[0], xd0 : xd0 + patch.shape[1]] = patch
+
+    # Basic validity mask: True only for normal finite numbers. This rejects
+    # NaN, +inf, and -inf values.
+    finite_patch = np.isfinite(patch)
+
+    if panel_mask_np is None:
+        # No real detector mask was provided. The mask only means:
+        #   finite pixel inside the detector panel.
+        mask_patch = finite_patch
+    else:
+        # Crop the detector mask using exactly the same source coordinates as
+        # the detector pixel patch. Because the slices are identical, patch and
+        # detector_mask_patch have the same shape.
+        detector_mask_patch = panel_mask_np[ys0:ys1, xs0:xs1]
+
+        # Combine the two masks element-by-element:
+        #   True  only if the pixel is finite AND detector mask says good.
+        #   False if the pixel is NaN/inf OR detector mask says bad.
+        mask_patch = finite_patch & detector_mask_patch
+
+    # Place the mask patch into the same position as the shoebox pixel patch.
+    # Outside-panel padding remains False.
+    mask[yd0 : yd0 + patch.shape[0], xd0 : xd0 + patch.shape[1]] = mask_patch
+    
+    # returns:
+    # shoebox: np.ndarray, shape (height, width), dtype same as detector pixels
+    # mask:    np.ndarray, shape (height, width), dtype bool
+    # fixed_bbox: tuple of ints, (x0, x1, y0, y1, 0, 1)
+    return shoebox, mask, fixed_bbox
 
 def _stats_from_memmap(
     counts_path: Path,
     masks_path: Path,
     chunk: int = 10_000,
 ) -> dict:
+    
     """Return (mean, var) of masked counts and their Anscombe transform.
 
     Streams the on-disk memmap in chunks; values are stored in dataset.yaml.
     """
+
+    #r: means read-only. NumPy reads chunks from disk as needed.
     counts = np.load(counts_path, mmap_mode="r")
     masks = np.load(masks_path, mmap_mode="r")
     n, _ = counts.shape
@@ -218,12 +1038,21 @@ def _stats_from_memmap(
         c = counts[i : i + chunk].astype(np.float64)
         m = masks[i : i + chunk]
         c = c * m
+
+        #c >= -0.375
+        #we have valid MFX counts include values like:-7, -115
+        # so for MFX Anscombe becomes invalid and produces nan.
         a = 2.0 * np.sqrt(c + 0.375)
         sum_c += c.sum()
         sumsq_c += (c * c).sum()
         sum_a += a.sum()
         sumsq_a += (a * a).sum()
         nel += c.size
+    
+    #raw mean
+    #raw variance
+    #anscombe mean
+    #anscombe variance
 
     mean_c = sum_c / nel
     var_c = sumsq_c / nel - mean_c * mean_c
@@ -234,6 +1063,256 @@ def _stats_from_memmap(
         "raw": [float(mean_c), float(var_c)],
         "anscombe": [float(mean_a), float(var_a)],
     }
+
+
+def _raw_stats_from_memmap(
+    counts_path: Path,
+    masks_path: Path,
+    chunk: int = 10_000,
+) -> dict:
+    """
+    one image -> many reflections/shoeboxes: counts.npy = shoeboxes from many images. 
+
+    Return raw mean/variance of over the whole counts.npy dataset
+
+    Ex: For 1500-file dataset: all shoeboxes from all 1500 files
+
+    MFX data can contain negative valid pixel values, so Anscombe stats are
+    skipped because sqrt(c + 0.375) can become invalid.
+    """
+    counts = np.load(counts_path, mmap_mode="r")
+    masks = np.load(masks_path, mmap_mode="r")
+
+    # n = number of shoeboxes. _ = pixels per shoebox, usually 625.
+    n, _ = counts.shape
+
+    sum_c = 0.0
+    sumsq_c = 0.0
+    nel = 0
+
+    for i in range(0, n, chunk):
+        c = counts[i : i + chunk].astype(np.float64)
+        m = masks[i : i + chunk]
+        c = c * m
+
+        sum_c += c.sum()
+        sumsq_c += (c * c).sum()
+        nel += c.size
+
+    mean_c = sum_c / nel
+    var_c = sumsq_c / nel - mean_c * mean_c
+
+    return {
+        "raw": [float(mean_c), float(var_c)],
+    }
+
+
+def merge_mfx_chunks(chunk_dirs, out_dir, counts_fname="counts.npy", masks_fname="masks.npy"):
+    """Merge MFX chunk folders into final counts.npy, masks.npy, metadata.npy.
+
+    Each chunk folder contains:
+        counts.npy
+        masks.npy
+        metadata.npy
+
+    Final output folder will contain:
+        counts.npy
+        masks.npy
+        metadata.npy
+
+    This function writes final counts/masks through memmap so it does not need
+    to hold all shoebox pixels in RAM at once during the merge.
+    """
+    chunk_dirs = list(chunk_dirs)
+    if not chunk_dirs:
+        raise RuntimeError("No chunks to merge.")
+
+    # First pass: inspect chunk shapes and dtypes.
+    # Example chunk counts shape: (10000, 625).
+    total_rows = 0
+    n_pixels = None
+    counts_dtype = None
+    metadata_list = []
+
+    for chunk_dir in chunk_dirs:
+        counts_chunk = np.load(chunk_dir / counts_fname, mmap_mode="r")
+        masks_chunk = np.load(chunk_dir / masks_fname, mmap_mode="r")
+
+        if n_pixels is None:
+            n_pixels = counts_chunk.shape[1]
+            counts_dtype = counts_chunk.dtype
+        elif counts_chunk.shape[1] != n_pixels:
+            raise ValueError(
+                f"chunk {chunk_dir} has {counts_chunk.shape[1]} pixels per row, "
+                f"expected {n_pixels}"
+            )
+
+        if masks_chunk.shape != counts_chunk.shape:
+            raise ValueError(
+                f"mask/counts shape mismatch in {chunk_dir}: "
+                f"counts={counts_chunk.shape}, masks={masks_chunk.shape}"
+            )
+
+        total_rows += counts_chunk.shape[0]
+        metadata = np.load(chunk_dir / "metadata.npy", allow_pickle=True).item()
+        metadata_list.append(metadata)
+
+    # Create final output arrays on disk.
+    counts_out = open_memmap(
+        out_dir / counts_fname,
+        mode="w+",
+        dtype=counts_dtype,
+        shape=(total_rows, n_pixels),
+    )
+    masks_out = open_memmap(
+        out_dir / masks_fname,
+        mode="w+",
+        dtype=np.bool_,
+        shape=(total_rows, n_pixels),
+    )
+
+    # Second pass: copy chunk arrays into the final arrays.
+    row0 = 0
+    for chunk_dir in chunk_dirs:
+        counts_chunk = np.load(chunk_dir / counts_fname, mmap_mode="r")
+        masks_chunk = np.load(chunk_dir / masks_fname, mmap_mode="r")
+
+        row1 = row0 + counts_chunk.shape[0]
+        counts_out[row0:row1] = counts_chunk
+        masks_out[row0:row1] = masks_chunk
+        row0 = row1
+
+    counts_out.flush()
+    masks_out.flush()
+    del counts_out, masks_out
+
+    # Merge metadata key-by-key.
+    # Metadata arrays are much smaller than counts/masks, so this part is fine
+    # to concatenate in memory for now.
+    merged_meta = {}
+    keys = metadata_list[0].keys()
+    for key in keys:
+        merged_meta[key] = np.concatenate([m[key] for m in metadata_list], axis=0)
+
+    np.save(out_dir / "metadata.npy", merged_meta)
+
+    return total_rows
+
+
+def _mfx_metadata_rows_to_luis_dict(metadata_rows, test_fraction, global_start=0):
+    """Convert MFX per-reflection metadata rows into Luis-style metadata.npy.
+
+    Luis's metadata.npy is a zero-dimensional object array containing one dict.
+    Each key maps to a NumPy array with one value per reflection.
+
+    Example:
+        metadata["panel"].shape == (N,)
+        metadata["H"].shape == (N,)
+        metadata["K"].shape == (N,)
+        metadata["L"].shape == (N,)
+
+    global_start:
+        Starting row index for this chunk in the full final dataset.
+        Example:
+            chunk 0 starts at 0
+            chunk 1 starts at 10000
+            chunk 2 starts at 20000
+    """
+    n = len(metadata_rows)
+
+    meta = {}
+
+    # Simple scalar columns.
+    # Use row.get(..., np.nan) so optional columns like background.mean do not
+    # crash if they are absent in some future MFX reflection table.
+    scalar_keys = [
+        "reflection_id",
+        "panel",
+        "d",
+        "intensity_sum_value",
+        "intensity_sum_variance",
+        "background_sum_value",
+        "background_sum_variance",
+        "background.mean",
+    ]
+
+    for key in scalar_keys:
+        meta[key] = np.array(
+            [row.get(key, np.nan) for row in metadata_rows],
+            dtype=np.float32,
+        )
+
+    # Match Luis-style names for intensity/background columns.
+    meta["intensity.sum.value"] = meta.pop("intensity_sum_value")
+    meta["intensity.sum.variance"] = meta.pop("intensity_sum_variance")
+    meta["background.sum.value"] = meta.pop("background_sum_value")
+    meta["background.sum.variance"] = meta.pop("background_sum_variance")
+
+    # Miller indices: Luis uses H, K, L.
+    miller = np.array(
+        [row["miller_index"] for row in metadata_rows],
+        dtype=np.float32,
+    )
+    meta["H"] = miller[:, 0]
+    meta["K"] = miller[:, 1]
+    meta["L"] = miller[:, 2]
+
+    # Fixed bbox: use the fixed shoebox bbox, because that aligns with counts/masks.
+    bbox = np.array(
+        [row["fixed_bbox"] for row in metadata_rows],
+        dtype=np.float32,
+    )
+    for j in range(6):
+        meta[f"bbox.{j}"] = bbox[:, j]
+
+    # xyzcal.px
+    xyzcal = np.array(
+        [row["xyzcal_px"] for row in metadata_rows],
+        dtype=np.float32,
+    )
+    for j in range(3):
+        meta[f"xyzcal.px.{j}"] = xyzcal[:, j]
+
+    # xyzobs.px.value, if available.
+    xyzobs = np.array(
+        [
+            row["xyzobs_px_value"]
+            if row["xyzobs_px_value"] is not None
+            else (np.nan, np.nan, np.nan)
+            for row in metadata_rows
+        ],
+        dtype=np.float32,
+    )
+    for j in range(3):
+        meta[f"xyzobs.px.value.{j}"] = xyzobs[:, j]
+
+    # this is_test follows Luis's convention: randomly flag a fraction of reflections as test.
+    # For example, if test_fraction=0.1, then about 10% of reflections will have is_test=True.
+    # global_start makes the split deterministic across chunks, matching the same
+    # RNG sequence as if all rows were processed together.
+    rng = np.random.default_rng(42)
+    is_test_all = rng.random(global_start + n)
+    meta["is_test"] = (is_test_all[global_start:] < test_fraction).astype(np.float32)
+
+    meta["wavelength"] = np.array(
+        [row.get("wavelength", np.nan) for row in metadata_rows],
+        dtype=np.float32,
+    )
+
+    meta["image_num"] = np.array(
+        [
+            row["image_index"] if row["image_index"] is not None else -1
+            for row in metadata_rows
+        ],
+        dtype=np.float32,
+    )
+
+    # Global row ids across the final merged dataset.
+    # This keeps refl_ids unique across chunks.
+    meta["refl_ids"] = np.arange(global_start, global_start + n, dtype=np.float32)
+
+    return meta
+
 
 
 def _save_concentration_from_memmap(
@@ -249,6 +1328,13 @@ def _save_concentration_from_memmap(
     for i in range(0, n, chunk):
         c = counts[i : i + chunk].astype(np.float32)
         conc[i : i + chunk] = c.mean(axis=1)
+
+    if torch is None:
+        raise RuntimeError(
+            "torch is required to save concentration.npy; "
+            "rerun with --no-stats or use an environment with torch."
+        )
+
     save_data(torch.from_numpy(conc), out_dir / out_fname)
 
 

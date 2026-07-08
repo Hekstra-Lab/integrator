@@ -8,6 +8,10 @@ from integrator.model.distributions import (
     ProfileSurrogate,
     build_gamma,
 )
+
+from integrator.model.distributions.lognormal import build_lognormal
+from integrator.model.distributions.folded_normal import build_folded_normal
+
 from integrator.model.encoders import (
     IntensityEncoder,
     ProfileEncoder,
@@ -34,10 +38,14 @@ REGISTRY = {
         "hierarchical": HierarchicalIntegrator,
         "hierarchical_3enc": HierarchicalIntegrator3Enc,
     },
+
+    #Thao: added for Normal Distribution for MFX dataset
     "surrogates": {
         "gamma": build_gamma,
         "dirichlet": DirichletDistribution,
         "learned_basis_profile": ProfileSurrogate,
+        "lognormal": build_lognormal,
+        "foldednormal": build_folded_normal,
     },
     "data_loader": {
         "rotation_data": RotationDataModule,

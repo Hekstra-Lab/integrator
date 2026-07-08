@@ -1,0 +1,23 @@
+config: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/runs/run_20260702-160655_3424/config_log.yaml
+log_dir: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/runs/run_20260702-160655_3424/files
+output_root: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/runs/run_20260702-160655_3424
+plots_dir: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/runs/run_20260702-160655_3424/plots
+predictions_dir: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/runs/run_20260702-160655_3424/predictions
+resolved_paths:
+  data_dir: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_r0269_012_rg058_with_d_1500
+  data_loader:
+    counts:
+      exists: true
+      path: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_r0269_012_rg058_with_d_1500/counts.npy
+      size_bytes: 2303997628
+    masks:
+      exists: true
+      path: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_r0269_012_rg058_with_d_1500/masks.npy
+      size_bytes: 575999503
+    reference:
+      exists: true
+      path: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_r0269_012_rg058_with_d_1500/metadata.npy
+      size_bytes: 95848117
+  n_bins: 1
+slurm:
+  job_id: '30480765'
