@@ -37,5 +37,12 @@ micromamba activate integrator-dev
 micromamba env create -f environment-cuda-dev.yml
 micromamba activate integrator-cuda-dev
 ```
+## MFX READ ME
+
+Additional workflow notes and experiment-specific examples are stored in the `workflows/` directory.
+
+- [`workflows/mfx101555026`](workflows/mfx101555026/README.md): MFX cctbx.xfel-to-integrator workflow notes, including chunked shoebox extraction, MFX training configs, and `qi` posterior comparison diagnostics.
+
+
 
 Each installs DIALS, laue-DIALS, PyTorch, the integrator package (editable), and the upstream reciprocalspaceship build required to read DIALS `.refl` files. 
