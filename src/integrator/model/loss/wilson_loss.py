@@ -32,11 +32,10 @@ class WilsonLoss(nn.Module):
         # B factor
         init_log_B: float = 3.0,
         b_min: float = 0.0,
-        # Scale stabilization (DIALS-free): log-space G + bounded B + a one-time
-        # Wilson-plot scale init from raw counts. Off by default (legacy behavior,
-        # checkpoint-compatible). See _maybe_init_scale / MonochromaticWilsonLoss.
+        # Scale stabilization (DIALS-free): log-space G + a physical B init + a
+        # one-time Wilson-plot scale init from raw counts. Off by default (legacy
+        # behavior, checkpoint-compatible). See _maybe_init_scale / MonochromaticWilsonLoss.
         stabilize_scale: bool = False,
-        b_max: float = 80.0,
         init_B: float = 30.0,
         init_scale_from_counts: bool = True,
         wilson_init_bins: int = 20,
@@ -58,7 +57,6 @@ class WilsonLoss(nn.Module):
     ):
         super().__init__()
         self.b_min = b_min  # minimum B-factor
-        self.b_max = b_max
         self.n_bins = n_bins
         self.stabilize_scale = stabilize_scale
         self.init_scale_from_counts = init_scale_from_counts
@@ -84,14 +82,13 @@ class WilsonLoss(nn.Module):
         self.background_kl_weight = pbg_cfg.weight if pbg_cfg is not None else background_kl_weight
         self.intensity_kl_weight = pi_cfg.weight if pi_cfg is not None else intensity_kl_weight
 
-        # Point-estimate B factor
+        # Point-estimate B factor: B = b_min + softplus(raw_B). Bounded below (never
+        # collapses to 0), unbounded above (no cap to clip or trap a large B).
         # used by polychromatic and monochromatic loss classes
         if stabilize_scale:
-            # B is sigmoid-bounded to [b_min, b_max]; init at init_B (physical,
-            # data-free). raw_B is the inverse-sigmoid of that fraction.
-            u = (float(init_B) - b_min) / (b_max - b_min)
-            u = min(max(u, 1e-4), 1.0 - 1e-4)
-            self.raw_B = nn.Parameter(torch.tensor(math.log(u / (1.0 - u))))
+            # init at init_B (physical, data-free): raw_B = softplus^-1(init_B - b_min)
+            y = max(float(init_B) - b_min, 1e-3)
+            self.raw_B = nn.Parameter(torch.tensor(math.log(math.expm1(y))))
             # persistent so a resumed run does not re-init over trained params;
             # only registered when the feature is on, so legacy checkpoints load.
             self.register_buffer(
@@ -109,11 +106,6 @@ class WilsonLoss(nn.Module):
         )
 
     def get_B(self) -> Tensor:
-        if self.stabilize_scale:
-            # bounded to [b_min, b_max]: never collapses to 0, gradient never dies
-            return self.b_min + (self.b_max - self.b_min) * torch.sigmoid(
-                self.raw_B
-            )
         return F.softplus(self.raw_B) + self.b_min
 
     @abstractmethod
