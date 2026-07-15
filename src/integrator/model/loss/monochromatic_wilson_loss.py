@@ -21,7 +21,17 @@ class MonochromaticWilsonLoss(WilsonLoss):
         self.raw_G = nn.Parameter(torch.tensor(float(init_log_G)))
 
     def get_G(self) -> Tensor:
+        if self.stabilize_scale:
+            return torch.exp(self.raw_G)
         return F.softplus(self.raw_G)
+
+    def _set_scale_from_fit(self, G0: float) -> None:
+        with torch.no_grad():
+            self.raw_G.copy_(
+                torch.log(
+                    torch.as_tensor(max(G0, 1e-6), device=self.raw_G.device)
+                )
+            )
 
     def _get_tau(
         self, metadata: dict, s_sq: Tensor, device: torch.device

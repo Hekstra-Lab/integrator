@@ -1,11 +1,12 @@
 import torch
 import torch.nn as nn
 from torch import Tensor
-from torch.distributions import Distribution, Gamma, Poisson, kl_divergence
+from torch.distributions import Distribution, Gamma, kl_divergence
 
 from integrator.model.distributions.profile_surrogates import (
     ProfileSurrogateOutput,
 )
+from integrator.model.loss.count_likelihood import CountLikelihood
 from integrator.model.loss.kl_helpers import compute_profile_kl
 
 _DEFAULT_PROFILE_PRIOR_SCALE = 3.0
@@ -13,19 +14,6 @@ _DEFAULT_PROFILE_PRIOR_SCALE = 3.0
 
 class GlobalPriorLoss(nn.Module):
     """ELBO loss with a single global (resolution-independent) intensity prior.
-
-    The pre-Wilson baseline. `q(I)` is regularized toward one global
-    `Gamma(i_concentration, i_rate)` prior and `q(bg)` toward a global
-    `Gamma(bg_concentration, bg_rate)`; both parameter pairs come from a
-    dataset Gamma MLE (see `integrator.utils.prepare_priors.prepare_global_priors`).
-    Unlike the Wilson prior, the intensity rate does not vary with resolution,
-    so swapping this loss for `monochromatic_wilson` isolates exactly the effect
-    of the resolution-dependent Wilson prior.
-
-    The profile KL reuses `compute_profile_kl`, so this loss supports both a
-    `Dirichlet` profile (KL against a uniform `Dirichlet(1)`) and the
-    learned-basis profile (Gaussian KL on the latent).
-
     Args:
         i_concentration: Shape of the global intensity Gamma prior.
         i_rate: Rate of the global intensity Gamma prior.
@@ -49,6 +37,12 @@ class GlobalPriorLoss(nn.Module):
         profile_kl_weight: float = 1.0,
         background_kl_weight: float = 1.0,
         intensity_kl_weight: float = 1.0,
+        # Pixel count likelihood: "poisson" (default) or "negative_binomial"
+        likelihood: str = "poisson",
+        nb_dispersion_init: float = 10.0,
+        nb_dispersion_scope: str = "global",
+        nb_dispersion_floor: float = 1e-3,
+        n_bins: int = 1,
         pi_cfg=None,
         pbg_cfg=None,
         pprf_cfg=None,
@@ -90,6 +84,14 @@ class GlobalPriorLoss(nn.Module):
             pi_cfg.weight if pi_cfg is not None else intensity_kl_weight
         )
 
+        self.count_likelihood = CountLikelihood(
+            likelihood,
+            dispersion_init=nb_dispersion_init,
+            dispersion_scope=nb_dispersion_scope,
+            n_bins=n_bins,
+            dispersion_floor=nb_dispersion_floor,
+        )
+
     def forward(
         self,
         rate: Tensor,
@@ -127,10 +129,9 @@ class GlobalPriorLoss(nn.Module):
         kl_bg = kl_divergence(qbg, p_bg) * self.background_kl_weight
         kl = kl + kl_bg
 
-        # Poisson NLL
-        ll = Poisson(rate.clamp(min=1e-12)).log_prob(counts.unsqueeze(1))
-        ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
-        neg_ll = (-ll_mean).sum(1)
+        neg_ll = self.count_likelihood.neg_ll(
+            rate, counts, mask, group_labels=group_labels
+        )
 
         loss = (neg_ll + kl).mean()
 

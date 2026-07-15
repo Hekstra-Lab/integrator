@@ -18,7 +18,6 @@ OPERATIONS = {
     },
 }
 
-
 class ProfileEncoder(nn.Module):
     """CNN encoder producing a fixed-length embedding from a shoebox volume.
 

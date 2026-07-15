@@ -107,14 +107,7 @@ class HierarchicalIntegrator(BaseIntegrator):
 
 
 class HierarchicalIntegrator2Enc(BaseIntegrator):
-    """Hierarchical integrator with 2 encoders: profile and a shared intensity.
-
-    The single intensity encoder produces one representation from which every
-    intensity/background distribution parameter is derived (both heads of `qi`
-    and `qbg` read the same embedding). This is the original two-encoder design
-    and the least-decoupled end of the encoder ablation; `HierarchicalIntegrator`
-    (5 encoders) gives each parameter its own encoder.
-    """
+    """Hierarchical integrator with 2 encoders: profile and a shared intensity."""
 
     REQUIRED_ENCODERS = {
         "profile": ("profile_encoder", configs.ProfileEncoderArgs),
@@ -184,18 +177,7 @@ class HierarchicalIntegrator2Enc(BaseIntegrator):
 
 
 class HierarchicalIntegrator3EncIB(BaseIntegrator):
-    """Hierarchical integrator with 3 encoders: profile, intensity, background.
-
-    The middle rung of the encoder-decoupling ablation. One intensity encoder
-    feeds both heads of `qi` and one background encoder feeds both heads of
-    `qbg`, so intensity and background no longer share a representation (as in
-    the 2-encoder version) but the two heads within each still do (unlike the
-    5-encoder version, which gives every parameter its own encoder).
-
-    This splits by intensity/background; the separate `HierarchicalIntegrator3Enc`
-    (`hierarchical_3enc`) instead splits by the Gamma heads k/r, sharing those
-    across intensity and background.
-    """
+    """Hierarchical integrator with 3 encoders: profile, intensity, background."""
 
     REQUIRED_ENCODERS = {
         "profile": ("profile_encoder", configs.ProfileEncoderArgs),
