@@ -1,4 +1,3 @@
-import math
 from abc import abstractmethod
 
 import torch
@@ -10,7 +9,7 @@ from torch.distributions import Distribution, Gamma, kl_divergence
 from integrator.model.distributions.profile_surrogates import (
     ProfileSurrogateOutput,
 )
-from integrator.model.loss.count_likelihood import CountLikelihood
+from integrator.model.loss.count_likelihood import CountLikelihood, _inv_softplus
 from integrator.model.loss.kl_helpers import compute_profile_kl
 
 _DEFAULT_PROFILE_PRIOR_SCALE = 3.0
@@ -29,14 +28,14 @@ class WilsonLoss(nn.Module):
         # Background Gamma prior: scalar, or per-resolution-bin prior
         bg_rate: float | list[float] = 1.0,
         bg_concentration: float | list[float] = 1.0,
-        # B factor
-        init_log_B: float = 3.0,
-        b_min: float = 0.0,
-        # Scale stabilization (DIALS-free): log-space G + a physical B init + a
-        # one-time Wilson-plot scale init from raw counts. Off by default (legacy
-        # behavior, checkpoint-compatible). See _maybe_init_scale / MonochromaticWilsonLoss.
-        stabilize_scale: bool = False,
+        # B factor: B = softplus(raw_B) + b_min, so init_B is the physical B
+        # (A^2) at init -- floored at b_min, unbounded above.
         init_B: float = 30.0,
+        b_min: float = 0.0,
+        # Scale stabilization (DIALS-free): log-space G + a one-time Wilson-plot
+        # scale init from raw counts. Off by default (legacy behavior,
+        # checkpoint-compatible). See _maybe_init_scale / MonochromaticWilsonLoss.
+        stabilize_scale: bool = False,
         init_scale_from_counts: bool = True,
         wilson_init_bins: int = 20,
         # Resolution bins for per-bin background prior
@@ -46,6 +45,7 @@ class WilsonLoss(nn.Module):
         nb_dispersion_init: float = 10.0,
         nb_dispersion_scope: str = "global",
         nb_dispersion_floor: float = 1e-3,
+        nb_learn_dispersion: bool = True,
         # Prior configs from yaml
         pi_cfg=None,
         pbg_cfg=None,
@@ -79,23 +79,20 @@ class WilsonLoss(nn.Module):
         self.profile_kl_weight = (
             pprf_cfg.weight if pprf_cfg is not None else profile_kl_weight
         )
-        self.background_kl_weight = pbg_cfg.weight if pbg_cfg is not None else background_kl_weight
-        self.intensity_kl_weight = pi_cfg.weight if pi_cfg is not None else intensity_kl_weight
+        self.background_kl_weight = (
+            pbg_cfg.weight if pbg_cfg is not None else background_kl_weight
+        )
+        self.intensity_kl_weight = (
+            pi_cfg.weight if pi_cfg is not None else intensity_kl_weight
+        )
 
-        # Point-estimate B factor: B = b_min + softplus(raw_B). Bounded below (never
-        # collapses to 0), unbounded above (no cap to clip or trap a large B).
-        # used by polychromatic and monochromatic loss classes
+        # invert B = softplus(raw_B) + b_min so that B == init_B at init
+        y = torch.tensor(max(float(init_B) - b_min, 1e-3))
+        self.raw_B = nn.Parameter(_inv_softplus(y))
         if stabilize_scale:
-            # init at init_B (physical, data-free): raw_B = softplus^-1(init_B - b_min)
-            y = max(float(init_B) - b_min, 1e-3)
-            self.raw_B = nn.Parameter(torch.tensor(math.log(math.expm1(y))))
-            # persistent so a resumed run does not re-init over trained params;
-            # only registered when the feature is on, so legacy checkpoints load.
             self.register_buffer(
                 "scale_initialized", torch.tensor(False), persistent=True
             )
-        else:
-            self.raw_B = nn.Parameter(torch.tensor(float(init_log_B)))
 
         self.count_likelihood = CountLikelihood(
             likelihood,
@@ -103,7 +100,15 @@ class WilsonLoss(nn.Module):
             dispersion_scope=nb_dispersion_scope,
             n_bins=n_bins,
             dispersion_floor=nb_dispersion_floor,
+            learn_dispersion=nb_learn_dispersion,
         )
+
+    def diagnostics(self) -> dict[str, Tensor]:
+        """Scalars to log each step: the Wilson B-factor + likelihood diagnostics."""
+        return {
+            "wilson_B": self.get_B().detach(),
+            **self.count_likelihood.diagnostics(),
+        }
 
     def get_B(self) -> Tensor:
         return F.softplus(self.raw_B) + self.b_min
@@ -121,11 +126,7 @@ class WilsonLoss(nn.Module):
         """
 
     def _wilson_fit_G(self, i_hat: Tensor, s_sq: Tensor) -> float:
-        """Intercept of a binned Wilson-plot fit: log(mean I per bin) vs s^2.
-
-        Uses per-bin means (unbiased for the Wilson mean), so the intercept
-        recovers G without the Euler-Mascheroni bias of a per-reflection log-mean.
-        """
+        """Intercept of a binned Wilson-plot fit: log(mean I per bin) vs s^2."""
         valid = i_hat > 0
         i_hat, s2 = i_hat[valid], s_sq[valid]
         n_bins = self.wilson_init_bins
@@ -151,7 +152,11 @@ class WilsonLoss(nn.Module):
     def _maybe_init_scale(
         self, counts: Tensor, s_sq: Tensor, mask: Tensor
     ) -> None:
-        """One-time DIALS-free scale init from raw counts (first batch only)."""
+        """One-time DIALS-free scale init from raw counts (first batch only).
+
+        Skipped when `init_scale_from_counts` is off, which an explicit `init_G`
+        also turns off so that a pinned scale is never overwritten.
+        """
         if not (self.stabilize_scale and self.init_scale_from_counts):
             return
         if bool(self.scale_initialized):
@@ -159,7 +164,7 @@ class WilsonLoss(nn.Module):
         with torch.no_grad():
             m = mask.squeeze(-1)  # (B, P)
             npix = m.sum(-1).clamp_min(1.0)
-            bg_mean = (self.bg_concentration / self.bg_rate.clamp_min(1e-6))
+            bg_mean = self.bg_concentration / self.bg_rate.clamp_min(1e-6)
             bg_mean = bg_mean.mean()  # scalar proxy (per-bin or scalar prior)
             # intensity proxy = summed counts above background; raw data, no DIALS
             i_hat = (counts * m).sum(-1) - bg_mean * npix

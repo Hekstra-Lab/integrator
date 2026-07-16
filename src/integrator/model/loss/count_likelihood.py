@@ -32,6 +32,8 @@ class CountLikelihood(nn.Module):
         n_bins: Number of resolution bins used when `dispersion_scope` is
             `per_bin`.
         dispersion_floor: Floor added after softplus for numerical stability.
+        learn_dispersion: If True (default) the dispersion r is a learned
+            `nn.Parameter`; if False it is a fixed buffer held at `dispersion_init`.
     """
 
     def __init__(
@@ -42,6 +44,7 @@ class CountLikelihood(nn.Module):
         dispersion_scope: str = _GLOBAL,
         n_bins: int = 1,
         dispersion_floor: float = 1e-3,
+        learn_dispersion: bool = True,
     ):
         super().__init__()
         if name not in _VALID:
@@ -51,6 +54,7 @@ class CountLikelihood(nn.Module):
         self.name = name
         self.dispersion_scope = dispersion_scope
         self.dispersion_floor = dispersion_floor
+        self.learn_dispersion = learn_dispersion
 
         if name == NEGATIVE_BINOMIAL:
             if dispersion_scope not in _VALID_SCOPE:
@@ -61,7 +65,11 @@ class CountLikelihood(nn.Module):
             n = n_bins if dispersion_scope == _PER_BIN else 1
             raw_init = _inv_softplus(torch.full((n,), float(dispersion_init)))
             # softplus(raw_dispersion) + floor = dispersion_init at init.
-            self.raw_dispersion = nn.Parameter(raw_init)
+            if learn_dispersion:
+                self.raw_dispersion = nn.Parameter(raw_init)
+            else:
+                # fixed r: a persistent buffer, so it is saved but never trained.
+                self.register_buffer("raw_dispersion", raw_init)
 
     def dispersion(self, group_labels: Tensor | None = None) -> Tensor:
         """Return the Negative Binomial dispersion r, shape () or (B,)."""
@@ -71,6 +79,13 @@ class CountLikelihood(nn.Module):
                 raise ValueError("per_bin dispersion requires group_labels.")
             return r[group_labels.long()]  # (B,)
         return r.squeeze(0)  # ()
+
+    def diagnostics(self) -> dict[str, Tensor]:
+        """Scalar diagnostics to log; empty for Poisson."""
+        if self.name != NEGATIVE_BINOMIAL:
+            return {}
+        r = F.softplus(self.raw_dispersion) + self.dispersion_floor
+        return {"nb_dispersion": r.mean().detach()}
 
     def neg_ll(
         self,

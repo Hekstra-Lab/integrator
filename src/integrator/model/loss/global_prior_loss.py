@@ -42,6 +42,7 @@ class GlobalPriorLoss(nn.Module):
         nb_dispersion_init: float = 10.0,
         nb_dispersion_scope: str = "global",
         nb_dispersion_floor: float = 1e-3,
+        nb_learn_dispersion: bool = True,
         n_bins: int = 1,
         pi_cfg=None,
         pbg_cfg=None,
@@ -90,7 +91,12 @@ class GlobalPriorLoss(nn.Module):
             dispersion_scope=nb_dispersion_scope,
             n_bins=n_bins,
             dispersion_floor=nb_dispersion_floor,
+            learn_dispersion=nb_learn_dispersion,
         )
+
+    def diagnostics(self) -> dict[str, Tensor]:
+        """Scalars to log each step (likelihood diagnostics; no Wilson G/B here)."""
+        return self.count_likelihood.diagnostics()
 
     def forward(
         self,

@@ -203,6 +203,10 @@ class BaseIntegrator(pl.LightningModule):
             },
         )
 
+        if hasattr(self.loss, "diagnostics"):
+            for name, value in self.loss.diagnostics().items():
+                self.log(f"{step} {name}", value, on_step=False, on_epoch=True)
+
         penalty, penalty_components = self._profile_basis_penalty()
         for name, value in penalty_components.items():
             self.log(
