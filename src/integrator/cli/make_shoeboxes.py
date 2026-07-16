@@ -27,7 +27,7 @@ integrator.make_shoeboxes --laue \
     --w 21 --h 21 --d 1 \
     --max-images 1000
 """
-
+import time
 import argparse
 import os
 import re
@@ -74,6 +74,18 @@ def parse_args():
         help="Process MFX/cctbx.xfel serial stills output using *_integrated.refl/expt pairs.",
     )
 
+    # Thao: added MFX combined mode to process one combined .expt/.refl pair
+    # created by dials.combine_experiments.
+    parser.add_argument(
+        "--mfx-combined",
+        action="store_true",
+        help=(
+            "Process one combined MFX/cctbx.xfel .expt/.refl pair. "
+            "The combined .refl should contain an id column linking each "
+            "reflection row to experiments[id] in the combined .expt file."
+        ),
+    )
+
     parser.add_argument(
         "--mfx-pattern",
         default="idx-data_*_integrated.refl",
@@ -107,6 +119,22 @@ def parse_args():
             "Example: hot_lines_combined5.mask. The file is loaded with "
             "libtbx.easy_pickle and should contain one boolean mask per panel, "
             "where True means good pixel and False means bad/masked pixel."
+        ),
+    )
+
+    # Thao: optional raw-panel cache for MFX mode.
+    # If this is supplied, run_mfx() loads raw detector panels from files like
+    # raw_panels_image_01418.npz instead of calling get_raw_data(0).
+    parser.add_argument(
+        "--mfx-raw-cache-dir",
+        type=str,
+        default=None,
+        help=(
+            "Optional MFX raw-panel cache directory containing files named "
+            "raw_panels_image_XXXXX.npz. When supplied with --mfx, the code "
+            "loads cached panel arrays from this directory instead of calling "
+            "ExperimentListFactory.from_json_file(..., check_format=True) and "
+            "get_raw_data(0)."
         ),
     )
 
@@ -254,7 +282,9 @@ def _require(args, names):
 def main():
     args = parse_args()
 
-    if args.mfx: 
+    if args.mfx_combined:
+        run_mfx_combined(args)
+    elif args.mfx:
         run_mfx(args)
     elif args.laue:
         run_laue(args)
@@ -282,7 +312,6 @@ def main():
 #
 # Why dials.python? It runs Python with the DIALS/cctbx environment loaded.
 # Why PYTHONPATH? It lets Python find this local integrator source tree.
-
 
 def run_mfx(args):
     """Create an integrator-style shoebox dataset from MFX/cctbx.xfel outputs.
@@ -318,6 +347,21 @@ def run_mfx(args):
         - After all files are processed, the chunk folders are merged into final
           counts.npy, masks.npy, and metadata.npy.
         - This keeps memory lower during the MFX extraction loop.
+
+    Skip-bad-file update:
+        - Some .refl/.expt pairs can exist on disk but fail when dxtbx/psana2
+          tries to open the image data referenced by the .expt file.
+        - Instead of crashing the whole Slurm array task, this version prints a
+          warning, records the bad pair, skips it, and continues to the next pair.
+
+    Raw-panel-cache update:
+        - If --mfx-raw-cache-dir is supplied, this function loads saved NumPy
+          panel arrays such as raw_panels_image_01418.npz.
+        - This skips the slow dxtbx/psana2 path:
+              ExperimentListFactory.from_json_file(..., check_format=True)
+              imageset.get_raw_data(0)
+        - The .refl file is still used for reflection metadata, and the .expt
+          JSON is read lightly for image index, wavelength, and unit cell.
     """
     # To read cctbx.xfel integrated .refl/.expt files, we need DIALS and dxtbx.
     # flex provides the DIALS array objects used by reflection tables.
@@ -390,6 +434,19 @@ def run_mfx(args):
         detector_masks = easy_pickle.load(args.detector_mask)
         print(f"loaded detector mask with {len(detector_masks)} panel mask(s): {args.detector_mask}")
 
+    # Optional raw-panel cache for MFX mode.
+    # This is the local-copy speed test suggested after the psana/dxtbx timing:
+    #   slow path: .expt -> ExperimentListFactory -> get_raw_data(0)
+    #   cache path: raw_panels_image_XXXXX.npz -> NumPy arrays
+    #
+    # The cache files are expected to contain panel_00, panel_01, ..., panel_31.
+    raw_cache_dir = None
+    if args.mfx_raw_cache_dir is not None:
+        raw_cache_dir = Path(args.mfx_raw_cache_dir)
+        if not raw_cache_dir.exists():
+            raise SystemExit(f"MFX raw-panel cache directory not found: {raw_cache_dir}")
+        print(f"using MFX raw-panel cache: {raw_cache_dir}")
+
     # Chunk buffers.
     # These replace the old full-run lists:
     #   counts = []
@@ -443,6 +500,10 @@ def run_mfx(args):
             global_start=global_row,
         )
 
+        # This helps long MFX jobs avoid "Too many open files" during np.save.
+        import gc
+        gc.collect()
+
         # Save this chunk to disk.
         np.save(chunk_dir / args.counts_fname, counts_chunk)
         np.save(chunk_dir / args.masks_fname, masks_chunk)
@@ -469,83 +530,175 @@ def run_mfx(args):
     n_reflections_seen = 0
     n_reflections_saved = 0
 
+    # New: keep a list of skipped bad file pairs for the final summary.
+    skipped_files = []
+
     for refl_path in refl_paths:
         # Each integrated .refl should have a matching integrated .expt.
-        expt_path = _matching_mfx_expt(refl_path)
-        n_files += 1
+        expt_path = None
 
-        # Load reflection table metadata.
+        # New: skip-bad-file protection.
         #
-        # A single integrated .refl file can contain many reflection rows.
-        # In the first test file, idx-data_36001_integrated.refl had 415 rows.
-        # Example row information looked like:
-        #   row 0: panel=31, xyzcal.px=(777.30, 384.75, 0.0),
-        #          intensity.sum.value=16.07, ...
-        reflections = flex.reflection_table.from_file(str(refl_path))
+        # Some .refl/.expt pairs exist on disk, but dxtbx/psana2 may fail when
+        # opening the image data referenced by the .expt file.
+        #
+        # Without this try/except:
+        #   one bad .expt crashes the whole Slurm array task.
+        #
+        # With this try/except:
+        #   print the bad file pair, record it, and continue to the next file.
+        try:
+            expt_path = _matching_mfx_expt(refl_path)
+            
+            if expt_path is None:
+                print("WARNING: skipping MFX file pair with missing .expt")
+                print(f"  refl: {refl_path}")
+                skipped_files.append((str(refl_path), "missing", "missing .expt"))
+                continue
+                
+            # Load reflection table metadata.
+            #
+            # A single integrated .refl file can contain many reflection rows.
+            # In the first test file, idx-data_36001_integrated.refl had 415 rows.
+            # Example row information looked like:
+            #   row 0: panel=31, xyzcal.px=(777.30, 384.75, 0.0),
+            #          intensity.sum.value=16.07, ...
+            reflections = flex.reflection_table.from_file(str(refl_path))
+
+            # Check required columns early so errors are easier to understand.
+            required_cols = [
+                "panel",
+                "xyzcal.px",
+                "miller_index",
+                "intensity.sum.value",
+                "intensity.sum.variance",
+                "background.sum.value",
+                "background.sum.variance",
+            ]
+            missing = [col for col in required_cols if col not in reflections]
+
+            if missing:
+                print("WARNING: skipping MFX file pair with missing columns")
+                print(f"  refl: {refl_path}")
+                print(f"  expt: {expt_path}")
+                print(f"  missing: {missing}")
+                skipped_files.append(
+                    (str(refl_path), str(expt_path), f"missing columns: {missing}")
+                )
+                continue
+
+            # Try to record the event/image index stored in the ImageSet JSON, if present.
+            # For example, idx-data_36001_integrated.expt had single_file_indices=[36001].
+            #
+            # In raw-panel-cache mode, this image_index is also used to find:
+            #   raw_panels_image_36001.npz
+            image_index = _mfx_image_index_from_expt_json(expt_path)
+
+            # These are filled differently depending on whether we read raw pixels
+            # from dxtbx/psana2 or from the local raw-panel cache.
+            experiments = None
+            wavelength = np.nan
+            unit_cell_for_cache = None
+            raw_cache_file = None
+
+            if raw_cache_dir is None:
+                # Load experiment and connect to underlying image source.
+                # check_format=True is what lets dxtbx read the real pixels through the
+                # imageset/data.loc mechanism.
+                experiments = ExperimentListFactory.from_json_file(
+                    str(expt_path),
+                    check_format=True,
+                )
+
+                # New: do not crash if this .expt has an unexpected number of experiments.
+                # For this MFX prototype, we expect exactly one experiment per file.
+                if len(experiments) != 1:
+                    print("WARNING: skipping MFX file pair with unexpected experiment count")
+                    print(f"  refl: {refl_path}")
+                    print(f"  expt: {expt_path}")
+                    print(f"  n_experiments: {len(experiments)}")
+                    skipped_files.append(
+                        (str(refl_path), str(expt_path), f"n_experiments={len(experiments)}")
+                    )
+                    continue
+
+                # raw is a tuple of panel images for one event/image:
+                #   raw[0], raw[1], ..., raw[31]
+                #
+                # Mental model:
+                #   imageset = the book / file access instructions
+                #   raw      = one page/image loaded from that book
+                #   panel    = one detector tile/region on that page
+                #   pixel    = one number inside that tile
+                #
+                # experiments[0].imageset is a loader/access object, not pixels yet.
+                # get_raw_data(0) loads the actual pixels for image index 0 inside this
+                # one-image imageset. For this MFX Jungfrau data, it returns 32 panel
+                # flex arrays, each with shape about (514, 1030).
+                #
+                # New: put get_raw_data(0) inside the try block too.
+                # This can fail if dxtbx can read the .expt JSON but cannot open the
+                # actual image data referenced by the imageset.
+                raw = experiments[0].imageset.get_raw_data(0)
+
+                # retrieve wavelength from the beam object in the experiment. If it fails, set wavelength to NaN.
+                try:
+                    wavelength = float(experiments[0].beam.get_wavelength())
+                except Exception:
+                    wavelength = np.nan
+
+            else:
+                # Raw-panel-cache mode:
+                #   Do not call ExperimentListFactory.from_json_file(..., check_format=True).
+                #   Do not call imageset.get_raw_data(0).
+                # Instead, load local NumPy panel arrays created by dump_raw_panels_test.py.
+                raw, raw_cache_file = _load_mfx_raw_panels_from_npz(
+                    raw_cache_dir,
+                    image_index,
+                )
+
+                # The .expt JSON is still useful metadata. Reading the JSON directly
+                # is much lighter than check_format=True + get_raw_data(0).
+                wavelength = _mfx_wavelength_from_expt_json(expt_path)
+                unit_cell_for_cache = _mfx_unit_cell_from_expt_json(expt_path)
+
+            # If a detector mask was provided, it should have one mask per raw
+            # detector panel. For this MFX Jungfrau case, both should have length 32.
+            #
+            # New: skip instead of crashing if the mask panel count does not match.
+            if detector_masks is not None and len(detector_masks) != len(raw):
+                print("WARNING: skipping MFX file pair with detector mask mismatch")
+                print(f"  refl: {refl_path}")
+                print(f"  expt: {expt_path}")
+                print(f"  detector mask panels: {len(detector_masks)}")
+                print(f"  raw panels: {len(raw)}")
+                skipped_files.append(
+                    (str(refl_path), str(expt_path), "detector mask panel mismatch")
+                )
+                continue
+
+        except Exception as e:
+            print("WARNING: skipping bad MFX file pair")
+            print(f"  refl: {refl_path}")
+            print(f"  expt: {expt_path if expt_path is not None else 'unknown'}")
+            print(f"  error: {type(e).__name__}: {e}")
+            skipped_files.append(
+                (
+                    str(refl_path),
+                    str(expt_path) if expt_path is not None else "unknown",
+                    f"{type(e).__name__}: {e}",
+                )
+            )
+            continue
+
+        n_files += 1
 
         # Count reflection rows, not files. One file may add hundreds of rows.
         n_reflections_seen += len(reflections)
 
-        # Check required columns early so errors are easier to understand.
-        required_cols = [
-            "panel",
-            "xyzcal.px",
-            "miller_index",
-            "intensity.sum.value",
-            "intensity.sum.variance",
-            "background.sum.value",
-            "background.sum.variance",
-        ]
-        missing = [col for col in required_cols if col not in reflections]
-        if missing:
-            raise SystemExit(f"{refl_path} is missing required column(s): {missing}")
-
-        # Load experiment and connect to underlying image source.
-        # check_format=True is what lets dxtbx read the real pixels through the
-        # imageset/data.loc mechanism.
-        experiments = ExperimentListFactory.from_json_file(
-            str(expt_path),
-            check_format=True,
-        )
-
-        if len(experiments) != 1:
-            raise SystemExit(
-                f"MFX prototype expects exactly 1 experiment per file, got "
-                f"{len(experiments)} in {expt_path}"
-            )
-
-        # raw is a tuple of panel images for one event/image:
-        #   raw[0], raw[1], ..., raw[31]
-        #
-        # Mental model:
-        #   imageset = the book / file access instructions
-        #   raw      = one page/image loaded from that book
-        #   panel    = one detector tile/region on that page
-        #   pixel    = one number inside that tile
-        #
-        # experiments[0].imageset is a loader/access object, not pixels yet.
-        # get_raw_data(0) loads the actual pixels for image index 0 inside this
-        # one-image imageset. For this MFX Jungfrau data, it returns 32 panel
-        # flex arrays, each with shape about (514, 1030).
-        raw = experiments[0].imageset.get_raw_data(0)
-
-        # If a detector mask was provided, it should have one mask per raw
-        # detector panel. For this MFX Jungfrau case, both should have length 32.
-        if detector_masks is not None and len(detector_masks) != len(raw):
-            raise SystemExit(
-                f"detector mask panel count ({len(detector_masks)}) does not "
-                f"match raw panel count ({len(raw)}) for {expt_path}"
-            )
-
-        # Try to record the event/image index stored in the ImageSet, if present.
-        # For example, idx-data_36001_integrated.expt had single_file_indices=[36001].
-        image_index = _mfx_image_index_from_expt_json(expt_path)
-
-        # retrieve wavelength from the beam object in the experiment. If it fails, set wavelength to NaN.
-        try:
-            wavelength = float(experiments[0].beam.get_wavelength())
-        except Exception:
-            wavelength = np.nan
+        # image_index and wavelength were already set above.
+        # In normal mode, wavelength came from experiments[0].beam.
+        # In raw-panel-cache mode, wavelength came from the .expt JSON.
 
         # Loop over reflections in this event.
         for i in range(len(reflections)):
@@ -606,7 +759,10 @@ def run_mfx(args):
             # MFX metadata is built manually, so compute d-spacing here from
             # the experiment crystal/unit cell and the reflection Miller index.
             miller_index = tuple(int(v) for v in reflections["miller_index"][i])
-            d_spacing = _mfx_d_spacing(experiments[0], miller_index)
+            if raw_cache_dir is None:
+                d_spacing = _mfx_d_spacing(experiments[0], miller_index)
+            else:
+                d_spacing = _mfx_d_spacing_from_unit_cell(unit_cell_for_cache, miller_index)
 
             # Add one metadata row for this shoebox.
             # background.mean is optional in general, but your checked MFX
@@ -621,6 +777,7 @@ def run_mfx(args):
                     "fixed_bbox": tuple(fixed_bbox),
                     "integration_bbox": integration_bbox,
                     "detector_mask": str(args.detector_mask) if args.detector_mask else None,
+                    "raw_cache_file": raw_cache_file.name if raw_cache_file is not None else "",
                     "xyzcal_px": tuple(float(v) for v in reflections["xyzcal.px"][i]),
                     "xyzobs_px_value": tuple(float(v) for v in reflections["xyzobs.px.value"][i])
                     if "xyzobs.px.value" in reflections
@@ -647,7 +804,11 @@ def run_mfx(args):
         # imageset is the loader/cache object. clear_cache() tells it to forget
         # loaded image pixels after we finish this event, so memory does not grow
         # while processing many .refl/.expt pairs.
-        experiments[0].imageset.clear_cache()
+        if experiments is not None:
+            try:
+                experiments[0].imageset.clear_cache()
+            except Exception as e:
+                print(f"WARNING: could not clear image cache for {expt_path}: {type(e).__name__}: {e}")
 
     # Write the final partial chunk, if any.
     flush_chunk()
@@ -709,17 +870,788 @@ def run_mfx(args):
     print(f"wrote {metadata_path}")
     print(f"wrote dataset.yaml under {out_dir}")
 
+    print(f"skipped {len(skipped_files)} bad MFX file pair(s)")
+    for refl_name, expt_name, reason in skipped_files[:50]:
+        print("SKIPPED:")
+        print(f"  refl: {refl_name}")
+        print(f"  expt: {expt_name}")
+        print(f"  reason: {reason}")
+    if len(skipped_files) > 50:
+        print(f"... {len(skipped_files) - 50} more skipped file pair(s) not printed")
+
+
+def run_mfx_combined(args):
+    """Create an integrator-style shoebox dataset from combined MFX files.
+
+    Expected input:
+        args.data_dir should point to a folder containing one combined .expt
+        and one combined .refl, for example:
+
+            combined_10/combined_10.expt
+            combined_10/combined_10.refl
+
+    Run with:
+        --mfx-combined
+        --data-dir /path/to/combined_10
+        --expt combined_10.expt
+        --refl combined_10.refl
+
+    Main idea:
+        - dials.combine_experiments creates one combined experiment list and
+          one combined reflection table.
+        - The combined .refl has an "id" column.
+        - reflections["id"] tells which experiment each reflection belongs to.
+        - experiments[experiment_id] gives the matching image loader.
+        - The original image/event number is preserved in single_file_indices.
+
+    Example mapping:
+        reflections with id == 0 -> experiments[0] -> original image 1418
+        reflections with id == 1 -> experiments[1] -> original image 2203
+
+    This keeps the chunked writing approach from run_mfx:
+        - chunk_counts
+        - chunk_masks
+        - chunk_metadata_rows
+        - flush_chunk()
+        - merge_mfx_chunks()
+
+    So the redesign changes how inputs are read, but keeps memory-safe output.
+
+    Timing update:
+        - This version measures time spent loading combined files, selecting
+          reflection subsets, reading raw images, cropping/building metadata,
+          flushing chunks, merging chunks, and writing dataset.yaml/stats.
+
+    Skip-bad-experiment update:
+        - If one experiment inside the combined .expt fails during raw-data
+          access, detector-mask validation, image-index lookup, or wavelength
+          lookup, record the failure and continue with the next experiment.
+        - This prevents one bad image/event from stopping the full combined run.
+    """
+    from dials.array_family import flex
+    from dxtbx.model.experiment_list import ExperimentListFactory
+    from integrator.io import write_dataset_yaml
+
+    # Total timer for the whole combined-file MFX approach.
+    t_total_start = time.perf_counter()
+
+    # Timing counters.
+    t_path_setup = 0.0
+    t_load_mask = 0.0
+    t_load_refl = 0.0
+    t_load_expt = 0.0
+    t_get_ids = 0.0
+    t_select_subset = 0.0
+    t_get_raw = 0.0
+    t_image_index_json = 0.0
+    t_crop_loop = 0.0
+    t_clear_cache = 0.0
+    t_flush = 0.0
+    t_merge = 0.0
+    t_stats = 0.0
+    t_write_yaml = 0.0
+
+    # MFX/cctbx.xfel output files are still images, so depth should be 1.
+    if args.d != 1:
+        raise ValueError(f"--d must be 1 for MFX still-image extraction (got {args.d})")
+
+    # Fixed-size windows need a clear center pixel.
+    if args.w % 2 == 0 or args.h % 2 == 0:
+        raise ValueError(f"--w and --h must be odd (got w={args.w}, h={args.h})")
+
+    # Combined mode needs one folder, one .refl, and one .expt.
+    _require(args, ["data_dir", "refl", "expt"])
+
+    t0 = time.perf_counter()
+
+    data_dir = Path(args.data_dir)
+    out_dir = Path(args.out_dir or "out_dir")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    refl_path = data_dir / args.refl
+    expt_path = data_dir / args.expt
+
+    if not refl_path.exists():
+        raise SystemExit(f"combined reflection file not found: {refl_path}")
+    if not expt_path.exists():
+        raise SystemExit(f"combined experiment file not found: {expt_path}")
+
+    t_path_setup += time.perf_counter() - t0
+
+    # Storage dtype. Use float32 by default because Jungfrau/cctbx raw pixels can
+    # be floating point and may include negative values.
+    counts_dtype = np.dtype(args.counts_dtype or "float32")
+
+    # Optional real detector mask for MFX data.
+    #
+    # Pam's/cctbx mask file loads as a tuple of 32 flex.bool arrays, one per
+    # Jungfrau panel. Each panel mask has the same shape as the corresponding
+    # raw detector panel, e.g. (514, 1030). In the inspected file, about 98.7%
+    # of pixels were True, so we treat True as good/usable and False as
+    # bad/hot/masked.
+    #
+    # If no detector mask is supplied, the MFX path falls back to the simpler
+    # finite/padding mask: True for finite pixels inside the panel, False for
+    # outside-panel padding or NaN/inf.
+    detector_masks = None
+    if args.detector_mask is not None:
+        t0 = time.perf_counter()
+
+        from libtbx import easy_pickle
+
+        detector_masks = easy_pickle.load(args.detector_mask)
+        print(f"loaded detector mask with {len(detector_masks)} panel mask(s): {args.detector_mask}")
+
+        t_load_mask += time.perf_counter() - t0
+
+    # Load combined reflection table once.
+    t0 = time.perf_counter()
+
+    reflections = flex.reflection_table.from_file(str(refl_path))
+    t_load_refl += time.perf_counter() - t0
+
+    # Combined reflection table must have id so we can connect:
+    #   reflections["id"] -> experiments[id]
+    required_cols = [
+        "id",
+        "panel",
+        "xyzcal.px",
+        "miller_index",
+        "intensity.sum.value",
+        "intensity.sum.variance",
+        "background.sum.value",
+        "background.sum.variance",
+    ]
+    missing = [col for col in required_cols if col not in reflections]
+    if missing:
+        raise SystemExit(f"{refl_path} is missing required column(s): {missing}")
+
+    # Load combined experiment list once.
+    t0 = time.perf_counter()
+    experiments = ExperimentListFactory.from_json_file(
+        str(expt_path),
+        check_format=True,
+    )
+    t_load_expt += time.perf_counter() - t0
+
+    print(f"loaded combined experiments: {len(experiments)}")
+    print(f"loaded combined reflections: {len(reflections)}")
+
+    # Get actual experiment ids present in the reflection table.
+    # Usually this is 0, 1, 2, ..., N-1, but using unique ids is safer.
+    t0 = time.perf_counter()
+    ids_np = reflections["id"].as_numpy_array()
+    experiment_ids = sorted(int(v) for v in np.unique(ids_np))
+    t_get_ids += time.perf_counter() - t0
+
+    print(f"experiment ids in combined refl: {experiment_ids[:10]}")
+    if len(experiment_ids) > 10:
+        print(f"... total experiment ids: {len(experiment_ids)}")
+
+    # Chunk buffers.
+    # These replace the old full-run lists:
+    #   counts = []
+    #   masks = []
+    #   metadata_rows = []
+    #
+    # Each buffer stores only up to args.write_chunk_size shoeboxes. When the
+    # chunk is full, flush_chunk() writes it to disk and clears memory.
+    chunk_counts = []
+    chunk_masks = []
+    chunk_metadata_rows = []
+
+    # List of chunk folders written to disk. Used later by merge_mfx_chunks().
+    chunk_dirs = []
+
+    # Chunk counter: chunk_00000, chunk_00001, ...
+    chunk_id = 0
+
+    # Global row counter across the final merged dataset.
+    # This keeps refl_ids unique across chunks.
+    global_row = 0
+
+    # Number of shoeboxes to hold in memory before writing one chunk.
+    write_chunk_size = int(getattr(args, "write_chunk_size", 10_000))
+
+    def flush_chunk():
+        """Write current chunk buffers to disk and clear them from memory."""
+        nonlocal chunk_id, global_row, t_flush
+        nonlocal chunk_counts, chunk_masks, chunk_metadata_rows
+
+        # Nothing to write.
+        if not chunk_counts:
+            return
+
+        t0 = time.perf_counter()
+
+        # Create folder like chunk_00000.
+        chunk_dir = out_dir / f"chunk_{chunk_id:05d}"
+        chunk_dir.mkdir(parents=True, exist_ok=True)
+
+        # Stack chunk lists into arrays.
+        # counts_chunk shape: (n_chunk, d*h*w), usually (n_chunk, 625)
+        # masks_chunk shape:  (n_chunk, d*h*w), usually (n_chunk, 625)
+        counts_chunk = np.stack(chunk_counts)
+        masks_chunk = np.stack(chunk_masks).astype(np.bool_)
+
+        # Convert this chunk's row metadata into Luis-style dict.
+        # global_start tells the metadata helper where this chunk begins in the
+        # final merged dataset, so refl_ids stay unique after merging.
+        metadata_chunk = _mfx_metadata_rows_to_luis_dict(
+            chunk_metadata_rows,
+            args.test_fraction,
+            global_start=global_row,
+        )
+
+        # This helps long MFX jobs avoid "Too many open files" during np.save.
+        import gc
+        gc.collect()
+
+        # Save this chunk to disk.
+        np.save(chunk_dir / args.counts_fname, counts_chunk)
+        np.save(chunk_dir / args.masks_fname, masks_chunk)
+        np.save(chunk_dir / "metadata.npy", metadata_chunk)
+
+        # Remember this chunk for final merge.
+        chunk_dirs.append(chunk_dir)
+
+        n_chunk = counts_chunk.shape[0]
+        print(f"wrote chunk {chunk_id}: {n_chunk} shoeboxes")
+
+        # Advance global row counter.
+        global_row += n_chunk
+
+        # Move to next chunk ID.
+        chunk_id += 1
+
+        # Clear memory for next chunk.
+        chunk_counts = []
+        chunk_masks = []
+        chunk_metadata_rows = []
+
+        t_flush += time.perf_counter() - t0
+
+    n_experiments_attempted = 0
+    n_experiments_seen = 0
+    n_reflections_seen = 0
+    n_reflections_saved = 0
+
+    # Keep a record of experiments that fail inside the combined file.
+    # This is the combined-mode equivalent of skip-bad-file logic in run_mfx().
+    skipped_experiments = []
+
+    # Main combined-file loop.
+    #
+    # Old MFX mode:
+    #   for each separate .refl/.expt pair:
+    #       load one .refl
+    #       load one .expt
+    #       crop shoeboxes
+    #
+    # New combined MFX mode:
+    #   load combined .refl once
+    #   load combined .expt once
+    #   for each experiment id:
+    #       select reflections where reflections["id"] == experiment_id
+    #       use experiments[experiment_id]
+    #       crop shoeboxes
+    for experiment_id in experiment_ids:
+        n_experiments_attempted += 1
+
+        if experiment_id < 0 or experiment_id >= len(experiments):
+            skipped_experiments.append(
+                {
+                    "experiment_id": experiment_id,
+                    "image_index": -1,
+                    "n_reflections": 0,
+                    "error_type": "BAD_EXPERIMENT_ID",
+                    "error_message": (
+                        f"reflection table has id={experiment_id}, but combined .expt "
+                        f"contains only {len(experiments)} experiment(s)"
+                    ),
+                }
+            )
+            print(
+                f"WARNING: skipping combined experiment id {experiment_id}: "
+                f"outside experiment list range"
+            )
+            continue
+
+        # Select the rows in the combined reflection table that belong to this
+        # experiment/image.
+        t0 = time.perf_counter()
+        select_mask_np = ids_np == experiment_id
+
+        # New: keep the original row numbers from the full combined .refl.
+        # reflection_id below is the row inside this experiment subset, while
+        # combined_refl_row is the row in the full combined reflection table.
+        # This makes future write-back to the combined .refl safer.
+        subset_indices_np = np.nonzero(select_mask_np)[0]
+
+        select_mask = flex.bool(select_mask_np.tolist())
+        refl_subset = reflections.select(select_mask)
+        t_select_subset += time.perf_counter() - t0
+
+        if len(refl_subset) == 0:
+            continue
+
+        experiment = experiments[experiment_id]
+
+        # raw is a tuple of panel images for one event/image:
+        #   raw[0], raw[1], ..., raw[31]
+        #
+        # experiments[experiment_id].imageset is the loader/access object.
+        # get_raw_data(0) loads the actual pixels for image index 0 inside this
+        # one-image imageset. The original event/image index is preserved in
+        # single_file_indices inside the combined .expt file.
+        #
+        # New skip logic:
+        #   If raw-data loading, detector-mask checking, or image-index lookup
+        #   fails for this experiment, skip only this experiment and continue.
+        try:
+            t0 = time.perf_counter()
+            raw = experiment.imageset.get_raw_data(0)
+            t_get_raw += time.perf_counter() - t0
+
+            # If a detector mask was provided, it should have one mask per raw
+            # detector panel. For this MFX Jungfrau case, both should have length 32.
+            if detector_masks is not None and len(detector_masks) != len(raw):
+                raise RuntimeError(
+                    f"detector mask panel count ({len(detector_masks)}) does not "
+                    f"match raw panel count ({len(raw)}) for experiment id {experiment_id}"
+                )
+
+            # Record original detector image/event number, e.g. 1418.
+            t0 = time.perf_counter()
+            image_index = _mfx_image_index_from_combined_expt_json(
+                expt_path,
+                experiment_id,
+            )
+            t_image_index_json += time.perf_counter() - t0
+
+            # Retrieve wavelength from the beam object in the experiment. If it fails,
+            # set wavelength to NaN.
+            try:
+                wavelength = float(experiment.beam.get_wavelength())
+            except Exception:
+                wavelength = np.nan
+
+        except Exception as e:
+            skipped_experiments.append(
+                {
+                    "experiment_id": experiment_id,
+                    "image_index": -1,
+                    "n_reflections": len(refl_subset),
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                }
+            )
+            print(
+                f"WARNING: skipping combined experiment id {experiment_id} "
+                f"with {len(refl_subset)} reflection(s): {type(e).__name__}: {e}"
+            )
+
+            # Try to release any cached data before moving on.
+            try:
+                experiment.imageset.clear_cache()
+            except Exception:
+                pass
+
+            continue
+
+        n_experiments_seen += 1
+        n_reflections_seen += len(refl_subset)
+
+        # Loop over reflections for this one experiment/image.
+        t0 = time.perf_counter()
+
+        for i in range(len(refl_subset)):
+            panel_id = int(refl_subset["panel"][i])
+
+            # xyzcal.px is the DIALS/cctbx calculated pixel position from the
+            # refined geometry/model. It is not an ML prediction from integrator.
+            # We use it as the center of the fixed shoebox crop.
+            xyz = refl_subset["xyzcal.px"][i]
+            x_center = float(xyz[0])
+            y_center = float(xyz[1])
+
+            if panel_id < 0 or panel_id >= len(raw):
+                # Bad panel ID; skip this reflection.
+                continue
+
+            panel_image = raw[panel_id]
+
+            # If a detector mask was supplied, select the mask for this same
+            # panel. The raw pixel panel and mask panel should have matching
+            # shapes, e.g. both (514, 1030).
+            panel_mask_np = None
+            if detector_masks is not None:
+                panel_mask_np = detector_masks[panel_id].as_numpy_array().astype(
+                    bool,
+                    copy=False,
+                )
+
+            # Crop a fixed-size window centered on xyzcal.px.
+            # Returns a 2D counts array with shape (args.h, args.w) and a mask.
+            # If panel_mask_np is provided, the mask combines:
+            #   finite pixel values AND detector-good pixels.
+            # If panel_mask_np is None, the mask only checks finite pixels and
+            # outside-panel padding.
+            shoebox, mask, fixed_bbox = _crop_mfx_fixed_shoebox(
+                panel_image=panel_image,
+                x_center=x_center,
+                y_center=y_center,
+                width=args.w,
+                height=args.h,
+                panel_mask_np=panel_mask_np,
+            )
+
+            # Flatten the fixed-size 2D shoebox/mask into one 1D row.
+            # Pixel values stay the same; only the shape changes.
+            # Example: (25, 25) -> (625,).
+            #
+            # Streaming update:
+            #   append to the current chunk buffer, not to a full-run list.
+            chunk_counts.append(shoebox.reshape(-1).astype(counts_dtype, copy=False))
+            chunk_masks.append(mask.reshape(-1))
+            n_reflections_saved += 1
+
+            # Existing integration bbox is useful metadata, but it may not have
+            # the fixed --w/--h shape. Keep it if the column exists.
+            integration_bbox = tuple(refl_subset["bbox"][i]) if "bbox" in refl_subset else None
+
+            # MFX metadata is built manually, so compute d-spacing here from
+            # the experiment crystal/unit cell and the reflection Miller index.
+            miller_index = tuple(int(v) for v in refl_subset["miller_index"][i])
+            d_spacing = _mfx_d_spacing(experiment, miller_index)
+
+            # Add one metadata row for this shoebox.
+            # background.mean is optional in general, but your checked MFX
+            # integrated.refl files contain it, so copy it when present.
+            #
+            # For combined mode:
+            #   source_refl/source_expt are the combined files.
+            #   experiment_id tells which combined experiment was used.
+            #   image_index preserves the original detector image/event number.
+            chunk_metadata_rows.append(
+                {
+                    "source_refl": refl_path.name,
+                    "source_expt": expt_path.name,
+                    "experiment_id": experiment_id,
+                    "image_index": image_index,
+                    "reflection_id": int(i),
+                    "combined_refl_row": int(subset_indices_np[i]),
+                    "panel": panel_id,
+                    "fixed_bbox": tuple(fixed_bbox),
+                    "integration_bbox": integration_bbox,
+                    "detector_mask": str(args.detector_mask) if args.detector_mask else None,
+                    "xyzcal_px": tuple(float(v) for v in refl_subset["xyzcal.px"][i]),
+                    "xyzobs_px_value": tuple(float(v) for v in refl_subset["xyzobs.px.value"][i])
+                    if "xyzobs.px.value" in refl_subset
+                    else None,
+                    "miller_index": miller_index,
+                    "d": d_spacing,
+                    "intensity_sum_value": float(refl_subset["intensity.sum.value"][i]),
+                    "intensity_sum_variance": float(refl_subset["intensity.sum.variance"][i]),
+                    "background_sum_value": float(refl_subset["background.sum.value"][i]),
+                    "background_sum_variance": float(refl_subset["background.sum.variance"][i]),
+                    "background.mean": (
+                        float(refl_subset["background.mean"][i])
+                        if "background.mean" in refl_subset
+                        else np.nan
+                    ),
+                    "wavelength": wavelength,
+                }
+            )
+
+            # If the current chunk is full, write it to disk and clear memory.
+            if len(chunk_counts) >= write_chunk_size:
+                flush_chunk()
+
+        t_crop_loop += time.perf_counter() - t0
+
+        # imageset is the loader/cache object. clear_cache() tells it to forget
+        # loaded image pixels after we finish this event, so memory does not grow
+        # while processing many experiments inside the combined .expt file.
+        t0 = time.perf_counter()
+        experiment.imageset.clear_cache()
+        t_clear_cache += time.perf_counter() - t0
+
+    # Write the final partial chunk, if any.
+    flush_chunk()
+
+    if not chunk_dirs:
+        raise SystemExit("No MFX shoeboxes were extracted; check input files and bbox/panel data.")
+
+    counts_path = out_dir / args.counts_fname
+    masks_path = out_dir / args.masks_fname
+    metadata_path = out_dir / "metadata.npy"
+
+    # Merge all chunk folders into final counts.npy, masks.npy, metadata.npy.
+    # merge_mfx_chunks writes counts/masks through memmap so the final merge does
+    # not need to hold all pixel arrays in memory at once.
+    t0 = time.perf_counter()
+    n_saved = merge_mfx_chunks(
+        chunk_dirs=chunk_dirs,
+        out_dir=out_dir,
+        counts_fname=args.counts_fname,
+        masks_fname=args.masks_fname,
+    )
+    t_merge += time.perf_counter() - t0
+
+    stats = None
+
+    # concentration.npy is created only when we do NOT use: --no-stats
+    t0 = time.perf_counter()
+    if not args.no_stats:
+        stats = _raw_stats_from_memmap(counts_path, masks_path, chunk=args.stats_chunk)
+
+        _save_concentration_from_memmap(
+            counts_path=counts_path,
+            out_dir=out_dir,
+            chunk=args.stats_chunk,
+        )
+        print("wrote concentration.npy")
+    t_stats += time.perf_counter() - t0
+
+    # Write a simple dataset.yaml so the output folder has the expected dataset
+    # description. The metadata format may still need to be aligned with Luis's
+    # final data-loader expectations.
+    t0 = time.perf_counter()
+    write_dataset_yaml(
+        out_dir,
+        geometry={"d": args.d, "h": args.h, "w": args.w},
+        n_reflections=n_saved,
+        polychromatic=False,
+        anscombe=False,
+        files={
+            "counts": args.counts_fname,
+            "masks": args.masks_fname,
+            "reference": "metadata.npy",
+        },
+        crystal=None,
+        stats=stats,
+        refl_file=None,
+    )
+    t_write_yaml += time.perf_counter() - t0
+
+    # Write a small text report of skipped combined experiments.
+    # This makes it easy to inspect whether failures were raw-data access,
+    # detector-mask mismatch, bad experiment ids, or image-index lookup issues.
+    if skipped_experiments:
+        skipped_path = out_dir / "skipped_combined_experiments.txt"
+        with skipped_path.open("w") as f:
+            for row in skipped_experiments:
+                f.write(
+                    f"experiment_id={row['experiment_id']} "
+                    f"image_index={row['image_index']} "
+                    f"n_reflections={row['n_reflections']} "
+                    f"error_type={row['error_type']} "
+                    f"error_message={row['error_message']}\n"
+                )
+        print(f"wrote {skipped_path}")
+
+    t_total = time.perf_counter() - t_total_start
+
+    accounted = (
+        t_path_setup
+        + t_load_mask
+        + t_load_refl
+        + t_load_expt
+        + t_get_ids
+        + t_select_subset
+        + t_get_raw
+        + t_image_index_json
+        + t_crop_loop
+        + t_clear_cache
+        + t_flush
+        + t_merge
+        + t_stats
+        + t_write_yaml
+    )
+
+    print("")
+    print("MFX combined-file timing summary:")
+    print(f"  total wall time:        {t_total:.2f} sec ({t_total / 60:.2f} min)")
+    print(f"  path/setup checks:      {t_path_setup:.2f} sec")
+    print(f"  load detector mask:     {t_load_mask:.2f} sec")
+    print(f"  load combined .refl:    {t_load_refl:.2f} sec")
+    print(f"  load combined .expt:    {t_load_expt:.2f} sec")
+    print(f"  get unique ids:         {t_get_ids:.2f} sec")
+    print(f"  select refl subsets:    {t_select_subset:.2f} sec")
+    print(f"  get_raw_data:           {t_get_raw:.2f} sec")
+    print(f"  read image index json:  {t_image_index_json:.2f} sec")
+    print(f"  crop/metadata loop:     {t_crop_loop:.2f} sec")
+    print(f"  clear image cache:      {t_clear_cache:.2f} sec")
+    print(f"  flush chunks:           {t_flush:.2f} sec")
+    print(f"  merge chunks:           {t_merge:.2f} sec")
+    print(f"  stats/concentration:    {t_stats:.2f} sec")
+    print(f"  write dataset.yaml:     {t_write_yaml:.2f} sec")
+    print(f"  unaccounted/other:      {t_total - accounted:.2f} sec")
+    print("")
+    print("Note:")
+    print("  crop/metadata loop includes any flush_chunk() calls that happen inside")
+    print("  the reflection loop, so crop/metadata and flush chunks overlap slightly.")
+    print("")
+
+    print(f"attempted {n_experiments_attempted} combined experiment id(s)")
+    print(f"processed {n_experiments_seen} combined experiment(s)")
+    print(f"skipped {len(skipped_experiments)} combined experiment(s)")
+    print(f"seen {n_reflections_seen} reflection(s)")
+    print(f"saved {n_reflections_saved} fixed-size shoebox(es)")
+    print(f"wrote {counts_path}")
+    print(f"wrote {masks_path}")
+    print(f"wrote {metadata_path}")
+    print(f"wrote dataset.yaml under {out_dir}")
+
+
+def _load_mfx_raw_panels_from_npz(raw_cache_dir: Path, image_index):
+    """Load cached MFX raw detector panels for one image/event.
+
+    Expected cache filename:
+        raw_panels_image_01418.npz
+
+    Expected arrays inside the .npz:
+        panel_00, panel_01, ..., panel_31
+
+    This is the cache/local-copy path:
+        old slow path: .expt -> ExperimentListFactory -> get_raw_data(0)
+        new fast path: raw_panels_image_XXXXX.npz -> NumPy arrays
+    """
+    if image_index is None:
+        raise ValueError("cannot load raw-panel cache because image_index is None")
+
+    cache_path = raw_cache_dir / f"raw_panels_image_{int(image_index):05d}.npz"
+    if not cache_path.exists():
+        raise FileNotFoundError(f"raw-panel cache file not found: {cache_path}")
+
+    with np.load(cache_path) as data:
+        panel_keys = sorted(k for k in data.files if k.startswith("panel_"))
+        if not panel_keys:
+            raise ValueError(f"no panel_XX arrays found in {cache_path}")
+
+        # Copy arrays out before closing the np.load context.
+        raw = tuple(data[k].astype(np.float32, copy=False) for k in panel_keys)
+
+    return raw, cache_path
+
+
+def _mfx_wavelength_from_expt_json(expt_path: Path):
+    """Read beam wavelength from an MFX .expt JSON without loading image data."""
+    import json
+
+    try:
+        with open(expt_path) as f:
+            data = json.load(f)
+
+        exp = data["experiment"][0]
+        beam_id = int(exp.get("beam", 0))
+        return float(data["beam"][beam_id]["wavelength"])
+    except Exception:
+        return np.nan
+
+
+def _angle_degrees(u, v):
+    """Return angle between two vectors in degrees."""
+    import math
+
+    u = np.asarray(u, dtype=float)
+    v = np.asarray(v, dtype=float)
+    denom = np.linalg.norm(u) * np.linalg.norm(v)
+    if denom == 0:
+        return np.nan
+
+    cosang = float(np.dot(u, v) / denom)
+    cosang = max(-1.0, min(1.0, cosang))
+    return float(math.degrees(math.acos(cosang)))
+
+
+def _mfx_unit_cell_from_expt_json(expt_path: Path):
+    """Read crystal unit cell from an MFX .expt JSON without loading image data.
+
+    The .expt file stores real-space basis vectors. We convert those vectors to
+    the six unit-cell parameters needed by cctbx. This avoids the expensive
+    ExperimentListFactory.from_json_file(..., check_format=True) call in
+    raw-panel-cache mode.
+    """
+    import json
+
+    try:
+        from cctbx import uctbx
+
+        with open(expt_path) as f:
+            data = json.load(f)
+
+        exp = data["experiment"][0]
+        crystal_id = int(exp.get("crystal", 0))
+        crystal = data["crystal"][crystal_id]
+
+        a_vec = np.asarray(crystal["real_space_a"], dtype=float)
+        b_vec = np.asarray(crystal["real_space_b"], dtype=float)
+        c_vec = np.asarray(crystal["real_space_c"], dtype=float)
+
+        a = float(np.linalg.norm(a_vec))
+        b = float(np.linalg.norm(b_vec))
+        c = float(np.linalg.norm(c_vec))
+        alpha = _angle_degrees(b_vec, c_vec)
+        beta = _angle_degrees(a_vec, c_vec)
+        gamma = _angle_degrees(a_vec, b_vec)
+
+        return uctbx.unit_cell((a, b, c, alpha, beta, gamma))
+    except Exception:
+        return None
+
+
+def _mfx_d_spacing_from_unit_cell(unit_cell, miller_index):
+    """Compute d-spacing from a cached-mode unit cell, or NaN if unavailable."""
+    if unit_cell is None:
+        return np.nan
+
+    try:
+        hkl = tuple(int(v) for v in miller_index)
+        return float(unit_cell.d(hkl))
+    except Exception:
+        return np.nan
+
+
 #Thao: Added a helper function to find the matching .expt file for a given MFX integrated reflection table path.
-def _matching_mfx_expt(refl_path: Path) -> Path:
+def _matching_mfx_expt(refl_path: Path): 
     # Given an MFX integrated reflection table path, return the matching .expt path.
     # Example:
     #   idx-data_36001_integrated.refl -> idx-data_36001_integrated.expt
     expt_path = refl_path.with_suffix(".expt")
     if not expt_path.exists():
-        raise SystemExit(
-            f"could not find matching .expt for {refl_path} (expected {expt_path})"
-        )
+        return None
+        
     return expt_path
+
+
+# Thao: added helper for combined MFX .expt files.
+# In combined files, each experiment has a new internal id: 0, 1, 2, ...
+# Each experiment points to an imageset, and that imageset preserves the
+# original single_file_indices value, e.g. 1418, 2203, 2660.
+def _mfx_image_index_from_combined_expt_json(expt_path: Path, experiment_id: int):
+    """Return original single_file_indices for one experiment in a combined .expt.
+
+    Example:
+        combined experiment id 0 -> original image/event 1418
+        combined experiment id 1 -> original image/event 2203
+
+    This is only metadata for tracking/debugging. Pixel loading still happens
+    through ExperimentListFactory and experiments[experiment_id].imageset.
+    """
+    import json
+
+    with open(expt_path) as f:
+        data = json.load(f)
+
+    try:
+        exp = data["experiment"][experiment_id]
+        imageset_id = int(exp["imageset"])
+        return int(data["imageset"][imageset_id]["single_file_indices"][0])
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+
 
 #Thao: added a helper function to extract the first single_file_indices value from an MFX .expt file. 
 # This is only metadata for tracking/debugging. dxtbx can still load the pixels through ExperimentListFactory even if this value is absent.
@@ -903,11 +1835,21 @@ def _crop_mfx_fixed_shoebox(
         Loss
     
     """
-    # flex arrays use .all() for shape. For this data: (514, 1030).
-    panel_h, panel_w = panel_image.all()
+    # panel_image can be either:
+    #   1. a DIALS/scitbx flex array from get_raw_data(0), or
+    #   2. a NumPy array loaded from raw_panels_image_XXXXX.npz.
+    #
+    # Support both so the same crop code works for the normal psana/dxtbx path
+    # and the raw-panel-cache path.
+    if isinstance(panel_image, np.ndarray):
+        panel_np = panel_image
+        panel_h, panel_w = panel_np.shape
+    else:
+        # flex arrays use .all() for shape. For this data: (514, 1030).
+        panel_h, panel_w = panel_image.all()
 
-    # Convert once to NumPy so ordinary slicing/assignment works.
-    panel_np = panel_image.as_numpy_array()
+        # Convert once to NumPy so ordinary slicing/assignment works.
+        panel_np = panel_image.as_numpy_array()
 
     # If a detector mask is supplied, make sure it lines up with this panel.
     # This catches mistakes such as using a mask from a different detector size.
@@ -1227,6 +2169,8 @@ def _mfx_metadata_rows_to_luis_dict(metadata_rows, test_fraction, global_start=0
     # crash if they are absent in some future MFX reflection table.
     scalar_keys = [
         "reflection_id",
+        "combined_refl_row",
+        "experiment_id",
         "panel",
         "d",
         "intensity_sum_value",
@@ -1310,6 +2254,26 @@ def _mfx_metadata_rows_to_luis_dict(metadata_rows, test_fraction, global_start=0
     # Global row ids across the final merged dataset.
     # This keeps refl_ids unique across chunks.
     meta["refl_ids"] = np.arange(global_start, global_start + n, dtype=np.float32)
+
+    meta["source_refl"] = np.array(
+        [row.get("source_refl", "") for row in metadata_rows],
+        dtype=object,
+    )
+
+    meta["source_expt"] = np.array(
+        [row.get("source_expt", "") for row in metadata_rows],
+        dtype=object,
+    )
+
+    meta["detector_mask"] = np.array(
+        [row.get("detector_mask", "") for row in metadata_rows],
+        dtype=object,
+    )
+
+    meta["raw_cache_file"] = np.array(
+        [row.get("raw_cache_file", "") for row in metadata_rows],
+        dtype=object,
+    )
 
     return meta
 

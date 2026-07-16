@@ -43,7 +43,7 @@ data_loader:
   name: rotation_data
   args:
     # Use the MFX shoebox dataset.
-    data_dir: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_stream_test_25
+    data_dir: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_r0269_018_rg070_combined_all
 
     batch_size: 1024
     validation_split: 0.2
@@ -55,7 +55,7 @@ data_loader:
 
     # Files inside data_dir.
     shoebox_file_names:
-      data_dir: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_stream_test_25
+      data_dir: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_r0269_018_rg070_combined_all
       counts: counts.npy
       masks: masks.npy
       reference: metadata.npy
