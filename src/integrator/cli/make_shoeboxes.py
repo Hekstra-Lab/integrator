@@ -8,7 +8,7 @@ Two modes:
 1. Default (rotation / sequence): one imageset with a rotation scan.
 2. --laue: many single-frame stills from laue-dials. --d must be 1;
 
-Examples: 
+Examples:
 
 Run (rotation mode):
 integrator.make_shoeboxes \
@@ -18,7 +18,7 @@ integrator.make_shoeboxes \
     --out-dir /n/.../pytorch_data \
     --w 21 --h 21 --d 3
 
-Run (laue mode): 
+Run (laue mode):
 integrator.make_shoeboxes --laue \
     --data-dir /n/.../laue-dials \
     --refl integrated.refl \
@@ -66,7 +66,7 @@ def parse_args():
         "rotation sequence",
     )
 
-    
+
     #Thao: added MFX mode to process cctbx.xfel integrated refl/expt pairs for stills.
     parser.add_argument(
         "--mfx",
@@ -119,22 +119,6 @@ def parse_args():
             "Example: hot_lines_combined5.mask. The file is loaded with "
             "libtbx.easy_pickle and should contain one boolean mask per panel, "
             "where True means good pixel and False means bad/masked pixel."
-        ),
-    )
-
-    # Thao: optional raw-panel cache for MFX mode.
-    # If this is supplied, run_mfx() loads raw detector panels from files like
-    # raw_panels_image_01418.npz instead of calling get_raw_data(0).
-    parser.add_argument(
-        "--mfx-raw-cache-dir",
-        type=str,
-        default=None,
-        help=(
-            "Optional MFX raw-panel cache directory containing files named "
-            "raw_panels_image_XXXXX.npz. When supplied with --mfx, the code "
-            "loads cached panel arrays from this directory instead of calling "
-            "ExperimentListFactory.from_json_file(..., check_format=True) and "
-            "get_raw_data(0)."
         ),
     )
 
@@ -354,14 +338,6 @@ def run_mfx(args):
         - Instead of crashing the whole Slurm array task, this version prints a
           warning, records the bad pair, skips it, and continues to the next pair.
 
-    Raw-panel-cache update:
-        - If --mfx-raw-cache-dir is supplied, this function loads saved NumPy
-          panel arrays such as raw_panels_image_01418.npz.
-        - This skips the slow dxtbx/psana2 path:
-              ExperimentListFactory.from_json_file(..., check_format=True)
-              imageset.get_raw_data(0)
-        - The .refl file is still used for reflection metadata, and the .expt
-          JSON is read lightly for image index, wavelength, and unit cell.
     """
     # To read cctbx.xfel integrated .refl/.expt files, we need DIALS and dxtbx.
     # flex provides the DIALS array objects used by reflection tables.
@@ -434,18 +410,6 @@ def run_mfx(args):
         detector_masks = easy_pickle.load(args.detector_mask)
         print(f"loaded detector mask with {len(detector_masks)} panel mask(s): {args.detector_mask}")
 
-    # Optional raw-panel cache for MFX mode.
-    # This is the local-copy speed test suggested after the psana/dxtbx timing:
-    #   slow path: .expt -> ExperimentListFactory -> get_raw_data(0)
-    #   cache path: raw_panels_image_XXXXX.npz -> NumPy arrays
-    #
-    # The cache files are expected to contain panel_00, panel_01, ..., panel_31.
-    raw_cache_dir = None
-    if args.mfx_raw_cache_dir is not None:
-        raw_cache_dir = Path(args.mfx_raw_cache_dir)
-        if not raw_cache_dir.exists():
-            raise SystemExit(f"MFX raw-panel cache directory not found: {raw_cache_dir}")
-        print(f"using MFX raw-panel cache: {raw_cache_dir}")
 
     # Chunk buffers.
     # These replace the old full-run lists:
@@ -549,13 +513,13 @@ def run_mfx(args):
         #   print the bad file pair, record it, and continue to the next file.
         try:
             expt_path = _matching_mfx_expt(refl_path)
-            
+
             if expt_path is None:
                 print("WARNING: skipping MFX file pair with missing .expt")
                 print(f"  refl: {refl_path}")
                 skipped_files.append((str(refl_path), "missing", "missing .expt"))
                 continue
-                
+
             # Load reflection table metadata.
             #
             # A single integrated .refl file can contain many reflection rows.
@@ -589,78 +553,50 @@ def run_mfx(args):
 
             # Try to record the event/image index stored in the ImageSet JSON, if present.
             # For example, idx-data_36001_integrated.expt had single_file_indices=[36001].
-            #
-            # In raw-panel-cache mode, this image_index is also used to find:
-            #   raw_panels_image_36001.npz
             image_index = _mfx_image_index_from_expt_json(expt_path)
 
-            # These are filled differently depending on whether we read raw pixels
-            # from dxtbx/psana2 or from the local raw-panel cache.
             experiments = None
             wavelength = np.nan
-            unit_cell_for_cache = None
-            raw_cache_file = None
 
-            if raw_cache_dir is None:
-                # Load experiment and connect to underlying image source.
-                # check_format=True is what lets dxtbx read the real pixels through the
-                # imageset/data.loc mechanism.
-                experiments = ExperimentListFactory.from_json_file(
-                    str(expt_path),
-                    check_format=True,
+            # Load experiment and connect to underlying image source.
+            # Fast MFX/Jungfrau path:
+            #   check_format=False avoids expensive psana/dxtbx validation.
+            #   Then we explicitly force the lazy reader to use FormatXTCJungfrau.
+            # This preserves the working Jungfrau panel reader without the slow
+            # full format-check step.
+            experiments = ExperimentListFactory.from_json_file(
+                str(expt_path),
+                check_format=False,
+            )
+            _mfx_force_xtc_jungfrau_for_experiments(experiments)
+
+            # New: do not crash if this .expt has an unexpected number of experiments.
+            # For this MFX prototype, we expect exactly one experiment per file.
+            if len(experiments) != 1:
+                print("WARNING: skipping MFX file pair with unexpected experiment count")
+                print(f"  refl: {refl_path}")
+                print(f"  expt: {expt_path}")
+                print(f"  n_experiments: {len(experiments)}")
+                skipped_files.append(
+                    (str(refl_path), str(expt_path), f"n_experiments={len(experiments)}")
                 )
+                continue
 
-                # New: do not crash if this .expt has an unexpected number of experiments.
-                # For this MFX prototype, we expect exactly one experiment per file.
-                if len(experiments) != 1:
-                    print("WARNING: skipping MFX file pair with unexpected experiment count")
-                    print(f"  refl: {refl_path}")
-                    print(f"  expt: {expt_path}")
-                    print(f"  n_experiments: {len(experiments)}")
-                    skipped_files.append(
-                        (str(refl_path), str(expt_path), f"n_experiments={len(experiments)}")
-                    )
-                    continue
+            # raw is a tuple of panel images for one event/image:
+            #   raw[0], raw[1], ..., raw[31]
+            #
+            # experiments[0].imageset is a loader/access object, not pixels yet.
+            # get_raw_data(0) loads the actual pixels for image index 0 inside this
+            # one-image imageset. For this MFX Jungfrau data, it returns 32 panel
+            # flex arrays, each with shape about (514, 1030).
+            raw = experiments[0].imageset.get_raw_data(0)
 
-                # raw is a tuple of panel images for one event/image:
-                #   raw[0], raw[1], ..., raw[31]
-                #
-                # Mental model:
-                #   imageset = the book / file access instructions
-                #   raw      = one page/image loaded from that book
-                #   panel    = one detector tile/region on that page
-                #   pixel    = one number inside that tile
-                #
-                # experiments[0].imageset is a loader/access object, not pixels yet.
-                # get_raw_data(0) loads the actual pixels for image index 0 inside this
-                # one-image imageset. For this MFX Jungfrau data, it returns 32 panel
-                # flex arrays, each with shape about (514, 1030).
-                #
-                # New: put get_raw_data(0) inside the try block too.
-                # This can fail if dxtbx can read the .expt JSON but cannot open the
-                # actual image data referenced by the imageset.
-                raw = experiments[0].imageset.get_raw_data(0)
-
-                # retrieve wavelength from the beam object in the experiment. If it fails, set wavelength to NaN.
-                try:
-                    wavelength = float(experiments[0].beam.get_wavelength())
-                except Exception:
-                    wavelength = np.nan
-
-            else:
-                # Raw-panel-cache mode:
-                #   Do not call ExperimentListFactory.from_json_file(..., check_format=True).
-                #   Do not call imageset.get_raw_data(0).
-                # Instead, load local NumPy panel arrays created by dump_raw_panels_test.py.
-                raw, raw_cache_file = _load_mfx_raw_panels_from_npz(
-                    raw_cache_dir,
-                    image_index,
-                )
-
-                # The .expt JSON is still useful metadata. Reading the JSON directly
-                # is much lighter than check_format=True + get_raw_data(0).
-                wavelength = _mfx_wavelength_from_expt_json(expt_path)
-                unit_cell_for_cache = _mfx_unit_cell_from_expt_json(expt_path)
+            # Retrieve wavelength from the beam object in the experiment.
+            # If it fails, set wavelength to NaN.
+            try:
+                wavelength = float(experiments[0].beam.get_wavelength())
+            except Exception:
+                wavelength = np.nan
 
             # If a detector mask was provided, it should have one mask per raw
             # detector panel. For this MFX Jungfrau case, both should have length 32.
@@ -759,10 +695,7 @@ def run_mfx(args):
             # MFX metadata is built manually, so compute d-spacing here from
             # the experiment crystal/unit cell and the reflection Miller index.
             miller_index = tuple(int(v) for v in reflections["miller_index"][i])
-            if raw_cache_dir is None:
-                d_spacing = _mfx_d_spacing(experiments[0], miller_index)
-            else:
-                d_spacing = _mfx_d_spacing_from_unit_cell(unit_cell_for_cache, miller_index)
+            d_spacing = _mfx_d_spacing(experiments[0], miller_index)
 
             # Add one metadata row for this shoebox.
             # background.mean is optional in general, but your checked MFX
@@ -777,7 +710,6 @@ def run_mfx(args):
                     "fixed_bbox": tuple(fixed_bbox),
                     "integration_bbox": integration_bbox,
                     "detector_mask": str(args.detector_mask) if args.detector_mask else None,
-                    "raw_cache_file": raw_cache_file.name if raw_cache_file is not None else "",
                     "xyzcal_px": tuple(float(v) for v in reflections["xyzcal.px"][i]),
                     "xyzobs_px_value": tuple(float(v) for v in reflections["xyzobs.px.value"][i])
                     if "xyzobs.px.value" in reflections
@@ -829,6 +761,11 @@ def run_mfx(args):
         counts_fname=args.counts_fname,
         masks_fname=args.masks_fname,
     )
+
+    # Add compact image IDs only after all chunk metadata has been merged.
+    # If image_id is computed inside each chunk, each chunk can restart at 0,
+    # which would make the same image_id refer to different images in the final dataset.
+    _add_image_id_metadata(metadata_path)
 
     stats = None
 
@@ -1027,11 +964,15 @@ def run_mfx_combined(args):
         raise SystemExit(f"{refl_path} is missing required column(s): {missing}")
 
     # Load combined experiment list once.
+    # Fast MFX/Jungfrau path:
+    #   check_format=False avoids expensive psana/dxtbx validation.
+    #   Then explicitly force each lazy imageset reader to use FormatXTCJungfrau.
     t0 = time.perf_counter()
     experiments = ExperimentListFactory.from_json_file(
         str(expt_path),
-        check_format=True,
+        check_format=False,
     )
+    _mfx_force_xtc_jungfrau_for_experiments(experiments)
     t_load_expt += time.perf_counter() - t0
 
     print(f"loaded combined experiments: {len(experiments)}")
@@ -1210,6 +1151,7 @@ def run_mfx_combined(args):
         #   fails for this experiment, skip only this experiment and continue.
         try:
             t0 = time.perf_counter()
+            _mfx_force_xtc_jungfrau_reader(experiment.imageset)
             raw = experiment.imageset.get_raw_data(0)
             t_get_raw += time.perf_counter() - t0
 
@@ -1397,6 +1339,12 @@ def run_mfx_combined(args):
         counts_fname=args.counts_fname,
         masks_fname=args.masks_fname,
     )
+
+    # Add compact image IDs only after all chunk metadata has been merged.
+    # If image_id is computed inside each chunk, each chunk can restart at 0,
+    # which would make the same image_id refer to different images in the final dataset.
+    _add_image_id_metadata(metadata_path)
+
     t_merge += time.perf_counter() - t0
 
     stats = None
@@ -1505,35 +1453,52 @@ def run_mfx_combined(args):
     print(f"wrote dataset.yaml under {out_dir}")
 
 
-def _load_mfx_raw_panels_from_npz(raw_cache_dir: Path, image_index):
-    """Load cached MFX raw detector panels for one image/event.
+def _mfx_force_xtc_jungfrau_reader(imageset):
+    """Force a lazy MFX imageset reader to use the Jungfrau XTC format.
 
-    Expected cache filename:
-        raw_panels_image_01418.npz
+    Why this exists:
+        ExperimentListFactory.from_json_file(..., check_format=False) is much
+        faster for MFX .expt files, but dxtbx may otherwise leave the lazy
+        reader as generic FormatMultiImage. That generic reader fails later at
+        get_raw_data(0). Setting reader.format_class to FormatXTCJungfrau keeps
+        the fast JSON load while preserving the working Jungfrau raw-panel
+        reader.
 
-    Expected arrays inside the .npz:
-        panel_00, panel_01, ..., panel_31
-
-    This is the cache/local-copy path:
-        old slow path: .expt -> ExperimentListFactory -> get_raw_data(0)
-        new fast path: raw_panels_image_XXXXX.npz -> NumPy arrays
+    Working pattern tested on MFX run 0269:
+        experiments = ExperimentListFactory.from_json_file(path, check_format=False)
+        imageset = experiments.imagesets()[0]
+        imageset.reader().format_class = FormatXTCJungfrau
+        raw = imageset.get_raw_data(0)  # returns 32 panels
     """
-    if image_index is None:
-        raise ValueError("cannot load raw-panel cache because image_index is None")
+    from dxtbx.format.FormatXTCJungfrau import FormatXTCJungfrau
 
-    cache_path = raw_cache_dir / f"raw_panels_image_{int(image_index):05d}.npz"
-    if not cache_path.exists():
-        raise FileNotFoundError(f"raw-panel cache file not found: {cache_path}")
+    reader = imageset.reader()
+    reader.format_class = FormatXTCJungfrau
+    return reader
 
-    with np.load(cache_path) as data:
-        panel_keys = sorted(k for k in data.files if k.startswith("panel_"))
-        if not panel_keys:
-            raise ValueError(f"no panel_XX arrays found in {cache_path}")
 
-        # Copy arrays out before closing the np.load context.
-        raw = tuple(data[k].astype(np.float32, copy=False) for k in panel_keys)
+def _mfx_force_xtc_jungfrau_for_experiments(experiments):
+    """Apply the MFX Jungfrau reader override to every imageset once."""
+    seen = set()
 
-    return raw, cache_path
+    # experiments.imagesets() is the most direct way to get all imagesets.
+    for imageset in experiments.imagesets():
+        key = id(imageset)
+        if key in seen:
+            continue
+        _mfx_force_xtc_jungfrau_reader(imageset)
+        seen.add(key)
+
+    # Some dxtbx ExperimentList objects may expose imagesets differently, so
+    # also walk experiments defensively. This is harmless if already handled.
+    for experiment in experiments:
+        imageset = experiment.imageset
+        key = id(imageset)
+        if key in seen:
+            continue
+        _mfx_force_xtc_jungfrau_reader(imageset)
+        seen.add(key)
+
 
 
 def _mfx_wavelength_from_expt_json(expt_path: Path):
@@ -1615,14 +1580,14 @@ def _mfx_d_spacing_from_unit_cell(unit_cell, miller_index):
 
 
 #Thao: Added a helper function to find the matching .expt file for a given MFX integrated reflection table path.
-def _matching_mfx_expt(refl_path: Path): 
+def _matching_mfx_expt(refl_path: Path):
     # Given an MFX integrated reflection table path, return the matching .expt path.
     # Example:
     #   idx-data_36001_integrated.refl -> idx-data_36001_integrated.expt
     expt_path = refl_path.with_suffix(".expt")
     if not expt_path.exists():
         return None
-        
+
     return expt_path
 
 
@@ -1653,7 +1618,7 @@ def _mfx_image_index_from_combined_expt_json(expt_path: Path, experiment_id: int
         return None
 
 
-#Thao: added a helper function to extract the first single_file_indices value from an MFX .expt file. 
+#Thao: added a helper function to extract the first single_file_indices value from an MFX .expt file.
 # This is only metadata for tracking/debugging. dxtbx can still load the pixels through ExperimentListFactory even if this value is absent.
 def _mfx_image_index_from_expt_json(expt_path: Path):
     """Return the first single_file_indices value from an MFX .expt file.
@@ -1687,7 +1652,7 @@ def _mfx_image_index_from_expt_json(expt_path: Path):
 
 def _mfx_d_spacing(experiment, miller_index):
     """Compute d-spacing for one MFX reflection from the experiment crystal."""
-    
+
     #Example expt file:
     # {
     #   "experiment": [
@@ -1707,7 +1672,7 @@ def _mfx_d_spacing(experiment, miller_index):
     #       "space_group_hall_symbol": "..."
     #     }
     #   ],
-        
+
 
     unit_cell = experiment.crystal.get_unit_cell()
 
@@ -1731,13 +1696,13 @@ def _crop_mfx_fixed_shoebox(
     panel_image
         scitbx/DIALS flex 2D array for one detector panel. Use
         panel_image.all() to get shape because this is not a NumPy array.
-    
+
     x_center, y_center
         Predicted reflection center in pixel coordinates from xyzcal.px.
-    
+
     width, height
         Desired fixed output size from --w and --h.
-    
+
     panel_mask_np
         Optional NumPy boolean detector mask for the same panel as panel_image.
         Shape should match panel_image.as_numpy_array().shape.
@@ -1833,7 +1798,7 @@ def _crop_mfx_fixed_shoebox(
         ↓
 
         Loss
-    
+
     """
     # panel_image can be either:
     #   1. a DIALS/scitbx flex array from get_raw_data(0), or
@@ -1891,7 +1856,7 @@ def _crop_mfx_fixed_shoebox(
     # and an all-False mask.
     if xs0 >= xs1 or ys0 >= ys1:
         return shoebox, mask, fixed_bbox
-    
+
     # Destination offsets inside the fixed-size shoebox.
     #
     # x0/y0 are the requested crop start coordinates.
@@ -1951,7 +1916,7 @@ def _crop_mfx_fixed_shoebox(
     # Place the mask patch into the same position as the shoebox pixel patch.
     # Outside-panel padding remains False.
     mask[yd0 : yd0 + patch.shape[0], xd0 : xd0 + patch.shape[1]] = mask_patch
-    
+
     # returns:
     # shoebox: np.ndarray, shape (height, width), dtype same as detector pixels
     # mask:    np.ndarray, shape (height, width), dtype bool
@@ -1963,7 +1928,7 @@ def _stats_from_memmap(
     masks_path: Path,
     chunk: int = 10_000,
 ) -> dict:
-    
+
     """Return (mean, var) of masked counts and their Anscombe transform.
 
     Streams the on-disk memmap in chunks; values are stored in dataset.yaml.
@@ -1990,7 +1955,7 @@ def _stats_from_memmap(
         sum_a += a.sum()
         sumsq_a += (a * a).sum()
         nel += c.size
-    
+
     #raw mean
     #raw variance
     #anscombe mean
@@ -2013,7 +1978,7 @@ def _raw_stats_from_memmap(
     chunk: int = 10_000,
 ) -> dict:
     """
-    one image -> many reflections/shoeboxes: counts.npy = shoeboxes from many images. 
+    one image -> many reflections/shoeboxes: counts.npy = shoeboxes from many images.
 
     Return raw mean/variance of over the whole counts.npy dataset
 
@@ -2139,6 +2104,69 @@ def merge_mfx_chunks(chunk_dirs, out_dir, counts_fname="counts.npy", masks_fname
     np.save(out_dir / "metadata.npy", merged_meta)
 
     return total_rows
+
+
+def _add_image_id_metadata(metadata_path: Path):
+    """Add compact image_id and n_images to final merged metadata.npy.
+
+    image_num is the original MFX/cctbx image number, e.g. 2660, 3017.
+    image_id is compact for ML embeddings, e.g. 0, 1, 2.
+
+    This should run only after merge_mfx_chunks(...) has created the final
+    metadata.npy. Do not run it inside each chunk, because each chunk may
+    restart image IDs from 0 and create inconsistent IDs in the merged dataset.
+    """
+    metadata = np.load(metadata_path, allow_pickle=True).item()
+
+    if "image_num" not in metadata:
+        raise KeyError("metadata.npy does not contain image_num")
+
+    image_num = np.asarray(metadata["image_num"]).astype(np.int64)
+
+    unique = np.array(sorted(set(image_num.tolist())), dtype=np.int64)
+    image_to_id = {img: i for i, img in enumerate(unique)}
+
+    metadata["image_id"] = np.array(
+        [image_to_id[x] for x in image_num],
+        dtype=np.int64,
+    )
+    """
+    Ex:
+    image_num = [2660, 2660, 3017, 3744, 3744]
+    unique = [2660, 3017, 3744]
+    len(unique) = 3
+
+    for every reflection row:
+    reflection 0: image_num=2660, image_id=0, n_images=3
+    reflection 1: image_num=2660, image_id=0, n_images=3
+    reflection 2: image_num=3017, image_id=1, n_images=3
+
+    we want to save n_images because later he model/loss needs to create one learnable value per image.
+
+    nn.Embedding(n_images, 1)
+
+    then PyTorch creates:
+
+    image 0  -> learnable B/G value
+    image 1  -> learnable B/G value
+
+    So each reflection uses:
+
+    image_id = which image this reflection came from
+    n_images = how many total image-specific parameters to create
+
+    """
+
+    metadata["n_images"] = np.full(
+        len(image_num),
+        len(unique),
+        dtype=np.int64,
+    )
+
+    np.save(metadata_path, metadata)
+
+    print("added image_id to metadata.npy")
+    print(f"n_images = {len(unique)}")
 
 
 def _mfx_metadata_rows_to_luis_dict(metadata_rows, test_fraction, global_start=0):
@@ -2270,10 +2298,6 @@ def _mfx_metadata_rows_to_luis_dict(metadata_rows, test_fraction, global_start=0
         dtype=object,
     )
 
-    meta["raw_cache_file"] = np.array(
-        [row.get("raw_cache_file", "") for row in metadata_rows],
-        dtype=object,
-    )
 
     return meta
 

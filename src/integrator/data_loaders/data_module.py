@@ -14,8 +14,24 @@ from torch.utils.data import (
 logger = logging.getLogger(__name__)
 
 
+def _mask_metadata(metadata: dict, mask):
+    """Apply boolean mask to tensor and NumPy metadata values."""
+    if isinstance(mask, torch.Tensor):
+        mask_np = mask.detach().cpu().numpy()
+    else:
+        mask_np = np.asarray(mask)
+
+    out = {}
+    for k, v in metadata.items():
+        if isinstance(v, torch.Tensor):
+            out[k] = v[mask]
+        else:
+            out[k] = np.asarray(v)[mask_np]
+    return out
+
+
 def _load_shoebox_array(path, weights_only=True):
-    """Load counts/masks from either new .npy  or .pt. Returns torch.Tensor."""
+    """Load counts/masks from either new .npy or .pt. Returns torch.Tensor."""
     p = Path(path)
     npy = p.with_suffix(".npy")
     if npy.exists():
@@ -88,6 +104,9 @@ DEFAULT_DS_COLS = [
     "is_coset",
     "group_label",
     "profile_group_label",
+    "image_num",
+    "image_id",
+    "n_images",
 ]
 
 
@@ -139,7 +158,7 @@ def _remove_flagged_variance(
         logger.info("Removed %d reflections with %s < 0", n_bad, filter_key)
     counts = counts[~bad]
     masks = masks[~bad]
-    metadata = {k: v[~bad] for k, v in metadata.items()}
+    metadata = _mask_metadata(metadata, ~bad)
     return counts, masks, metadata
 
 
@@ -173,6 +192,8 @@ class RotationDataModule(pl.LightningDataModule):
         self.resolution_cutoff = resolution_cutoff
         self.min_valid_pixels = min_valid_pixels
         self.full_dataset = None
+        self.n_images = None
+
         if shoebox_file_names is None:
             shoebox_file_names = {
                 "counts": "counts.npy",
@@ -180,10 +201,19 @@ class RotationDataModule(pl.LightningDataModule):
                 "reference": "metadata.npy",
             }
         self.shoebox_file_names = shoebox_file_names
+
         transform = transform or "standardization"
-        if transform not in ("anscombe", "log1p", "standardization"):
+        if transform not in (
+            "anscombe",
+            "log1p",
+            "standardization",
+            "asinh",
+            "log_softplus",
+            "sqrt_squareplus",
+        ):
             raise ValueError(
-                f"transform must be 'anscombe', 'log1p', or 'standardization'; "
+                f"transform must be 'anscombe', 'log1p', 'standardization', "
+                f"'asinh', 'log_softplus', or 'sqrt_squareplus'; "
                 f"got {transform!r}"
             )
         self.transform = transform
@@ -195,6 +225,7 @@ class RotationDataModule(pl.LightningDataModule):
         masks = _load_shoebox_array(
             os.path.join(self.data_dir, self.shoebox_file_names["masks"])
         ).squeeze(-1)
+
         from integrator.io import load_metadata, read_dataset_spec
 
         spec = read_dataset_spec(self.data_dir)
@@ -203,11 +234,31 @@ class RotationDataModule(pl.LightningDataModule):
                 f"dataset.yaml not found in {self.data_dir}; "
                 "regenerate the dataset with mksbox"
             )
+
         stats_key = "anscombe" if self.transform == "anscombe" else "raw"
         stats = torch.tensor(spec["stats"][stats_key], dtype=torch.float32)
+
         reference = load_metadata(
             os.path.join(self.data_dir, self.shoebox_file_names["reference"])
         )
+
+        # Keep image_id / n_images as integer tensors for per-image parameters.
+        if "image_id" in reference:
+            reference["image_id"] = torch.as_tensor(
+                reference["image_id"],
+                dtype=torch.long,
+            )
+
+        if "n_images" in reference:
+            reference["n_images"] = torch.as_tensor(
+                reference["n_images"],
+                dtype=torch.long,
+            )
+            self.n_images = int(reference["n_images"][0].item())
+        elif "image_id" in reference:
+            self.n_images = int(reference["image_id"].max().item()) + 1
+        else:
+            self.n_images = None
 
         # Filter out reflections with too few valid pixels
         all_dead = masks.sum(-1) < self.min_valid_pixels
@@ -218,9 +269,10 @@ class RotationDataModule(pl.LightningDataModule):
                 n_dead,
                 self.min_valid_pixels,
             )
+
         counts = counts[~all_dead]
         masks = masks[~all_dead]
-        reference = {k: v[~all_dead] for k, v in reference.items()}
+        reference = _mask_metadata(reference, ~all_dead)
 
         if "intensity.prf.variance" in reference:
             counts, masks, reference = _remove_flagged_variance(
@@ -249,9 +301,10 @@ class RotationDataModule(pl.LightningDataModule):
                     n_cut,
                     self.resolution_cutoff,
                 )
+
             counts = counts[selection]
             masks = masks[selection]
-            reference = {k: v[selection] for k, v in reference.items()}
+            reference = _mask_metadata(reference, selection)
 
         if counts.dim() == 2:
             if self.transform == "anscombe":
@@ -259,16 +312,35 @@ class RotationDataModule(pl.LightningDataModule):
                 standardized_counts = (
                     (anscombe_transformed - stats[0]) / stats[1].sqrt()
                 ) * masks
+
             elif self.transform == "log1p":
                 standardized_counts = torch.log1p(counts.clamp(min=0)) * masks
+
+            elif self.transform == "asinh":
+                scale = stats[1].sqrt().clamp(min=1e-08)
+                standardized_counts = torch.asinh(counts / scale) * masks
+
+            elif self.transform == "log_softplus":
+                standardized_counts = (
+                    torch.log(torch.nn.functional.softplus(counts) + 1e-8)
+                    * masks
+                )
+
+            elif self.transform == "sqrt_squareplus":
+                b = 4.0
+                squareplus = 0.5 * (counts + torch.sqrt(counts * counts + b))
+                standardized_counts = torch.sqrt(squareplus + 1e-8) * masks
+
             else:
                 standardized_counts = ((counts * masks) - stats[0]) / stats[
                     1
                 ].sqrt()
+
         else:
             standardized_counts = (
                 (counts[..., -1] * masks) - stats[0]
             ) / stats[1].sqrt()
+
             if counts.dim() >= 3 and counts.size(-1) >= 3:
                 counts[:, :, 0] = (
                     2 * (counts[:, :, 0] / (counts[:, :, 0].max() + 1e-8)) - 1

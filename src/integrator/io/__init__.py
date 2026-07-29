@@ -17,8 +17,26 @@ from .metadata import (
     save_data,
 )
 from .mtz_io import write_mtz_from_preds
-from .pred_io import get_pred_files, write_refl_from_preds
-from .refl_io import unstack_preds, write_refl_with_predictions
+
+
+#needed for writing predictions back into .refl files.
+try:
+    from .refl_io import unstack_preds, write_refl_with_predictions
+except ModuleNotFoundError as e:
+    if e.name != "dials":
+        raise
+
+    unstack_preds = None
+    write_refl_with_predictions = None
+
+try:
+    from .pred_io import get_pred_files, write_refl_from_preds
+except ModuleNotFoundError as e:
+    if e.name != "dials":
+        raise
+
+    get_pred_files = None
+    write_refl_from_preds = None
 
 __all__ = [
     "DEFAULT_REFL_COLS",

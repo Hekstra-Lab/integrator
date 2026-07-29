@@ -44,6 +44,27 @@ def parse_args():
         action="store_true",
         help="Write predictions as a .refl file",
     )
+    # MFX write-back extension (Thao): keep Luis's --write-refl path,
+    # but allow writing predictions into many original MFX .refl files.
+    parser.add_argument(
+        "--mfx-writeback",
+        action="store_true",
+        help=(
+            "Use MFX many-file .refl write-back instead of the default "
+            "single-source .refl write-back. Requires --write-refl and "
+            "--original-refl-dir."
+        ),
+    )
+    parser.add_argument(
+        "--original-refl-dir",
+        type=str,
+        default=None,
+        help=(
+            "Original MFX/cctbx out folder containing "
+            "idx-data_*_integrated.refl/.expt files. Used only with "
+            "--write-refl --mfx-writeback."
+        ),
+    )
     parser.add_argument(
         "--write-mtz",
         action="store_true",
@@ -166,12 +187,20 @@ def main():
             print(f"  {k}")
         return
 
-    # path to input refl file (only needed for --write-refl)
+    # Path to input refl file for Luis's original single-file write-back.
+    # MFX write-back extension (Thao): the many-file MFX path uses
+    # --original-refl-dir + metadata.npy instead, so it does not require
+    # output.refl_file in the YAML config.
     refl_file = config.get("output", {}).get("refl_file")
-    if args.write_refl and not refl_file:
+    if args.write_refl and not args.mfx_writeback and not refl_file:
         raise ValueError(
             "--write-refl requires 'output.refl_file' in the YAML config"
         )
+    if args.mfx_writeback:
+        if not args.write_refl:
+            raise ValueError("--mfx-writeback must be used with --write-refl")
+        if args.original_refl_dir is None:
+            raise ValueError("--mfx-writeback requires --original-refl-dir")
 
     epoch_re = re.compile(r"epoch=(\d+)")
     for ckpt in checkpoints:
@@ -227,12 +256,29 @@ def main():
 
         if args.write_refl:
             logger.info("Writing .refl output for epoch %d", epoch)
-            write_refl_from_preds(
-                ckpt_dir=ckpt_dir,
-                refl_file=refl_file,
-                epoch=epoch,
-                filetype="parquet",
-            )
+
+            if args.mfx_writeback:
+                # MFX write-back extension (Thao): write predictions back into
+                # many original idx-data_*_integrated.refl files. The output is
+                # intentionally placed directly under pred_dir, outside the
+                # epoch_* subfolders, for easier scaling/merging input.
+                from integrator.io.pred_io import write_mfx_refl_from_preds
+
+                data_dir = Path(config["data_loader"]["args"]["data_dir"])
+                write_mfx_refl_from_preds(
+                    ckpt_dir=ckpt_dir,
+                    metadata_path=data_dir / "metadata.npy",
+                    original_refl_dir=Path(args.original_refl_dir),
+                    out_dir=pred_dir / "mfx_refl_writeback",
+                    filetype="parquet",
+                )
+            else:
+                write_refl_from_preds(
+                    ckpt_dir=ckpt_dir,
+                    refl_file=refl_file,
+                    epoch=epoch,
+                    filetype="parquet",
+                )
 
         if args.write_mtz:
             from integrator.io import get_pred_files

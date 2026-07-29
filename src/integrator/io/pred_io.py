@@ -4,7 +4,11 @@ from typing import Literal
 import polars as pl
 import torch
 
-from .refl_io import unstack_preds, write_refl_with_predictions
+from .refl_io import (
+    unstack_preds,
+    write_mfx_refl_with_predictions,
+    write_refl_with_predictions,
+)
 
 
 # Load integrator predictions from disk and write them back to a DIALS .refl
@@ -77,3 +81,31 @@ def write_refl_from_preds(
         bg_mean=pred_df["qbg_mean"].to_numpy(),
     )
     return fname
+
+
+def write_mfx_refl_from_preds(
+    ckpt_dir,
+    metadata_path,
+    original_refl_dir,
+    out_dir,
+    filetype: Literal["pt", "parquet"],
+    variance_floor: float = 1.0e-6,
+    copy_expt: bool = False,
+):
+    """Write prediction intensities back into many MFX .refl files.
+
+    MFX write-back extension (Thao): Luis's original write_refl_from_preds()
+    handles one source .refl with a refl_ids column. This wrapper keeps the
+    same prediction-loading code but passes the predictions plus metadata.npy
+    to the many-file MFX writer.
+    """
+    data = get_pred_files(ckpt_dir=ckpt_dir, filetype=filetype)
+
+    return write_mfx_refl_with_predictions(
+        pred_data=data,
+        metadata_path=metadata_path,
+        original_refl_dir=original_refl_dir,
+        out_dir=out_dir,
+        variance_floor=variance_floor,
+        copy_expt=copy_expt,
+    )

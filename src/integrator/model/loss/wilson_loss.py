@@ -11,8 +11,6 @@ from torch.distributions import (
     Normal,
     Poisson,
     StudentT,
-
-    #to check how different one probability distribution is from another.
     kl_divergence,
 )
 
@@ -32,82 +30,45 @@ def _kl_divergence_with_mc_fallback(
 ) -> Tensor:
     """Compute KL(q || p), with a sampling fallback for unsupported pairs.
 
-    Why this helper exists:
-        PyTorch already knows exact KL formulas for some distribution pairs,
-        such as Gamma vs Gamma. That is why the original Gamma qi setup worked.
+    PyTorch has exact KL formulas for some distribution pairs, such as
+    Gamma vs Gamma. For newer MFX tests, qi may be LogNormal or FoldedNormal
+    while the Wilson intensity prior p_i is still Gamma. PyTorch does not
+    always have a built-in exact KL formula for those pairs.
 
-        But for the new MFX tests, qi may be LogNormal or FoldedNormal while
-        the Wilson intensity prior p_i is still Gamma. PyTorch does not have a
-        built-in exact formula for KL(LogNormal || Gamma), so the direct call
-        kl_divergence(q, p) raises NotImplementedError.
+    This fallback estimates:
 
-    What the fallback does:
-        It estimates the same quantity by sampling values x from q and averaging
+        KL(q || p) = E_q[log q(x) - log p(x)]
 
-            log q(x) - log p(x)
-
-        This is the Monte Carlo estimate of KL(q || p).
-
-    Plain-English meaning:
-        We sample possible intensity values from the model's qi distribution.
-        Then we ask: are those same values also likely under the Wilson prior?
-
-        If yes, the difference is small.
-        If no, the difference is large.
+    by sampling x from q.
     """
     try:
-        # Fast/default path: use PyTorch's exact analytic formula when it exists.
-        # Example: Gamma qi vs Gamma Wilson prior.
         return kl_divergence(q, p)
     except NotImplementedError:
-        # Fallback path: PyTorch does not know this distribution pair.
-        # Example: LogNormal qi vs Gamma Wilson prior.
-
-        # Draw n_samples possible values from q.
-        # rsample keeps gradients through the random sample when supported.
-        # This is useful because qi's parameters are learned by the neural net.
         if getattr(q, "has_rsample", False):
             x = q.rsample((n_samples,))
         else:
             x = q.sample((n_samples,))
 
-        # The Wilson intensity prior p is Gamma, which only supports positive
-        # values. Clamp protects against zero/negative values before log_prob.
         x = x.clamp_min(eps)
 
-        # How likely are these sampled intensities under the model posterior q?
         log_q = q.log_prob(x)
-
-        # How likely are the same sampled intensities under the Wilson prior p?
         log_p = p.log_prob(x)
 
-        # Average over the Monte Carlo sample dimension.
-        # Result shape should match the per-reflection KL shape expected below.
         return (log_q - log_p).mean(dim=0)
 
 
 class ObservationLikelihood(nn.Module):
-    """
-    Pixel observation likelihood helper.
-
-    Purpose:
-        Keep Luis's original Poisson pixel likelihood as the default,
-        but add optional Normal and Student-t likelihoods for MFX/Jungfrau data.
-
-    Why MFX needs this:
-        MFX/Jungfrau counts.npy can contain floating-point values and negative
-        values. Poisson is designed for nonnegative count-like values, so it is
-        not a good match for those MFX pixels.
+    """Pixel observation likelihood helper.
 
     Options:
         poisson:
-            Original behavior. Use this for old/default workflows.
+            Original behavior. Use for nonnegative count-like data.
 
         normal:
             Continuous likelihood. Handles float and negative values.
 
         student_t:
-            Continuous likelihood like Normal, but more forgiving of outliers.
+            Continuous likelihood like Normal, but more robust to outliers.
     """
 
     def __init__(
@@ -130,30 +91,15 @@ class ObservationLikelihood(nn.Module):
         self.student_t_df = float(student_t_df)
         self.eps = eps
 
-        # Normal and Student-t need a positive noise scale.
-        # We make this trainable so the model can learn the detector noise size.
-        #
-        # For Poisson, we do NOT create this parameter, so Luis's original
-        # Poisson behavior stays as unchanged as possible.
         if self.name in {"normal", "student_t"}:
             init_scale = max(float(init_scale), self.eps)
-
-            # raw_scale can be any real number.
-            # softplus(raw_scale) is always positive.
-            #
-            # This inverse-softplus initialization makes the starting scale
-            # close to init_scale.
             raw_init = math.log(math.expm1(init_scale))
             self.raw_scale = nn.Parameter(
                 torch.tensor(raw_init, dtype=torch.float32)
             )
 
     def get_scale(self, device: torch.device, dtype: torch.dtype) -> Tensor:
-        """
-        Return positive scale for Normal/Student-t.
-
-        scale = allowed noise/spread around the predicted pixel value.
-        """
+        """Return positive scale for Normal/Student-t."""
         if not hasattr(self, "raw_scale"):
             raise RuntimeError(
                 "Observation scale is only defined for normal/student_t."
@@ -162,23 +108,14 @@ class ObservationLikelihood(nn.Module):
         return F.softplus(self.raw_scale).to(device=device, dtype=dtype) + self.eps
 
     def forward(self, rate: Tensor, counts: Tensor) -> Tensor:
-        """
-        Compute pixel log probability.
+        """Compute pixel log probability.
 
         Args:
             rate:
                 Shape: (batch, mc_samples, pixels)
 
-                For Poisson:
-                    rate is the Poisson rate.
-
-                For Normal/Student-t:
-                    rate is used as the predicted pixel center/location.
-
             counts:
                 Shape: (batch, pixels)
-
-                Observed detector pixel values.
 
         Returns:
             Tensor with shape: (batch, mc_samples, pixels)
@@ -186,17 +123,13 @@ class ObservationLikelihood(nn.Module):
         y = counts.unsqueeze(1)
 
         if self.name == "poisson":
-            # Original Luis behavior.
             return Poisson(rate.clamp(min=1e-12)).log_prob(y)
 
         if self.name == "normal":
-            # MFX option: handles float and negative pixel values.
             scale = self.get_scale(device=rate.device, dtype=rate.dtype)
             return Normal(loc=rate, scale=scale).log_prob(y)
 
         if self.name == "student_t":
-            # MFX option: handles float/negative values and is more robust
-            # to very bright/outlier pixels.
             scale = self.get_scale(device=rate.device, dtype=rate.dtype)
             df = torch.tensor(
                 self.student_t_df,
@@ -212,35 +145,42 @@ class WilsonLoss(nn.Module):
     """Base ELBO loss with Wilson intensity prior.
 
     Subclasses implement `_get_tau` to define how the Wilson prior rate
-    is computed: scalar G for monochromatic, G(lambda) for polychromatic.
+    is computed.
+
+    Examples:
+        MonochromaticWilsonLoss:
+            scalar G, optionally per-image B/G.
+
+        PolychromaticWilsonLoss:
+            wavelength-dependent G(lambda).
     """
 
     def __init__(
         self,
         *,
-        # Background Gamma prior: scalar, or per-resolution-bin prior
+        # Background Gamma prior: scalar, or per-resolution-bin prior.
         bg_rate: float | list[float] = 1.0,
         bg_concentration: float | list[float] = 1.0,
-        # B factor
+        # B factor.
         init_log_B: float = 3.0,
         b_min: float = 0.0,
-        # Resolution bins for per-bin background prior
+        # Resolution bins for per-bin background prior.
         n_bins: int = 1,
-        # Prior configs from yaml
+        # Prior configs from YAML.
         pi_cfg=None,
         pbg_cfg=None,
         pprf_cfg=None,
-        # KL weights
+        # KL weights.
         profile_kl_weight: float = 1.0,
         background_kl_weight: float = 1.0,
         intensity_kl_weight: float = 1.0,
         # MFX/new observation likelihood options.
-        #
-        # Default is "poisson", preserving Luis's original logic.
-        # For MFX, use "normal" or "student_t" from YAML.
         observation_likelihood: str = "poisson",
         init_obs_scale: float = 1.0,
         student_t_df: float = 4.0,
+        # Optional image-level Wilson options.
+        image_level_wilson: bool = False,
+        n_images: int | None = None,
         eps: float = 1e-6,
     ):
         super().__init__()
@@ -248,6 +188,11 @@ class WilsonLoss(nn.Module):
         self.eps = eps
         self.b_min = b_min
         self.n_bins = n_bins
+
+        # Store image-level Wilson settings for subclasses.
+        self.image_level_wilson = image_level_wilson
+        self.n_images = n_images
+        self.init_log_B = init_log_B
 
         self.register_buffer(
             "bg_concentration",
@@ -275,17 +220,10 @@ class WilsonLoss(nn.Module):
             pi_cfg.weight if pi_cfg is not None else intensity_kl_weight
         )
 
-        # Point-estimate B factor.
-        # Used by polychromatic and monochromatic loss classes.
+        # Global B factor.
+        # MonochromaticWilsonLoss may also create per-image B embeddings.
         self.raw_B = nn.Parameter(torch.tensor(float(init_log_B)))
 
-        # Observation likelihood helper.
-        #
-        # If observation_likelihood="poisson":
-        #     same behavior as original Poisson(rate).log_prob(counts)
-        #
-        # If observation_likelihood="normal" or "student_t":
-        #     MFX-friendly continuous likelihood for float/negative pixels.
         self.observation_model = ObservationLikelihood(
             name=observation_likelihood,
             init_scale=init_obs_scale,
@@ -298,7 +236,10 @@ class WilsonLoss(nn.Module):
 
     @abstractmethod
     def _get_tau(
-        self, metadata: dict, s_sq: Tensor, device: torch.device
+        self,
+        metadata: dict,
+        s_sq: Tensor,
+        device: torch.device,
     ) -> Tensor:
         """Compute Wilson prior rate tau per reflection."""
 
@@ -328,10 +269,15 @@ class WilsonLoss(nn.Module):
 
         # Profile KL-divergence.
         prf_prior_scale = getattr(
-            qp, "prior_scale", _DEFAULT_PROFILE_PRIOR_SCALE
+            qp,
+            "prior_scale",
+            _DEFAULT_PROFILE_PRIOR_SCALE,
         )
         kl_prf = compute_profile_kl(
-            qp, prf_prior_scale, self.profile_kl_weight, device
+            qp,
+            prf_prior_scale,
+            self.profile_kl_weight,
+            device,
         )
         kl = kl + kl_prf
 
@@ -341,22 +287,10 @@ class WilsonLoss(nn.Module):
 
         tau = self._get_tau(metadata, s_sq, device)
 
-        p_i = Gamma(concentration=torch.ones_like(tau), rate=tau)
-
-        # Compare the learned intensity posterior qi against the Wilson Gamma prior.
-        #
-        # Original Gamma setup:
-        #     qi = Gamma, p_i = Gamma
-        #     PyTorch has an exact KL formula, so this behaves like kl_divergence.
-        #
-        # New LogNormal/FoldedNormal qi tests:
-        #     qi = LogNormal or FoldedNormal, p_i = Gamma
-        #     PyTorch may not have an exact KL formula, so the helper estimates
-        #     KL(qi || p_i) using samples instead of crashing.
-
-        # we are comparing: qi = model's predicted intensity posterior with p_i = Wilson Gamma prior
-        #if Luis runs orginal YAML with qi of gamma, then this helper should behave like the original code
-        #kl_divergence(qi, p_i)
+        p_i = Gamma(
+            concentration=torch.ones_like(tau),
+            rate=tau.clamp(min=self.eps),
+        )
 
         kl_i = (
             _kl_divergence_with_mc_fallback(qi, p_i, eps=self.eps)
@@ -377,19 +311,14 @@ class WilsonLoss(nn.Module):
             bg_conc = self.bg_concentration
             bg_rate = self.bg_rate
 
-        p_bg = Gamma(concentration=bg_conc, rate=bg_rate)
+        p_bg = Gamma(
+            concentration=bg_conc,
+            rate=bg_rate,
+        )
         kl_bg = kl_divergence(qbg, p_bg) * self.background_kl_weight
         kl = kl + kl_bg
 
         # Pixel negative log likelihood.
-        #
-        # Original behavior:
-        #     ll = Poisson(rate.clamp(min=1e-12)).log_prob(counts.unsqueeze(1))
-        #
-        # New wrapped behavior:
-        #     poisson   -> same as original behavior
-        #     normal    -> MFX float/negative pixel likelihood
-        #     student_t -> MFX robust float/negative pixel likelihood
         ll = self.observation_model(rate, counts)
 
         # Average over Monte Carlo samples, then apply valid-pixel mask.
