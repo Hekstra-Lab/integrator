@@ -1172,7 +1172,7 @@ Current next questions / remaining items:
 ```text
 1. Finish/improve the full all-runs shoebox chunk merge.
 2. Add Wilson B/G tracker callback.
-3. Test global B + per-image G.
+3. Test per-image B/G.
 4. Run full all-runs Integrator training with n_images: 35330.
 5. Run prediction on the full all-runs model.
 6. Run MFX .refl write-back for the full all-runs predictions.
