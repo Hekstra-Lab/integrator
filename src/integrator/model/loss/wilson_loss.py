@@ -162,7 +162,7 @@ class WilsonLoss(nn.Module):
         bg_rate: float | list[float] = 1.0,
         bg_concentration: float | list[float] = 1.0,
         # B factor.
-        init_log_B: float = 3.0,
+        init_log_B: float = 20.0,
         b_min: float = 0.0,
         # Resolution bins for per-bin background prior.
         n_bins: int = 1,
@@ -178,6 +178,7 @@ class WilsonLoss(nn.Module):
         observation_likelihood: str = "poisson",
         init_obs_scale: float = 1.0,
         student_t_df: float = 4.0,
+        
         # Optional image-level Wilson options.
         image_level_wilson: bool = False,
         n_images: int | None = None,
@@ -193,7 +194,7 @@ class WilsonLoss(nn.Module):
         self.image_level_wilson = image_level_wilson
         self.n_images = n_images
         self.init_log_B = init_log_B
-
+        
         self.register_buffer(
             "bg_concentration",
             torch.as_tensor(bg_concentration, dtype=torch.float32),

@@ -333,9 +333,26 @@ def main():
     prepare_per_bin_priors(cfg)
 
     data_loader = construct_data_loader(cfg)
+
+    #we already calculate n_images inside this RotationDataModule.setup() function 
+    
     data_loader.setup()
     inject_binning_labels(data_loader, cfg)
 
+    loss_args = cfg.setdefault("loss", {}).setdefault("args", {})
+    if loss_args.get("image_level_wilson", False):
+        if data_loader.n_images is None:
+            raise ValueError(
+             "image_level_wilson=True requires image_id metadata."
+            )
+
+        loss_args["n_images"] = data_loader.n_images
+    
+        logger.info(
+            "Detected n_image=%d from the data module",
+            data_loader.n_images,
+        )
+        
     tags = [
         cfg["integrator"]["name"],
         cfg["integrator"]["args"]["data_dim"],

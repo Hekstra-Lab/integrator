@@ -12,12 +12,15 @@ class MonochromaticWilsonLoss(WilsonLoss):
     def __init__(
         self,
         *,
-        init_log_G: float = 0.0,
+        #init_log_G is captured directly.
+        init_log_G: float = 1000.0,
         lp_correction: bool = False,
+        #init_log_B goes inside kwargs
         **kwargs,
     ):
         super().__init__(**kwargs)
 
+        self.init_log_G = init_log_G
         self._apply_lp = lp_correction
 
         # Global G parameter used when image_level_wilson=False.
@@ -43,8 +46,41 @@ class MonochromaticWilsonLoss(WilsonLoss):
             )
             nn.init.constant_(
                 self.raw_G_by_image.weight,
-                float(init_log_G),
+                float(self.init_log_G),
             )
+
+    def get_wilson_stats(self) -> dict[str, Tensor]:
+        """Return summary statistics for the learned Wilson B/G values
+            it reads the current (trained) values and summarizes them
+
+            So the structure is:
+            monochromatic_wilson_loss.py -> calculates B/G statistics
+            WilsonParamLogger callback -> calls get_wilson_stats() every epoch
+            train.py -> already registers the callback  
+        """
+        with torch.no_grad():
+            if self.image_level_wilson:
+                #torch.arange: creates a tensor of integers from 0 to n - 1.
+                image_id = torch.arange(self.n_images, device= self.raw_B_by_image.weight.device,)
+
+                B, G = self._get_image_B_G(image_id)
+
+            else:
+                B = self.get_B().reshape(1)
+                G = self.get_G().reshape(1)
+            return{
+                "B_mean": B.mean(),
+                #population standard deviation formula: divide by N,
+                #if = True means: sample standard deviation formula: divide by N - 1
+                "B_std": B.std(unbiased=False),                                             
+                "B_min": B.min(),
+                "B_max": B.max(),
+                "G_mean":G.mean(),
+                "G_std": G.std(unbiased=False),
+                "G_min": G.min(),
+                "G_max": G.max(),
+            }
+                
 
     def get_G(self) -> Tensor:
         return F.softplus(self.raw_G)
@@ -63,12 +99,7 @@ class MonochromaticWilsonLoss(WilsonLoss):
 
             image_id = metadata["image_id"].to(device).long()
 
-            B = (
-                F.softplus(self.raw_B_by_image(image_id)).squeeze(-1)
-                + self.b_min
-            )
-            G = F.softplus(self.raw_G_by_image(image_id)).squeeze(-1)
-
+            B, G = self._get_image_B_G(image_id)
         else:
             B = self.get_B()
             G = self.get_G()
@@ -82,3 +113,16 @@ class MonochromaticWilsonLoss(WilsonLoss):
             tau = tau * lp
 
         return tau
+
+
+    def _get_image_B_G(self, image_id: Tensor,) -> tuple[Tensor, Tensor]:
+        raw_B = self.raw_B_by_image(image_id).squeeze(-1)
+        raw_G = self.raw_G_by_image(image_id).squeeze(-1)
+
+        B = F.softplus(raw_B) + self.b_min
+        G = F.softplus(raw_G)
+
+        return B, G
+        
+        
+

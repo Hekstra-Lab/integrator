@@ -1,4 +1,4 @@
-# MFX 10-file smoke test
+# MFX all-runs smoke test
 # Goal: test latest code path:
 # make_shoeboxes -> data loading -> training -> prediction/write-back
 # Uses image-level Wilson B/G parameters.
@@ -47,16 +47,16 @@ optimizer:
 data_loader:
   name: rotation_data
   args:
-    data_dir: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_allruns_269_289_no275_024_rg101_test10
+    data_dir: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_allruns_269_289_no275_024_rg101
     batch_size: 1024
     validation_split: 0.2
     num_workers: 4
 
-    transform: asinh
+    transform: sqrt_squareplus
     resolution_cutoff: null
 
     shoebox_file_names:
-      data_dir: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_allruns_269_289_no275_024_rg101_test10
+      data_dir: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_allruns_269_289_no275_024_rg101
       counts: counts.npy
       masks: masks.npy
       reference: metadata.npy
@@ -69,9 +69,8 @@ loss:
     init_obs_scale: 10.0
     n_bins: 1
     image_level_wilson: true
-    n_images: 10
     lp_correction: false
-
+    
 trainer:
   max_epochs: 25
   accelerator: gpu

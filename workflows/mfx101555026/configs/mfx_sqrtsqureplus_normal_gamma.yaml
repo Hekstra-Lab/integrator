@@ -1,12 +1,12 @@
-# MFX all-runs smoke test
-# Goal: test latest code path:
-# make_shoeboxes -> data loading -> training -> prediction/write-back
-# Uses image-level Wilson B/G parameters.
-
+# ADAPTED FOR MFX:
+# Uses monochromatic mode because Kevin suggested avoiding the polychromatic Wilson prior here.
 mode: monochromatic
 
+
+# Main integrator model settings.
 integrator:
   name: hierarchical
+
   args:
     encoder_out: 32
     mc_samples: 20
@@ -35,43 +35,49 @@ integrator:
       - K
       - L
 
-      - image_id
-      - image_num
-      - source_refl
-      - source_expt
 
+# Optimizer settings.
 optimizer:
   lr: 0.001
   weight_decay: 0.0
 
+
+# Data loader settings.
 data_loader:
   name: rotation_data
+
   args:
-    data_dir: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_allruns_269_289_no275_024_rg101
+    data_dir: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_r0269_018_rg070_fastreader_merged_all
+
     batch_size: 1024
     validation_split: 0.2
     num_workers: 4
 
+    # For MFX/Jungfrau float pixels that can be negative.
     transform: sqrt_squareplus
+
     resolution_cutoff: null
 
     shoebox_file_names:
-      data_dir: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_allruns_269_289_no275_024_rg101
+      data_dir: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_r0269_018_rg070_fastreader_merged_all
+
       counts: counts.npy
       masks: masks.npy
-      reference: metadata.npy
+      reference: metadata_numeric.npy
       standardized_counts: null
 
+
+# Loss function settings.
 loss:
   name: monochromatic_wilson
+
   args:
     observation_likelihood: normal
     init_obs_scale: 10.0
     n_bins: 1
-    image_level_wilson: true
-    n_images: 35330
-    lp_correction: false
 
+
+# PyTorch Lightning trainer settings.
 trainer:
   max_epochs: 25
   accelerator: gpu
@@ -79,9 +85,13 @@ trainer:
   gradient_clip_val: 1.0
   check_val_every_n_epoch: 1
 
+
+# Checkpoint settings.
 checkpoint:
   save_top_k: -1
 
+
+# Encoder networks.
 encoders:
   - name: profile_encoder
     args:
@@ -111,7 +121,10 @@ encoders:
       data_dim: 2d
       encoder_out: 32
 
+
+# Surrogate/posterior distributions.
 surrogates:
+  # qp = profile posterior.
   qp:
     name: learned_basis_profile
     args:
@@ -121,6 +134,7 @@ surrogates:
       input_dim: 32
       output_dim: 625
 
+  # qbg = background posterior.
   qbg:
     name: gamma
     args:
@@ -129,9 +143,11 @@ surrogates:
       k_min: 0.01
       in_features: 32
 
+  # qi = intensity posterior.
   qi:
-    name: foldednormal
+    name: gamma
     args:
+      reparameterization: mean_fano
       eps: 1.0e-06
-      scale_min: 1.0e-04
+      k_min: 0.01
       in_features: 32

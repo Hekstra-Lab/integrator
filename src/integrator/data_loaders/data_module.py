@@ -5,44 +5,122 @@ from pathlib import Path
 import numpy as np
 import pytorch_lightning as pl
 import torch
-from torch.utils.data import (
-    DataLoader,
-    Dataset,
-    Subset,
-)
+from torch.utils.data import DataLoader, Dataset
 
 logger = logging.getLogger(__name__)
 
 
-def _mask_metadata(metadata: dict, mask):
-    """Apply boolean mask to tensor and NumPy metadata values."""
-    if isinstance(mask, torch.Tensor):
-        mask_np = mask.detach().cpu().numpy()
-    else:
-        mask_np = np.asarray(mask)
-
-    out = {}
-    for k, v in metadata.items():
-        if isinstance(v, torch.Tensor):
-            out[k] = v[mask]
-        else:
-            out[k] = np.asarray(v)[mask_np]
-    return out
-
-
+# LAZY-READING EDIT: read .npy files with mmap_mode='r' so the full arrays
+# stay on disk instead of being copied into CPU RAM at setup time.
 def _load_shoebox_array(path, weights_only=True):
-    """Load counts/masks from either new .npy or .pt. Returns torch.Tensor."""
+    """Load counts/masks from .npy lazily, or fall back to eager .pt loading."""
     p = Path(path)
     npy = p.with_suffix(".npy")
     if npy.exists():
-        arr = np.load(npy)
-        if arr.dtype == np.uint16:
-            arr = arr.astype(np.int32)
-        return torch.from_numpy(arr)
+        return np.load(npy, mmap_mode="r")
+
+    logger.warning(
+        "Lazy loading is only available for .npy files; loading %s eagerly.", p
+    )
     try:
         return torch.load(p, weights_only=weights_only)
     except TypeError:
         return torch.load(p)
+
+
+def _squeeze_last_axis(array):
+    """Remove a trailing singleton axis without materializing the whole array."""
+    if array.ndim > 0 and array.shape[-1] == 1:
+        return array[..., 0]
+    return array
+
+
+def _metadata_value_at(value, idx):
+    """Read one metadata value while preserving tensors when possible."""
+    return value[idx]
+
+
+def _metadata_numpy(value):
+    """Return a NumPy view/copy suitable for indexing and boolean tests."""
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().numpy()
+    return np.asarray(value)
+
+
+def _compute_valid_indices(
+    masks,
+    reference,
+    min_valid_pixels,
+    resolution_cutoff,
+    chunk_size=250_000,
+):
+    """Build valid row indices in chunks without loading all masks into RAM."""
+    n_rows = len(masks)
+    variance_key = None
+    if "intensity.prf.variance" in reference:
+        variance_key = "intensity.prf.variance"
+    elif "intensity.sum.variance" in reference:
+        variance_key = "intensity.sum.variance"
+
+    variance = (
+        _metadata_numpy(reference[variance_key]) if variance_key is not None else None
+    )
+    d_values = (
+        _metadata_numpy(reference["d"])
+        if resolution_cutoff is not None
+        else None
+    )
+
+    valid_chunks = []
+    n_dead = 0
+    n_bad_variance = 0
+    n_cut = 0
+
+    # LAZY-READING EDIT: inspect only a manageable slice of masks at a time.
+    for start in range(0, n_rows, chunk_size):
+        stop = min(start + chunk_size, n_rows)
+        mask_chunk = np.asarray(masks[start:stop])
+        keep = mask_chunk.sum(axis=-1) >= min_valid_pixels
+        n_dead += int((~keep).sum())
+
+        if variance is not None:
+            variance_ok = variance[start:stop] >= 0
+            n_bad_variance += int((~variance_ok).sum())
+            keep &= variance_ok
+
+        if d_values is not None:
+            resolution_ok = d_values[start:stop] < resolution_cutoff
+            n_cut += int((~resolution_ok).sum())
+            keep &= resolution_ok
+
+        local = np.flatnonzero(keep).astype(np.int64, copy=False)
+        if local.size:
+            valid_chunks.append(local + start)
+
+    if n_dead:
+        logger.info(
+            "Removed %d reflections with < %d valid pixels",
+            n_dead,
+            min_valid_pixels,
+        )
+    if variance_key is not None and n_bad_variance:
+        logger.info(
+            "Removed %d reflections with %s < 0",
+            n_bad_variance,
+            variance_key,
+        )
+    if resolution_cutoff is not None and n_cut:
+        logger.info(
+            "Removed %d reflections with d >= %.2f",
+            n_cut,
+            resolution_cutoff,
+        )
+    if variance_key is None:
+        logger.info("No intensity variance key found; skipping variance filtering")
+
+    if not valid_chunks:
+        return np.empty(0, dtype=np.int64)
+    return np.concatenate(valid_chunks)
 
 
 # Default columns from rs.io.read_dials_stills
@@ -114,60 +192,102 @@ class IntegratorDataset(Dataset):
     def __init__(
         self,
         counts,
-        standardized_counts,
         masks,
         reference,
+        valid_indices,
+        stats,
+        transform,
         column_names: list = DEFAULT_DS_COLS,
     ):
         self.counts = counts
-        self.standardized_counts = standardized_counts
         self.masks = masks
         self.reference = reference
+        self.valid_indices = np.asarray(valid_indices, dtype=np.int64)
+        self.stats = torch.as_tensor(stats, dtype=torch.float32)
+        self.transform = transform
         self.column_names = column_names
 
     def __len__(self):
-        return len(self.counts)
+        return len(self.valid_indices)
+
+    def _transform_counts(self, counts, masks):
+        """Apply the configured transform to one reflection only."""
+        stats = self.stats
+
+        if counts.dim() == 1:
+            if self.transform == "anscombe":
+                transformed = 2 * (counts.clamp(min=0) + 0.375).sqrt()
+                return ((transformed - stats[0]) / stats[1].sqrt()) * masks
+
+            if self.transform == "log1p":
+                return torch.log1p(counts.clamp(min=0)) * masks
+
+            if self.transform == "asinh":
+                scale = stats[1].sqrt().clamp(min=1e-8)
+                return torch.asinh(counts / scale) * masks
+
+            if self.transform == "log_softplus":
+                return torch.log(torch.nn.functional.softplus(counts) + 1e-8) * masks
+
+            if self.transform == "sqrt_squareplus":
+                b = 4.0
+                squareplus = 0.5 * (counts + torch.sqrt(counts * counts + b))
+                return torch.sqrt(squareplus + 1e-8) * masks
+
+            return ((counts * masks) - stats[0]) / stats[1].sqrt()
+
+        # Preserve the original behavior for arrays with extra feature channels.
+        standardized = ((counts[..., -1] * masks) - stats[0]) / stats[1].sqrt()
+        counts = counts.clone()
+        if counts.dim() >= 2 and counts.size(-1) >= 3:
+            for channel in range(3):
+                channel_max = counts[..., channel].max().clamp(min=1e-8)
+                counts[..., channel] = 2 * (counts[..., channel] / channel_max) - 1
+        return standardized
 
     def __getitem__(self, idx):
         if torch.is_tensor(idx):
             idx = idx.item()
 
-        counts = self.counts[idx]
-        standardized_counts = self.standardized_counts[idx]
-        masks = self.masks[idx]
+        source_idx = int(self.valid_indices[idx])
+
+        # LAZY-READING EDIT: copy only this one row from the disk-backed arrays.
+        # The DataLoader later combines individual rows into a batch.
+        counts_np = np.array(self.counts[source_idx], copy=True)
+        masks_np = np.array(self.masks[source_idx], copy=True)
+
+        if counts_np.dtype == np.uint16:
+            counts_np = counts_np.astype(np.int32, copy=False)
+
+        counts = torch.from_numpy(counts_np).to(torch.float32)
+        masks = torch.from_numpy(masks_np).bool()
+        standardized_counts = self._transform_counts(counts, masks)
 
         meta = {
-            k: self.reference[k][idx]
-            for k in self.column_names
-            if k in self.reference
+            key: _metadata_value_at(self.reference[key], source_idx)
+            for key in self.column_names
+            if key in self.reference
         }
 
         return counts, standardized_counts, masks, meta
 
 
-# Filter to remove reflections with variance = -1
-def _remove_flagged_variance(
-    counts: torch.Tensor,
-    masks: torch.Tensor,
-    metadata: dict,
-    filter_key: str = "intensity.prf.variance",
-) -> tuple[torch.Tensor, torch.Tensor, dict]:
-    bad = metadata[filter_key] < 0
-    n_bad = bad.sum().item()
-    if n_bad > 0:
-        logger.info("Removed %d reflections with %s < 0", n_bad, filter_key)
-    counts = counts[~bad]
-    masks = masks[~bad]
-    metadata = _mask_metadata(metadata, ~bad)
-    return counts, masks, metadata
+class IndexedDataset(Dataset):
+    """Memory-efficient subset that stores NumPy indices instead of Python lists."""
+
+    def __init__(self, dataset, indices):
+        self.dataset = dataset
+        self.indices = np.asarray(indices, dtype=np.int64)
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, idx):
+        return self.dataset[int(self.indices[idx])]
 
 
 class RotationDataModule(pl.LightningDataModule):
-    """LightningDataModule for rotation-geometry shoebox data.
-
-    Attributes:
-        transform: Count transform `anscombe`, `log1p`, or `standardization`.
-    """
+    """LightningDataModule for rotation-geometry shoebox data."""
 
     def __init__(
         self,
@@ -219,12 +339,17 @@ class RotationDataModule(pl.LightningDataModule):
         self.transform = transform
 
     def setup(self, stage=None):
-        counts = _load_shoebox_array(
-            os.path.join(self.data_dir, self.shoebox_file_names["counts"])
-        ).squeeze(-1)
-        masks = _load_shoebox_array(
-            os.path.join(self.data_dir, self.shoebox_file_names["masks"])
-        ).squeeze(-1)
+        # LAZY-READING EDIT: these are NumPy memory maps, not full RAM copies.
+        counts = _squeeze_last_axis(
+            _load_shoebox_array(
+                os.path.join(self.data_dir, self.shoebox_file_names["counts"])
+            )
+        )
+        masks = _squeeze_last_axis(
+            _load_shoebox_array(
+                os.path.join(self.data_dir, self.shoebox_file_names["masks"])
+            )
+        )
 
         from integrator.io import load_metadata, read_dataset_spec
 
@@ -242,151 +367,65 @@ class RotationDataModule(pl.LightningDataModule):
             os.path.join(self.data_dir, self.shoebox_file_names["reference"])
         )
 
-        # Keep image_id / n_images as integer tensors for per-image parameters.
         if "image_id" in reference:
             reference["image_id"] = torch.as_tensor(
-                reference["image_id"],
-                dtype=torch.long,
+                reference["image_id"], dtype=torch.long
             )
-
-        if "n_images" in reference:
-            reference["n_images"] = torch.as_tensor(
-                reference["n_images"],
-                dtype=torch.long,
-            )
-            self.n_images = int(reference["n_images"][0].item())
-        elif "image_id" in reference:
             self.n_images = int(reference["image_id"].max().item()) + 1
         else:
             self.n_images = None
 
-        # Filter out reflections with too few valid pixels
-        all_dead = masks.sum(-1) < self.min_valid_pixels
-        n_dead = all_dead.sum().item()
-        if n_dead > 0:
-            logger.info(
-                "Removed %d reflections with < %d valid pixels",
-                n_dead,
-                self.min_valid_pixels,
-            )
-
-        counts = counts[~all_dead]
-        masks = masks[~all_dead]
-        reference = _mask_metadata(reference, ~all_dead)
-
-        if "intensity.prf.variance" in reference:
-            counts, masks, reference = _remove_flagged_variance(
-                counts,
-                masks,
-                reference,
-                filter_key="intensity.prf.variance",
-            )
-        elif "intensity.sum.variance" in reference:
-            counts, masks, reference = _remove_flagged_variance(
-                counts,
-                masks,
-                reference,
-                filter_key="intensity.sum.variance",
-            )
-        else:
-            logger.info("No intensity variance key found; skipping variance filtering")
-
-        # Apply resolution cutoff before standardization
-        if self.resolution_cutoff is not None:
-            selection = reference["d"] < self.resolution_cutoff
-            n_cut = (~selection).sum().item()
-            if n_cut > 0:
-                logger.info(
-                    "Removed %d reflections with d >= %.2f",
-                    n_cut,
-                    self.resolution_cutoff,
-                )
-
-            counts = counts[selection]
-            masks = masks[selection]
-            reference = _mask_metadata(reference, selection)
-
-        if counts.dim() == 2:
-            if self.transform == "anscombe":
-                anscombe_transformed = 2 * (counts.clamp(min=0) + 0.375).sqrt()
-                standardized_counts = (
-                    (anscombe_transformed - stats[0]) / stats[1].sqrt()
-                ) * masks
-
-            elif self.transform == "log1p":
-                standardized_counts = torch.log1p(counts.clamp(min=0)) * masks
-
-            elif self.transform == "asinh":
-                scale = stats[1].sqrt().clamp(min=1e-08)
-                standardized_counts = torch.asinh(counts / scale) * masks
-
-            elif self.transform == "log_softplus":
-                standardized_counts = (
-                    torch.log(torch.nn.functional.softplus(counts) + 1e-8)
-                    * masks
-                )
-
-            elif self.transform == "sqrt_squareplus":
-                b = 4.0
-                squareplus = 0.5 * (counts + torch.sqrt(counts * counts + b))
-                standardized_counts = torch.sqrt(squareplus + 1e-8) * masks
-
-            else:
-                standardized_counts = ((counts * masks) - stats[0]) / stats[
-                    1
-                ].sqrt()
-
-        else:
-            standardized_counts = (
-                (counts[..., -1] * masks) - stats[0]
-            ) / stats[1].sqrt()
-
-            if counts.dim() >= 3 and counts.size(-1) >= 3:
-                counts[:, :, 0] = (
-                    2 * (counts[:, :, 0] / (counts[:, :, 0].max() + 1e-8)) - 1
-                )
-                counts[:, :, 1] = (
-                    2 * (counts[:, :, 1] / (counts[:, :, 1].max() + 1e-8)) - 1
-                )
-                counts[:, :, 2] = (
-                    2 * (counts[:, :, 2] / (counts[:, :, 2].max() + 1e-8)) - 1
-                )
-
-        self.full_dataset = IntegratorDataset(
-            counts,
-            standardized_counts,
-            masks,
-            reference,
+        # LAZY-READING EDIT: keep the original arrays untouched and retain only
+        # integer row indices for reflections that pass the filters.
+        valid_indices = _compute_valid_indices(
+            masks=masks,
+            reference=reference,
+            min_valid_pixels=self.min_valid_pixels,
+            resolution_cutoff=self.resolution_cutoff,
         )
 
-        # Split using is_test if available
+        self.full_dataset = IntegratorDataset(
+            counts=counts,
+            masks=masks,
+            reference=reference,
+            valid_indices=valid_indices,
+            stats=stats,
+            transform=self.transform,
+        )
+
+        all_indices = np.arange(len(self.full_dataset), dtype=np.int64)
+
+        if self.subset_size is not None and self.subset_size < len(all_indices):
+            all_indices = np.random.default_rng().choice(
+                all_indices,
+                size=self.subset_size,
+                replace=False,
+            )
+
         is_test = reference.get("is_test")
-        all_indices = torch.arange(len(self.full_dataset))
-
-        if self.subset_size is not None and self.subset_size < len(
-            self.full_dataset
-        ):
-            all_indices = all_indices[
-                torch.randperm(len(all_indices))[: self.subset_size]
-            ]
-
-        if is_test is not None and is_test.any():
-            test_mask = is_test[all_indices].bool()
-            test_idx = all_indices[test_mask]
-            train_val_idx = all_indices[~test_mask]
+        if is_test is not None:
+            source_indices = valid_indices[all_indices]
+            is_test_values = _metadata_numpy(is_test)[source_indices].astype(bool)
         else:
-            test_idx = torch.tensor([], dtype=torch.long)
+            is_test_values = None
+
+        if is_test_values is not None and is_test_values.any():
+            test_idx = all_indices[is_test_values]
+            train_val_idx = all_indices[~is_test_values]
+        else:
+            test_idx = np.empty(0, dtype=np.int64)
             train_val_idx = all_indices
 
-        self.test_dataset = Subset(self.full_dataset, test_idx.tolist())
+        self.test_dataset = IndexedDataset(self.full_dataset, test_idx)
 
-        perm = torch.randperm(len(train_val_idx))
+        # This permutation is only an int64 index array, not a copy of counts.
+        perm = np.random.default_rng().permutation(len(train_val_idx))
         val_size = int(len(train_val_idx) * self.validation_split)
         val_idx = train_val_idx[perm[:val_size]]
         train_idx = train_val_idx[perm[val_size:]]
 
-        self.val_dataset = Subset(self.full_dataset, val_idx.tolist())
-        self.train_dataset = Subset(self.full_dataset, train_idx.tolist())
+        self.val_dataset = IndexedDataset(self.full_dataset, val_idx)
+        self.train_dataset = IndexedDataset(self.full_dataset, train_idx)
 
     def train_dataloader(self):
         return DataLoader(
@@ -395,6 +434,7 @@ class RotationDataModule(pl.LightningDataModule):
             shuffle=True,
             num_workers=self.num_workers,
             pin_memory=True,
+            persistent_workers=self.num_workers > 0,
         )
 
     def val_dataloader(self):
@@ -404,6 +444,7 @@ class RotationDataModule(pl.LightningDataModule):
             shuffle=False,
             num_workers=self.num_workers,
             pin_memory=True,
+            persistent_workers=self.num_workers > 0,
         )
 
     def test_dataloader(self):
@@ -414,9 +455,9 @@ class RotationDataModule(pl.LightningDataModule):
                 shuffle=False,
                 num_workers=self.num_workers,
                 pin_memory=True,
+                persistent_workers=self.num_workers > 0,
             )
-        else:
-            return None
+        return None
 
     def predict_dataloader(self):
         return DataLoader(
@@ -425,4 +466,5 @@ class RotationDataModule(pl.LightningDataModule):
             shuffle=False,
             num_workers=self.num_workers,
             pin_memory=True,
+            persistent_workers=self.num_workers > 0,
         )
