@@ -1,0 +1,41 @@
+# Results land in <base_dir>/<name>/{images,proc}/
+base_dir: ../sbgrid_datasets
+name: hewl_1118
+
+dataset:
+  sbgrid_id: 1118
+  frames: [1, 20]     # inclusive [first, last]; limits download *and* import
+  # template: HEWL_NaI_3_2_####.mccd   # pin the sweep if auto-detection is wrong
+  # images_dir: ../my_images   # optional: use local images instead of fetching
+  host: data.sbgrid.org        # or a Tier-1 mirror: sbgrid.icm.uu.se, etc.
+  fetch: frames                # frames = download only `frames` (all if unset)
+                               # none   = use images_dir, download nothing
+  extensions: [.mccd, .cbf, .img, .h5, .nxs]   # used to locate images / build template
+
+
+geometry:
+  oscillation: [0, 1]
+  goniometer_axes: [-1, 0, 0]
+  wavelength: 1.05
+  pixel: [0.08854, 0.08854]
+
+processing:
+  nproc: 8
+  gain: 0.15
+  max_separation: 10
+  space_group: 96
+  wav_min: 0.97
+  wav_max: 1.25
+  d_min: 1.4
+
+# # Any additional PHIL parameters, passed verbatim to a given step.
+# # e.g.  find_spots: ["spotfinder.filter.d_min=1.5"]
+# extra:
+#   import: []
+#   find_spots: []
+#   index: []
+#   sequence_to_stills: []
+#   assign: []
+#   refine: []
+#   predict: []
+#   integrate: []
