@@ -1,0 +1,183 @@
+================================================================================
+FINAL FIX — src/integrator/io/refl_io.py
+write_mfx_refl_with_predictions()
+================================================================================
+Date   : 2026-08-06
+Reason : Validation test showed source_refl has run-prefixed filenames
+         (e.g. r0269_idx-data_01418_integrated.refl) that cannot be
+         reconstructed from image_num alone.
+         Previous fast-path was removed; code is now a single unified path.
+
+Validation result that triggered this fix:
+  Total rows    : 115,146,952
+  Checked rows  : 100,000
+  Mismatches    : 100,000  (100%)
+  Actual        : r0269_idx-data_01418_integrated.refl
+  Expected      : idx-data_01418_integrated.refl   (missing run prefix)
+
+================================================================================
+WHAT CHANGES
+================================================================================
+
+Only the groupby/write-loop section changes (~lines 185-272 in current file).
+Everything before (refl_ids matching, reflection_id lookup, image_numbers
+extraction) and everything after (return dict) is untouched.
+
+================================================================================
+BEFORE  (current code in file)
+================================================================================
+
+    row_in_source = reflection_id[metadata_rows]
+
+    # Pull source_refl / source_expt via vectorized fancy-index ...
+    source_refl_all    = _as_numpy(metadata["source_refl"])
+    source_expt_all    = _as_numpy(metadata["source_expt"])
+    source_refl_subset = source_refl_all[metadata_rows]
+    source_expt_subset = source_expt_all[metadata_rows]
+
+    has_image_num = "image_num" in metadata or "image_index" in metadata
+
+    if has_image_num:
+        # Fast sort key: integer image_num
+        sort_key   = image_numbers[metadata_rows]
+        order      = np.argsort(sort_key, kind="stable")
+        sorted_key = sort_key[order]
+        boundaries = np.flatnonzero(sorted_key[1:] != sorted_key[:-1]) + 1
+    else:
+        # Encode unique source_refl strings to sorted int IDs
+        _, encoded = np.unique(source_refl_subset, return_inverse=True)
+        order      = np.argsort(encoded, kind="stable")
+        sorted_enc = encoded[order]
+        boundaries = np.flatnonzero(sorted_enc[1:] != sorted_enc[:-1]) + 1
+
+    starts = np.concatenate(([0], boundaries))
+    ends   = np.concatenate((boundaries, [len(order)]))
+
+    # One refl/expt filename per group: first element silently (no check).
+    unique_refl = source_refl_subset[order[starts]]
+    unique_expt = source_expt_subset[order[starts]]
+
+    written = []
+    for i, (start, end) in enumerate(zip(starts, ends)):
+        group     = order[start:end]
+        refl_name = _as_text(unique_refl[i])
+        expt_name = _as_text(unique_expt[i])    # <- silent, no validation
+
+        src_refl = original_refl_dir / refl_name
+        ...
+        _copy_or_link_expt(src_expt, out_dir / expt_name, copy_expt=copy_expt)
+
+================================================================================
+AFTER  (proposed replacement)
+================================================================================
+
+    row_in_source = reflection_id[metadata_rows]
+
+    # Pull source_refl / source_expt via vectorized fancy-index — one C call,
+    # no per-row Python loop. metadata["source_refl"] is the source of truth
+    # for filenames; run-prefixed names (e.g. r0269_idx-data_01418_integrated.refl)
+    # are NOT reconstructible from image_num alone.
+    source_refl_all    = _as_numpy(metadata["source_refl"])
+    source_expt_all    = _as_numpy(metadata["source_expt"])
+    source_refl_subset = source_refl_all[metadata_rows]
+    source_expt_subset = source_expt_all[metadata_rows]
+
+    # Encode unique source_refl strings to sorted int IDs — one C pass.
+    # Groupby via argsort on encoded IDs: O(N log N), no O(N x n_files) scan.
+    unique_refl, encoded = np.unique(
+        source_refl_subset, return_inverse=True
+    )
+    order          = np.argsort(encoded, kind="stable")
+    sorted_encoded = encoded[order]
+    boundaries     = (
+        np.flatnonzero(sorted_encoded[1:] != sorted_encoded[:-1]) + 1
+    )
+    starts = np.concatenate(([0], boundaries))
+    ends   = np.concatenate((boundaries, [len(order)]))
+
+    written = []
+    for i, (start, end) in enumerate(zip(starts, ends)):
+        group     = order[start:end]
+        refl_name = _as_text(unique_refl[i])
+
+        # Validate exactly one .expt per .refl group (restored correctness check).
+        expt_names = np.unique(source_expt_subset[group])
+        if len(expt_names) != 1:
+            raise ValueError(
+                f"Expected one source_expt for {refl_name}, "
+                f"got {expt_names.tolist()}"
+            )
+        expt_name = _as_text(expt_names[0])
+
+        src_refl = original_refl_dir / refl_name
+        ...
+        _copy_or_link_expt(src_expt, out_dir / expt_name, copy_expt=copy_expt)
+
+================================================================================
+DIFF SUMMARY
+================================================================================
+
+REMOVED:
+  - has_image_num = "image_num" in metadata or "image_index" in metadata
+  - if has_image_num / else two-branch block (sort by image_num vs encoded)
+  - unique_refl = source_refl_subset[order[starts]]   (silent pre-computation)
+  - unique_expt = source_expt_subset[order[starts]]   (silent pre-computation)
+  - expt_name = _as_text(unique_expt[i])              (silent first-element pick)
+
+ADDED:
+  + unique_refl, encoded = np.unique(source_refl_subset, return_inverse=True)
+    (always groups by source_refl; image_num branch removed entirely)
+  + expt_names = np.unique(source_expt_subset[group])
+  + if len(expt_names) != 1: raise ValueError(...)    (restored correctness check)
+  + expt_name = _as_text(expt_names[0])
+
+UNCHANGED:
+  - source_refl_all / source_expt_all vectorized fancy-index extraction
+  - order = np.argsort(encoded, kind="stable")
+  - boundaries / starts / ends computation
+  - entire per-file write body (src_refl check, rt load, _set_column x5,
+    rt.as_file, src_expt check, _copy_or_link_expt)
+  - all code before the groupby block (refl_ids match, reflection_id, image_numbers)
+  - return dict
+
+================================================================================
+WHY
+================================================================================
+
+1. source_refl is the only correct source for filenames.
+   Validation confirmed 100% mismatch between:
+     metadata source_refl : r0269_idx-data_01418_integrated.refl
+     image_num reconstruct: idx-data_01418_integrated.refl  (missing run prefix)
+
+2. Grouping by source_refl encoded IDs is correct by definition:
+   each group = all prediction rows belonging to one source .refl file.
+   Grouping by image_num is wrong here because image_num is not unique
+   across runs (run r0269 and run r0270 could both have image_num=1418).
+
+3. np.unique expt check per group restores the original correctness check
+   that was present in the very first write_mfx_refl_with_predictions()
+   and was accidentally dropped in the previous fast-path version.
+
+4. Single unified code path: simpler, no hidden naming assumptions,
+   works for any dataset regardless of filename convention.
+
+================================================================================
+PERFORMANCE (unchanged from previous fix)
+================================================================================
+
+  Stage                          Before all fixes   After this fix
+  -----------------------------------------------------------------
+  source_refl/expt extraction    ~46 s              ~1 s
+  Groupby scan                   ~80 hours          ~30-60 s
+  DIALS file I/O                 ~3-7 hours         ~3-7 hours
+  -----------------------------------------------------------------
+  Total                          ~84 hours          ~3-7 hours
+
+================================================================================
+FILES CHANGED
+================================================================================
+
+  src/integrator/io/refl_io.py    — groupby/write-loop section only
+  src/integrator/io/pred_io.py    — already fixed (single polars collect)
+
+================================================================================

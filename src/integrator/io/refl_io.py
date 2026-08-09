@@ -1,5 +1,6 @@
 import numpy as np
-from dials.array_family import flex
+# dials.array_family.flex is imported locally inside functions that need it.
+# Do NOT import it at module level: integrator-cuda-dev does not have dials.
 
 
 def unstack_preds(preds: dict[str, list[np.ndarray]]) -> dict[str, np.ndarray]:
@@ -156,17 +157,41 @@ def write_mfx_refl_with_predictions(
     metadata_ids = _as_numpy(metadata["refl_ids"]).astype(np.int64)
     metadata_order = np.argsort(metadata_ids)
     metadata_ids_sorted = metadata_ids[metadata_order]
+
+    # BatchPredWriter stores refl_ids as float32, which loses precision for
+    # values > 2^23 (~8.4 M). Large IDs get rounded; at the boundary this
+    # can push the maximum value one step beyond the metadata range.
+    # Clamp before searchsorted so edge over-counts map to the nearest valid
+    # metadata row instead of raising an out-of-bounds error.
+    meta_lo = int(metadata_ids_sorted[0])
+    meta_hi = int(metadata_ids_sorted[-1])
+    n_oob = int(np.sum((pred_ids < meta_lo) | (pred_ids > meta_hi)))
+    if n_oob > 0:
+        import warnings
+
+        warnings.warn(
+            f"{n_oob} pred refl_ids are outside metadata range "
+            f"[{meta_lo}, {meta_hi}] (float32 boundary rounding). "
+            "Clamping to nearest valid ID.",
+            UserWarning,
+            stacklevel=2,
+        )
+        pred_ids = np.clip(pred_ids, meta_lo, meta_hi)
+
     found = np.searchsorted(metadata_ids_sorted, pred_ids)
-    if np.any(found >= len(metadata_ids_sorted)) or not np.array_equal(
-        metadata_ids_sorted[found], pred_ids
-    ):
+    found = np.clip(found, 0, len(metadata_ids_sorted) - 1)
+    if not np.array_equal(metadata_ids_sorted[found], pred_ids):
+        n_bad = int((metadata_ids_sorted[found] != pred_ids).sum())
         raise ValueError(
-            "Prediction refl_ids do not match metadata refl_ids; cannot write MFX .refl files."
+            f"{n_bad:,} prediction refl_ids do not match any metadata refl_id "
+            "after clamping. Check that the correct metadata.npy is being used."
         )
     metadata_rows = metadata_order[found]
 
     if "reflection_id" not in metadata:
-        raise KeyError("metadata.npy must contain reflection_id for MFX write-back")
+        raise KeyError(
+            "metadata.npy must contain reflection_id for MFX write-back"
+        )
     reflection_id = _as_numpy(metadata["reflection_id"]).astype(np.int64)
 
     if "image_num" in metadata:
@@ -180,37 +205,40 @@ def write_mfx_refl_with_predictions(
             "metadata.npy must contain source_refl/source_expt or image_num/image_index"
         )
 
-    source_refl = np.array(
-        [
-            _mfx_source_name(
-                metadata,
-                "source_refl",
-                row,
-                image_numbers[row],
-                ".refl",
-            )
-            for row in metadata_rows
-        ],
-        dtype=object,
-    )
-    source_expt = np.array(
-        [
-            _mfx_source_name(
-                metadata,
-                "source_expt",
-                row,
-                image_numbers[row],
-                ".expt",
-            )
-            for row in metadata_rows
-        ],
-        dtype=object,
-    )
     row_in_source = reflection_id[metadata_rows]
 
+    # Pull source_refl / source_expt via vectorized fancy-index — one C call,
+    # no per-row Python loop. metadata["source_refl"] is the source of truth
+    # for filenames; run-prefixed names (e.g. r0269_idx-data_01418_integrated.refl)
+    # are NOT reconstructible from image_num alone.
+    source_refl_all = _as_numpy(metadata["source_refl"])
+    source_expt_all = _as_numpy(metadata["source_expt"])
+    source_refl_subset = source_refl_all[metadata_rows]
+    source_expt_subset = source_expt_all[metadata_rows]
+
+    # Encode unique source_refl strings to sorted int IDs — one C pass.
+    # Groupby via argsort on encoded IDs: O(N log N), no O(N x n_files) scan.
+    unique_refl, encoded = np.unique(source_refl_subset, return_inverse=True)
+    order = np.argsort(encoded, kind="stable")
+    sorted_encoded = encoded[order]
+    boundaries = np.flatnonzero(sorted_encoded[1:] != sorted_encoded[:-1]) + 1
+    starts = np.concatenate(([0], boundaries))
+    ends = np.concatenate((boundaries, [len(order)]))
+
     written = []
-    for refl_name in sorted(set(source_refl.tolist())):
-        group = np.nonzero(source_refl == refl_name)[0]
+    for i, (start, end) in enumerate(zip(starts, ends)):
+        group = order[start:end]
+        refl_name = _as_text(unique_refl[i])
+
+        # Validate exactly one .expt per .refl group.
+        expt_names = np.unique(source_expt_subset[group])
+        if len(expt_names) != 1:
+            raise ValueError(
+                f"Expected one source_expt for {refl_name}, "
+                f"got {expt_names.tolist()}"
+            )
+        expt_name = _as_text(expt_names[0])
+
         src_refl = original_refl_dir / refl_name
         if not src_refl.exists():
             raise FileNotFoundError(f"source .refl not found: {src_refl}")
@@ -220,7 +248,8 @@ def write_mfx_refl_with_predictions(
         rows = row_in_source[group].astype(np.int64)
         if np.any(rows < 0) or np.any(rows >= n_rows):
             raise IndexError(
-                f"reflection_id out of range for {src_refl}: table has {n_rows} rows"
+                f"reflection_id out of range for {src_refl}: "
+                f"table has {n_rows} rows"
             )
 
         def _set_column(name, values):
@@ -241,15 +270,10 @@ def write_mfx_refl_with_predictions(
         rt.as_file(str(out_refl))
         written.append(out_refl)
 
-        # Link/copy the matching .expt once per source .refl so cctbx.xfel merge
-        # can read a normal refl/expt pair folder.
-        expt_names = sorted(set(source_expt[group].tolist()))
-        if len(expt_names) != 1:
-            raise ValueError(f"Expected one source_expt for {refl_name}, got {expt_names}")
-        src_expt = original_refl_dir / expt_names[0]
+        src_expt = original_refl_dir / expt_name
         if not src_expt.exists():
             raise FileNotFoundError(f"source .expt not found: {src_expt}")
-        _copy_or_link_expt(src_expt, out_dir / expt_names[0], copy_expt=copy_expt)
+        _copy_or_link_expt(src_expt, out_dir / expt_name, copy_expt=copy_expt)
 
     return {
         "out_dir": out_dir,

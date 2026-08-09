@@ -2,6 +2,7 @@ from integrator.configs import DirichletParams, GammaParams
 from integrator.data_loaders import (
     PolychromaticDataModule,
     RotationDataModule,
+    ChunkedDataModule,
 )
 from integrator.model.distributions import (
     DirichletDistribution,
@@ -38,8 +39,7 @@ REGISTRY = {
         "hierarchical": HierarchicalIntegrator,
         "hierarchical_3enc": HierarchicalIntegrator3Enc,
     },
-
-    #Thao: added for Normal Distribution for MFX dataset
+    # Normal and StudentT observation likelihoods added for MFX data
     "surrogates": {
         "gamma": build_gamma,
         "dirichlet": DirichletDistribution,
@@ -50,6 +50,7 @@ REGISTRY = {
     "data_loader": {
         "rotation_data": RotationDataModule,
         "polychromatic_data": PolychromaticDataModule,
+        "chunked_rotation_data": ChunkedDataModule,
     },
     "priors": {
         "gamma": (GammaParams, ()),

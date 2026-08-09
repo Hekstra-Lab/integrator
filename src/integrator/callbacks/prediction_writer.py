@@ -13,6 +13,17 @@ def assign_labels(
     dataset,
     save_dir: str,
 ):
+    # assign_labels() receives the DataModule directly (train.py:424).
+    # ChunkedDataModule opts in via _CHUNKED_DATA_MODULE = True — its train/val
+    # split is already baked into chunk files; iterating dataloaders here would
+    # be prohibitively expensive at 100 M+ reflections.
+    if getattr(dataset, "_CHUNKED_DATA_MODULE", False):
+        logger.info(
+            "assign_labels: ChunkedDataModule detected - "
+            "train/val split is already baked into chunk files; skipping."
+        )
+        return
+
     train_id_df = pl.DataFrame(schema=[("train_ids", int)])
     val_id_df = pl.DataFrame(schema=[("val_ids", int)])
 

@@ -5,6 +5,7 @@ from .factory_utils import (
     construct_trainer,
     load_config,
     resolve_config,
+    resolve_source_data_dir,
     save_run_artifacts,
 )
 from .prepare_priors import (
@@ -19,6 +20,7 @@ __all__ = [
     "construct_trainer",
     "load_config",
     "resolve_config",
+    "resolve_source_data_dir",
     "save_run_artifacts",
     "inject_binning_labels",
     "prepare_per_bin_priors",

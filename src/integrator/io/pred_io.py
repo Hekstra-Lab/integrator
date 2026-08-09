@@ -34,11 +34,14 @@ def get_pred_files(
         )
         if not pred_files:
             raise RuntimeError(f"No prediction files found in {ckpt_dir}")
+        # Single lazy scan over all parquet files — one pass, four columns.
+        # Previously: four separate .collect() calls = four full scans.
         lf = pl.scan_parquet(pred_files)
-        refl_ids = lf.select("refl_ids").collect().to_numpy().ravel()
-        qi_mean = lf.select("qi_mean").collect().to_numpy().ravel()
-        qi_var = lf.select("qi_var").collect().to_numpy().ravel()
-        qbg_mean = lf.select("qbg_mean").collect().to_numpy().ravel()
+        df = lf.select(["refl_ids", "qi_mean", "qi_var", "qbg_mean"]).collect()
+        refl_ids = df["refl_ids"].to_numpy()
+        qi_mean = df["qi_mean"].to_numpy()
+        qi_var = df["qi_var"].to_numpy()
+        qbg_mean = df["qbg_mean"].to_numpy()
 
         data = {
             "refl_ids": refl_ids,

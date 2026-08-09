@@ -18,6 +18,87 @@ def _nbins_path(filename: str, n_bins: int, data_dir: Path) -> Path:
     return data_dir / suffixed
 
 
+def _validate_chunked_priors(cfg: dict, n_bins: int) -> None:
+    """Validate manifest.yaml for a chunked_rotation_data training config.
+
+    Checks performed (all raise with actionable messages on failure):
+      - manifest.yaml exists in chunk_dir
+      - version == 2  (v6 chunk layout)
+      - 'group_label' is in numeric_columns  (baked by integrator.preprocess)
+      - manifest n_bins matches loss.args.n_bins
+
+    Does NOT regenerate group_labels — integrator.preprocess already writes
+    group_label into every chunk's metadata.npz.
+
+    Does NOT check for bg_prior.npy here; that is the factory's responsibility
+    at loss-construction time (_get_loss_module in factory_utils.py).
+
+    If concentration_cfg is present but d_min/d_max are missing, raises
+    ValueError — raw metadata.npy is not available in chunk_dir so auto-fill
+    is impossible; the user must set them explicitly in the YAML.
+    """
+    import yaml as _yaml
+
+    chunk_dir = Path(cfg["data_loader"]["args"]["chunk_dir"])
+    manifest_path = chunk_dir / "manifest.yaml"
+    if not manifest_path.exists():
+        raise FileNotFoundError(
+            f"No manifest.yaml found in {chunk_dir}.\n"
+            "Run  integrator.preprocess  first."
+        )
+
+    m = _yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+
+    version = m.get("version", 1)
+    if version != 2:
+        raise ValueError(
+            f"manifest.yaml in {chunk_dir} declares version {version}; "
+            "version 2 is required.\n"
+            "Re-run  integrator.preprocess  to regenerate chunks with the "
+            "v6 layout."
+        )
+
+    numeric_cols = m.get("numeric_columns", [])
+    if "group_label" not in numeric_cols:
+        raise RuntimeError(
+            f"manifest.yaml in {chunk_dir} does not list 'group_label' in "
+            "numeric_columns.\n"
+            "group_label is required even for n_bins=1 (training calls "
+            "metadata['group_label'].long() in every step).\n"
+            f"Re-run:  integrator.preprocess --n-bins {n_bins}"
+        )
+
+    manifest_n_bins = int(m.get("n_bins", 1))
+    if manifest_n_bins != n_bins:
+        raise ValueError(
+            f"manifest.yaml was built with n_bins={manifest_n_bins} but "
+            f"loss.args.n_bins={n_bins}.\n"
+            "The resolution binning must match between preprocess and training.\n"
+            f"Re-run:  integrator.preprocess --n-bins {n_bins}  "
+            f"(or set loss.args.n_bins: {manifest_n_bins} in your config)."
+        )
+
+    loss_args = cfg.get("loss", {}).get("args", {})
+    conc_cfg = loss_args.get("concentration_cfg")
+    if isinstance(conc_cfg, dict) and (
+        "d_min" not in conc_cfg or "d_max" not in conc_cfg
+    ):
+        raise ValueError(
+            "loss.args.concentration_cfg requires explicit d_min and d_max "
+            "when using chunked_rotation_data.\n"
+            "Raw metadata.npy is not available in chunk_dir for auto-fill.\n"
+            "Set d_min and d_max explicitly in your config YAML under "
+            "loss.args.concentration_cfg."
+        )
+
+    logger.info(
+        "prepare_per_bin_priors: chunked_rotation_data — "
+        "manifest v2 validated, group_label present (n_bins=%d); "
+        "skipping group_label regeneration (baked into chunks by preprocess).",
+        n_bins,
+    )
+
+
 def prepare_per_bin_priors(
     cfg: dict,
     *,
@@ -34,6 +115,17 @@ def prepare_per_bin_priors(
     if loss_name not in ("monochromatic_wilson", "polychromatic_wilson"):
         return
 
+    # ── chunked_rotation_data: validate manifest; skip group_label regen ──────
+    # group_label is already baked into every chunk's metadata.npz by
+    # integrator.preprocess.  bg_prior.npy is written to chunk_dir by
+    # integrator.preprocess and loaded by the factory at loss-construction time.
+    if cfg.get("data_loader", {}).get("name") == "chunked_rotation_data":
+        loss_args = cfg.get("loss", {}).get("args", {})
+        _n = n_bins if n_bins > 0 else int(loss_args.get("n_bins", 1))
+        _validate_chunked_priors(cfg, n_bins=_n)
+        return
+
+    # ── Standard rotation_data path (unchanged) ───────────────────────────────
     data_dir = Path(cfg["data_loader"]["args"]["data_dir"])
     loss_args = cfg["loss"].get("args", {})
 
@@ -128,6 +220,31 @@ def prepare_per_bin_priors(
 
 def inject_binning_labels(data_loader, cfg: dict) -> None:
     """Load binning label files and inject into the dataset's metadata."""
+
+    # ChunkedDataModule: group_label must be baked into chunk files at preprocess
+    # time via  integrator.preprocess --n-bins N.
+    # group_label is required even when n_bins=1 because _step() always calls
+    # metadata["group_label"].long().  Raise loudly rather than letting training
+    # crash with a confusing KeyError inside the forward pass.
+    # Detection uses _CHUNKED_DATA_MODULE sentinel (set on ChunkedDataModule class)
+    # for robustness — same sentinel used in prediction_writer.py (v8).
+    if getattr(data_loader, "_CHUNKED_DATA_MODULE", False):
+        loss_args = cfg.get("loss", {}).get("args", {})
+        n_bins = int(loss_args.get("n_bins", 1))
+        numeric_cols = getattr(data_loader, "numeric_columns", {})
+        if "group_label" not in numeric_cols:
+            raise RuntimeError(
+                "ChunkedDataModule chunks are missing 'group_label'. "
+                "group_label is required even for n_bins=1 "
+                "(training will crash without it).\n"
+                f"Re-run:  integrator.preprocess --n-bins {n_bins}"
+            )
+        logger.info(
+            "inject_binning_labels: group_label verified in chunk manifest "
+            "(%d bin(s)); skipping re-injection.",
+            n_bins,
+        )
+        return
 
     loss_args = cfg.get("loss", {}).get("args", {})
     n_bins = int(loss_args.get("n_bins", 1))

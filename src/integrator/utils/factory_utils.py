@@ -215,7 +215,88 @@ def _require(cfg: dict, *path: str) -> Any:
 
 
 def _get_data_dir(cfg: dict) -> str:
-    return str(_require(cfg, "data_loader", "args", "data_dir"))
+    """Return the data directory for the current config.
+
+    For rotation_data: returns data_loader.args.data_dir (unchanged).
+    For chunked_rotation_data: returns data_loader.args.chunk_dir.
+      chunk_dir does not contain metadata.npy — callers that look for
+      optional files (bg_prior.npy, prior configs) will not find them
+      in chunk_dir unless integrator.preprocess has been run.
+    Raises KeyError if neither key is present.
+    """
+    args = cfg.get("data_loader", {}).get("args", {})
+    if "data_dir" in args:
+        return str(args["data_dir"])
+    if "chunk_dir" in args:
+        return str(args["chunk_dir"])
+    raise KeyError(
+        "Config missing 'data_dir' (or 'chunk_dir' for chunked_rotation_data) "
+        "under 'data_loader.args'"
+    )
+
+
+def resolve_source_data_dir(cfg: dict) -> Path:
+    """Return the original shoebox data directory for the given config.
+
+    This is the single authoritative resolver for paths that need the original
+    shoebox dataset directory — metadata.npy for MFX write-back, dataset.yaml
+    for MTZ export, bg_prior.npy for the Wilson loss, etc.
+
+    --original-refl-dir remains separate: it points to the original .refl/.expt
+    files which may be in a different location from the shoebox dataset.
+
+    For rotation_data:
+        Returns Path(data_loader.args.data_dir).
+        No manifest access — safe to call with no chunk directory present.
+
+    For chunked_rotation_data:
+        Reads source_data_dir from chunk_dir/manifest.yaml.
+        source_data_dir is written by integrator.preprocess and points to the
+        original shoebox dataset directory (containing metadata.npy, dataset.yaml,
+        counts.npy, masks.npy).
+
+    Raises:
+        KeyError:
+            rotation_data config is missing data_loader.args.data_dir.
+        FileNotFoundError:
+            chunked_rotation_data: manifest.yaml not found in chunk_dir.
+            Solution: run integrator.preprocess first.
+        ValueError:
+            chunked_rotation_data: manifest.yaml exists but lacks source_data_dir.
+            The chunk directory was produced by an older integrator.preprocess.
+            Solution: re-run integrator.preprocess.
+    """
+    import yaml as _yaml
+
+    name = cfg.get("data_loader", {}).get("name", "")
+    args = cfg.get("data_loader", {}).get("args", {})
+
+    if name == "chunked_rotation_data":
+        chunk_dir = Path(args["chunk_dir"])
+        manifest_path = chunk_dir / "manifest.yaml"
+        if not manifest_path.exists():
+            raise FileNotFoundError(
+                f"No manifest.yaml found in {chunk_dir}.\n"
+                "Run  integrator.preprocess  first."
+            )
+        m = _yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        if "source_data_dir" not in m:
+            raise ValueError(
+                f"manifest.yaml in {chunk_dir} does not contain 'source_data_dir'.\n"
+                "This chunk directory was produced by an older version of "
+                "integrator.preprocess.\n"
+                "Re-run  integrator.preprocess  to regenerate the chunks with "
+                "source_data_dir recorded in manifest.yaml."
+            )
+        return Path(m["source_data_dir"])
+
+    # rotation_data and all other loaders: require explicit data_dir.
+    if "data_dir" not in args:
+        raise KeyError(
+            "Config missing 'data_dir' under 'data_loader.args'.\n"
+            "Set data_loader.args.data_dir in your config YAML."
+        )
+    return Path(args["data_dir"])
 
 
 def _get_n_bins(cfg: dict) -> int | None:
@@ -359,11 +440,26 @@ def _get_loss_module(
             kwargs["spectrum_init_from"], data_dir, None
         )
 
-    # Inject the empirical background prior
+    # Inject the empirical background prior.
+    #
+    # For rotation_data: bg_prior_{n}.npy is looked up in data_dir (the raw
+    # shoebox dataset directory).  If absent the loss falls back to default
+    # bg_rate=1.0, bg_concentration=1.0 — existing behaviour, unchanged.
+    #
+    # For chunked_rotation_data: bg_prior_{n}.npy is written into chunk_dir
+    # by integrator.preprocess (_write_bg_prior), so data_dir == chunk_dir
+    # here (set by the updated _get_data_dir above).  If the file is missing
+    # we raise a clear error rather than silently using Gamma(1,1) defaults,
+    # because that would silently change Luis's empirical Wilson prior math.
+    # The user can suppress the error by setting bg_rate and bg_concentration
+    # explicitly in loss.args.
     if "bg_rate" not in kwargs or "bg_concentration" not in kwargs:
         from integrator.io import data_path, load_data
         from integrator.utils.prepare_priors import _nbins_path
 
+        is_chunked = (
+            cfg.get("data_loader", {}).get("name") == "chunked_rotation_data"
+        )
         n_bins = int(kwargs.get("n_bins", 1))
         bg_path = _nbins_path("bg_prior.npy", n_bins, Path(data_dir))
         if data_path(bg_path) is not None:
@@ -372,6 +468,13 @@ def _get_loss_module(
             kwargs.setdefault("bg_rate", bg_prior["bg_rate"].tolist())
             kwargs.setdefault(
                 "bg_concentration", bg_prior["bg_concentration"].tolist()
+            )
+        elif is_chunked:
+            raise FileNotFoundError(
+                f"bg_prior_{n_bins}.npy not found in chunk_dir {data_dir}.\n"
+                "integrator.preprocess must be run (or re-run) to generate it.\n"
+                "Alternatively, set bg_rate and bg_concentration explicitly "
+                "under loss.args in your config YAML to override the prior."
             )
 
     valid_keys = _valid_loss_keys(loss_cls)

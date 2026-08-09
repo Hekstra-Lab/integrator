@@ -44,7 +44,7 @@ data_loader:
     data_dir: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_allruns_269_289_no275_024_rg101
     batch_size: 1024
     validation_split: 0.2
-    num_workers: 4
+    num_workers: 0
 
     transform: asinh
     resolution_cutoff: null
