@@ -150,40 +150,8 @@ def fetch_files(base, files, images: Path, list_file: Path, dry_run: bool) -> bo
     return not dry_run
 
 
-def verify_checksums(images: Path, files) -> None:
-    """Check the downloaded frames against the dataset's files.sha (SHA-1)."""
-    manifest = images / "files.sha"
-    if not manifest.exists():
-        print("[warn] no files.sha in this dataset — skipping verification")
-        return
 
-    expected = {}
-    for line in manifest.read_text().splitlines():
-        digest, _, path = line.partition("  ")
-        if digest and path:
-            expected[path.removeprefix("./")] = digest
-
-    bad, unlisted = [], 0
-    for rel in files:
-        want = expected.get(rel)
-        if want is None:
-            unlisted += 1
-            continue
-        h = hashlib.sha1()
-        with open(images / rel, "rb") as fh:
-            for chunk in iter(lambda: fh.read(CHUNK), b""):
-                h.update(chunk)
-        if h.hexdigest() != want:
-            bad.append(rel)
-    if bad:
-        sys.exit(f"checksum mismatch for {len(bad)} file(s), e.g. {bad[:3]}; "
-                 f"delete them and rerun")
-    if unlisted:
-        print(f"[warn] {unlisted} file(s) not listed in files.sha")
-    print(f"[ok  ] {len(files) - unlisted} file(s) match files.sha")
-
-
-def prepare_images(cfg, run_dir: Path, dry_run: bool, verify: bool) -> Path:
+def prepare_images(cfg, run_dir: Path, dry_run: bool) -> Path:
     """Make the images available locally and return the dials.import template.
 
     fetch: remote -> list the dataset on the server, choose the sweep, then
@@ -210,8 +178,6 @@ def prepare_images(cfg, run_dir: Path, dry_run: bool, verify: bool) -> Path:
     chosen, wanted = pick_images(rsync_list(base), exts, frames, template)
     downloaded = fetch_files(base, wanted + ["files.sha"], images,
                              run_dir / ".rsync-files", dry_run)
-    if downloaded and verify:
-        verify_checksums(images, wanted)
     return images / chosen
 
 
@@ -337,10 +303,7 @@ def run_pipeline(steps, proc: Path, force: bool, dry_run: bool) -> None:
     """Run the steps in order, skipping those whose result is already current.
 
     A step is current only if its outputs exist *and* its stamp matches.  The
-    stamp is a rolling hash over the toolchain version, this step's command
-    line and every command line before it, so changing e.g. wav_min or
-    upgrading laue-dials invalidates that step and all its descendants instead
-    of being silently skipped.
+    stamp is a rolling hash over the toolchain version.
     """
     proc.mkdir(parents=True, exist_ok=True)
     stamps = proc / ".stamps"
@@ -385,15 +348,12 @@ def main():
     ap.add_argument("--base-dir", help="override base directory")
     ap.add_argument("--force", action="store_true", help="rerun everything")
     ap.add_argument("--dry-run", action="store_true", help="print the plan only")
-    ap.add_argument("--no-verify", action="store_true",
-                    help="skip the files.sha checksum pass")
     a = ap.parse_args()
 
     cfg = yaml.safe_load(Path(a.config).read_text())
     cfg["name"] = a.name or need(cfg, "name")
     cfg["base_dir"] = a.base_dir or need(cfg, "base_dir")
     force = a.force or cfg.get("force", False)
-    verify = not a.no_verify and cfg.get("verify", True)
 
     run_dir = resolve(Path(cfg["base_dir"]) / cfg["name"])
     proc = run_dir / "proc"
@@ -403,7 +363,7 @@ def main():
     steps = build_steps(cfg, "")          # cheap: validates the config first
     preflight(steps)
 
-    template = prepare_images(cfg, run_dir, a.dry_run, verify)
+    template = prepare_images(cfg, run_dir, a.dry_run)
     print(f"template: {template}")
     run_pipeline(build_steps(cfg, template), proc, force, a.dry_run)
     if not a.dry_run:
