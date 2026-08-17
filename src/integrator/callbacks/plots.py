@@ -217,7 +217,10 @@ class WilsonParamLogger(Callback):
             if spectrum is not None:
                 lam_lo = float(spectrum.lam_mid - spectrum.lam_scale)
                 lam_hi = float(spectrum.lam_mid + spectrum.lam_scale)
-                lam = torch.linspace(lam_lo, lam_hi, self.n_lambda)
+                lam = torch.linspace(
+                    lam_lo, lam_hi, self.n_lambda,
+                    device=spectrum.lam_mid.device,
+                )
                 g = spectrum.get_log_G(lam).exp()
                 self._spectra.append(
                     (epoch, lam.cpu().numpy(), g.cpu().numpy())
