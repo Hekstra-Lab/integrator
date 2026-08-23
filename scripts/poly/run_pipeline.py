@@ -91,10 +91,20 @@ def predictions_dir(run_dir: Path) -> Path:
     )
 
 
-def find_mtz(pred_dir: Path, epoch: int | None) -> Path:
-    """The predicted unmerged MTZ for `epoch`, or the highest epoch present."""
+def find_mtz(
+    pred_dir: Path, epoch: int | None, allow_missing: bool = False
+) -> Path:
+    """The predicted unmerged MTZ for `epoch`, or the highest epoch present.
+
+    With `allow_missing` (a dry run, or a run still training) the expected
+    path is returned instead of raising, so the rest of the chain can still
+    be printed.
+    """
     mtzs = sorted(pred_dir.glob("epoch_*/preds_epoch_*.mtz"))
     if not mtzs:
+        if allow_missing:
+            e = 0 if epoch is None else int(epoch)
+            return pred_dir / f"epoch_{e:04d}" / f"preds_epoch_{e:04d}.mtz"
         raise SystemExit(
             f"no preds_epoch_*.mtz under {pred_dir}; run the predict step "
             "with write_mtz enabled"
@@ -127,7 +137,8 @@ def step_careless(cfg, mtz: Path, dry) -> Path:
     ccfg = cfg.get("careless", {})
     config = int(ccfg.get("config", 4))
     scaling_dir = mtz.parent / ccfg.get("out_dir", "scaling")
-    scaling_dir.mkdir(parents=True, exist_ok=True)
+    if not dry:
+        scaling_dir.mkdir(parents=True, exist_ok=True)
     out_base = scaling_dir / f"config{config}"
 
     args = flags(config, ccfg.get("dmin", 1.5), ccfg.get("seed"))
@@ -153,8 +164,9 @@ def step_phenix(cfg, merged: Path, work_dir: Path, dry) -> Path:
     prefix = pcfg.get("prefix", "refined")
     refine1 = work_dir / "refine1"
     refine2 = work_dir / "refine2"
-    refine1.mkdir(parents=True, exist_ok=True)
-    refine2.mkdir(parents=True, exist_ok=True)
+    if not dry:
+        refine1.mkdir(parents=True, exist_ok=True)
+        refine2.mkdir(parents=True, exist_ok=True)
 
     pass1 = (
         f'phenix.refine "{Path(pcfg["eff1"]).resolve()}" '
@@ -244,8 +256,12 @@ def main():
 
     merged = refine2 = None
     if {"careless", "phenix", "peaks"} & set(steps):
-        mtz = find_mtz(predictions_dir(run_dir), args.epoch)
+        mtz = find_mtz(
+            predictions_dir(run_dir), args.epoch, allow_missing=args.dry_run
+        )
         print(f"unmerged : {mtz}")
+        if args.dry_run and not mtz.exists():
+            print("           (does not exist yet; predict writes it)")
         ccfg = cfg.get("careless", {})
         config = int(ccfg.get("config", 4))
         scaling_dir = mtz.parent / ccfg.get("out_dir", "scaling")
