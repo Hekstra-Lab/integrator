@@ -12,6 +12,7 @@ class ChebyshevSpectrum(nn.Module):
         lambda_min: float = 0.95,
         lambda_max: float = 1.25,
         init_from: str | None = None,
+        init_G: float = 1.0,
     ):
         super().__init__()
         self.degree = degree
@@ -36,7 +37,13 @@ class ChebyshevSpectrum(nn.Module):
             else:
                 init = c_saved[: self.n_basis].clone()
         else:
+            # T_0 = 1, so c[0] is the mean of log G: it sets the overall scale.
+            # G = 1 puts the Wilson prior's mean intensity at one count, which
+            # is orders of magnitude below real data and drags q(I) down for
+            # the first epochs. Set init_G to the expected <I> at low
+            # resolution instead.
             init = torch.zeros(self.n_basis)
+            init[0] = torch.log(torch.tensor(max(float(init_G), 1e-12)))
 
         self.c = nn.Parameter(init)
 

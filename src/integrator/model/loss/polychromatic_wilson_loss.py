@@ -18,6 +18,7 @@ class PolychromaticWilsonLoss(WilsonLoss):
         lambda_min: float = 0.95,
         lambda_max: float = 1.25,
         spectrum_init_from: str | None = None,
+        init_G: float = 1.0,
         beam_center: list[float] | None = None,
         polarization: bool = False,
         polarization_fraction: float = 0.99,
@@ -31,6 +32,7 @@ class PolychromaticWilsonLoss(WilsonLoss):
             lambda_min=lambda_min,
             lambda_max=lambda_max,
             init_from=spectrum_init_from,
+            init_G=init_G,
         )
 
         # Warm-start B and concentration from checkpoint
@@ -79,6 +81,21 @@ class PolychromaticWilsonLoss(WilsonLoss):
     def _lorentz_factor(two_theta: Tensor) -> Tensor:
         """f_L = sin^2(2 theta)  (Ren & Moffat eq. 10)."""
         return torch.sin(two_theta).pow(2).clamp(min=1e-8)
+
+    def _set_scale_from_fit(self, G0: float) -> None:
+        """Put a data-driven overall scale into the spectrum's constant term.
+
+        `T_0 = 1`, so `c[0]` is the mean of `log G(lambda)`: writing the fitted
+        scale there shifts the whole spectrum without touching its shape. This
+        is what makes `stabilize_scale` work for the polychromatic loss, whose
+        scale is a curve rather than the single scalar the base class assumes.
+        """
+        with torch.no_grad():
+            self.spectrum.c[0] = torch.log(
+                torch.tensor(
+                    max(float(G0), 1e-12), device=self.spectrum.c.device
+                )
+            )
 
     def _get_tau(
         self, metadata: dict, s_sq: Tensor, device: torch.device
