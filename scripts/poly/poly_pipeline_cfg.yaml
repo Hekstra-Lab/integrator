@@ -1,0 +1,39 @@
+# Laue pipeline: predict -> careless -> phenix.refine (2 passes) -> peaks.
+#
+# The careless flags reproduce hewl_1118/laue-dials-careless/config{1..6}.sh,
+# which the unified ~/refltorch/scripts/laue_output/careless_scale.sh also
+# encodes. `config: 4` is the anomalous + positional-encoding recipe.
+#
+# Paths verified live 2026-08. Note only /n/hekstra_lab moved to
+# /n/lab_storage/hekstra_lab; /n/holylabs and /n/hekstra_lab_tier0 did not.
+
+predict:
+  env: integrator               # micromamba env with integrator + torch
+  write_mtz: true               # -> <predictions>/epoch_XXXX/preds_epoch_XXXX.mtz
+
+careless:
+  env: crls
+  config: 4                     # 1, 4, 5, 6 here; 2 and 3 are Friedel-split
+  dmin: 1.5
+  out_dir: scaling              # created next to the unmerged MTZ
+  seed: null                    # null -> careless default; set for reproducibility
+  extra_args: []                # appended verbatim, after the config's flags
+
+phenix:
+  env: /n/hekstra_lab_tier0/Lab/garden/phenix_1_20/phenix-1.20.1-4487/phenix_env.sh
+  eff1: /n/holylabs/hekstra_lab/Users/laldama/laue_analysis/custom_refinement_param_1_.eff
+  eff2: /n/holylabs/hekstra_lab/Users/laldama/laue_analysis/custom_refinement_param_2_.eff
+  pdb: /n/holylabs/hekstra_lab/Users/laldama/integrato_refac/integrator/reference_data/shaken_9b7c.pdb
+  prefix: refined               # refine1 -> refined_data.mtz, refined_1.pdb
+
+peaks:
+  env: integrator
+  script: /n/lab_storage/hekstra_lab/people/aldama/refltorch/scripts/laue_output/anomalous_peak_heights.py
+  pdb: /n/holylabs/hekstra_lab/Users/laldama/integrato_refac/integrator/reference_data/9b7c.pdb
+  elements: "[S,I]"
+  ccanom: true                  # careless.ccanom on the cross-validation MTZ
+  ccanom_env: crls
+
+reference:                      # optional, for comparison plots only
+  peaks: null
+  refine_log: null
