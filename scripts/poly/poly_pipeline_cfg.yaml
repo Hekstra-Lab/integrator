@@ -27,7 +27,14 @@ phenix:
   prefix: refined               # refine1 -> refined_data.mtz, refined_1.pdb
 
 peaks:
-  env: integrator
+  env: integrator-cuda-dev      # holds rs.find_peaks and gemmi
+  method: both                  # find_peaks | peak_heights | both
+  # rs.find_peaks -> peaks.csv, the schema plot_peaks.py reads
+  f: ANOM
+  phi: PANOM
+  z: 5.0
+  # anomalous_peak_heights.py -> peak_heights.csv, matching the earlier
+  # laue-dials runs (two-row transposed CSV, not readable by plot_peaks.py)
   script: /n/lab_storage/hekstra_lab/people/aldama/refltorch/scripts/laue_output/anomalous_peak_heights.py
   pdb: /n/holylabs/hekstra_lab/Users/laldama/integrato_refac/integrator/reference_data/9b7c.pdb
   elements: "[S,I]"

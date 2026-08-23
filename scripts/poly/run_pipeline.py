@@ -178,26 +178,48 @@ def step_phenix(cfg, merged: Path, work_dir: Path, dry) -> Path:
 
 
 def step_peaks(cfg, refine2: Path, merged: Path, dry) -> None:
-    """Anomalous peak heights at the model's S and I sites, plus CCanom."""
+    """Anomalous peaks from the refined model, plus CCanom on the xval data.
+
+    Two peak measures, because they answer different questions and only one
+    of them feeds the plotting suite:
+
+    - `rs.find_peaks` writes the one-row-per-site table that `plot_peaks.py`
+      reads (`seqid`, `peakz`), so it is the default.
+    - `anomalous_peak_heights.py` samples the ANOM map at the model's S and I
+      sites and averages over symmetry mates. It writes a two-row transposed
+      CSV, which is what the earlier laue-dials runs used, so it is kept for
+      comparability under a separate name.
+    """
     pcfg = cfg.get("peaks", {})
-    script = pcfg.get("script")
-    if not script:
-        raise SystemExit("peaks.script is not set in the pipeline config")
+    method = pcfg.get("method", "find_peaks")
     prefix = cfg.get("phenix", {}).get("prefix", "refined")
-    refined_mtz = refine2 / f"{prefix}_1.mtz"
-    out_csv = refine2.parent / "peaks.csv"
-    cmd = (
-        f"python {script} {refined_mtz} {Path(pcfg['pdb']).resolve()} "
-        f"{pcfg.get('elements', '[S,I]')} {out_csv}"
-    )
-    run(in_env(cmd, pcfg.get("env")), dry=dry)
+    mtz = refine2 / f"{prefix}_1.mtz"
+    pdb = refine2 / f"{prefix}_1.pdb"
+    out_dir = refine2.parent
+
+    if method in ("find_peaks", "both"):
+        cmd = (
+            f"rs.find_peaks {mtz} {pdb} "
+            f"-f {pcfg.get('f', 'ANOM')} -p {pcfg.get('phi', 'PANOM')} "
+            f"-z {pcfg.get('z', 5.0)} -o {out_dir / 'peaks.csv'}"
+        )
+        run(in_env(cmd, pcfg.get("env")), cwd=refine2, dry=dry)
+
+    if method in ("peak_heights", "both"):
+        script = pcfg.get("script")
+        if not script:
+            raise SystemExit("peaks.script is needed for the peak_heights method")
+        cmd = (
+            f"python {script} {mtz} {Path(pcfg['pdb']).resolve()} "
+            f"{pcfg.get('elements', '[S,I]')} {out_dir / 'peak_heights.csv'}"
+        )
+        run(in_env(cmd, pcfg.get("env")), dry=dry)
 
     if pcfg.get("ccanom", True):
         xval = merged.with_name(merged.name.replace("_0.mtz", "_xval_0.mtz"))
         ccanom = (
             f"careless.ccanom {xval} "
-            f"-o {refine2.parent / 'ccanom.csv'} "
-            f"-i {refine2.parent / 'ccanom.png'}"
+            f"-o {out_dir / 'ccanom.csv'} -i {out_dir / 'ccanom.png'}"
         )
         run(in_env(ccanom, pcfg.get("ccanom_env", "crls")), dry=dry)
 
