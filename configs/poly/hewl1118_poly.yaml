@@ -49,6 +49,11 @@ loss:
     degree: 40                  # Chebyshev order of log G(lambda)
     lambda_min: 0.97            # the data's real range (preflight, 2026-08-23);
     lambda_max: 1.25            #   matching it maps the data onto the full [-1, 1]
+    # <I> = G * exp(-B / 2d^2), so G is the prior's mean intensity at low
+    # resolution in count units. The default G = 1 asserts one photon per
+    # reflection and drags q(I) down for the first epochs; this dataset runs
+    # ~7000 counts per shoebox. Both stay learnable from here.
+    init_G: 5000.0
     init_B: 30.0
     b_min: 0.0
     polarization: false         # unconstrained corrections run away; keep off
