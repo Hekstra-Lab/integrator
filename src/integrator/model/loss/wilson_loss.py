@@ -9,7 +9,10 @@ from torch.distributions import Distribution, Gamma, kl_divergence
 from integrator.model.distributions.profile_surrogates import (
     ProfileSurrogateOutput,
 )
-from integrator.model.loss.count_likelihood import CountLikelihood, _inv_softplus
+from integrator.model.loss.count_likelihood import (
+    CountLikelihood,
+    _inv_softplus,
+)
 from integrator.model.loss.kl_helpers import compute_profile_kl
 
 _DEFAULT_PROFILE_PRIOR_SCALE = 3.0
@@ -125,13 +128,21 @@ class WilsonLoss(nn.Module):
         Overridden by MonochromaticWilsonLoss, whose scale is a single scalar G.
         """
 
-    def _wilson_fit_G(self, i_hat: Tensor, s_sq: Tensor) -> float:
-        """Intercept of a binned Wilson-plot fit: log(mean I per bin) vs s^2."""
+    @staticmethod
+    def wilson_fit(
+        i_hat: Tensor, s_sq: Tensor, n_bins: int = 20
+    ) -> tuple[float, float]:
+        """Binned Wilson-plot fit of log(mean I per bin) vs s^2, giving (G, B).
+
+        The line is `log<I> = log G - 2 B s^2`, so G is the intercept and B is
+        -slope/2. Bins are equal-count in s^2, and each bin contributes its MEAN
+        intensity: a per-reflection log-mean is biased low by the
+        Euler-Mascheroni constant for exponentially distributed intensities.
+        """
         valid = i_hat > 0
         i_hat, s2 = i_hat[valid], s_sq[valid]
-        n_bins = self.wilson_init_bins
         if i_hat.numel() < 3 * n_bins:
-            return float(i_hat.mean()) if i_hat.numel() else 1.0
+            return (float(i_hat.mean()) if i_hat.numel() else 1.0), 0.0
         order = torch.argsort(s2)
         s2s, is_ = s2[order], i_hat[order]
         idx = torch.linspace(0, len(s2s), n_bins + 1).long()
@@ -147,7 +158,7 @@ class WilsonLoss(nn.Module):
         slope = ((x - xm) * (y - ym)).sum() / (x - xm).pow(2).sum().clamp_min(
             1e-12
         )
-        return float(torch.exp(ym - slope * xm))
+        return float(torch.exp(ym - slope * xm)), float(-slope / 2.0)
 
     def _maybe_init_scale(
         self, counts: Tensor, s_sq: Tensor, mask: Tensor
@@ -168,7 +179,7 @@ class WilsonLoss(nn.Module):
             bg_mean = bg_mean.mean()  # scalar proxy (per-bin or scalar prior)
             # intensity proxy = summed counts above background; raw data, no DIALS
             i_hat = (counts * m).sum(-1) - bg_mean * npix
-            g0 = self._wilson_fit_G(i_hat, s_sq)
+            g0, _ = self.wilson_fit(i_hat, s_sq, self.wilson_init_bins)
             self._set_scale_from_fit(g0)
             self.scale_initialized.fill_(True)
 

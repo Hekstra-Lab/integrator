@@ -147,7 +147,9 @@ class RotationDataModule(pl.LightningDataModule):
     """LightningDataModule for rotation-geometry shoebox data.
 
     Attributes:
-        transform: Count transform `anscombe`, `log1p`, or `standardization`.
+        transform: Count transform `anscombe`, `log1p`, `asinh`, or `standardization`.
+            `asinh` is the one defined for negative counts, so it is the transform for
+            real-valued detector output; `asinh_scale` sets its linear->log knee.
     """
 
     def __init__(
@@ -162,6 +164,7 @@ class RotationDataModule(pl.LightningDataModule):
         min_valid_pixels: int = 10,
         shoebox_file_names: dict | None = None,
         transform: str | None = None,
+        asinh_scale: float = 1.0,
     ):
         super().__init__()
         self.data_dir = data_dir
@@ -181,12 +184,15 @@ class RotationDataModule(pl.LightningDataModule):
             }
         self.shoebox_file_names = shoebox_file_names
         transform = transform or "standardization"
-        if transform not in ("anscombe", "log1p", "standardization"):
+        if transform not in ("anscombe", "log1p", "asinh", "standardization"):
             raise ValueError(
-                f"transform must be 'anscombe', 'log1p', or 'standardization'; "
-                f"got {transform!r}"
+                "transform must be 'anscombe', 'log1p', 'asinh', or "
+                f"'standardization'; got {transform!r}"
             )
+        if asinh_scale <= 0:
+            raise ValueError(f"asinh_scale must be > 0; got {asinh_scale}")
         self.transform = transform
+        self.asinh_scale = asinh_scale
 
     def setup(self, stage=None):
         counts = _load_shoebox_array(
@@ -248,6 +254,14 @@ class RotationDataModule(pl.LightningDataModule):
                 ) * masks
             elif self.transform == "log1p":
                 standardized_counts = torch.log1p(counts.clamp(min=0)) * masks
+            elif self.transform == "asinh":
+                # inverse hyperbolic sine, asinh(c/s) = log(c/s + sqrt((c/s)^2 + 1)):
+                # defined on the whole real line (anscombe/log1p need c >= 0 and clamp
+                # away the negatives), ~linear for |c| < s and ~log in the tails. Handles
+                # the negative background pixels of real-valued detector output and
+                # compresses bright peaks so a 180-photon spot does not dominate the
+                # encoder input. `s = asinh_scale` sets the linear->log knee, in photons.
+                standardized_counts = torch.asinh(counts / self.asinh_scale) * masks
             else:
                 standardized_counts = ((counts * masks) - stats[0]) / stats[
                     1

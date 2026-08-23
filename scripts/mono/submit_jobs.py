@@ -64,7 +64,7 @@ def main():
         echo "Started at: $(date)"
         echo "Working dir: {run_dir}"
 
-        source /n/hekstra_lab/people/aldama/micromamba/etc/profile.d/mamba.sh
+        source /n/lab_storage/hekstra_lab/people/aldama/micromamba/etc/profile.d/mamba.sh
         micromamba activate integrator-cuda-dev
 
         python {proc_py} --config "{cfg_file}" --index $SLURM_ARRAY_TASK_ID
@@ -88,7 +88,7 @@ def main():
     #     echo "All array jobs completed. Generating plots"
     #     echo "Started at: $(date)"
     #
-    #     source /n/hekstra_lab/people/aldama/micromamba/etc/profile.d/mamba.sh
+    #     source /n/lab_storage/hekstra_lab/people/aldama/micromamba/etc/profile.d/mamba.sh
     #     micromamba activate refltorch
     #
     #     python {plot_script} --run-dirs "{run_dir}"

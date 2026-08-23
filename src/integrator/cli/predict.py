@@ -123,6 +123,18 @@ def _resolve_sources(args):
     return config, checkpoints, pred_dir
 
 
+def _reference_file(config) -> str:
+    """Metadata filename for this dataset: `.pt` for Laue, `.npy` for rotation."""
+    from integrator.io import read_dataset_spec
+
+    dl_args = config.get("data_loader", {}).get("args", {})
+    names = dl_args.get("shoebox_file_names") or {}
+    if names.get("reference"):
+        return str(names["reference"])
+    spec = read_dataset_spec(dl_args.get("data_dir", ".")) or {}
+    return str((spec.get("files") or {}).get("reference", "metadata.npy"))
+
+
 def main():
     from pathlib import Path
 
@@ -239,10 +251,11 @@ def main():
 
             logger.info("Writing .mtz output for epoch %d", epoch)
             pred_data = get_pred_files(ckpt_dir=ckpt_dir, filetype="parquet")
-            data_dir = Path(config["data_loader"]["args"]["data_dir"])
+            dl_args = config["data_loader"]["args"]
+            data_dir = Path(dl_args["data_dir"])
             write_mtz_from_preds(
                 pred_data=pred_data,
-                metadata_path=data_dir / "metadata.npy",
+                metadata_path=data_dir / _reference_file(config),
                 data_dir=data_dir,
                 out_path=ckpt_dir / f"preds_epoch_{epoch:04d}.mtz",
             )

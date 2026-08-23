@@ -12,6 +12,6 @@ optimizer:
 
 data_loader:
   args:
-    data_dir: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data
+    data_dir: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data
     batch_size: 2048
     validation_split: 0.2

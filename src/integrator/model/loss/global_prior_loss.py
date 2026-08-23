@@ -37,12 +37,17 @@ class GlobalPriorLoss(nn.Module):
         profile_kl_weight: float = 1.0,
         background_kl_weight: float = 1.0,
         intensity_kl_weight: float = 1.0,
-        # Pixel count likelihood: "poisson" (default) or "negative_binomial"
+        # Pixel count likelihood: "poisson" (default), "negative_binomial", or "normal"
         likelihood: str = "poisson",
         nb_dispersion_init: float = 10.0,
         nb_dispersion_scope: str = "global",
         nb_dispersion_floor: float = 1e-3,
         nb_learn_dispersion: bool = True,
+        # Normal likelihood (for real-valued detector output)
+        normal_read_noise: float = 0.0,
+        normal_variance: str = "coupled",
+        normal_sigma_init: float = 1.0,
+        normal_learn_sigma: bool = True,
         n_bins: int = 1,
         pi_cfg=None,
         pbg_cfg=None,
@@ -92,6 +97,10 @@ class GlobalPriorLoss(nn.Module):
             n_bins=n_bins,
             dispersion_floor=nb_dispersion_floor,
             learn_dispersion=nb_learn_dispersion,
+            read_noise=normal_read_noise,
+            variance=normal_variance,
+            sigma_init=normal_sigma_init,
+            learn_sigma=normal_learn_sigma,
         )
 
     def diagnostics(self) -> dict[str, Tensor]:
