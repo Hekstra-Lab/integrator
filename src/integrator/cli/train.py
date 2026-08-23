@@ -219,6 +219,20 @@ def parse_args():
         help="Log model-vs-DIALS intensity/background scatters (off by default)",
     )
     parser.add_argument(
+        "--figures",
+        action="store_true",
+        help="Collect the training-figure dumps (tracked shoeboxes, profile "
+        "basis, latent space) into <output_root>/figures and render them "
+        "at the end of the run",
+    )
+    parser.add_argument(
+        "--figure-every",
+        type=int,
+        default=1,
+        help="Record the tracked shoeboxes and the basis every n epochs "
+        "(only used with --figures)",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="count",
@@ -295,8 +309,11 @@ def main():
     from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 
     from integrator.callbacks import (
+        LatentSpaceLogger,
         LossCurveLogger,
         PredictionScatterLogger,
+        ProfileBasisLogger,
+        TrackedShoeboxLogger,
         WilsonParamLogger,
         assign_labels,
     )
@@ -365,6 +382,7 @@ def main():
     # plots/ and predictions/ as siblings.
     logdir = output_root / "files"
     plots_dir = output_root / "plots"
+    figures_dir = output_root / "figures"
     predictions_dir = output_root / "predictions"
     logdir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Run directory (handle): {run_dir}")
@@ -386,6 +404,7 @@ def main():
         "output_root": output_root.as_posix(),
         "predictions_dir": predictions_dir.as_posix(),
         "plots_dir": plots_dir.as_posix(),
+        "figures_dir": figures_dir.as_posix(),
         "slurm": {
             "job_id": os.environ.get("SLURM_JOB_ID"),
         },
@@ -491,6 +510,17 @@ def main():
     ]
     if args.scatter:
         callbacks.append(PredictionScatterLogger(out_dir=plots_dir))
+    if args.figures:
+        callbacks += [
+            TrackedShoeboxLogger(
+                out_dir=figures_dir, every_n_epochs=args.figure_every
+            ),
+            ProfileBasisLogger(
+                out_dir=figures_dir, every_n_epochs=args.figure_every
+            ),
+            LatentSpaceLogger(out_dir=figures_dir),
+        ]
+        logger.info("Figure dumps: %s", figures_dir.as_posix())
     if early_stop_cb is not None:
         callbacks.append(early_stop_cb)
 

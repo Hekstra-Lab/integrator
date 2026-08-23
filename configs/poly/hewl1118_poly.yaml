@@ -47,8 +47,8 @@ loss:
   name: polychromatic_wilson
   args:
     degree: 40                  # Chebyshev order of log G(lambda)
-    lambda_min: 0.95            # check against the real range before a long run:
-    lambda_max: 1.25            #   scripts/poly/preflight.py prints it
+    lambda_min: 0.97            # the data's real range (preflight, 2026-08-23);
+    lambda_max: 1.25            #   matching it maps the data onto the full [-1, 1]
     init_B: 30.0
     b_min: 0.0
     polarization: false         # unconstrained corrections run away; keep off
