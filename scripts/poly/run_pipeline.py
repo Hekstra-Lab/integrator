@@ -73,6 +73,19 @@ def run(cmd: str, cwd: Path | None = None, dry: bool = False) -> None:
         raise SystemExit(f"step failed with exit code {proc.returncode}")
 
 
+def via_python(cmd: str) -> str:
+    """Run a console script through python, ignoring its shebang line.
+
+    The `crls` environment predates the storage migration: its 52 console
+    scripts still start with `#!/n/hekstra_lab/...`, an interpreter path that
+    no longer exists, so executing them directly fails with "bad interpreter"
+    (exit 126). Resolving the script and handing it to the active python
+    sidesteps that without modifying the environment.
+    """
+    prog, _, rest = cmd.partition(" ")
+    return f'python "$(command -v {prog})" {rest}'
+
+
 def in_env(cmd: str, env: str | None) -> str:
     """Wrap a command in its environment: a phenix_env.sh, or a mamba env."""
     if not env:
@@ -147,7 +160,7 @@ def step_careless(cfg, mtz: Path, dry) -> Path:
         f"careless poly {' '.join(args)} "
         f'"{METADATA_KEYS}" {mtz} {out_base}'
     )
-    run(in_env(cmd, ccfg.get("env", "crls")), dry=dry)
+    run(in_env(via_python(cmd), ccfg.get("env", "crls")), dry=dry)
     return Path(f"{out_base}_0.mtz")
 
 
@@ -233,7 +246,10 @@ def step_peaks(cfg, refine2: Path, merged: Path, dry) -> None:
             f"careless.ccanom {xval} "
             f"-o {out_dir / 'ccanom.csv'} -i {out_dir / 'ccanom.png'}"
         )
-        run(in_env(ccanom, pcfg.get("ccanom_env", "crls")), dry=dry)
+        run(
+            in_env(via_python(ccanom), pcfg.get("ccanom_env", "crls")),
+            dry=dry,
+        )
 
 
 def main():
