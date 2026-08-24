@@ -22,7 +22,9 @@ import sys
 from pathlib import Path
 
 # columns the MTZ writer reads straight out of the metadata file
-MTZ_KEYS = ("H", "K", "L", "wavelength", "xyzcal.px.0", "xyzcal.px.1")
+MTZ_KEYS = ("H", "K", "L", "xyzcal.px.0", "xyzcal.px.1")
+# a per-reflection wavelength only exists, and is only needed, for Laue data
+POLY_ONLY_KEYS = ("wavelength",)
 
 OK, WARN, BAD = "  ok  ", " warn ", " FAIL "
 
@@ -95,8 +97,23 @@ def check_config(report, config_path):
     return cfg, model
 
 
+def mode_of(cfg) -> str:
+    """`polychromatic` or `monochromatic`, from the config's mode or its loss."""
+    mode = cfg.get("mode")
+    if mode:
+        return str(mode)
+    loss = str(cfg.get("loss", {}).get("name", ""))
+    return "polychromatic" if loss.startswith("poly") else "monochromatic"
+
+
 def check_dataset(report, cfg, skip_metadata):
-    """Dataset directory, manifest, array sizes, and metadata columns."""
+    """Dataset directory, manifest, array sizes, and metadata columns.
+
+    The requirements differ by mode: Laue data carries a per-reflection
+    wavelength and needs image_num so careless can scale per image, while
+    rotation data has neither and is scaled by DIALS from the experiment
+    list.
+    """
     from integrator.io import load_metadata, read_dataset_spec
 
     dl_args = cfg.get("data_loader", {}).get("args", {})
@@ -113,8 +130,16 @@ def check_dataset(report, cfg, skip_metadata):
         return
     report.ok("dataset.yaml", f"{spec['n_reflections']:,} reflections")
 
-    if not spec.get("polychromatic"):
-        report.warn("dataset.yaml", "polychromatic is false for a Laue run")
+    mode = mode_of(cfg)
+    is_poly = mode == "polychromatic"
+    if bool(spec.get("polychromatic")) != is_poly:
+        report.fail(
+            "mode vs dataset",
+            f"config is {mode} but dataset.yaml says polychromatic="
+            f"{bool(spec.get('polychromatic'))}",
+        )
+    else:
+        report.ok("mode", f"{mode}, matching dataset.yaml")
     if "crystal" not in spec:
         report.fail("dataset.yaml crystal block", "the MTZ writer needs it")
 
@@ -146,23 +171,29 @@ def check_dataset(report, cfg, skip_metadata):
         return
 
     meta = load_metadata(meta_path)
-    missing = [k for k in MTZ_KEYS if k not in meta]
+    wanted = MTZ_KEYS + (POLY_ONLY_KEYS if is_poly else ())
+    missing = [k for k in wanted if k not in meta]
     if missing:
         report.fail("metadata columns for the MTZ", f"missing {missing}")
     else:
-        report.ok("metadata columns for the MTZ", ", ".join(MTZ_KEYS))
+        report.ok("metadata columns for the MTZ", ", ".join(wanted))
 
     if "image_num" in meta:
         n_images = len(set(meta["image_num"].tolist()))
         report.ok("metadata image_num", f"{n_images} images -> BATCH")
-    else:
+    elif is_poly:
         report.fail(
             "metadata image_num",
             "absent: every BATCH becomes 1 and careless cannot scale "
             "per image. Fix with scripts/add_image_num_to_metadata.py",
         )
+    else:
+        report.ok(
+            "metadata image_num",
+            "absent, which is fine: DIALS scales from the experiment list",
+        )
 
-    if "wavelength" in meta:
+    if is_poly and "wavelength" in meta:
         lam = meta["wavelength"]
         lo, hi = float(lam.min()), float(lam.max())
         report.ok("wavelength range", f"{lo:.4f} – {hi:.4f} Å")
