@@ -16,6 +16,10 @@
 #
 # Resumable: rsync skips what is already there, so resubmitting after a
 # timeout costs a listing rather than a re-transfer.
+#
+# Deliberately on `shared`, not a GPU partition: gpu_test allows only 2
+# submitted jobs per user across all sessions, and a download has no reason
+# to spend one of them.
 
 set -euo pipefail
 

@@ -120,6 +120,29 @@ Two things the scripts handle for you:
   curves. `02b` passes `--wandb-resume-id` with the id recorded in
   `run_paths.yaml`, so every attempt logs into one run.
 
+## Partition limits on FASRC cannon
+
+`gpu_test` allows **2 submitted jobs per user**, running or pending, and caps
+a user at 8 GPUs / 64 CPUs / 512 GB across them. A third submission is
+rejected with `QOSMaxSubmitJobPerUserLimit`, which surfaces as an
+instant-failure job with no output file rather than as a queued job.
+
+The limit is per *user*, so anything else running under the same account
+counts against it — including another session's jobs. Before queuing a
+`gpu_test` chain, check what is already there:
+
+```bash
+squeue -u $USER -p gpu_test
+```
+
+Per-GPU limits on that partition, enforced by a submit filter: fewer than 8
+cores and under 65,536 MB per GPU. `02c_train_gputest.sh` asks for `-c 7`
+and `--mem=60G` for that reason, and `03_pipeline.sh` matches it.
+
+`gpu_requeue` has no such submit cap and a far larger node pool, at the cost
+of preemption. `02b_train_requeue.sh` resumes from `last.ckpt`, so a
+preemption there costs at most one checkpoint interval.
+
 ## What to check while it runs
 
 In the first minutes of the training job:
