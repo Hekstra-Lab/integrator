@@ -1,0 +1,112 @@
+# HEWL Laue (hewl_1118), reproducing the settings of the poly_wilson runs
+# that reach ~20 sigma anomalous peaks on IOD 206.
+#
+# The A arm of an A/B against configs/poly/hewl1118_poly.yaml, which reached
+# 9.8 sigma. Those runs predate the April refactor, so their config cannot be
+# run as written -- `spectral_wilson` and `gammaA` are no longer registry
+# names. The settings below are the same choices expressed in current terms:
+#
+#   spectral_wilson          -> polychromatic_wilson (same tau = G(lam)^-1
+#                               exp(2 B s^2), same Poisson NLL; the historical
+#                               loss's zero-inflation path was inert for a
+#                               plain Gamma posterior)
+#   gammaA                   -> gamma, reparameterization: shape_rate
+#   positive_constraint: log -> exp
+#
+# One setting has no current equivalent and is therefore NOT reproduced:
+# qp_orthogonality_weight (0.01). ProfileSurrogate has no orthogonality
+# penalty, only smoothness.
+mode: polychromatic
+
+integrator:
+  name: hierarchical_3enc     # profile, k, r -- the reference architecture,
+                              #   against 5 decoupled encoders in the other arm
+  args:
+    encoder_out: 32           # half the width of the other arm
+    mc_samples: 50
+    predict_keys: default
+
+optimizer:
+  lr: 0.001
+  weight_decay: 0.0
+  decoder_weight_decay: 0.001 # the reference regularizes the profile decoder
+  lr_schedule: null           # the reference used a flat learning rate
+
+surrogates:
+  qp:
+    name: learned_basis_profile
+    args:
+      latent_dim: 12
+      init_std: 0.5
+      prior_scale: 3.0
+      smoothness_weight: 0.001
+  qbg:
+    name: gamma
+    args:
+      reparameterization: shape_rate   # heads predict shape and rate
+      eps: 1.0e-6
+      k_min: 0.01
+      positive_constraint: exp         # `log` in the reference config
+  qi:
+    name: gamma
+    args:
+      reparameterization: shape_rate
+      eps: 1.0e-6
+      k_min: 0.01
+      positive_constraint: exp
+
+loss:
+  name: polychromatic_wilson
+  args:
+    degree: 5                 # 6 coefficients, against 41 in the other arm
+    lambda_min: 0.97          # measured from the data
+    lambda_max: 1.25
+    init_G: 5000.0
+    init_B: 30.0
+    b_min: 1.0                # the reference floors B at 1, not 0
+    polarization: false
+    lorentz: false
+    intensity_kl_weight: 1.0
+    background_kl_weight: 1.0
+    profile_kl_weight: 1.0
+    bg_rate: 1.0
+    bg_concentration: 1.0
+    n_bins: 30                # per-resolution-bin background prior; the priors
+                              # are generated on first run if absent
+
+data_loader:
+  name: polychromatic_data
+  args:
+    data_dir: &data_dir /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_1118/pytorch_data
+    batch_size: 256
+    validation_split: 0.2
+    num_workers: 8
+    include_test: true
+    subset_size: null
+    resolution_cutoff: null
+    min_valid_pixels: 10
+    transform: anscombe
+    shoebox_file_names:
+      data_dir: *data_dir
+      counts: counts.npy
+      masks: masks.npy
+      reference: metadata.pt
+
+trainer:
+  max_epochs: 50
+  accelerator: gpu
+  devices: 1
+  logger: true
+  precision: '32'
+  check_val_every_n_epoch: 5
+  log_every_n_steps: 10
+  deterministic: false
+  enable_checkpointing: true
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+
+checkpoint:
+  save_top_k: -1
+
+output:
+  refl_file: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_1118/pytorch_data/reflections_.refl
