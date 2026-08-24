@@ -22,7 +22,11 @@ set -euo pipefail
 INTEGRATOR_ROOT="${INTEGRATOR_ROOT:?INTEGRATOR_ROOT must be set.}"
 DATA_DIR="${DATA_DIR:?DATA_DIR must be set to the downloaded dataset.}"
 MAMBA_SH="${MAMBA_SH:-/n/lab_storage/hekstra_lab/people/aldama/micromamba/etc/profile.d/mamba.sh}"
-ENV_NAME="${ENV_NAME:-dials}"
+# integrator-cuda-dev, not the `dials` env: that one predates the storage
+# migration and its console scripts still carry #!/n/hekstra_lab shebangs, so
+# exec fails with a FileNotFoundError naming the *script*, which reads as
+# "dials.import is missing" when the interpreter is what is missing.
+ENV_NAME="${ENV_NAME:-integrator-cuda-dev}"
 
 source "$MAMBA_SH"
 micromamba activate "$ENV_NAME"
