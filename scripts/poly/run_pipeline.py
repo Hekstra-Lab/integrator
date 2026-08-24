@@ -244,7 +244,7 @@ def step_peaks(cfg, refine2: Path, merged: Path, dry) -> None:
     if method in ("find_peaks", "both"):
         cmd = (
             f"rs.find_peaks {mtz} {pdb} "
-            f"-f {pcfg.get('f', 'ANOM')} -p {pcfg.get('phi', 'PANOM')} "
+            f"-f {pcfg.get('f', 'ANOM')} -p {pcfg.get('phi', 'PHANOM')} "
             f"-z {pcfg.get('z', 5.0)} -o {out_dir / 'peaks.csv'}"
         )
         run(in_env(cmd, pcfg.get("env")), cwd=refine2, dry=dry)

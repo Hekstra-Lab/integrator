@@ -31,7 +31,8 @@ peaks:
   method: both                  # find_peaks | peak_heights | both
   # rs.find_peaks -> peaks.csv, the schema plot_peaks.py reads
   f: ANOM
-  phi: PANOM
+  phi: PHANOM                   # phenix writes ANOM/PHANOM; -p PANOM raises
+                                #   KeyError: None of [Index(['PANOM'])]
   z: 5.0
   # anomalous_peak_heights.py -> peak_heights.csv, matching the earlier
   # laue-dials runs (two-row transposed CSV, not readable by plot_peaks.py)
