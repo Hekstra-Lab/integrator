@@ -1,0 +1,100 @@
+# SMOKE variant of hewl1118_poly.yaml: 50k reflections, 2 epochs.
+# Proves train -> predict -> careless -> refine -> peaks end to end
+# in minutes. Identical model; only the data slice and schedule differ.
+#
+# Paths are post-migration: /n/hekstra_lab -> /n/lab_storage/hekstra_lab.
+# Requires <data_dir>/dataset.yaml (written 2026-08; the dataset predates the
+# manifest). Geometry, transform, and the crystal block come from it.
+mode: polychromatic
+
+integrator:
+  name: hierarchical            # 5 encoders: profile, k_i, r_i, k_bg, r_bg
+  args:
+    encoder_out: 64
+    mc_samples: 50
+    predict_keys: default       # poly-minimal set; MTZ writer needs no more
+# no `encoders:` -> the factory synthesizes 2D encoders from dataset.yaml
+
+optimizer:
+  lr: 0.001
+  weight_decay: 1.0e-4
+  lr_schedule: cosine_warmup
+  warmup_epochs: 5
+  lr_min: 1.0e-5
+
+surrogates:
+  qp:
+    name: learned_basis_profile
+    args:
+      latent_dim: 16            # streaky Laue spots need more profile modes
+      init_std: 0.5
+      prior_scale: 3.0
+      smoothness_weight: 0.0
+  qbg:
+    name: gamma
+    args:
+      reparameterization: mean_fano
+      eps: 1.0e-6
+      k_min: 0.1
+      positive_constraint: softplus
+  qi:
+    name: gamma
+    args:
+      reparameterization: mean_fano
+      eps: 1.0e-6
+      k_min: 0.1
+      positive_constraint: softplus
+
+loss:
+  name: polychromatic_wilson
+  args:
+    degree: 40                  # Chebyshev order of log G(lambda)
+    lambda_min: 0.97            # the data's real range (preflight, 2026-08-23);
+    lambda_max: 1.25            #   matching it maps the data onto the full [-1, 1]
+    init_B: 30.0
+    b_min: 0.0
+    polarization: false         # unconstrained corrections run away; keep off
+    lorentz: false
+    intensity_kl_weight: 1.0
+    background_kl_weight: 1.0
+    profile_kl_weight: 1.0
+    bg_rate: 1.0
+    bg_concentration: 1.0
+    n_bins: 1
+
+data_loader:
+  name: polychromatic_data
+  args:
+    data_dir: &data_dir /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_1118/pytorch_data
+    batch_size: 512
+    validation_split: 0.2
+    num_workers: 8
+    include_test: true
+    subset_size: 50000
+    resolution_cutoff: null
+    min_valid_pixels: 10
+    transform: anscombe
+    shoebox_file_names:
+      data_dir: *data_dir
+      counts: counts.npy
+      masks: masks.npy
+      reference: metadata.pt
+
+trainer:
+  max_epochs: 2
+  accelerator: gpu
+  devices: 1
+  logger: true
+  precision: '32'
+  check_val_every_n_epoch: 1
+  log_every_n_steps: 10
+  deterministic: false
+  enable_checkpointing: true
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+
+checkpoint:
+  save_top_k: -1                # keep every epoch: the figure suite replays them
+
+output:
+  refl_file: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_1118/pytorch_data/reflections_.refl

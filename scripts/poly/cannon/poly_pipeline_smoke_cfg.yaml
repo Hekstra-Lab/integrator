@@ -1,0 +1,51 @@
+# Laue pipeline: predict -> careless -> phenix.refine (2 passes) -> peaks.
+#
+# The careless flags reproduce hewl_1118/laue-dials-careless/config{1..6}.sh,
+# which the unified ~/refltorch/scripts/laue_output/careless_scale.sh also
+# encodes. `config: 4` is the anomalous + positional-encoding recipe.
+#
+# Paths verified live 2026-08. Note only /n/hekstra_lab moved to
+# /n/lab_storage/hekstra_lab; /n/holylabs and /n/hekstra_lab_tier0 did not.
+
+predict:
+  env: integrator-cuda-dev               # micromamba env with integrator + torch
+  write_mtz: true               # -> <predictions>/epoch_XXXX/preds_epoch_XXXX.mtz
+  epoch: last                   # last | all | <int>. `all` walks every
+                                #   checkpoint: 20 passes over 2.66M
+                                #   reflections for the one MTZ used.
+
+careless:
+  env: crls
+  config: 4                     # 1, 4, 5, 6 here; 2 and 3 are Friedel-split
+  dmin: 1.5
+  out_dir: scaling              # created next to the unmerged MTZ
+  seed: null                    # null -> careless default; set for reproducibility
+  extra_args: [--iterations=300]   # smoke only: careless in minutes, not hours
+                                #   (appended last, so it overrides --iterations=30000)
+
+phenix:
+  env: /n/hekstra_lab_tier0/Lab/garden/phenix_1_20/phenix-1.20.1-4487/phenix_env.sh
+  eff1: /n/holylabs/hekstra_lab/Users/laldama/laue_analysis/custom_refinement_param_1_.eff
+  eff2: /n/holylabs/hekstra_lab/Users/laldama/laue_analysis/custom_refinement_param_2_.eff
+  pdb: /n/holylabs/hekstra_lab/Users/laldama/integrato_refac/integrator/reference_data/shaken_9b7c.pdb
+  prefix: refined               # refine1 -> refined_data.mtz, refined_1.pdb
+
+peaks:
+  env: integrator-cuda-dev      # holds rs.find_peaks and gemmi
+  method: both                  # find_peaks | peak_heights | both
+  # rs.find_peaks -> peaks.csv, the schema plot_peaks.py reads
+  f: ANOM
+  phi: PHANOM                   # phenix writes ANOM/PHANOM; -p PANOM raises
+                                #   KeyError: None of [Index(['PANOM'])]
+  z: 5.0
+  # anomalous_peak_heights.py -> peak_heights.csv, matching the earlier
+  # laue-dials runs (two-row transposed CSV, not readable by plot_peaks.py)
+  script: /n/lab_storage/hekstra_lab/people/aldama/refltorch/scripts/laue_output/anomalous_peak_heights.py
+  pdb: /n/holylabs/hekstra_lab/Users/laldama/integrato_refac/integrator/reference_data/9b7c.pdb
+  elements: "[S,I]"
+  ccanom: true                  # careless.ccanom on the cross-validation MTZ
+  ccanom_env: crls
+
+reference:                      # optional, for comparison plots only
+  peaks: null
+  refine_log: null

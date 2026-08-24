@@ -1,0 +1,31 @@
+# Model manifest for the multi-model comparison figures (make_figures.sh).
+#
+# `path` must be a run directory holding run_paths.yaml; the scripts read
+# predictions_dir and plots_dir out of it, so the W&B relocation is handled.
+# Add more entries to compare runs side by side.
+
+runs:
+  g5000:
+    path: /n/holylabs/hekstra_lab/Users/laldama/track_training_figures/hewl1118_g5000
+    label: laue_g5000
+  # g1:
+  #   path: /n/holylabs/hekstra_lab/Users/laldama/track_training_figures/hewl1118
+  #   label: laue_g1
+
+# Optional references. Two notes for the Laue arm:
+#
+#  - `merge:` expects a DIALS merged.html. careless does not write one, so
+#    plot_merging is skipped here; careless.ccanom's csv/png in the scaling
+#    directory is the substitute.
+#  - `peaks:` must be in rs.find_peaks schema (one row per site, with seqid
+#    and peakz). hewl_1118/laue-dials-careless/config3/peaks.csv is the older
+#    two-row peak-heights format and will NOT parse. To get a comparable
+#    baseline, run rs.find_peaks over that run's refined model:
+#
+#      rs.find_peaks <config3>/refine2/HEWL_anom_0999_frames_refine_2.mtz \
+#                    <config3>/refine2/HEWL_anom_0999_frames_refine_2.pdb \
+#                    -f ANOM -p PANOM -z 5.0 -o laue_dials_reference_peaks.csv
+#
+# reference_data:
+#   peaks: /n/holylabs/hekstra_lab/Users/laldama/track_training_figures/laue_dials_reference_peaks.csv
+#   refinement: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_1118/laue-dials-careless/config3/refine2/HEWL_anom_0999_frames_refine_2.log
