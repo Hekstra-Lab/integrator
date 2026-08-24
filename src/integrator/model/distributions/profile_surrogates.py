@@ -73,6 +73,9 @@ class ProfileSurrogate(nn.Module):
         latent_dim: Dimension of the latent h. Default 8.
         output_dim: Number of profile pixels (D*H*W). Default 441.
         init_std: Initial posterior std for h.
+        prior_scale: Std of the N(0, prior_scale) prior on the latent h.
+        smoothness_weight: Penalty on the spatial roughness of each mode.
+        orthogonality_weight: Penalty on the angles between modes.
     """
 
     def __init__(
@@ -83,6 +86,7 @@ class ProfileSurrogate(nn.Module):
         init_std: float = 0.5,
         prior_scale: float = 3.0,
         smoothness_weight: float = 0.0,
+        orthogonality_weight: float = 0.0,
     ) -> None:
         super().__init__()
 
@@ -91,6 +95,7 @@ class ProfileSurrogate(nn.Module):
         self.d: int = latent_dim
         self.prior_scale = prior_scale
         self.smoothness_weight = smoothness_weight
+        self.orthogonality_weight = orthogonality_weight
 
         self.loc_head = nn.Linear(input_dim, self.d)
         self.scale_head = nn.Linear(input_dim, self.d)

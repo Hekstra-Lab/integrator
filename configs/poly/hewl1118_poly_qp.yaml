@@ -1,0 +1,116 @@
+# HEWL Laue (hewl_1118): hewl1118_poly.yaml with ONLY the profile terms
+# changed, to test whether the profile model explains the anomalous gap
+# (9.8 sigma on IOD 206 here, ~20 in the poly_wilson runs).
+#
+# Changed, all of them qp:
+#   latent_dim             16 -> 12     the reference size; the first run's
+#                                       basis figure put effective rank at
+#                                       13.2 of 16, so 16 was not being used
+#   smoothness_weight     0.0 -> 0.001  penalize spatially rough modes
+#   orthogonality_weight  new -> 0.01   penalize modes that duplicate each
+#                                       other; the reference had this and the
+#                                       current code did not
+#   decoder_weight_decay none -> 0.001  the reference regularizes the decoder
+#
+# Deliberately unchanged: 5 encoders at width 64, degree 40 (41 coefficients),
+# mean_fano with softplus, one background bin, b_min 0, batch 512, 40 epochs.
+mode: polychromatic
+
+integrator:
+  name: hierarchical            # 5 encoders: profile, k_i, r_i, k_bg, r_bg
+  args:
+    encoder_out: 64
+    mc_samples: 50
+    predict_keys: default       # poly-minimal set; MTZ writer needs no more
+# no `encoders:` -> the factory synthesizes 2D encoders from dataset.yaml
+
+optimizer:
+  lr: 0.001
+  weight_decay: 1.0e-4
+  decoder_weight_decay: 0.001   # separate decay on the qp decoder
+  lr_schedule: cosine_warmup
+  warmup_epochs: 5
+  lr_min: 1.0e-5
+
+surrogates:
+  qp:
+    name: learned_basis_profile
+    args:
+      latent_dim: 12
+      init_std: 0.5
+      prior_scale: 3.0
+      smoothness_weight: 0.001
+      orthogonality_weight: 0.01
+  qbg:
+    name: gamma
+    args:
+      reparameterization: mean_fano
+      eps: 1.0e-6
+      k_min: 0.1
+      positive_constraint: softplus
+  qi:
+    name: gamma
+    args:
+      reparameterization: mean_fano
+      eps: 1.0e-6
+      k_min: 0.1
+      positive_constraint: softplus
+
+loss:
+  name: polychromatic_wilson
+  args:
+    degree: 40                  # Chebyshev order of log G(lambda)
+    lambda_min: 0.97            # the data's real range (preflight, 2026-08-23);
+    lambda_max: 1.25            #   matching it maps the data onto the full [-1, 1]
+    # <I> = G * exp(-B / 2d^2), so G is the prior's mean intensity at low
+    # resolution in count units. The default G = 1 asserts one photon per
+    # reflection and drags q(I) down for the first epochs; this dataset runs
+    # ~7000 counts per shoebox. Both stay learnable from here.
+    init_G: 5000.0
+    init_B: 30.0
+    b_min: 0.0
+    polarization: false         # unconstrained corrections run away; keep off
+    lorentz: false
+    intensity_kl_weight: 1.0
+    background_kl_weight: 1.0
+    profile_kl_weight: 1.0
+    bg_rate: 1.0
+    bg_concentration: 1.0
+    n_bins: 1
+
+data_loader:
+  name: polychromatic_data
+  args:
+    data_dir: &data_dir /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_1118/pytorch_data
+    batch_size: 512
+    validation_split: 0.2
+    num_workers: 8
+    include_test: true
+    subset_size: null
+    resolution_cutoff: null
+    min_valid_pixels: 10
+    transform: anscombe
+    shoebox_file_names:
+      data_dir: *data_dir
+      counts: counts.npy
+      masks: masks.npy
+      reference: metadata.pt
+
+trainer:
+  max_epochs: 100
+  accelerator: gpu
+  devices: 1
+  logger: true
+  precision: '32'
+  check_val_every_n_epoch: 2
+  log_every_n_steps: 10
+  deterministic: false
+  enable_checkpointing: true
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+
+checkpoint:
+  save_top_k: -1                # keep every epoch: the figure suite replays them
+
+output:
+  refl_file: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_1118/pytorch_data/reflections_.refl

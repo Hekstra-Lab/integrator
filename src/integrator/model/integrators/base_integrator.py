@@ -265,13 +265,18 @@ class BaseIntegrator(pl.LightningModule):
 
         - Smoothness: mean squared spatial gradient across (D, H, W) per
           column
+        - Orthogonality: mean squared off-diagonal of the normalized Gram
+          matrix, which pushes the basis modes apart. Without it nothing
+          stops several latent dimensions from learning the same
+          deformation, leaving the effective rank below the latent size.
         """
         zero = torch.zeros((), device=self.device)
         qp = self.surrogates["qp"] if "qp" in self.surrogates else None
         decoder = getattr(qp, "decoder", None)
         W = getattr(decoder, "weight", None)
-        # The smoothness penalty weight is owned by the profile surrogate.
+        # Both penalty weights are owned by the profile surrogate.
         smooth_w = float(getattr(qp, "smoothness_weight", 0.0))
+        ortho_w = float(getattr(qp, "orthogonality_weight", 0.0))
         if W is None or W.dim() != 2:
             return zero, {}
 
@@ -297,6 +302,16 @@ class BaseIntegrator(pl.LightningModule):
             smooth = sq_sum / max(n_terms, 1)
             components["profile_smoothness"] = smooth.detach()
             total = total + smooth_w * smooth
+
+        if ortho_w > 0 and d > 1:
+            # normalize first: this penalizes the angles between modes, not
+            # their lengths, which the smoothness term already constrains
+            cols = W / W.norm(dim=0, keepdim=True).clamp_min(1e-8)
+            gram = cols.T @ cols
+            off = gram - torch.eye(d, device=gram.device, dtype=gram.dtype)
+            ortho = off.pow(2).sum() / (d * (d - 1))
+            components["profile_orthogonality"] = ortho.detach()
+            total = total + ortho_w * ortho
 
         return total, components
 
