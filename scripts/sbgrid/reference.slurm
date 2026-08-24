@@ -1,14 +1,20 @@
 #!/bin/bash
-#SBATCH -c 16
+#SBATCH -c 64
 #SBATCH -N 1
-#SBATCH -p sapphire,shared
-#SBATCH --mem=64G
+#SBATCH -p test,sapphire
+#SBATCH --mem=200G
 #SBATCH -t 0-12:00
 #SBATCH -o dials_ref_%j.out
 #SBATCH -e dials_ref_%j.err
 #
 # DIALS reference processing for an SBGrid dataset. CPU only, so it neither
 # competes with training nor spends one of the two gpu_test slots.
+#
+# `test` first: same 112-core, 1 TB nodes as sapphire, a 12-hour limit that
+# this fits inside, and a QOS allowing 5 submitted jobs per user against
+# gpu_test's 2. find_spots and integrate parallelize over nproc, so the core
+# count is the lever that matters here; sapphire is the fallback when test
+# is full.
 #
 #   DATA_DIR=<dataset dir> sbatch scripts/sbgrid/reference.slurm
 #   DATA_DIR=<dir> MAX_IMAGES=50 sbatch scripts/sbgrid/reference.slurm
