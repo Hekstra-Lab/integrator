@@ -48,6 +48,13 @@ def parse_args():
         help="default: <mtz parent>/refine",
     )
     p.add_argument("--macro-cycles", type=int, default=3)
+    p.add_argument("--rfree-fraction", type=float, default=0.05)
+    p.add_argument(
+        "--rfree-seed",
+        type=int,
+        default=2026,
+        help="fixed so every arm holds out the same reflections",
+    )
     p.add_argument(
         "--no-peaks",
         action="store_true",
@@ -100,22 +107,37 @@ def anomalous_sites(model: Path) -> dict[str, int]:
     return counts
 
 
-def free_flags_argument(data_dir: Path | None) -> str:
-    """Point phenix at the deposited R-free flags, if the sf file is here.
+def ensure_free_flags(mtz: Path, out_dir: Path, fraction: float, seed: int) -> Path:
+    """Add an R-free set to the merged MTZ, or reuse one already there.
 
-    Using the depositors' free set is what makes R-free comparable across
-    arms and with the publication; a freshly generated set per arm holds out
-    different reflections in each.
+    One free set is generated per dataset and then copied to every arm, not
+    generated per arm: each arm holding out different reflections would make
+    R-free incomparable between them, which is the comparison the whole
+    exercise exists for. The seed is fixed for the same reason.
     """
-    if data_dir is None:
-        return "xray_data.r_free_flags.generate=True"
-    sf = next(iter(sorted(data_dir.glob("*-sf.cif"))), None)
-    if sf is None:
-        return "xray_data.r_free_flags.generate=True"
-    return (
-        f"refinement.input.xray_data.r_free_flags.file_name={sf} "
-        "refinement.input.xray_data.r_free_flags.label=pdbx_r_free_flag"
-    )
+    import reciprocalspaceship as rs
+
+    ds = rs.read_mtz(str(mtz))
+    existing = [c for c in ds.columns if "free" in c.lower()]
+    if existing:
+        print(f"  free flags already present: {existing[0]}")
+        return mtz
+
+    shared = out_dir.parent / "rfree.mtz"
+    if shared.exists():
+        # a sibling arm already made one; copy it so both hold out the same
+        # reflections
+        reference = rs.read_mtz(str(shared))
+        ds = rs.utils.copy_rfree(ds, reference)
+        print(f"  copied free flags from {shared.name}")
+    else:
+        ds = rs.utils.add_rfree(ds, fraction=fraction, seed=seed)
+        ds.write_mtz(str(shared))
+        print(f"  generated {fraction:.0%} free flags (seed {seed}) -> {shared.name}")
+
+    flagged = out_dir / f"{mtz.stem}_rfree.mtz"
+    ds.write_mtz(str(flagged))
+    return flagged
 
 
 def main():
@@ -141,10 +163,14 @@ def main():
     print(f"anomalous {anomalous}"
           + (f"  sites: {sites}" if sites else "  (no anomalous elements in the model)"))
 
+    mtz = args.mtz
+    if not args.dry_run:
+        mtz = ensure_free_flags(
+            mtz, out_dir, args.rfree_fraction, args.rfree_seed
+        )
     refine = (
-        f"phenix.refine {args.mtz.resolve()} {Path(model).resolve()} "
+        f"phenix.refine {mtz.resolve()} {Path(model).resolve()} "
         f"refinement.main.number_of_macro_cycles={args.macro_cycles} "
-        f"{free_flags_argument(args.data_dir)} "
         "refinement.output.prefix=refined --overwrite"
     )
     if anomalous:
