@@ -47,5 +47,6 @@ args=(--data-dir "$DATA_DIR" --nproc "${SLURM_CPUS_PER_TASK:-8}")
 [[ -n "${MAX_IMAGES:-}" ]] && args+=(--max-images "$MAX_IMAGES")
 [[ -n "${OUT_DIR:-}" ]] && args+=(--out-dir "$OUT_DIR")
 [[ -n "${D_MIN:-}" ]] && args+=(--d-min "$D_MIN")
+[[ -n "${MERGE_WITH:-}" ]] && args+=(--merge-with "$MERGE_WITH")
 
 python "$INTEGRATOR_ROOT/scripts/sbgrid/dials_reference.py" "${args[@]}"
