@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 source ./env.sh
 
-CONFIG="$OUT/hewl1118_smoke.yaml" \
+CONFIG="$KIT_DIR/hewl1118_smoke.yaml" \
 RUN_NAME="smoke" \
 EPOCHS=2 \
 FIGURES=1 \

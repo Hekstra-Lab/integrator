@@ -124,14 +124,14 @@ fi
 if [[ "$from_i" -le 2 && "$to_i" -ge 2 ]]; then
     jobs[figures]=$(submit figures "$dep" "${CPU_ARGS[@]}" \
         -J figures -o "figures_%j.out" -e "figures_%j.err" \
-        --wrap "cd $OUT && ./04_figures.sh $run_dir")
+        --wrap "cd $KIT_DIR && ./04_figures.sh $run_dir")
     dep="${jobs[figures]}"
 fi
 
 if [[ "$from_i" -le 3 && "$to_i" -ge 3 ]]; then
     jobs[plots]=$(submit plots "$dep" "${CPU_ARGS[@]}" \
         -J plots -o "plots_%j.out" -e "plots_%j.err" \
-        --wrap "cd $OUT && ./05_plots.sh")
+        --wrap "cd $KIT_DIR && ./05_plots.sh")
 fi
 
 echo

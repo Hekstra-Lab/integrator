@@ -4,9 +4,15 @@ The orchestration layer for a Laue run on FASRC `cannon`: thin wrappers around
 `scripts/poly/` plus the site-specific settings (`env.sh`) and the two
 downstream configs.
 
-**Copy this directory before using it.** Run directories land next to the
-scripts, because `env.sh` derives `OUT` from its own location — so running
-these in place would drop run dirs inside the repo.
+**Copy this directory before using it**, then edit `env.sh`. The scripts and
+their configs stay where they are copied (`KIT_DIR`, small, versioned); run
+outputs go to `OUT` on scratch, which defaults to
+`/n/netscratch/hekstra_lab/Lab/laldama/integrator_runs`.
+
+That split is not cosmetic. A single run writes tens of GB of checkpoints,
+predictions and MTZs, and `/n/holylabs` is a small per-lab allocation:
+filling it makes every `sbatch` fail at launch, because SLURM cannot create
+the job's `.out` file. Outputs must never default to the script directory.
 
 ```bash
 cp -r $INTEGRATOR_ROOT/scripts/poly/cannon ~/my_laue_run

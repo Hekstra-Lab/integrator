@@ -21,5 +21,5 @@ micromamba activate "$ENV_TRAIN"
 
 RUNNER=python INTEGRATOR_ROOT="$INTEGRATOR_ROOT" \
     "$INTEGRATOR_ROOT/scripts/make_figures.sh" \
-    --plot-cfg "${1:-$OUT/plot_cfg.yaml}" \
+    --plot-cfg "${1:-$KIT_DIR/plot_cfg.yaml}" \
     --out-dir "${OUT_DIR:-$OUT/figures_comparison}"
