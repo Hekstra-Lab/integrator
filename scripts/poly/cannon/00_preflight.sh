@@ -8,6 +8,6 @@ source ./env.sh
 source "$MAMBA_SH"
 micromamba activate "$ENV_TRAIN"
 
-python "$INTEGRATOR_ROOT/scripts/poly/preflight.py" \
+python "$INTEGRATOR_ROOT/scripts/preflight.py" \
     --config "$CONFIG" \
     --pipeline-cfg "$PIPELINE_CFG"

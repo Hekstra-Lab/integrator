@@ -42,7 +42,7 @@ echo "===== config:  $CONFIG"
 echo "===== run dir: $run_dir"
 
 # Fail before the allocation is spent, not four hours in.
-python "$INTEGRATOR_ROOT/scripts/poly/preflight.py" --config "$CONFIG"
+python "$INTEGRATOR_ROOT/scripts/preflight.py" --config "$CONFIG"
 
 args=(--config "$CONFIG" --run-dir "$run_dir" -v)
 [[ -n "$EPOCHS" ]]     && args+=(--max-epochs "$EPOCHS")

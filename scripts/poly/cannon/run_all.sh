@@ -79,7 +79,7 @@ echo
 if [[ "$PREFLIGHT" == "1" && "$DRY" == "0" && "$from_i" -eq 0 ]]; then
     source "$MAMBA_SH"
     micromamba activate "$ENV_TRAIN"
-    python "$INTEGRATOR_ROOT/scripts/poly/preflight.py" \
+    python "$INTEGRATOR_ROOT/scripts/preflight.py" \
         --config "$CONFIG" --pipeline-cfg "$PIPELINE_CFG"
     echo
 fi

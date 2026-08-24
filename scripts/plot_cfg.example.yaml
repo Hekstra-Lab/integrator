@@ -1,0 +1,31 @@
+# plot_cfg.yaml --- model manifest for the multi-model comparison figures.
+#
+# Consumed via --plot-cfg by the four multi-model plot scripts at the repo root:
+#   plot_loss.py     -> loss curves (loss_<label>.png, loss_compare_<term>.png)
+#   plot_compare.py  -> intensity/background scatters vs each model and vs DIALS
+#   plot_merging.py  -> CC1/2, Rpim, CCanom, I/sigma vs DIALS
+#   plot_peaks.py    -> anomalous peak heights per residue + R-work/R-free
+#
+# Each entry under `runs:` is one trained model. `path` MUST be a run directory
+# that contains run_paths.yaml (written by integrator.train); the scripts read
+# predictions_dir / plots_dir out of it. `label` is the display name and the PNG
+# filename slug (non-alphanumeric characters become "_").
+
+runs:
+  m2:
+    path: /path/to/runs/2_encoder
+    label: 2_encoder
+  m3:
+    path: /path/to/runs/3_encoder
+    label: 3_encoder
+  m5:
+    path: /path/to/runs/5_encoder
+    label: 5_encoder
+
+# Optional DIALS/phenix reference overlaid on the comparisons. Omit any key you
+# do not have and that reference simply is not drawn.
+reference_data:
+  refl: /path/to/dials/integrated.refl     # plot_compare: intensity/background vs DIALS
+  merge: /path/to/dials/merged.html        # plot_merging: merging statistics vs DIALS
+  peaks: /path/to/reference_peaks.csv      # plot_peaks: reference anomalous peak heights
+  refinement: /path/to/phenix/refine.log   # plot_peaks: reference R-work / R-free

@@ -27,7 +27,7 @@ there.
 
 | # | Step | Command |
 | --- | --- | --- |
-| 1 | Pre-flight | `python scripts/poly/preflight.py --config configs/poly/hewl1118_poly.yaml --pipeline-cfg scripts/poly/poly_pipeline_cfg.yaml` |
+| 1 | Pre-flight | `python scripts/preflight.py --config configs/poly/hewl1118_poly.yaml --pipeline-cfg scripts/poly/poly_pipeline_cfg.yaml` |
 | 2 | Train | `sbatch scripts/poly/train.slurm` |
 | 3 | Predict → careless → refine → peaks | `RUN_DIR=<run-dir> sbatch scripts/poly/pipeline.slurm` |
 | 4 | Figures | `python scripts/make_training_figures.py --run-dir <run-dir>` |
@@ -64,7 +64,7 @@ unfriedelize pass afterwards; that path is not ported here.
 | File | Role |
 | --- | --- |
 | `configs/poly/hewl1118_poly.yaml` | Training config: 5-encoder hierarchical, learned-basis profile (latent 16), `polychromatic_wilson` with a degree-40 Chebyshev G(λ) |
-| `scripts/poly/preflight.py` | Builds the model, validates the manifest and metadata, prints the real wavelength range, checks every downstream path |
+| `scripts/preflight.py` | Builds the model, validates the manifest and metadata, prints the real wavelength range, checks every downstream path |
 | `scripts/poly/train.slurm` | GPU training with `--figures`; pre-flights first |
 | `scripts/poly/careless_configs.py` | The six careless recipes as flag lists |
 | `scripts/poly/run_pipeline.py` | The four downstream steps; `--steps`, `--config`, `--dry-run` |

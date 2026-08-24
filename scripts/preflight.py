@@ -8,8 +8,8 @@ reference files named in the pipeline config exist.
 Nothing here loads the shoebox arrays, so it runs in seconds on a login node.
 
 Usage:
-    python scripts/poly/preflight.py --config configs/poly/hewl1118_poly.yaml
-    python scripts/poly/preflight.py --config <cfg> \
+    python scripts/preflight.py --config configs/poly/hewl1118_poly.yaml
+    python scripts/preflight.py --config <cfg> \
         --pipeline-cfg scripts/poly/poly_pipeline_cfg.yaml
 """
 
