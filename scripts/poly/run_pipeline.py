@@ -130,12 +130,50 @@ def find_mtz(
     return match[0]
 
 
+def epoch_of(path: Path) -> int:
+    """Epoch number parsed from a checkpoint filename, else -1."""
+    match = re.search(r"epoch[=_](\d+)", path.name)
+    return int(match.group(1)) if match else -1
+
+
+def checkpoint_for(run_dir: Path, scope) -> Path | None:
+    """Resolve `scope` to one checkpoint: "last", "all" (None), or an epoch.
+
+    `integrator.predict --run-dir` walks every checkpoint in the run, which
+    for a 40-epoch run checkpointed every 2 epochs is 20 forward passes over
+    all 2.66M reflections and 20 MTZs, when the downstream chain consumes
+    exactly one. Narrowing to a single checkpoint is the difference between
+    half an hour and ninety seconds.
+    """
+    if scope == "all":
+        return None
+    meta = yaml.safe_load((run_dir / "run_paths.yaml").read_text())
+    log_dir = Path(meta.get("log_dir") or Path(meta["output_root"]) / "files")
+    ckpts = [c for c in log_dir.glob("**/epoch*.ckpt") if c.name != "last.ckpt"]
+    if not ckpts:
+        return None
+    if scope in (None, "last"):
+        return max(ckpts, key=epoch_of)
+    wanted = int(scope)
+    match = [c for c in ckpts if epoch_of(c) == wanted]
+    if not match:
+        raise SystemExit(f"no checkpoint for epoch {wanted} under {log_dir}")
+    return match[0]
+
+
 def step_predict(cfg, run_dir, dry):
     """integrator.predict over the run's checkpoints, writing MTZs."""
     pcfg = cfg.get("predict", {})
-    flags = "--write-mtz" if pcfg.get("write_mtz", True) else ""
-    cmd = f"integrator.predict -v --run-dir {run_dir} {flags}".strip()
-    run(in_env(cmd, pcfg.get("env")), dry=dry)
+    flags = ["--write-mtz"] if pcfg.get("write_mtz", True) else []
+    try:
+        ckpt = checkpoint_for(run_dir, pcfg.get("epoch", "last"))
+    except (OSError, KeyError):
+        ckpt = None  # dry run against a run that has not trained yet
+    if ckpt is not None:
+        flags += ["--ckpt", str(ckpt)]
+        print(f"predict  : {ckpt.name}")
+    cmd = f"integrator.predict -v --run-dir {run_dir} {' '.join(flags)}"
+    run(in_env(cmd.strip(), pcfg.get("env")), dry=dry)
 
 
 def step_careless(cfg, mtz: Path, dry) -> Path:
