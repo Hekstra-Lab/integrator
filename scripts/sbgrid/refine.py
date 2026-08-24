@@ -159,6 +159,37 @@ def xray_labels(mtz: Path, anomalous: bool) -> str | None:
     return None
 
 
+def ligand_restraints(model: Path, out_dir: Path, dry: bool) -> list[Path]:
+    """Generate restraints for ligands the monomer library does not know.
+
+    A deposited model usually carries ligands, and phenix.refine refuses to
+    start when it cannot type their atoms -- 7LVC's NADP is 73 such atoms.
+    ready_set writes the restraint CIFs, which is a one-time cost per model
+    rather than something to work around by deleting the ligands, since
+    removing them would change the refinement being compared.
+    """
+    if dry:
+        return []
+    existing = sorted(out_dir.glob("*.ligands.cif")) + sorted(
+        out_dir.glob("*.restraints.cif")
+    )
+    if existing:
+        print(f"  restraints already generated: {[p.name for p in existing]}")
+        return existing
+
+    run(
+        f"phenix.ready_set {model.resolve()} --overwrite",
+        out_dir,
+        PHENIX_ENV,
+        False,
+        out_dir / "ready_set.log",
+    )
+    cifs = sorted(out_dir.glob("*.cif"))
+    if cifs:
+        print(f"  restraints: {[p.name for p in cifs]}")
+    return cifs
+
+
 def main():
     args = parse_args()
     out_dir = args.out_dir or args.mtz.parent / "refine"
@@ -190,10 +221,15 @@ def main():
     labels = None if args.dry_run else xray_labels(mtz, anomalous)
     if labels:
         print(f"  refining against {labels}")
+    cifs = ligand_restraints(Path(model), out_dir, args.dry_run)
+    restraints = "".join(
+        f"refinement.input.monomers.file_name={c.resolve()} " for c in cifs
+    )
     refine = (
         f"phenix.refine {mtz.resolve()} {Path(model).resolve()} "
         f"refinement.main.number_of_macro_cycles={args.macro_cycles} "
         + (f'refinement.input.xray_data.labels="{labels}" ' if labels else "")
+        + restraints
         + "refinement.output.prefix=refined --overwrite"
     )
     if anomalous:
