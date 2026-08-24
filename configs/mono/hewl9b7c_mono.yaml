@@ -1,0 +1,100 @@
+# HEWL rotation (hewl_9b7c), 5-encoder hierarchical integrator.
+#
+# The monochromatic counterpart of configs/poly/hewl1118_poly.yaml: same
+# architecture and schedule, so the two arms differ only where the physics
+# does -- a scalar Wilson scale G here against a learned G(lambda) there.
+mode: monochromatic
+
+integrator:
+  name: hierarchical            # 5 encoders: profile, k_i, r_i, k_bg, r_bg
+  args:
+    encoder_out: 64
+    mc_samples: 100
+    predict_keys: default
+# no `encoders:` -> the factory synthesizes 3D encoders from dataset.yaml
+
+optimizer:
+  lr: 0.001
+  weight_decay: 1.0e-4
+  lr_schedule: cosine_warmup
+  warmup_epochs: 5
+  lr_min: 1.0e-5
+
+surrogates:
+  qp:
+    name: learned_basis_profile
+    args:
+      latent_dim: 12            # rotation spots are rounder than Laue streaks
+      init_std: 0.5
+      prior_scale: 3.0
+      smoothness_weight: 0.0
+  qbg:
+    name: gamma
+    args:
+      reparameterization: mean_fano
+      eps: 1.0e-6
+      k_min: 0.01
+      positive_constraint: softplus
+  qi:
+    name: gamma
+    args:
+      reparameterization: mean_fano
+      eps: 1.0e-6
+      k_min: 0.01
+      positive_constraint: softplus
+
+loss:
+  name: monochromatic_wilson
+  args:
+    # Measured from the raw counts on 2026-08-24 with
+    # scripts/poly/estimate_wilson_init.py: a Wilson-plot fit over 20k
+    # sampled shoeboxes gives G = 3782 counts, B = 7.5 A^2. <I> = G *
+    # exp(-B / 2d^2), so G is the prior's mean intensity at low resolution
+    # in count units; the default G = 1 would be off by three orders.
+    init_G: 3781.8
+    init_B: 7.5
+    b_min: 0.0
+    lp_correction: false        # our rate already divides by lp
+    intensity_kl_weight: 1.0
+    background_kl_weight: 1.0
+    profile_kl_weight: 1.0
+    bg_rate: 1.0
+    bg_concentration: 1.0
+    n_bins: 1                   # bg_prior_1.npy is present in the data dir
+
+data_loader:
+  name: rotation_data
+  args:
+    data_dir: &data_dir /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/scaling_dataset
+    batch_size: 512
+    validation_split: 0.2
+    num_workers: 8
+    include_test: true
+    subset_size: null
+    resolution_cutoff: null
+    min_valid_pixels: 10
+    transform: anscombe
+    shoebox_file_names:
+      data_dir: *data_dir
+      counts: counts.npy
+      masks: masks.npy
+      reference: metadata.npy
+
+trainer:
+  max_epochs: 40
+  accelerator: gpu
+  devices: 1
+  logger: true
+  precision: '32'
+  check_val_every_n_epoch: 2
+  log_every_n_steps: 10
+  deterministic: false
+  enable_checkpointing: true
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+
+checkpoint:
+  save_top_k: -1
+
+output:
+  refl_file: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/scaling_dataset/reflections_.refl

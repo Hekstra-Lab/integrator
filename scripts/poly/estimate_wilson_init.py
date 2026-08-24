@@ -80,7 +80,7 @@ def main():
 
     print(f"\nsampled {good.sum():,} of {counts.shape[0]:,} reflections")
     print(f"  pixels per shoebox    {n_px}")
-    print(f"  median background     {np.median(bg):.2f} counts/pixel")
+    print(f"  median background     {np.nanmedian(bg):.2f} counts/pixel")
     print(f"  median I (bg-subtr.)  {np.median(i_hat):,.0f} counts")
     print(f"  resolution range      {d.min():.2f} – {d.max():.2f} A")
     print("\nWilson-plot fit:")
