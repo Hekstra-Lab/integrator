@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -c 64
 #SBATCH -N 1
-#SBATCH -p test,sapphire
+#SBATCH -p test
 #SBATCH --mem=200G
 #SBATCH -t 0-12:00
 #SBATCH -o dials_ref_%j.out
@@ -13,8 +13,12 @@
 # `test` first: same 112-core, 1 TB nodes as sapphire, a 12-hour limit that
 # this fits inside, and a QOS allowing 5 submitted jobs per user against
 # gpu_test's 2. find_spots and integrate parallelize over nproc, so the core
-# count is the lever that matters here; sapphire is the fallback when test
-# is full.
+# count is the lever that matters here.
+#
+# One partition per job, not `-p test,sapphire`: the two sit under different
+# QOS, and SLURM rejects the multi-partition form with a bare "Unspecified
+# error" rather than naming the conflict. Override with PARTITION=sapphire
+# when test is full.
 #
 #   DATA_DIR=<dataset dir> sbatch scripts/sbgrid/reference.slurm
 #   DATA_DIR=<dir> MAX_IMAGES=50 sbatch scripts/sbgrid/reference.slurm
@@ -33,6 +37,8 @@ MAMBA_SH="${MAMBA_SH:-/n/lab_storage/hekstra_lab/people/aldama/micromamba/etc/pr
 # exec fails with a FileNotFoundError naming the *script*, which reads as
 # "dials.import is missing" when the interpreter is what is missing.
 ENV_NAME="${ENV_NAME:-integrator-cuda-dev}"
+
+[[ -n "${PARTITION:-}" ]] && echo "note: submit with sbatch -p $PARTITION to override"
 
 source "$MAMBA_SH"
 micromamba activate "$ENV_NAME"
