@@ -64,6 +64,10 @@ def parse_args():
     return p.parse_args()
 
 
+def load_json(path: Path) -> dict | None:
+    return json.loads(path.read_text()) if path.exists() else None
+
+
 def load_cards(data_dir: Path) -> tuple[dict, dict | None]:
     card = data_dir / "dataset_card.json"
     if not card.exists():
@@ -71,12 +75,7 @@ def load_cards(data_dir: Path) -> tuple[dict, dict | None]:
             f"no dataset_card.json in {data_dir}; run characterize.py first"
         )
     dataset = json.loads(card.read_text())
-    reference_path = data_dir / "reference_card.json"
-    reference = (
-        json.loads(reference_path.read_text())
-        if reference_path.exists()
-        else None
-    )
+    reference = load_json(data_dir / "reference_card.json")
     return dataset, reference
 
 
@@ -91,12 +90,17 @@ def crystal_hints(reference: dict | None) -> list[str]:
     if not reference:
         return []
     hints = []
-    space_group = reference.get("space_group")
-    if space_group:
-        hints.append(f'space_group="{space_group}"')
+    number = reference.get("space_group_number")
+    if number:
+        # by number, as the depositor scripts do: unambiguous, and it avoids
+        # quoting a Hermann-Mauguin string through a shell
+        hints.append(f"indexing.known_symmetry.space_group={number}")
     cell = reference.get("unit_cell")
     if cell and all(v is not None for v in cell):
-        hints.append("unit_cell=" + ",".join(f"{v:g}" for v in cell))
+        hints.append(
+            "indexing.known_symmetry.unit_cell="
+            + ",".join(f"{v:g}" for v in cell)
+        )
     return hints
 
 
@@ -126,20 +130,42 @@ def process_sweep(
     images: list[str],
     out_dir: Path,
     hints: list[str],
+    bundle: dict | None,
     args,
-) -> tuple[Path, Path] | None:
-    """Import through integrate for one sweep; returns its expt/refl pair."""
+) -> tuple[Path, Path]:
+    """Import through integrate for one sweep; returns its expt/refl pair.
+
+    Where the depositors published a recipe for this sweep it wins over
+    anything inferred: their beam centre corrects a header the detector move
+    invalidated, their mask covers a shadow no header describes, and their
+    image range drops a frame.
+    """
     work = out_dir / name
     work.mkdir(parents=True, exist_ok=True)
     if args.max_images:
         images = images[: args.max_images]
+    recipe = ((bundle or {}).get("per_sweep") or {}).get(name, {})
     print(f"\n=== sweep {name}: {len(images)} images -> {work}")
+    if recipe:
+        print(f"    depositor recipe: {recipe}")
 
-    run(["dials.import", *images], work, args.dry_run, work / "import.log")
+    imported = ["dials.import", *images]
+    if recipe.get("beam_centre"):
+        imported.append(
+            f"geometry.detector.mosflm_beam_centre={recipe['beam_centre']}"
+        )
+    if recipe.get("image_range") and not args.max_images:
+        imported.append(f"geometry.scan.image_range={recipe['image_range']}")
+    mask = resolve_mask(bundle)
+    if mask:
+        imported.append(f"mask={mask}")
+    run(imported, work, args.dry_run, work / "import.log")
 
     find = ["dials.find_spots", "imported.expt", f"nproc={args.nproc}"]
+    if recipe.get("d_max"):
+        find.append(f"spotfinder.filter.d_max={recipe['d_max']}")
     if args.d_min:
-        find.append(f"d_min={args.d_min}")
+        find.append(f"spotfinder.filter.d_min={args.d_min}")
     run(find, work, args.dry_run, work / "find_spots.log")
 
     run(
@@ -148,12 +174,11 @@ def process_sweep(
         args.dry_run,
         work / "index.log",
     )
-    run(
-        ["dials.refine", "indexed.expt", "indexed.refl"],
-        work,
-        args.dry_run,
-        work / "refine.log",
-    )
+
+    refine = ["dials.refine", "indexed.expt", "indexed.refl"]
+    if str(recipe.get("scan_varying", "")).lower() == "true":
+        refine.append("refinement.parameterisation.scan_varying=True")
+    run(refine, work, args.dry_run, work / "refine.log")
 
     integrate = [
         "dials.integrate",
@@ -168,6 +193,15 @@ def process_sweep(
     return work / "integrated.expt", work / "integrated.refl"
 
 
+def resolve_mask(bundle: dict | None) -> str | None:
+    """The bundle's pixel mask, if it shipped one."""
+    masks = (bundle or {}).get("masks") or []
+    for candidate in masks:
+        if Path(candidate).exists():
+            return candidate
+    return None
+
+
 def main():
     args = parse_args()
     dataset, reference = load_cards(args.data_dir)
@@ -180,6 +214,7 @@ def main():
             "not apply. Use laue-dials."
         )
 
+    bundle = load_json(args.data_dir / "processing_hints.json")
     anomalous = bool(dataset.get("expect_anomalous"))
     hints = crystal_hints(reference)
     sweeps = dataset["sweeps"]
@@ -192,10 +227,19 @@ def main():
     print(f"sweeps    {len(sweeps)}: {', '.join(sorted(sweeps))}")
     print(f"anomalous {anomalous}  ({'; '.join(dataset.get('anomalous_reasons') or ['no evidence'])})")
     print(f"hints     {' '.join(hints) if hints else 'none (no deposition)'}")
+    if bundle:
+        mask = resolve_mask(bundle)
+        print(f"bundle    {len(bundle.get('recipes') or [])} depositor script(s)"
+              f"{', mask ' + Path(mask).name if mask else ', no mask'}")
+    else:
+        print("bundle    none: processing from headers alone, which is only "
+              "safe if no depositor note contradicts them")
 
     integrated = []
     for name in sorted(sweeps):
-        result = process_sweep(name, sweeps[name], out_dir, hints, args)
+        result = process_sweep(
+            name, sweeps[name], out_dir, hints, bundle, args
+        )
         if result:
             integrated.append(result)
 
@@ -209,14 +253,6 @@ def main():
     if args.d_min:
         scale.append(f"d_min={args.d_min}")
     run(scale, out_dir, args.dry_run, out_dir / "scale.log")
-
-    # symmetry from the data, to be compared against the deposited group
-    run(
-        ["dials.symmetry", "scaled.expt", "scaled.refl"],
-        out_dir,
-        args.dry_run,
-        out_dir / "symmetry.log",
-    )
 
     run(
         ["dials.merge", "scaled.expt", "scaled.refl", f"anomalous={anomalous}"],
