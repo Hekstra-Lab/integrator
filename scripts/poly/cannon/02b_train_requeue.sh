@@ -11,12 +11,27 @@
 #SBATCH -o poly_train_%j.out
 #SBATCH -e poly_train_%j.err
 #
-# Same run as 02_train.sh, on the scavenger partition instead of `gpu`.
-# gpu_requeue is not gated by fairshare, so it starts when `gpu` will not.
+# The batch script every front door submits; run_all.sh and
+# 02c_train_gputest.sh override the #SBATCH lines below.
 #
-# Preemption is safe: the run checkpoints every 2 epochs, and SLURM restarts
-# this script with the same SLURM_JOB_ID, so the run dir is stable and
-# training resumes from last.ckpt. A preemption costs at most 2 epochs.
+# PARTITION CHOICE. Prefer gpu_test for a run that fits in 12 hours: it does
+# not preempt, and our training runs are ~2h. Its cost is a cap of 2
+# submitted jobs per user, shared across sessions.
+#
+# gpu_requeue, the partition named in the #SBATCH line below, has no submit
+# cap and a 3-day limit, but PreemptMode=REQUEUE: a higher-priority job can
+# evict yours, which restarts this script on a different GPU. Use it when a
+# run needs more than 12 hours, or when both gpu_test slots are taken.
+#
+# Preemption is survivable but not free. Lightning installs SLURM signal
+# handlers and checkpoints when the eviction signal arrives, and this script
+# resumes from last.ckpt on restart with the same job id, so the run dir is
+# stable. Each eviction still costs a data reload (~3 min for 8.8 GB) and
+# whatever training happened since the last checkpoint. Frequent preemption
+# can therefore cost more throughput than waiting for a gpu_test slot.
+#
+# The resume path has not yet been exercised by an actual preemption -- the
+# logic is there, but treat the first preempted run as a test of it.
 #
 #   sbatch 02b_train_requeue.sh
 #   EPOCHS=40 sbatch 02b_train_requeue.sh
