@@ -31,6 +31,19 @@ import sys
 import time
 from pathlib import Path
 
+# the schema both integrator arms emit
+COLUMNS = [
+    "bin",
+    "d_max",
+    "d_min",
+    "n_obs",
+    "n_unique",
+    "cc_half",
+    "cc_anom",
+    "r_pim",
+    "i_over_sigma",
+]
+
 
 def parse_args():
     p = argparse.ArgumentParser(description="DIALS reference processing")
@@ -59,6 +72,14 @@ def parse_args():
         type=int,
         default=None,
         help="use only the first N images of each sweep (a fast rehearsal)",
+    )
+    p.add_argument(
+        "--merge-with",
+        default="aimless",
+        choices=["aimless", "dials", "both"],
+        help="aimless reproduces the depositors' route; dials keeps "
+        "everything in one toolchain; both runs each, which is how you "
+        "find out whether the merging program matters",
     )
     p.add_argument("--dry-run", action="store_true")
     return p.parse_args()
@@ -95,12 +116,9 @@ def crystal_hints(reference: dict | None) -> list[str]:
         # by number, as the depositor scripts do: unambiguous, and it avoids
         # quoting a Hermann-Mauguin string through a shell
         hints.append(f"indexing.known_symmetry.space_group={number}")
-    cell = reference.get("unit_cell")
-    if cell and all(v is not None for v in cell):
-        hints.append(
-            "indexing.known_symmetry.unit_cell="
-            + ",".join(f"{v:g}" for v in cell)
-        )
+    # deliberately no unit_cell hint: the depositor scripts pass the space
+    # group alone, and adding the cell would make indexing a different
+    # experiment from theirs
     return hints
 
 
@@ -190,6 +208,20 @@ def process_sweep(
         integrate.append(f"prediction.d_min={args.d_min}")
     run(integrate, work, args.dry_run, work / "integrate.log")
 
+    # an unmerged MTZ per pass, which is what the depositors hand to AIMLESS
+    mtz = work / f"integrated_{name}.mtz"
+    run(
+        [
+            "dials.export",
+            "integrated.expt",
+            "integrated.refl",
+            f"mtz.hklout={mtz.name}",
+        ],
+        work,
+        args.dry_run,
+        work / "export.log",
+    )
+
     return work / "integrated.expt", work / "integrated.refl"
 
 
@@ -200,6 +232,114 @@ def resolve_mask(bundle: dict | None) -> str | None:
         if Path(candidate).exists():
             return candidate
     return None
+
+
+CCP4_SETUP = (
+    "/n/hekstra_lab_tier0/Lab/garden/ccp4/ccp4-7.1/bin/ccp4.setup-sh"
+)
+
+
+def run_ccp4(script: str, cwd: Path, dry: bool, log: Path) -> None:
+    """Run a CCP4 program, which needs its environment sourced first."""
+    command = f"source {CCP4_SETUP} >/dev/null 2>&1 && {script}"
+    print(f"\n$ {script.splitlines()[0]} ...", flush=True)
+    if dry:
+        return
+    start = time.time()
+    proc = subprocess.run(
+        ["bash", "-c", command],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    log.write_text(proc.stdout + proc.stderr)
+    if proc.returncode:
+        tail = "\n".join((proc.stdout + proc.stderr).splitlines()[-15:])
+        raise SystemExit(f"CCP4 step failed (exit {proc.returncode}):\n{tail}")
+    print(f"  ok ({time.time() - start:.0f}s)")
+
+
+def merge_with_aimless(
+    mtzs: list[Path], out_dir: Path, anomalous: bool, dry: bool
+) -> None:
+    """Sort with POINTLESS and merge with AIMLESS, as the depositors did.
+
+    The passes are separate DIALS integrations of one crystal, so POINTLESS
+    puts them on a common indexing and sort order first; AIMLESS then scales
+    and merges them into the single dataset whose multiplicity the deposition
+    reports.
+    """
+    inputs = " ".join(
+        f"HKLIN {mtz}" for mtz in mtzs
+    )
+    run_ccp4(
+        f"pointless {inputs} HKLOUT sorted.mtz > pointless.log",
+        out_dir,
+        dry,
+        out_dir / "pointless_run.log",
+    )
+    anom = "ANOMALOUS ON" if anomalous else "ANOMALOUS OFF"
+    run_ccp4(
+        "aimless HKLIN sorted.mtz HKLOUT merged_aimless.mtz "
+        "XMLOUT aimless.xml << EOF > aimless.log\n"
+        f"{anom}\nEOF",
+        out_dir,
+        dry,
+        out_dir / "aimless_run.log",
+    )
+
+
+def aimless_stats(xml_path: Path, out_path: Path) -> int:
+    """Turn AIMLESS's XML into the shared nine-column table.
+
+    AIMLESS reports per-shell statistics in its XML rather than only in the
+    log, which is why XMLOUT is requested: parsing the log's fixed-width
+    tables is fragile in a way the XML is not.
+    """
+    import xml.etree.ElementTree as ET
+
+    root = ET.parse(xml_path).getroot()
+
+    def number(node, tag):
+        found = node.find(tag)
+        if found is None or found.text is None:
+            return None
+        text = found.text.strip()
+        try:
+            return float(text)
+        except ValueError:
+            return None
+
+    rows = []
+    shells = root.findall(".//Result/ResolutionShell") or root.findall(
+        ".//ResolutionShell"
+    )
+    for i, shell in enumerate(shells):
+        rows.append(
+            {
+                "bin": i + 1,
+                "d_max": number(shell, "MinRes") or number(shell, "ResolutionLow"),
+                "d_min": number(shell, "MaxRes") or number(shell, "ResolutionHigh"),
+                "n_obs": number(shell, "NumberObservations"),
+                "n_unique": number(shell, "NumberReflections"),
+                "cc_half": number(shell, "CChalf"),
+                "cc_anom": number(shell, "CCanom"),
+                "r_pim": number(shell, "RpimOverall")
+                or number(shell, "Rpim"),
+                "i_over_sigma": number(shell, "MeanIoverSD"),
+            }
+        )
+    if not rows:
+        return 0
+
+    import csv
+
+    with open(out_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=COLUMNS)
+        writer.writeheader()
+        writer.writerows(rows)
+    return len(rows)
 
 
 def main():
@@ -243,33 +383,42 @@ def main():
         if result:
             integrated.append(result)
 
-    # joint scaling: the sweeps are one measurement in several orientations,
-    # and scaling them together is what produces the deposited multiplicity
-    print(f"\n=== scaling {len(integrated)} sweep(s) together")
-    scale = ["dials.scale"]
-    for expt, refl in integrated:
-        scale += [str(expt), str(refl)]
-    scale.append(f"anomalous={anomalous}")
-    if args.d_min:
-        scale.append(f"d_min={args.d_min}")
-    run(scale, out_dir, args.dry_run, out_dir / "scale.log")
+    mtzs = [
+        expt.parent / f"integrated_{expt.parent.name}.mtz"
+        for expt, _ in integrated
+    ]
 
-    # name the outputs as the monochromatic arm does: dials.merge otherwise
-    # writes dials.merge.html, and the emitter looks for merged.html
-    run(
-        [
-            "dials.merge",
-            "scaled.expt",
-            "scaled.refl",
-            f"anomalous={anomalous}",
-            "output.html=merged.html",
-            "output.log=merged.log",
-            "output.mtz=merged.mtz",
-        ],
-        out_dir,
-        args.dry_run,
-        out_dir / "merge_run.log",
-    )
+    # AIMLESS is the depositors' route: they integrated each pass in DIALS,
+    # exported an MTZ each, and merged the three together in AIMLESS
+    if args.merge_with in ("aimless", "both"):
+        print(f"\n=== POINTLESS + AIMLESS over {len(mtzs)} pass(es)")
+        merge_with_aimless(mtzs, out_dir, anomalous, args.dry_run)
+
+    # the DIALS route keeps everything in one toolchain and feeds the shared
+    # merging_stats contract without translation
+    if args.merge_with in ("dials", "both"):
+        print(f"\n=== dials.scale + dials.merge over {len(integrated)} sweep(s)")
+        scale = ["dials.scale"]
+        for expt, refl in integrated:
+            scale += [str(expt), str(refl)]
+        scale.append(f"anomalous={anomalous}")
+        if args.d_min:
+            scale.append(f"d_min={args.d_min}")
+        run(scale, out_dir, args.dry_run, out_dir / "scale.log")
+        run(
+            [
+                "dials.merge",
+                "scaled.expt",
+                "scaled.refl",
+                f"anomalous={anomalous}",
+                "output.html=merged.html",
+                "output.log=merged.log",
+                "output.mtz=merged.mtz",
+            ],
+            out_dir,
+            args.dry_run,
+            out_dir / "merge_run.log",
+        )
 
     if args.dry_run:
         print("\ndry run: nothing executed")
@@ -277,15 +426,23 @@ def main():
 
     # the shared nine-column table, so this reference sits on the same axes
     # as both integrator arms
-    emitter = Path(__file__).resolve().parents[1] / "mono" / "emit_merging_stats.py"
-    if emitter.exists():
-        # positional merged.html; writes merging_stats.csv beside it
-        run(
-            [sys.executable, str(emitter), str(out_dir / "merged.html")],
-            out_dir,
-            False,
-            out_dir / "merging_stats.log",
+    xml = out_dir / "aimless.xml"
+    if xml.exists():
+        n = aimless_stats(xml, out_dir / "merging_stats_aimless.csv")
+        print(f"\nmerging_stats_aimless.csv: {n} shells")
+    merged_html = out_dir / "merged.html"
+    if merged_html.exists():
+        emitter = (
+            Path(__file__).resolve().parents[1] / "mono" / "emit_merging_stats.py"
         )
+        if emitter.exists():
+            run(
+                [sys.executable, str(emitter), str(merged_html)],
+                out_dir,
+                False,
+                out_dir / "merging_stats.log",
+            )
+
     print(f"\nreference processing complete: {out_dir}")
     print("  scaled.expt / scaled.refl / merged.mtz / merged.html")
     return 0
