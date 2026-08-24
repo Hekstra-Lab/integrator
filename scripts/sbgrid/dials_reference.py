@@ -254,11 +254,21 @@ def main():
         scale.append(f"d_min={args.d_min}")
     run(scale, out_dir, args.dry_run, out_dir / "scale.log")
 
+    # name the outputs as the monochromatic arm does: dials.merge otherwise
+    # writes dials.merge.html, and the emitter looks for merged.html
     run(
-        ["dials.merge", "scaled.expt", "scaled.refl", f"anomalous={anomalous}"],
+        [
+            "dials.merge",
+            "scaled.expt",
+            "scaled.refl",
+            f"anomalous={anomalous}",
+            "output.html=merged.html",
+            "output.log=merged.log",
+            "output.mtz=merged.mtz",
+        ],
         out_dir,
         args.dry_run,
-        out_dir / "merge.log",
+        out_dir / "merge_run.log",
     )
 
     if args.dry_run:
