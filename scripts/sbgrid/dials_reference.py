@@ -75,11 +75,11 @@ def parse_args():
     )
     p.add_argument(
         "--merge-with",
-        default="aimless",
+        default="dials",
         choices=["aimless", "dials", "both"],
-        help="aimless reproduces the depositors' route; dials keeps "
-        "everything in one toolchain; both runs each, which is how you "
-        "find out whether the merging program matters",
+        help="dials keeps everything in one toolchain and feeds the plotting "
+        "code, which reads DIALS merged.html; aimless reproduces the "
+        "depositors' route; both runs each",
     )
     p.add_argument("--dry-run", action="store_true")
     return p.parse_args()
