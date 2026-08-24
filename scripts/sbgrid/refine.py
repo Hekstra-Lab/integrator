@@ -159,23 +159,28 @@ def xray_labels(mtz: Path, anomalous: bool) -> str | None:
     return None
 
 
-def ligand_restraints(model: Path, out_dir: Path, dry: bool) -> list[Path]:
-    """Generate restraints for ligands the monomer library does not know.
+def ligand_restraints(
+    model: Path, out_dir: Path, dry: bool
+) -> tuple[list[Path], Path]:
+    """Prepare a deposited model for refinement.
 
-    A deposited model usually carries ligands, and phenix.refine refuses to
-    start when it cannot type their atoms -- 7LVC's NADP is 73 such atoms.
-    ready_set writes the restraint CIFs, which is a one-time cost per model
-    rather than something to work around by deleting the ligands, since
-    removing them would change the refinement being compared.
+    phenix.refine refuses to start when it cannot type an atom, and a
+    deposited model usually gives it two reasons to: ligands with no entry in
+    the monomer library (7LVC's NADP, 73 atoms) and stray hydrogens with no
+    restraint definition (one on its folate).
+
+    ready_set fixes both -- it writes restraint CIFs for the ligands and an
+    updated model with the problem atoms resolved. The updated model is the
+    one to refine; the original is what ready_set consumes. Returns both, so
+    the caller refines what ready_set produced rather than what it was given.
     """
     if dry:
-        return []
-    existing = sorted(out_dir.glob("*.ligands.cif")) + sorted(
-        out_dir.glob("*.restraints.cif")
-    )
-    if existing:
+        return [], model
+    updated = out_dir / f"{model.stem}.updated.pdb"
+    existing = sorted(out_dir.glob("*.ligands.cif"))
+    if existing and updated.exists():
         print(f"  restraints already generated: {[p.name for p in existing]}")
-        return existing
+        return existing, updated
 
     # ready_set takes no --overwrite and writes beside its input, so it runs
     # in the output directory against a copy
@@ -194,7 +199,10 @@ def ligand_restraints(model: Path, out_dir: Path, dry: bool) -> list[Path]:
     )
     if cifs:
         print(f"  restraints: {[p.name for p in cifs]}")
-    return cifs
+    if updated.exists():
+        print(f"  refining {updated.name}, not the deposited model")
+        return cifs, updated
+    return cifs, model
 
 
 def main():
@@ -228,7 +236,7 @@ def main():
     labels = None if args.dry_run else xray_labels(mtz, anomalous)
     if labels:
         print(f"  refining against {labels}")
-    cifs = ligand_restraints(Path(model), out_dir, args.dry_run)
+    cifs, model = ligand_restraints(Path(model), out_dir, args.dry_run)
     restraints = "".join(
         f"refinement.input.monomers.file_name={c.resolve()} " for c in cifs
     )

@@ -70,9 +70,11 @@ def anscombe_stats(counts: np.memmap, masks: np.memmap, chunk: int) -> tuple:
         ans_sq += (transformed**2).sum()
     raw_mean = raw_sum / total
     ans_mean = ans_sum / total
+    # plain floats: yaml.safe_dump refuses a numpy scalar, and these come out
+    # of numpy reductions
     return (
-        [raw_mean, raw_sq / total - raw_mean**2],
-        [ans_mean, ans_sq / total - ans_mean**2],
+        [float(raw_mean), float(raw_sq / total - raw_mean**2)],
+        [float(ans_mean), float(ans_sq / total - ans_mean**2)],
     )
 
 
