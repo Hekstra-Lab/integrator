@@ -49,7 +49,7 @@ def run_phenix(
     phenix_dir.mkdir(parents=True, exist_ok=True)
 
     # Construct the phenix.refine command with proper escaping
-    refine_command = f"phenix.refine {Path(phenix_eff).resolve()} {Path(mtz_file).resolve()} overwrite=true"
+    refine_command = f"phenix.refine {Path(phenix_eff).resolve()} overwrite=true"
 
     # refined_mtz_out = phenix_dir + "/refine_001.mtz"
     refined_mtz_out = mtz_file

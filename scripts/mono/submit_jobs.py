@@ -26,6 +26,7 @@ def parse_args():
         type=str,
         help="Path to directory containing .py files; e.g. process_single_refl.py",
     )
+    parser.add_argument("--partition", type=str, default="shared", help="SLURM partition for the DIALS/phenix array")
     return parser.parse_args()
 
 
@@ -73,7 +74,7 @@ def main():
         """
     )
 
-    dials_script_path = Path("dials_phenix_job.sh")
+    dials_script_path = Path(args.log_dir) / "dials_phenix_job.sh"
     dials_script_path.write_text(dials_script)
     dials_script_path.chmod(0o755)
 
@@ -111,7 +112,7 @@ def main():
         f"--error={logs_dir}/dials_phenix_%A_%a.err",
         "--time=10:00:00",
         "--mem=8G",
-        "--partition=shared",
+        f"--partition={args.partition}",
         "--cpus-per-task=1",
         f"--array=0-{num_files}",
         str(dials_script_path),
