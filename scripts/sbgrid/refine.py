@@ -140,6 +140,25 @@ def ensure_free_flags(mtz: Path, out_dir: Path, fraction: float, seed: int) -> P
     return flagged
 
 
+def xray_labels(mtz: Path, anomalous: bool) -> str | None:
+    """Which intensity array phenix should refine against.
+
+    dials.merge with anomalous=True writes both the merged mean (IMEAN) and
+    the Bijvoet pairs, and phenix refuses to guess between them. For an
+    anomalous dataset the pairs are the ones to use: refining against IMEAN
+    would discard the Bijvoet differences and produce no anomalous map for
+    the peak search to read.
+    """
+    import reciprocalspaceship as rs
+
+    columns = list(rs.read_mtz(str(mtz)).columns)
+    if anomalous and {"I(+)", "I(-)"} <= set(columns):
+        return "I(+),SIGI(+),I(-),SIGI(-)"
+    if "IMEAN" in columns:
+        return "IMEAN,SIGIMEAN"
+    return None
+
+
 def main():
     args = parse_args()
     out_dir = args.out_dir or args.mtz.parent / "refine"
@@ -168,10 +187,14 @@ def main():
         mtz = ensure_free_flags(
             mtz, out_dir, args.rfree_fraction, args.rfree_seed
         )
+    labels = None if args.dry_run else xray_labels(mtz, anomalous)
+    if labels:
+        print(f"  refining against {labels}")
     refine = (
         f"phenix.refine {mtz.resolve()} {Path(model).resolve()} "
         f"refinement.main.number_of_macro_cycles={args.macro_cycles} "
-        "refinement.output.prefix=refined --overwrite"
+        + (f'refinement.input.xray_data.labels="{labels}" ' if labels else "")
+        + "refinement.output.prefix=refined --overwrite"
     )
     if anomalous:
         # ask for the anomalous difference map the peak search reads
