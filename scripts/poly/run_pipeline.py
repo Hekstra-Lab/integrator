@@ -199,6 +199,19 @@ def step_careless(cfg, mtz: Path, dry) -> Path:
         f'"{METADATA_KEYS}" {mtz} {out_base}'
     )
     run(in_env(via_python(cmd), ccfg.get("env", "crls")), dry=dry)
+
+    # the canonical per-shell statistics, so this run can share a figure with
+    # a DIALS-scaled monochromatic one
+    if ccfg.get("merging_stats", True):
+        emitter = (
+            Path(__file__).resolve().parent / "emit_merging_stats.py"
+        )
+        stats_cmd = (
+            f"python {emitter} --scaling-dir {scaling_dir} "
+            f"--config {config} --unmerged {mtz}"
+        )
+        run(in_env(stats_cmd, cfg.get("predict", {}).get("env")), dry=dry)
+
     return Path(f"{out_base}_0.mtz")
 
 

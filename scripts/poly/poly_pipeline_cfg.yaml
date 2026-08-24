@@ -19,6 +19,8 @@ careless:
   config: 4                     # 1, 4, 5, 6 here; 2 and 3 are Friedel-split
   dmin: 1.5
   out_dir: scaling              # created next to the unmerged MTZ
+  merging_stats: true           # emit the canonical merging_stats.csv, the
+                                #   table the monochromatic arm also writes
   seed: null                    # null -> careless default; set for reproducibility
   extra_args: []                # appended verbatim, after the config's flags
 
