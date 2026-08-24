@@ -133,12 +133,90 @@ def _stats_from_table(df: pd.DataFrame) -> dict | None:
     resolution = [str(x) for x in df[cols["resolution"]].tolist()]
     keep = [not r.strip().lower().startswith("overall") for r in resolution]
     stats: dict[str, list] = {
-        "resolution": [r for r, k in zip(resolution, keep) if k]
+        "resolution": [r for r, k in zip(resolution, keep, strict=False) if k]
     }
     for key in ("cchalf", "ccanom", "rpim", "isigi"):
         c = cols[key]
         vals = _floats(df[c]) if c is not None else [np.nan] * len(df)
-        stats[key] = [v for v, k in zip(vals, keep) if k]
+        stats[key] = [v for v, k in zip(vals, keep, strict=False) if k]
+    return stats
+
+
+def _parse_merging_stats_csv(path: Path) -> dict | None:
+    """Read the canonical merging_stats.csv both arms emit.
+
+    Columns are locked across the monochromatic and polychromatic pipelines:
+    bin, d_max, d_min, n_obs, n_unique, cc_half, cc_anom, r_pim,
+    i_over_sigma. They are mapped onto the same keys the merged.html parser
+    produces, so everything downstream is unchanged.
+    """
+    try:
+        df = pd.read_csv(path)
+    except Exception as e:  # noqa: BLE001 - one bad file must not stop the run
+        logger.warning("Could not read %s: %s", path, e)
+        return None
+
+    rename = {
+        "cc_half": "cchalf",
+        "cc_anom": "ccanom",
+        "r_pim": "rpim",
+        "i_over_sigma": "isigi",
+    }
+    missing = [c for c in ("d_max", "d_min") if c not in df.columns]
+    if missing:
+        logger.warning("%s has no %s column", path.name, ", ".join(missing))
+        return None
+
+    stats: dict[str, list] = {
+        "resolution": [
+            f"{hi:.2f} - {lo:.2f}"
+            for hi, lo in zip(df["d_max"], df["d_min"], strict=False)
+        ],
+        "d": [
+            _shell_midpoint(hi, lo)
+            for hi, lo in zip(df["d_max"], df["d_min"], strict=False)
+        ],
+    }
+    for src, key in rename.items():
+        stats[key] = (
+            [float(v) if pd.notna(v) else np.nan for v in df[src]]
+            if src in df.columns
+            else [np.nan] * len(df)
+        )
+    return stats
+
+
+def _shell_midpoint(d_max: float, d_min: float) -> float:
+    """Resolution at the middle of a shell, in 1/d^2 (how shells are cut)."""
+    try:
+        s_hi, s_lo = 1.0 / float(d_max) ** 2, 1.0 / float(d_min) ** 2
+    except (TypeError, ValueError, ZeroDivisionError):
+        return float("nan")
+    return float(1.0 / np.sqrt((s_hi + s_lo) / 2.0))
+
+
+def _shell_d_from_labels(stats: dict) -> list[float]:
+    """Numeric shell centres parsed out of "79.63 - 2.97" style labels."""
+    out = []
+    for label in stats.get("resolution", []):
+        nums = re.findall(r"[0-9]*\.?[0-9]+", str(label))
+        out.append(
+            _shell_midpoint(float(nums[0]), float(nums[1]))
+            if len(nums) >= 2
+            else float("nan")
+        )
+    return out
+
+
+def _parse_stats(path: Path) -> dict | None:
+    """Read either the canonical CSV or a DIALS merged.html."""
+    stats = (
+        _parse_merging_stats_csv(path)
+        if path.suffix == ".csv"
+        else _parse_merged_html(path)
+    )
+    if stats is not None and "d" not in stats:
+        stats["d"] = _shell_d_from_labels(stats)
     return stats
 
 
@@ -149,12 +227,18 @@ def _model_merged_htmls(run_dir: Path, epoch: int | None) -> list[tuple[int, Pat
         logger.warning("No run_paths.yaml in %s; skipping", run_dir)
         return []
     pred_dir = Path(load_config(rp)["predictions_dir"])
+    # the canonical CSV wins when present; merged.html keeps older runs working
     found = []
-    for h in pred_dir.glob("**/merged.html"):
-        m = re.search(r"epoch_(\d+)", str(h))
-        found.append((int(m.group(1)) if m else 0, h))
+    for pattern in ("**/merging_stats.csv", "**/merged.html"):
+        for h in pred_dir.glob(pattern):
+            m = re.search(r"epoch_(\d+)", str(h))
+            found.append((int(m.group(1)) if m else 0, h))
+        if found:
+            break
     if not found:
-        logger.warning("No merged.html under %s; skipping", pred_dir)
+        logger.warning(
+            "No merging_stats.csv or merged.html under %s; skipping", pred_dir
+        )
         return []
     found.sort(key=lambda t: t[0])
     if epoch is not None:
@@ -166,19 +250,44 @@ def _model_merged_htmls(run_dir: Path, epoch: int | None) -> list[tuple[int, Pat
 # --------------------------------------------------------------------------- #
 # plotting
 # --------------------------------------------------------------------------- #
+def _shell_axis(stats: dict, key: str):
+    """x values for one series: shell centres in 1/d^2, else the shell index.
+
+    Plotting against real resolution rather than shell number is what lets
+    two runs with different binning share an axis -- DIALS picks its own
+    shells and careless picks others, and on an index axis position 5 would
+    mean a different resolution in each.
+    """
+    d = stats.get("d")
+    y = stats[key]
+    if d and len(d) == len(y) and not all(np.isnan(v) for v in d):
+        return [1.0 / v**2 if v and not np.isnan(v) else np.nan for v in d]
+    return list(range(len(y)))
+
+
 def _draw_stat(ax, key, ylabel, res, epoch_stats, colors, ref_stats):
     """Draw one statistic on `ax`: a line per epoch, plus a red DIALS line."""
-    for (_epoch, st), color in zip(epoch_stats, colors):
-        ax.plot(range(len(st[key])), st[key], color=color, lw=1)
+    for (_epoch, st), color in zip(epoch_stats, colors, strict=False):
+        ax.plot(_shell_axis(st, key), st[key], color=color, lw=1)
     if ref_stats is not None:
-        ax.plot(range(len(ref_stats[key])), ref_stats[key],
+        ax.plot(_shell_axis(ref_stats, key), ref_stats[key],
                 color="red", lw=2, label="DIALS")
         ax.legend(fontsize=8)
     ax.set_ylabel(ylabel)
     ax.set_xlabel("resolution (Å)")
     ax.grid(alpha=0.5)
-    ax.set_xticks(range(len(res)))
-    ax.set_xticklabels(res, rotation=55, fontsize=6, ha="right")
+
+    newest = epoch_stats[-1][1]
+    d = newest.get("d")
+    if d and len(d) == len(res) and not all(np.isnan(v) for v in d):
+        ticks = [1.0 / v**2 for v in d if v and not np.isnan(v)]
+        labels = [f"{v:.2f}" for v in d if v and not np.isnan(v)]
+        step = max(1, len(ticks) // 8)  # a dense binning would crowd the axis
+        ax.set_xticks(ticks[::step])
+        ax.set_xticklabels(labels[::step], rotation=55, fontsize=6, ha="right")
+    else:
+        ax.set_xticks(range(len(res)))
+        ax.set_xticklabels(res, rotation=55, fontsize=6, ha="right")
 
 
 def _epoch_colorbar(fig, ax, cmap, epochs):
@@ -198,7 +307,7 @@ def _plot_model(label, epoch_stats, ref_stats, out_path):
     res = epoch_stats[-1][1]["resolution"]  # newest epoch's shell labels
 
     fig, axes = plt.subplots(2, 2, figsize=(11, 8), layout="constrained")
-    for ax, (key, ylabel) in zip(axes.ravel(), STATS):
+    for ax, (key, ylabel) in zip(axes.ravel(), STATS, strict=False):
         _draw_stat(ax, key, ylabel, res, epoch_stats, colors, ref_stats)
     _epoch_colorbar(fig, axes, cmap, epochs)
 
@@ -230,7 +339,7 @@ def main():
     cfg = load_config(args.plot_cfg)
 
     ref = (cfg.get("reference_data") or {}).get("merge")
-    ref_stats = _parse_merged_html(Path(ref)) if ref else None
+    ref_stats = _parse_stats(Path(ref)) if ref else None
     if ref and ref_stats is None:
         logger.warning("Could not parse DIALS reference merged.html")
 
@@ -243,7 +352,7 @@ def main():
         htmls = _model_merged_htmls(Path(v["path"]), args.epoch)
         epoch_stats = []
         for epoch, html in htmls:
-            st = _parse_merged_html(html)
+            st = _parse_stats(html)
             if st is not None:
                 epoch_stats.append((epoch, st))
         if not epoch_stats:
