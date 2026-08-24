@@ -177,14 +177,21 @@ def ligand_restraints(model: Path, out_dir: Path, dry: bool) -> list[Path]:
         print(f"  restraints already generated: {[p.name for p in existing]}")
         return existing
 
+    # ready_set takes no --overwrite and writes beside its input, so it runs
+    # in the output directory against a copy
+    local = out_dir / model.name
+    if not local.exists():
+        local.write_bytes(model.read_bytes())
     run(
-        f"phenix.ready_set {model.resolve()} --overwrite",
+        f"phenix.ready_set {local.name}",
         out_dir,
         PHENIX_ENV,
         False,
         out_dir / "ready_set.log",
     )
-    cifs = sorted(out_dir.glob("*.cif"))
+    cifs = sorted(out_dir.glob("*.ligands.cif")) or sorted(
+        c for c in out_dir.glob("*.cif") if "ready_set" not in c.name
+    )
     if cifs:
         print(f"  restraints: {[p.name for p in cifs]}")
     return cifs
