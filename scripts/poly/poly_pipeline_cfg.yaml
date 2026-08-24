@@ -10,6 +10,9 @@
 predict:
   env: integrator               # micromamba env with integrator + torch
   write_mtz: true               # -> <predictions>/epoch_XXXX/preds_epoch_XXXX.mtz
+  epoch: last                   # last | all | <int>. `all` walks every
+                                #   checkpoint: 20 passes over 2.66M
+                                #   reflections for the one MTZ used.
 
 careless:
   env: crls
