@@ -202,6 +202,25 @@ def step_phenix(cfg, merged: Path, work_dir: Path, dry) -> Path:
     return refine2
 
 
+def refined_output(refine_dir: Path, prefix: str, suffix: str) -> Path:
+    """The highest-serial phenix output in `refine_dir`, e.g. refined_2.pdb.
+
+    phenix.refine increments the serial from the input model, so the second
+    pass reads `refined_1.pdb` and writes `refined_2.pdb`. Globbing for the
+    highest serial keeps this correct however many passes run, instead of
+    hard-coding one.
+    """
+    files = list(refine_dir.glob(f"{prefix}_[0-9]*{suffix}"))
+    if not files:
+        return refine_dir / f"{prefix}_2{suffix}"  # expected name, dry runs
+
+    def serial(path: Path) -> int:
+        stem = path.name[len(prefix) + 1 : -len(suffix)]
+        return int(stem) if stem.isdigit() else -1
+
+    return max(files, key=serial)
+
+
 def step_peaks(cfg, refine2: Path, merged: Path, dry) -> None:
     """Anomalous peaks from the refined model, plus CCanom on the xval data.
 
@@ -218,8 +237,8 @@ def step_peaks(cfg, refine2: Path, merged: Path, dry) -> None:
     pcfg = cfg.get("peaks", {})
     method = pcfg.get("method", "find_peaks")
     prefix = cfg.get("phenix", {}).get("prefix", "refined")
-    mtz = refine2 / f"{prefix}_1.mtz"
-    pdb = refine2 / f"{prefix}_1.pdb"
+    mtz = refined_output(refine2, prefix, ".mtz")
+    pdb = refined_output(refine2, prefix, ".pdb")
     out_dir = refine2.parent
 
     if method in ("find_peaks", "both"):
