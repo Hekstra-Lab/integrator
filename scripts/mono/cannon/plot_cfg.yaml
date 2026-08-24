@@ -1,0 +1,21 @@
+# Mono comparison manifest (shared schema with the poly arm; consumed by
+# scripts/make_figures.sh -> plot_{loss,compare,merging,peaks}.py).
+#
+# Each `runs:` entry is a trained run dir on scratch containing run_paths.yaml.
+# Fill/extend `path` per run; run names distinguish arms so mono and poly rows
+# can sit in one manifest for a side-by-side figure. plot_merging reads each
+# run's merging_stats.csv (emitted by 03_pipeline.sh), falling back to merged.html.
+
+runs:
+  mono_hewl9b7c:
+    # placeholder — set to the actual run dir, e.g. $OUT/mono_hewl9b7c_<date>
+    path: /n/netscratch/hekstra_lab/Lab/laldama/integrator_runs/mono_hewl9b7c
+    label: mono_hewl9b7c
+
+# DIALS/phenix references (already on the /n/lab_storage mirror). plot_merging
+# accepts merging_stats.csv or merged.html for reference_data.merge.
+reference_data:
+  refl: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/scaling_dataset/reflections_.refl
+  merge: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/dials_2026-05-14/merged.html
+  refinement: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/refine_001.log
+  peaks: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/reference_peaks.csv
