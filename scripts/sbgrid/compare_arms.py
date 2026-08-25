@@ -95,21 +95,21 @@ def peaks(arm: Path, subdir: str = "refine") -> pl.DataFrame | None:
     )
 
 
-def shrinkage(mtz: Path, edges) -> list[tuple[float, float, float, int]]:
-    """sd/mean of merged intensity per resolution shell, acentrics only.
+def shrinkage(mtz: Path, edges) -> list[dict]:
+    """Merged-intensity mean, sd and sd/mean per shell, acentrics only.
 
     For acentric reflections Wilson statistics make the intensity
     exponentially distributed, so sd/mean is exactly 1.0. Below that the
     posterior is compressing the spread of true intensities toward the prior
-    mean, which is what costs CC-half: the half-dataset correlation is a
-    correlation across reflections, so squeezing them together destroys it
-    however well each individual one is measured.
+    mean, which is what costs CC-half: the half-dataset correlation is taken
+    across reflections, so squeezing them together destroys it however well
+    each individual one is measured.
 
     Centrics are excluded rather than pooled. Their intensities follow a
     chi-squared with one degree of freedom, giving sd/mean = sqrt(2), so a
     mixed set has no single ideal value to compare against -- roughly 7% of
-    reflections here, enough to bias the ratio upward and flatter a
-    posterior that is over-shrinking.
+    reflections here, enough to bias the ratio upward and flatter a posterior
+    that is over-shrinking.
     """
     import reciprocalspaceship as rs
 
@@ -124,12 +124,43 @@ def shrinkage(mtz: Path, edges) -> list[tuple[float, float, float, int]]:
         values = shell[column].to_numpy().astype(float)
         if values.size < 20 or values.mean() == 0:
             continue
-        rows.append((hi, lo, float(values.std() / values.mean()), int(values.size)))
+        rows.append(
+            {
+                "hi": hi,
+                "lo": lo,
+                "mean": float(values.mean()),
+                "sd": float(values.std()),
+                "ratio": float(values.std() / values.mean()),
+                "n": int(values.size),
+            }
+        )
     return rows
 
 
+def normalized(rows: list[dict], key: str) -> list[float]:
+    """Each shell's value against that arm's own average across the shells.
+
+    Comparing one arm's raw mean to another's would mostly measure the
+    difference in their overall scale, which is arbitrary: two merges of the
+    same data sit on whatever scale their scaling model chose. Dividing by
+    the arm's own average leaves the falloff *shape*, which is what a
+    resolution-dependent prior distorts, and lets the arms be compared
+    without ever putting them on a common scale.
+    """
+    values = [r[key] for r in rows]
+    average = sum(values) / len(values) if values else 1.0
+    return [v / average if average else float("nan") for v in values]
+
+
 def show_shrinkage(arm_a: Path, arm_b: Path, stats: pl.DataFrame, labels):
-    """Report how far each arm sits from the Wilson ideal, shell by shell."""
+    """How far each arm sits from the Wilson ideal, and which way it fails.
+
+    sd/mean alone says a shell is compressed but not why. Splitting it into
+    the mean and the spread separates two failures that need different fixes:
+    a mean pulled up toward the prior with the spread intact points at the
+    prior's resolution dependence, while a spread collapsing onto a mean that
+    is already right points at its strength.
+    """
     edges = [(r["d_max"], r["d_min"]) for r in stats.iter_rows(named=True)]
     try:
         rows_a = shrinkage(arm_a / "merged.mtz", edges)
@@ -137,18 +168,32 @@ def show_shrinkage(arm_a: Path, arm_b: Path, stats: pl.DataFrame, labels):
     except (OSError, KeyError) as error:
         print(f"\nsd/mean unavailable: {error}")
         return
+    if len(rows_a) != len(rows_b):
+        print("\nsd/mean skipped: the arms binned to different shells")
+        return
+
+    mean_a, mean_b = normalized(rows_a, "mean"), normalized(rows_b, "mean")
+    sd_a, sd_b = normalized(rows_a, "sd"), normalized(rows_b, "sd")
 
     print("\nsd/mean of merged I, acentrics only  (Wilson ideal = 1.0)")
-    print(f"    {'shell':>14s}{labels[0]:>12s}{labels[1]:>12s}{'ratio':>9s}{'n':>8s}")
+    print("  mean r / sd r are normalized within each arm, so they are free of")
+    print("  the arbitrary overall scale of either merge")
+    print(f"    {'shell':>14s}{labels[0]:>10s}{labels[1]:>10s}"
+          f"{'ratio':>8s}{'mean r':>8s}{'sd r':>7s}{'n':>7s}")
     # flagged on the ratio between the arms, not on the absolute value: both
     # arms fall below 1.0 at low resolution, where the deviation belongs to
     # the data rather than to either integrator, and an absolute threshold
     # reports that shared behaviour as if one arm were at fault
-    for (hi, lo, va, n), (_, _, vb, _) in zip(rows_a, rows_b, strict=False):
-        ratio = vb / va if va else float("nan")
-        flag = "  <- compressed" if ratio < 0.9 else ""
-        print(f"    {f'{hi:.2f}-{lo:.2f}':>14s}{va:>12.3f}{vb:>12.3f}"
-              f"{ratio:>9.3f}{n:>8d}{flag}")
+    for i, (ra, rb) in enumerate(zip(rows_a, rows_b, strict=True)):
+        ratio = rb["ratio"] / ra["ratio"] if ra["ratio"] else float("nan")
+        m = mean_b[i] / mean_a[i] if mean_a[i] else float("nan")
+        d = sd_b[i] / sd_a[i] if sd_a[i] else float("nan")
+        flag = ""
+        if ratio < 0.9:
+            flag = "  <- variance collapse" if d < m else "  <- mean inflation"
+        shell = f"{ra['hi']:.2f}-{ra['lo']:.2f}"
+        print(f"    {shell:>14s}{ra['ratio']:>10.3f}{rb['ratio']:>10.3f}"
+              f"{ratio:>8.3f}{m:>8.3f}{d:>7.3f}{ra['n']:>7d}{flag}")
 
 
 def show_shells(a: pl.DataFrame, b: pl.DataFrame, labels) -> None:
