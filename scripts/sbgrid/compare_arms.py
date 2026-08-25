@@ -178,8 +178,8 @@ def show_shrinkage(arm_a: Path, arm_b: Path, stats: pl.DataFrame, labels):
     print("\nsd/mean of merged I, acentrics only  (Wilson ideal = 1.0)")
     print("  mean r / sd r are normalized within each arm, so they are free of")
     print("  the arbitrary overall scale of either merge")
-    print(f"    {'shell':>14s}{labels[0]:>10s}{labels[1]:>10s}"
-          f"{'ratio':>8s}{'mean r':>8s}{'sd r':>7s}{'n':>7s}")
+    print(f"    {'shell':>14s}{labels[0]:>12s}{labels[1]:>12s}"
+          f"{'ratio':>8s}{'mean r':>9s}{'sd r':>8s}{'n':>7s}")
     # flagged on the ratio between the arms, not on the absolute value: both
     # arms fall below 1.0 at low resolution, where the deviation belongs to
     # the data rather than to either integrator, and an absolute threshold
@@ -190,10 +190,18 @@ def show_shrinkage(arm_a: Path, arm_b: Path, stats: pl.DataFrame, labels):
         d = sd_b[i] / sd_a[i] if sd_a[i] else float("nan")
         flag = ""
         if ratio < 0.9:
-            flag = "  <- variance collapse" if d < m else "  <- mean inflation"
+            # whichever departs further from 1.0 is the dominant failure --
+            # not whichever is smaller. An inflated mean is above 1 and a
+            # collapsed spread below it, so comparing them directly calls
+            # every mean inflation a variance collapse.
+            flag = (
+                "  <- variance collapse"
+                if abs(d - 1) > abs(m - 1)
+                else "  <- mean inflation"
+            )
         shell = f"{ra['hi']:.2f}-{ra['lo']:.2f}"
-        print(f"    {shell:>14s}{ra['ratio']:>10.3f}{rb['ratio']:>10.3f}"
-              f"{ratio:>8.3f}{m:>8.3f}{d:>7.3f}{ra['n']:>7d}{flag}")
+        print(f"    {shell:>14s}{ra['ratio']:>12.3f}{rb['ratio']:>12.3f}"
+              f"{ratio:>8.3f}{m:>9.3f}{d:>8.3f}{ra['n']:>7d}{flag}")
 
 
 def show_shells(a: pl.DataFrame, b: pl.DataFrame, labels) -> None:
