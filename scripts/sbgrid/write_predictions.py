@@ -21,7 +21,6 @@ import argparse
 import sys
 from pathlib import Path
 
-import numpy as np
 import polars as pl
 import yaml
 
@@ -40,10 +39,19 @@ def parse_args():
 
 
 def load_predictions(pred_dir: Path) -> pl.DataFrame:
-    from integrator.io import get_pred_files
+    """Read the prediction parquet whole.
 
-    data = get_pred_files(ckpt_dir=pred_dir, filetype="parquet")
-    frame = pl.DataFrame({k: np.asarray(v).ravel() for k, v in data.items()})
+    Not through `get_pred_files`, which selects the four columns a
+    single-sweep writeback needs and would silently drop `sweep_id` -- the
+    one column this script exists to use.
+    """
+    single = pred_dir / "pred.parquet"
+    files = [single] if single.exists() else sorted(
+        pred_dir.glob("preds_epoch_*.parquet")
+    )
+    if not files:
+        raise SystemExit(f"no prediction parquet under {pred_dir}")
+    frame = pl.concat([pl.read_parquet(f) for f in files])
     missing = {"refl_ids", "qi_mean", "qi_var", "qbg_mean"} - set(frame.columns)
     if missing:
         raise SystemExit(f"predictions lack {sorted(missing)}")
