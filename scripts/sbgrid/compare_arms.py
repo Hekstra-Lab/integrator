@@ -22,6 +22,7 @@ import re
 import sys
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 
 # the merging-stats columns worth showing side by side, and whether more is
@@ -41,6 +42,12 @@ def parse_args():
     p.add_argument("--integrator", type=Path, required=True)
     p.add_argument("--labels", nargs=2, default=("DIALS", "integrator"))
     p.add_argument("--out", type=Path, default=None, help="write the peak table")
+    p.add_argument(
+        "--peak-tol",
+        type=float,
+        default=1.0,
+        help="angstroms within which two arms' peaks are the same site",
+    )
     return p.parse_args()
 
 
@@ -75,6 +82,9 @@ def peaks(arm: Path) -> pl.DataFrame | None:
         pl.col("seqid"),
         pl.col("residue"),
         pl.col("peakz"),
+        pl.col("coordx"),
+        pl.col("coordy"),
+        pl.col("coordz"),
     )
 
 
@@ -100,39 +110,72 @@ def show_shells(a: pl.DataFrame, b: pl.DataFrame, labels) -> None:
             print(f"    {shell:>14s}{va:>12.3f}{vb:>12.3f}{delta:>10.3f}{mark}")
 
 
-def show_peaks(a: pl.DataFrame, b: pl.DataFrame, labels, out: Path | None):
-    """Match peaks by site, not by rank.
+def match_peaks(a: pl.DataFrame, b: pl.DataFrame, tol: float):
+    """Pair peaks by position, nearest first.
 
-    Two arms rank their peaks differently, so comparing row 1 against row 1
-    compares different atoms. The site -- chain, residue number, residue name
-    -- is what stays fixed between them.
+    Not by (chain, residue, name): `rs.find_peaks` leaves the atom name blank,
+    so a ligand with several anomalous atoms -- 7LVC's NAP has seven above
+    5 sigma -- collapses to one key, and joining on it multiplies the peaks
+    together instead of pairing them. Position is what actually identifies a
+    peak, and the two arms place the same peak within a fraction of an
+    angstrom.
+
+    Greedy nearest-first, so each peak is used once: the closest pair over
+    the whole set is matched, both are removed, and the search repeats.
     """
-    key = ["chain", "seqid", "residue"]
-    merged = (
-        a.rename({"peakz": "z_a"})
-        .join(b.rename({"peakz": "z_b"}), on=key, how="full", coalesce=True)
-        .sort("z_a", descending=True, nulls_last=True)
-    )
-    print("\nanomalous peaks (sigma), matched by site")
+    xyz = ["coordx", "coordy", "coordz"]
+    pa, pb = a.select(xyz).to_numpy(), b.select(xyz).to_numpy()
+    if len(pa) == 0 or len(pb) == 0:
+        return [], list(range(len(pa))), list(range(len(pb)))
+
+    distance = np.linalg.norm(pa[:, None, :] - pb[None, :, :], axis=2)
+    pairs = []
+    free_a, free_b = set(range(len(pa))), set(range(len(pb)))
+    while free_a and free_b:
+        best = min(
+            ((i, j) for i in free_a for j in free_b), key=lambda ij: distance[ij]
+        )
+        if distance[best] > tol:
+            break
+        pairs.append(best)
+        free_a.discard(best[0])
+        free_b.discard(best[1])
+    return pairs, sorted(free_a), sorted(free_b)
+
+
+def show_peaks(a: pl.DataFrame, b: pl.DataFrame, labels, out: Path | None,
+               tol: float):
+    pairs, only_a, only_b = match_peaks(a, b, tol)
+    rows_a, rows_b = a.to_dicts(), b.to_dicts()
+
+    def site(row):
+        return f"{row['chain']}/{row['seqid']} {row['residue']}"
+
+    print(f"\nanomalous peaks (sigma), matched within {tol:.1f} A")
     print(f"  {'site':>16s}{labels[0]:>12s}{labels[1]:>12s}{'diff':>10s}")
-    wins = losses = 0
-    for row in merged.iter_rows(named=True):
-        site = f"{row['chain']}/{row['seqid']} {row['residue']}"
-        za, zb = row["z_a"], row["z_b"]
-        if za is None or zb is None:
-            only = labels[1] if za is None else labels[0]
-            value = zb if za is None else za
-            print(f"  {site:>16s}{value:>12.1f}".ljust(52) + f"  only in {only}")
-            continue
-        delta = zb - za
-        wins += delta > 0
-        losses += delta < 0
-        print(f"  {site:>16s}{za:>12.1f}{zb:>12.1f}{delta:>+10.1f}")
-    both = wins + losses
-    if both:
-        print(f"\n  {labels[1]} higher at {wins} of {both} shared sites")
+    records, wins = [], 0
+    for i, j in sorted(pairs, key=lambda ij: -rows_a[ij[0]]["peakz"]):
+        za, zb = rows_a[i]["peakz"], rows_b[j]["peakz"]
+        wins += zb > za
+        print(f"  {site(rows_a[i]):>16s}{za:>12.1f}{zb:>12.1f}{zb - za:>+10.1f}")
+        records.append({"site": site(rows_a[i]), labels[0]: za, labels[1]: zb})
+    for i in only_a:
+        print(f"  {site(rows_a[i]):>16s}{rows_a[i]['peakz']:>12.1f}"
+              f"{'--':>12s}{'':>10s}  only in {labels[0]}")
+        records.append({"site": site(rows_a[i]), labels[0]: rows_a[i]["peakz"],
+                        labels[1]: None})
+    for j in only_b:
+        print(f"  {site(rows_b[j]):>16s}{'--':>12s}"
+              f"{rows_b[j]['peakz']:>12.1f}{'':>10s}  only in {labels[1]}")
+        records.append({"site": site(rows_b[j]), labels[0]: None,
+                        labels[1]: rows_b[j]["peakz"]})
+
+    if pairs:
+        deltas = [rows_b[j]["peakz"] - rows_a[i]["peakz"] for i, j in pairs]
+        print(f"\n  {len(pairs)} peaks matched; {labels[1]} higher at {wins}")
+        print(f"  mean difference {sum(deltas) / len(deltas):+.2f} sigma")
     if out:
-        merged.write_csv(out)
+        pl.DataFrame(records).write_csv(out)
         print(f"  wrote {out}")
 
 
@@ -162,7 +205,7 @@ def main():
 
     pa, pb = peaks(args.reference), peaks(args.integrator)
     if pa is not None and pb is not None:
-        show_peaks(pa, pb, labels, args.out)
+        show_peaks(pa, pb, labels, args.out, args.peak_tol)
         print(f"\n  peaks above 5 sigma: {labels[0]} {len(pa)}, "
               f"{labels[1]} {len(pb)}")
     else:
