@@ -19,6 +19,11 @@ export MAMBA_SH="${MAMBA_SH:-/n/lab_storage/hekstra_lab/people/aldama/micromamba
 # integrator-cuda-dev throughout: the standalone dials env predates the
 # storage migration and its console scripts carry dead shebangs
 export ENV_MAIN="${ENV_MAIN:-integrator-cuda-dev}"
+# the shared training script reads ENV_TRAIN; one environment serves both
+export ENV_TRAIN="${ENV_TRAIN:-$ENV_MAIN}"
+
+# the training config for this dataset, written from the dataset card
+export CONFIG="${CONFIG:-$KIT_DIR/config.yaml}"
 
 export WB_PROJECT="${WB_PROJECT:-sbgrid_$SBGRID_ID}"
 export WB_SAVE_DIR="${WB_SAVE_DIR:-$OUT/wandb_logs}"
