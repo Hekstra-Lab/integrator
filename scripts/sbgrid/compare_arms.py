@@ -138,12 +138,17 @@ def show_shrinkage(arm_a: Path, arm_b: Path, stats: pl.DataFrame, labels):
         print(f"\nsd/mean unavailable: {error}")
         return
 
-    print("\nsd/mean of merged I, acentrics only  (Wilson ideal = 1.0;")
-    print("  below 1.0 the posterior is compressing the spread of intensities)")
-    print(f"    {'shell':>14s}{labels[0]:>12s}{labels[1]:>12s}{'n':>9s}")
+    print("\nsd/mean of merged I, acentrics only  (Wilson ideal = 1.0)")
+    print(f"    {'shell':>14s}{labels[0]:>12s}{labels[1]:>12s}{'ratio':>9s}{'n':>8s}")
+    # flagged on the ratio between the arms, not on the absolute value: both
+    # arms fall below 1.0 at low resolution, where the deviation belongs to
+    # the data rather than to either integrator, and an absolute threshold
+    # reports that shared behaviour as if one arm were at fault
     for (hi, lo, va, n), (_, _, vb, _) in zip(rows_a, rows_b, strict=False):
-        flag = "  <- over-shrunk" if vb < 0.8 else ""
-        print(f"    {f'{hi:.2f}-{lo:.2f}':>14s}{va:>12.3f}{vb:>12.3f}{n:>9d}{flag}")
+        ratio = vb / va if va else float("nan")
+        flag = "  <- compressed" if ratio < 0.9 else ""
+        print(f"    {f'{hi:.2f}-{lo:.2f}':>14s}{va:>12.3f}{vb:>12.3f}"
+              f"{ratio:>9.3f}{n:>8d}{flag}")
 
 
 def show_shells(a: pl.DataFrame, b: pl.DataFrame, labels) -> None:
