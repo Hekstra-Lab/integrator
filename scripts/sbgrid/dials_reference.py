@@ -143,6 +143,48 @@ def run(cmd: list[str], cwd: Path, dry: bool, log: Path | None = None) -> None:
     print(f"  ok ({elapsed:.0f}s)")
 
 
+def recipe_for(name: str, bundle: dict | None) -> dict:
+    """The depositor parameters for one sweep, by name where possible.
+
+    A script's image template does not always match what was deposited --
+    845's second script names L_helical_2 while the uploaded images are
+    L_helical_1 -- so an exact-name lookup silently returns nothing, and the
+    sweep is then processed with no beam centre, no mask and no resolution
+    filter. That failure is invisible: DIALS runs and produces a wrong answer.
+
+    So: exact match wins; otherwise a parameter every script agrees on is
+    used, since a value common to all passes cannot be pass-specific; and
+    where the scripts disagree the parameter is dropped, because guessing
+    which pass a sweep corresponds to is exactly what went wrong above.
+    """
+    per_sweep = (bundle or {}).get("per_sweep") or {}
+    if name in per_sweep:
+        return per_sweep[name]
+    if not per_sweep:
+        return {}
+
+    shared = {}
+    for key in {k for recipe in per_sweep.values() for k in recipe}:
+        values = {recipe.get(key) for recipe in per_sweep.values()}
+        if len(values) == 1 and None not in values:
+            shared[key] = values.pop()
+    if shared:
+        print(
+            f"    no script names sweep {name}; using the "
+            f"{len(shared)} parameter(s) every script agrees on: "
+            f"{sorted(shared)}"
+        )
+    dropped = sorted(
+        {k for recipe in per_sweep.values() for k in recipe} - set(shared)
+    )
+    if dropped:
+        print(
+            f"    NOT applied to {name} (scripts disagree): {dropped}. "
+            "Check the reprocessing note before trusting this sweep."
+        )
+    return shared
+
+
 def process_sweep(
     name: str,
     images: list[str],
@@ -162,7 +204,7 @@ def process_sweep(
     work.mkdir(parents=True, exist_ok=True)
     if args.max_images:
         images = images[: args.max_images]
-    recipe = ((bundle or {}).get("per_sweep") or {}).get(name, {})
+    recipe = recipe_for(name, bundle)
     print(f"\n=== sweep {name}: {len(images)} images -> {work}")
     if recipe:
         print(f"    depositor recipe: {recipe}")
