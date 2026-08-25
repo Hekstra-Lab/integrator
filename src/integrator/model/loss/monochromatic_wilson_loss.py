@@ -37,7 +37,11 @@ class MonochromaticWilsonLoss(WilsonLoss):
         # exactly solvable from dKL/dG = 0 (the mean B-corrected intensity of
         # that group) and carries no gauge freedom, because the intensities
         # themselves are still determined by each reflection's own pixels.
-        self.raw_G = nn.Parameter(raw.repeat(self.n_scale_groups))
+        # a single group keeps the scalar shape every existing checkpoint
+        # stores; making it a length-1 vector would break loading them
+        self.raw_G = nn.Parameter(
+            raw if self.n_scale_groups == 1 else raw.repeat(self.n_scale_groups)
+        )
         if init_G is not None:
             # an explicit scale wins: never overwrite it with the count-based fit
             self.init_scale_from_counts = False
@@ -80,7 +84,7 @@ class MonochromaticWilsonLoss(WilsonLoss):
                 )
             G = G[labels.to(device).long().clamp(0, self.n_scale_groups - 1)]
         else:
-            G = G.squeeze()
+            G = G.reshape(())
         B = self.get_B()
         tau = (1.0 / G) * torch.exp(2.0 * B * s_sq)
 
