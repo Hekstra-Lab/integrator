@@ -95,6 +95,57 @@ def peaks(arm: Path, subdir: str = "refine") -> pl.DataFrame | None:
     )
 
 
+def shrinkage(mtz: Path, edges) -> list[tuple[float, float, float, int]]:
+    """sd/mean of merged intensity per resolution shell, acentrics only.
+
+    For acentric reflections Wilson statistics make the intensity
+    exponentially distributed, so sd/mean is exactly 1.0. Below that the
+    posterior is compressing the spread of true intensities toward the prior
+    mean, which is what costs CC-half: the half-dataset correlation is a
+    correlation across reflections, so squeezing them together destroys it
+    however well each individual one is measured.
+
+    Centrics are excluded rather than pooled. Their intensities follow a
+    chi-squared with one degree of freedom, giving sd/mean = sqrt(2), so a
+    mixed set has no single ideal value to compare against -- roughly 7% of
+    reflections here, enough to bias the ratio upward and flatter a
+    posterior that is over-shrinking.
+    """
+    import reciprocalspaceship as rs
+
+    ds = rs.read_mtz(str(mtz))
+    ds["d"] = ds.compute_dHKL()["dHKL"]
+    ds = ds.label_centrics()
+    ds = ds[~ds["CENTRIC"]]
+    column = "IMEAN" if "IMEAN" in ds.columns else "I"
+    rows = []
+    for hi, lo in edges:
+        shell = ds[(ds["d"] <= hi) & (ds["d"] > lo)]
+        values = shell[column].to_numpy().astype(float)
+        if values.size < 20 or values.mean() == 0:
+            continue
+        rows.append((hi, lo, float(values.std() / values.mean()), int(values.size)))
+    return rows
+
+
+def show_shrinkage(arm_a: Path, arm_b: Path, stats: pl.DataFrame, labels):
+    """Report how far each arm sits from the Wilson ideal, shell by shell."""
+    edges = [(r["d_max"], r["d_min"]) for r in stats.iter_rows(named=True)]
+    try:
+        rows_a = shrinkage(arm_a / "merged.mtz", edges)
+        rows_b = shrinkage(arm_b / "merged.mtz", edges)
+    except (OSError, KeyError) as error:
+        print(f"\nsd/mean unavailable: {error}")
+        return
+
+    print("\nsd/mean of merged I, acentrics only  (Wilson ideal = 1.0;")
+    print("  below 1.0 the posterior is compressing the spread of intensities)")
+    print(f"    {'shell':>14s}{labels[0]:>12s}{labels[1]:>12s}{'n':>9s}")
+    for (hi, lo, va, n), (_, _, vb, _) in zip(rows_a, rows_b, strict=False):
+        flag = "  <- over-shrunk" if vb < 0.8 else ""
+        print(f"    {f'{hi:.2f}-{lo:.2f}':>14s}{va:>12.3f}{vb:>12.3f}{n:>9d}{flag}")
+
+
 def show_shells(a: pl.DataFrame, b: pl.DataFrame, labels) -> None:
     print("\nmerging statistics by resolution shell")
     for column, higher_is_better in STAT_COLUMNS:
@@ -193,6 +244,7 @@ def main():
     a, b = merging_stats(args.reference), merging_stats(args.integrator)
     if a is not None and b is not None:
         show_shells(a, b, labels)
+        show_shrinkage(args.reference, args.integrator, a, labels)
     else:
         missing = [
             str(arm)
