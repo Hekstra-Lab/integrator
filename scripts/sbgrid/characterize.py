@@ -27,6 +27,7 @@ import argparse
 import json
 import re
 import sys
+import urllib.request
 from collections import defaultdict
 from pathlib import Path
 
@@ -57,6 +58,17 @@ L3_EDGES_ANGSTROM = {"Ta": 1.255, "Pt": 1.072, "Au": 1.040, "Hg": 1.009}
 # inflection wavelength is chosen within a few tens of eV of the edge.
 EDGE_TOLERANCE_EV = 50.0
 HC_KEV_ANGSTROM = 12.39842  # E[keV] = HC / lambda[A]
+
+# Below this energy an experiment is in long-wavelength territory, where the
+# anomalous signal from light elements is enhanced by being far from any edge
+# rather than at one. Native S-SAD is collected here.
+LONG_WAVELENGTH_KEV = 8.0
+MODEL_URL = "https://files.rcsb.org/download/{pdb}.pdb"
+# elements that carry usable anomalous signal
+ANOMALOUS_ELEMENTS = (
+    "MN", "FE", "ZN", "CU", "NI", "CO", "SE", "S", "P", "I", "BR", "CA",
+    "PT", "AU", "HG", "TA",
+)
 
 
 def parse_args():
@@ -162,7 +174,37 @@ def nearest_edge(wavelength: float) -> dict | None:
     return None
 
 
-def classify(geometry: dict, reference: dict | None) -> dict:
+def model_scatterers(pdb_id: str | None, out_dir: Path) -> dict[str, int]:
+    """Count the anomalous scatterers in the deposited model.
+
+    Which elements are actually present is what decides whether a nearby
+    absorption edge is meaningful. 1.892 A sits 14 eV from the Mn K edge, but
+    in a protein with no manganese that is a coincidence, not a reason.
+    """
+    if not pdb_id:
+        return {}
+    path = out_dir / f"{pdb_id.upper()}.pdb"
+    if not path.exists():
+        try:
+            with urllib.request.urlopen(  # noqa: S310
+                MODEL_URL.format(pdb=pdb_id.upper()), timeout=120
+            ) as response:
+                path.write_bytes(response.read())
+        except OSError as exc:
+            print(f"could not fetch {pdb_id}: {exc}")
+            return {}
+    counts: dict[str, int] = {}
+    for line in path.read_text(errors="replace").splitlines():
+        if line.startswith(("ATOM", "HETATM")):
+            element = line[76:78].strip().upper()
+            if element in ANOMALOUS_ELEMENTS:
+                counts[element] = counts.get(element, 0) + 1
+    return counts
+
+
+def classify(
+    geometry: dict, reference: dict | None, scatterers: dict | None = None
+) -> dict:
     """Turn the evidence into the decisions the pipeline needs."""
     deposited_mono = None
     phasing_anomalous = False
@@ -191,16 +233,37 @@ def classify(geometry: dict, reference: dict | None) -> dict:
             "stills with no spectrum: could be serial monochromatic or Laue"
         )
 
-    edge = nearest_edge(geometry["wavelength"]) if geometry.get("wavelength") else None
+    wavelength = geometry.get("wavelength")
+    scatterers = scatterers or {}
+    edge = nearest_edge(wavelength) if wavelength else None
+    # an edge is only evidence if that element is in the crystal. The edge
+    # tables spell elements as Mn/Se, the PDB element field as MN/SE, so the
+    # comparison is on upper case -- matching on the raw spelling silently
+    # rejected every edge.
+    present = {k.upper() for k in scatterers}
+    if edge and scatterers and edge["element"].upper() not in present:
+        edge = None
+
     reasons = []
     if phasing_anomalous and reference is not None:
         method = (reference.get("anomalous") or {}).get("phasing_method")
         reasons.append(f"deposited phasing method is {method}")
     if edge:
         reasons.append(
-            f"wavelength {geometry['wavelength']:.4f} A is "
-            f"{edge['delta_ev']:.0f} eV from the {edge['element']} "
-            f"{edge['shell']} edge"
+            f"wavelength {wavelength:.4f} A is {edge['delta_ev']:.0f} eV from "
+            f"the {edge['element']} {edge['shell']} edge, and the model "
+            f"contains {scatterers.get(edge['element'].upper(), '?')} "
+            f"{edge['element']}"
+        )
+    elif wavelength and HC_KEV_ANGSTROM / wavelength < LONG_WAVELENGTH_KEV:
+        # far below any edge of the light elements, which is the point: f''
+        # for S and P rises toward long wavelengths without an edge to sit on
+        energy = HC_KEV_ANGSTROM / wavelength
+        light = {k: v for k, v in scatterers.items() if k in ("S", "P", "CA")}
+        reasons.append(
+            f"long wavelength ({wavelength:.4f} A, {energy:.2f} keV) "
+            "enhances the anomalous signal of light elements"
+            + (f"; the model contains {light}" if light else "")
         )
 
     return {
@@ -213,6 +276,7 @@ def classify(geometry: dict, reference: dict | None) -> dict:
         "expect_anomalous": bool(phasing_anomalous or edge),
         "anomalous_reasons": reasons,
         "nearest_edge": edge,
+        "model_scatterers": scatterers,
     }
 
 
@@ -243,7 +307,10 @@ def main():
                 "reference_stats.py first for the deposited evidence"
             )
 
-    decisions = classify(geometry, reference)
+    scatterers = model_scatterers(args.pdb, out_dir)
+    if scatterers:
+        print(f"\nanomalous scatterers in the model: {scatterers}")
+    decisions = classify(geometry, reference, scatterers)
 
     card = {
         "data_dir": str(args.data_dir),
