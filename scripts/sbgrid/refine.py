@@ -205,6 +205,27 @@ def ligand_restraints(
     return cifs, model
 
 
+def anomalous_map_columns(mtz: Path) -> tuple[str, str] | None:
+    """Find the anomalous difference map's amplitude and phase columns.
+
+    Their names depend on how the map was requested: phenix writes
+    ANOM/PHANOM by default and `anomalous`/`PHanomalous` when the map type is
+    named explicitly. Detecting beats assuming -- a wrong guess fails inside
+    rs.find_peaks with a KeyError naming a column, long after refinement has
+    spent its time.
+    """
+    import gemmi
+
+    columns = [c.label for c in gemmi.read_mtz_file(str(mtz)).columns]
+    for amplitude in ("ANOM", "anomalous", "DELFWT"):
+        if amplitude not in columns:
+            continue
+        for phase in (f"PH{amplitude}", f"PHI{amplitude}", "PHDELWT"):
+            if phase in columns:
+                return amplitude, phase
+    return None
+
+
 def main():
     args = parse_args()
     out_dir = args.out_dir or args.mtz.parent / "refine"
@@ -260,13 +281,23 @@ def main():
 
     refined_mtz = out_dir / "refined_001.mtz"
     refined_pdb = out_dir / "refined_001.pdb"
-    elements = "[" + ",".join(sorted(sites)) + "]" if sites else "[S]"
+    columns = anomalous_map_columns(refined_mtz)
+    if columns is None:
+        print(
+            f"\nno anomalous map in {refined_mtz.name}: skipping the peak "
+            "search. Refinement produced no ANOM/PHANOM pair, which usually "
+            "means it ran against merged means rather than Bijvoet pairs."
+        )
+        return 0
+    amplitude, phase = columns
+    print(f"  anomalous map: {amplitude} / {phase}")
     peaks = (
         f"rs.find_peaks {refined_mtz} {refined_pdb} "
-        f"-f ANOM -p PHANOM -z 5.0 -o {out_dir / 'peaks.csv'}"
+        f"-f {amplitude} -p {phase} -z 5.0 -o {out_dir / 'peaks.csv'}"
     )
     run(peaks, out_dir, None, args.dry_run, out_dir / "find_peaks.log")
-    print(f"\nrefinement and peaks in {out_dir}  (elements {elements})")
+    print(f"\nrefinement and peaks in {out_dir}")
+    print(f"  anomalous scatterers in the model: {sites}")
     return 0
 
 
