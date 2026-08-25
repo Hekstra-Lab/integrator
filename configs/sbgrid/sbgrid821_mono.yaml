@@ -60,7 +60,13 @@ loss:
     init_G: 3743.8
     init_B: 12.4
     b_min: 0.0
-    lp_correction: false        # our rate already divides by lp
+    # lp is consumed in exactly one place, the Wilson prior: nothing in the
+    # forward rate applies it, so there is no double-count to avoid. DIALS
+    # leaves intensities uncorrected at integration and stores lp separately
+    # (corrected = raw * lp), so the prior on raw counts needs tau *= lp,
+    # which is lp_correction: true. Left false here pending the A/B on
+    # SBGrid 821; see configs/mono/hewl9b7c_mono_expmean_lp.yaml.
+    lp_correction: false
     intensity_kl_weight: 1.0
     background_kl_weight: 1.0
     profile_kl_weight: 1.0

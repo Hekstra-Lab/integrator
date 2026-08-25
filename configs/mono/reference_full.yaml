@@ -91,9 +91,14 @@ loss:
   name: monochromatic_wilson
   args:
     # --- intensity (Wilson) prior: fixed Exponential, p(I) = Gamma(1, tau) ---
-    init_log_G: 0.0             # init scalar G = softplus(raw_G); mono-only
-    lp_correction: false        # multiply tau by metadata['lp']; mono-only
-    init_log_B: 3.0             # init Wilson B factor (softplus(raw_B) + b_min)
+    # init_G: 200.0             # pin the initial scale G; default G = 1; mono-only
+    # true multiplies the Wilson prior's tau by metadata['lp'] (mono-only).
+    # lp is consumed only by the prior -- the forward rate never applies it --
+    # and DIALS keeps intensities uncorrected with lp stored alongside, so a
+    # prior on raw counts wants true. false is the historical default, kept
+    # here pending the A/B on SBGrid 821.
+    lp_correction: false
+    init_B: 30.0                # init Wilson B (A^2): B = softplus(raw_B) + b_min
     b_min: 0.0
     # --- KL weights ---
     intensity_kl_weight: 1.0
