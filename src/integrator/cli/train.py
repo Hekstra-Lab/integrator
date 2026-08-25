@@ -229,8 +229,22 @@ def parse_args():
         "--figure-every",
         type=int,
         default=1,
-        help="Record the tracked shoeboxes and the basis every n epochs "
-        "(only used with --figures)",
+        help="Record the tracked shoeboxes and the basis every n epochs, "
+        "once past the dense window (only used with --figures)",
+    )
+    parser.add_argument(
+        "--figure-dense-window",
+        type=int,
+        default=2,
+        help="Sample within each of the first n epochs for a smooth movie "
+        "start; 0 disables sub-epoch sampling (only used with --figures)",
+    )
+    parser.add_argument(
+        "--figure-dense-per-epoch",
+        type=int,
+        default=20,
+        help="Frames per epoch inside the dense window (only used with "
+        "--figures)",
     )
     parser.add_argument(
         "-v",
@@ -513,10 +527,16 @@ def main():
     if args.figures:
         callbacks += [
             TrackedShoeboxLogger(
-                out_dir=figures_dir, every_n_epochs=args.figure_every
+                out_dir=figures_dir,
+                every_n_epochs=args.figure_every,
+                dense_window=args.figure_dense_window,
+                dense_per_epoch=args.figure_dense_per_epoch,
             ),
             ProfileBasisLogger(
-                out_dir=figures_dir, every_n_epochs=args.figure_every
+                out_dir=figures_dir,
+                every_n_epochs=args.figure_every,
+                dense_window=args.figure_dense_window,
+                dense_per_epoch=args.figure_dense_per_epoch,
             ),
             LatentSpaceLogger(out_dir=figures_dir),
         ]

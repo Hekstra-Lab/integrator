@@ -14,7 +14,13 @@ import math
 import numpy as np
 import polars as pl
 
-from .figure_style import imshow_panel, middle_slice, paper_style
+from .figure_style import (
+    add_colorbar,
+    fmt_epoch,
+    imshow_panel,
+    middle_slice,
+    paper_style,
+)
 
 
 def align_basis(weights: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -91,10 +97,12 @@ def plot_basis_atlas(
             nrows, ncols, figsize=(1.25 * ncols, 1.35 * nrows), squeeze=False
         )
         flat = axes.ravel()
-        imshow_panel(flat[0], middle_slice(base, shape))
+        mean_im = imshow_panel(flat[0], middle_slice(base, shape))
+        add_colorbar(mean_im, flat[0], label="p")
         flat[0].set_title("mean profile", fontsize=7)
         for ax, (title, img) in zip(flat[1:], panels, strict=False):
-            imshow_panel(ax, img, symmetric=True)
+            im = imshow_panel(ax, img, symmetric=True)
+            add_colorbar(im, ax)
             ax.set_title(title, fontsize=7)
         for ax in flat[n:]:
             ax.axis("off")
@@ -109,7 +117,7 @@ def plot_basis_filmstrip(
     """Basis modes (rows) against training epochs (columns)."""
     import matplotlib.pyplot as plt
 
-    epochs = [int(e) for e in snapshots["epochs"]]
+    epochs = [float(e) for e in snapshots["epochs"]]
     shape = tuple(int(s) for s in snapshots["shape"])
     aligned, _ = align_basis(snapshots["weights"])
     idx = np.unique(
@@ -123,20 +131,25 @@ def plot_basis_filmstrip(
         fig, axes = plt.subplots(
             n_modes,
             len(idx),
-            figsize=(1.05 * len(idx) + 0.6, 1.05 * n_modes),
+            figsize=(1.05 * len(idx) + 1.2, 1.05 * n_modes),
             squeeze=False,
         )
         for r in range(n_modes):
             lim = float(np.abs(aligned[:, :, r]).max()) or 1.0
+            last_im = None
             for c, e in enumerate(idx):
-                imshow_panel(
+                last_im = imshow_panel(
                     axes[r][c],
                     middle_slice(aligned[e][:, r], shape),
                     symmetric=True,
                     vmax=lim,
                 )
                 if r == 0:
-                    axes[r][c].set_title(f"ep {epochs[e]}", fontsize=7)
+                    axes[r][c].set_title(
+                        f"ep {fmt_epoch(epochs[e])}", fontsize=7
+                    )
+            if last_im is not None:
+                add_colorbar(last_im, axes[r][-1], pad=0.08)
             axes[r][0].set_ylabel(
                 f"h{r}", fontsize=7, rotation=0, ha="right", va="center",
                 labelpad=8,
@@ -213,7 +226,7 @@ def animate_basis(snapshots: dict, max_modes: int = 12):
     import matplotlib.pyplot as plt
     from matplotlib.animation import FuncAnimation
 
-    epochs = [int(e) for e in snapshots["epochs"]]
+    epochs = [float(e) for e in snapshots["epochs"]]
     shape = tuple(int(s) for s in snapshots["shape"])
     aligned, order = align_basis(snapshots["weights"])
     biases = np.asarray(snapshots["biases"], dtype=float)
@@ -222,38 +235,50 @@ def animate_basis(snapshots: dict, max_modes: int = 12):
         float(np.abs(aligned[:, :, r]).max()) or 1.0 for r in range(n_modes)
     ]
 
+    def softmax(x):
+        e = np.exp(x - x.max())
+        return e / e.sum()
+
+    # Fixed color scales across the movie: the mean profile grows out of a
+    # flat prior, so scaling to frame 0 would saturate it immediately.
+    mean_max = max(
+        float(middle_slice(softmax(biases[f]), shape).max())
+        for f in range(len(epochs))
+    ) or 1.0
+
     n = n_modes + 1
     ncols = min(6, n)
     nrows = math.ceil(n / ncols)
     with paper_style():
         fig, axes = plt.subplots(
-            nrows, ncols, figsize=(1.25 * ncols, 1.35 * nrows), squeeze=False
+            nrows, ncols, figsize=(1.4 * ncols, 1.35 * nrows), squeeze=False
         )
         flat = axes.ravel()
 
-        def softmax(x):
-            e = np.exp(x - x.max())
-            return e / e.sum()
-
-        mean_im = imshow_panel(flat[0], middle_slice(softmax(biases[0]), shape))
+        mean_im = imshow_panel(
+            flat[0], middle_slice(softmax(biases[0]), shape), vmax=mean_max
+        )
+        add_colorbar(mean_im, flat[0], label="p")
         flat[0].set_title("mean profile", fontsize=7)
         images = []
         for r in range(n_modes):
-            images.append(
-                imshow_panel(
-                    flat[r + 1],
-                    middle_slice(aligned[0][:, r], shape),
-                    symmetric=True,
-                    vmax=lims[r],
-                )
+            im = imshow_panel(
+                flat[r + 1],
+                middle_slice(aligned[0][:, r], shape),
+                symmetric=True,
+                vmax=lims[r],
             )
+            add_colorbar(im, flat[r + 1])
+            images.append(im)
             flat[r + 1].set_title(f"h{r}", fontsize=7)
         for ax in flat[n:]:
             ax.axis("off")
-        suptitle = fig.suptitle(f"basis, epoch {epochs[0]}", fontsize=9)
+        suptitle = fig.suptitle(
+            f"basis, epoch {fmt_epoch(epochs[0])}", fontsize=9
+        )
 
         def update(frame):
-            suptitle.set_text(f"basis, epoch {epochs[frame]}")
+            suptitle.set_text(f"basis, epoch {fmt_epoch(epochs[frame])}")
             mean_im.set_data(middle_slice(softmax(biases[frame]), shape))
             for r, im in enumerate(images):
                 im.set_data(middle_slice(aligned[frame][:, r], shape))

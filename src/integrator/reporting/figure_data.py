@@ -184,13 +184,18 @@ class TrackedRecorder:
         self.counts = np.asarray(counts, dtype=np.float32)
         self.masks = np.asarray(masks, dtype=np.float32)
         self.shape = tuple(int(s) for s in shape)
-        self.epochs: list[int] = []
+        self.epochs: list[float] = []
         self._profiles: list[np.ndarray] = []
         self._rates: list[np.ndarray] = []
         self._rows: list[dict] = []
 
-    def record(self, epoch: int, forward_out: dict) -> None:
-        """Store one epoch of predictions for the tracked mini-batch."""
+    def record(self, epoch: float, forward_out: dict) -> None:
+        """Store one frame of predictions for the tracked mini-batch.
+
+        `epoch` may be fractional: the dense early sampling records at
+        `epoch + batch_idx / num_batches`, so a whole number is an
+        end-of-epoch frame and a fraction is a mid-epoch one.
+        """
         profile = _np(forward_out["qp_mean"]).astype(np.float32)
         rates = _np(forward_out["rates"]).astype(np.float32)
         if rates.ndim == 3:  # (B, mc_samples, K)
@@ -200,7 +205,7 @@ class TrackedRecorder:
         qbg = _np(forward_out["qbg_mean"]).ravel()
         qbg_var = _np(forward_out["qbg_var"]).ravel()
 
-        self.epochs.append(int(epoch))
+        self.epochs.append(float(epoch))
         self._profiles.append(profile)
         self._rates.append(rates)
 
@@ -215,7 +220,7 @@ class TrackedRecorder:
         for slot in range(len(qi)):
             self._rows.append(
                 {
-                    "epoch": int(epoch),
+                    "epoch": float(epoch),
                     "slot": slot,
                     "refl_id": int(sel["refl_id"][slot]),
                     "regime": sel["regime"][slot],
@@ -251,13 +256,17 @@ class TrackedRecorder:
         }
         (out_dir / "tracked_selection.json").write_text(json.dumps(sel, indent=2))
         pl.DataFrame(self._rows).write_parquet(out_dir / "tracked_scalars.parquet")
+        # Frames are recorded train-batch-then-validation, so within the dense
+        # early window a mid-epoch frame lands before the whole-epoch one it
+        # precedes in time; sort by the coordinate so the movie plays forward.
+        order = np.argsort(np.asarray(self.epochs, dtype=np.float64))
         np.savez_compressed(
             out_dir / "tracked_arrays.npz",
-            epochs=np.asarray(self.epochs, dtype=np.int32),
+            epochs=np.asarray(self.epochs, dtype=np.float32)[order],
             counts=self.counts,
             masks=self.masks,
-            profiles=np.stack(self._profiles),
-            rates=np.stack(self._rates),
+            profiles=np.stack(self._profiles)[order],
+            rates=np.stack(self._rates)[order],
             shape=np.asarray(self.shape, dtype=np.int32),
         )
 
@@ -294,24 +303,34 @@ class BasisRecorder:
 
     def __init__(self, shape: tuple[int, ...]):
         self.shape = tuple(int(s) for s in shape)
-        self.epochs: list[int] = []
+        self.epochs: list[float] = []
         self._weights: list[np.ndarray] = []
         self._biases: list[np.ndarray] = []
 
-    def record(self, epoch: int, weight: np.ndarray, bias: np.ndarray) -> None:
-        """Store the decoder weight `(K, d)` and bias `(K,)` for one epoch."""
-        self.epochs.append(int(epoch))
+    def record(self, epoch: float, weight: np.ndarray, bias: np.ndarray) -> None:
+        """Store the decoder weight `(K, d)` and bias `(K,)` for one frame.
+
+        `epoch` may be fractional for the dense early snapshots.
+        """
+        self.epochs.append(float(epoch))
         self._weights.append(_np(weight).astype(np.float32))
         self._biases.append(_np(bias).astype(np.float32))
 
+    def _order(self) -> np.ndarray:
+        """Chronological order of the snapshots by (fractional) epoch."""
+        return np.argsort(np.asarray(self.epochs, dtype=np.float64))
+
     def diagnostics(self) -> pl.DataFrame:
         """Per-epoch spectrum, effective rank, step size, and distance to final."""
+        order = self._order()
+        epochs = [self.epochs[i] for i in order]
+        weights = [self._weights[i] for i in order]
         rows = []
-        final = self._weights[-1]
-        for i, (epoch, w) in enumerate(zip(self.epochs, self._weights, strict=True)):
+        final = weights[-1]
+        for i, (epoch, w) in enumerate(zip(epochs, weights, strict=True)):
             sv = np.linalg.svd(w, compute_uv=False)
             row = {
-                "epoch": epoch,
+                "epoch": float(epoch),
                 "eff_rank": effective_rank(sv),
                 "frob_norm": float(np.linalg.norm(w)),
                 "angle_to_final_deg": subspace_angle_deg(w, final),
@@ -322,7 +341,7 @@ class BasisRecorder:
             for j, value in enumerate(sv):
                 row[f"sv_{j}"] = float(value)
             if i > 0:
-                prev = self._weights[i - 1]
+                prev = weights[i - 1]
                 denom = float(np.linalg.norm(prev)) or 1.0
                 row["rel_step"] = float(np.linalg.norm(w - prev) / denom)
             else:
@@ -337,11 +356,12 @@ class BasisRecorder:
         if not self.epochs:
             logger.warning("BasisRecorder has no epochs to save")
             return
+        order = self._order()
         np.savez_compressed(
             out_dir / "basis_snapshots.npz",
-            epochs=np.asarray(self.epochs, dtype=np.int32),
-            weights=np.stack(self._weights),
-            biases=np.stack(self._biases),
+            epochs=np.asarray(self.epochs, dtype=np.float32)[order],
+            weights=np.stack(self._weights)[order],
+            biases=np.stack(self._biases)[order],
             shape=np.asarray(self.shape, dtype=np.int32),
         )
         self.diagnostics().write_parquet(out_dir / "basis_diagnostics.parquet")

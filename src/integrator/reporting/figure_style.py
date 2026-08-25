@@ -21,7 +21,7 @@ REGIME_COLORS = {
     "strong": "#029E73",
 }
 
-SEQUENTIAL_CMAP = "magma"
+SEQUENTIAL_CMAP = "cividis"
 DIVERGING_CMAP = "RdBu_r"
 
 PAPER_RC = {
@@ -129,6 +129,34 @@ def imshow_panel(ax, img, cmap=SEQUENTIAL_CMAP, symmetric=False, vmax=None):
     for spine in ax.spines.values():
         spine.set_visible(False)
     return im
+
+
+def add_colorbar(im, ax, label=None, size="6%", pad=0.04):
+    """Attach a colorbar to `ax` sized to match the panel.
+
+    Uses an axes divider so the bar is exactly the panel height regardless
+    of the panel's aspect ratio, which the `fraction=` trick only gets
+    right for square axes.  Without a scale bar a per-panel autoscaled
+    image reads as if a faint, near-uniform profile had a confident peak,
+    so the color range has to be shown.
+    """
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+    cax = make_axes_locatable(ax).append_axes("right", size=size, pad=pad)
+    cb = ax.figure.colorbar(im, cax=cax)
+    cb.ax.tick_params(labelsize=5, length=2, pad=1)
+    cb.outline.set_visible(False)
+    if label:
+        cb.set_label(label, fontsize=6)
+    return cb
+
+
+def fmt_epoch(value) -> str:
+    """Label a possibly fractional epoch: `5` for whole ones, `0.44` within."""
+    value = float(value)
+    if abs(value - round(value)) < 1e-6:
+        return f"{int(round(value))}"
+    return f"{value:.2f}"
 
 
 def regime_color(regime: str) -> str:

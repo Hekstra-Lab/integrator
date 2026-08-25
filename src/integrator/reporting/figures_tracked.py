@@ -13,6 +13,8 @@ import polars as pl
 
 from .figure_style import (
     REGIMES,
+    add_colorbar,
+    fmt_epoch,
     imshow_panel,
     middle_slice,
     paper_style,
@@ -20,13 +22,23 @@ from .figure_style import (
 )
 
 
-def pick_epochs(epochs, n: int = 6) -> list[int]:
-    """Evenly spaced epochs including the first and the last."""
-    epochs = list(map(int, epochs))
+def pick_epochs(epochs, n: int = 6) -> list[float]:
+    """`n` recorded frames spanning the run by value, first and last included.
+
+    Selecting by epoch *value* (not by position) keeps the static filmstrip
+    spanning the whole run even though the dense early sampling packs many
+    frames into the first epochs.
+    """
+    epochs = [float(e) for e in epochs]
     if len(epochs) <= n:
         return epochs
-    idx = np.unique(np.linspace(0, len(epochs) - 1, n).round().astype(int))
-    return [epochs[i] for i in idx]
+    lo, hi = min(epochs), max(epochs)
+    picked: list[float] = []
+    for target in np.linspace(lo, hi, n):
+        nearest = min(epochs, key=lambda e: abs(e - target))
+        if nearest not in picked:
+            picked.append(nearest)
+    return picked
 
 
 def _slot_order(selection: dict) -> list[int]:
@@ -41,6 +53,22 @@ def _slot_order(selection: dict) -> list[int]:
 def _row_label(selection: dict, slot: int) -> str:
     snr = selection["snr"][slot]
     return f"{selection['regime'][slot]}\nI/σ={snr:.1f}"
+
+
+def _balanced_rows(selection: dict, max_rows: int) -> list[int]:
+    """Slots spread across the regimes, so the movie shows weak *and* strong.
+
+    Taking the first `max_rows` of the regime-sorted order would fill up on
+    weak reflections and never reach strong; splitting the budget evenly
+    keeps the contrast the movie is meant to show.
+    """
+    ordered = _slot_order(selection)
+    regime = selection["regime"]
+    per = max(1, max_rows // len(REGIMES))
+    rows: list[int] = []
+    for name in REGIMES:
+        rows += [s for s in ordered if regime[s] == name][:per]
+    return rows[:max_rows]
 
 
 def plot_tracked_trajectories(scalars: pl.DataFrame):
@@ -154,7 +182,7 @@ def plot_tracked_filmstrip(
     """
     import matplotlib.pyplot as plt
 
-    epochs = [int(e) for e in arrays["epochs"]]
+    epochs = [float(e) for e in arrays["epochs"]]
     shown = pick_epochs(epochs, n_epochs)
     cols = [epochs.index(e) for e in shown]
     shape = tuple(int(s) for s in arrays["shape"])
@@ -163,17 +191,20 @@ def plot_tracked_filmstrip(
     if field == "residual":
         stack = counts[None, ...] - arrays["rates"]
     order = _slot_order(selection)
+    # The join key is a float coordinate; round both sides so a float32 npz
+    # value and a float64 parquet value for the same frame still match.
     qi_lookup = {
-        (row["epoch"], row["slot"]): row["qi_mean"]
+        (round(float(row["epoch"]), 4), row["slot"]): row["qi_mean"]
         for row in scalars.iter_rows(named=True)
     }
+    cbar_label = {"rate": "counts", "profile": "p", "residual": "resid"}[field]
 
     n_rows, n_cols = len(order), len(cols) + 1
     with paper_style():
         fig, axes = plt.subplots(
             n_rows,
             n_cols,
-            figsize=(1.05 * n_cols + 0.8, 1.05 * n_rows),
+            figsize=(1.05 * n_cols + 1.4, 1.05 * n_rows),
             squeeze=False,
         )
         for r, slot in enumerate(order):
@@ -188,15 +219,28 @@ def plot_tracked_filmstrip(
                 va="center",
                 labelpad=16,
             )
+            # One scale for the whole row so the epoch panels are comparable
+            # and a single colorbar tells the truth about a faint profile.
+            if field == "profile":
+                field_max = max(
+                    (
+                        float(middle_slice(stack[ei][slot], shape).max())
+                        for ei in cols
+                    ),
+                    default=1.0,
+                ) or 1.0
+            else:
+                field_max = vmax
+            last_im = None
             for c, epoch_idx in enumerate(cols, start=1):
                 img = middle_slice(stack[epoch_idx][slot], shape)
                 if field == "residual":
-                    imshow_panel(axes[r][c], img, symmetric=True, vmax=vmax)
-                elif field == "profile":
-                    imshow_panel(axes[r][c], img)
+                    last_im = imshow_panel(
+                        axes[r][c], img, symmetric=True, vmax=field_max
+                    )
                 else:
-                    imshow_panel(axes[r][c], img, vmax=vmax)
-                posterior = qi_lookup.get((epochs[epoch_idx], slot))
+                    last_im = imshow_panel(axes[r][c], img, vmax=field_max)
+                posterior = qi_lookup.get((round(epochs[epoch_idx], 4), slot))
                 if posterior is not None:
                     axes[r][c].text(
                         0.04,
@@ -208,10 +252,14 @@ def plot_tracked_filmstrip(
                         ha="left",
                         va="top",
                     )
+            if last_im is not None:
+                add_colorbar(last_im, axes[r][-1], label=cbar_label, pad=0.08)
             if r == 0:
                 axes[r][0].set_title("observed", fontsize=7)
                 for c, epoch_idx in enumerate(cols, start=1):
-                    axes[r][c].set_title(f"ep {epochs[epoch_idx]}", fontsize=7)
+                    axes[r][c].set_title(
+                        f"ep {fmt_epoch(epochs[epoch_idx])}", fontsize=7
+                    )
         if field == "rate":
             fig.supxlabel(
                 "inset number = posterior mean intensity", fontsize=6,
@@ -231,36 +279,54 @@ def animate_tracked(selection: dict, arrays: dict, max_rows: int = 6):
     import matplotlib.pyplot as plt
     from matplotlib.animation import FuncAnimation
 
-    epochs = [int(e) for e in arrays["epochs"]]
+    epochs = [float(e) for e in arrays["epochs"]]
     shape = tuple(int(s) for s in arrays["shape"])
     counts, rates = arrays["counts"], arrays["rates"]
     profiles = arrays["profiles"]
-    order = _slot_order(selection)[:max_rows]
+    order = _balanced_rows(selection, max_rows)
     panels = ("observed", "rate", "profile", "residual")
+    n_frames = len(epochs)
 
     with paper_style():
         fig, axes = plt.subplots(
             len(order),
             len(panels),
-            figsize=(1.15 * len(panels) + 0.9, 1.15 * len(order)),
+            figsize=(1.15 * len(panels) + 1.4, 1.15 * len(order)),
             squeeze=False,
         )
         images = {}
         for r, slot in enumerate(order):
             obs = middle_slice(counts[slot], shape)
             vmax = float(obs.max()) or 1.0
-            imshow_panel(axes[r][0], obs, vmax=vmax)
+            # Hold the color scale fixed across the movie: for the profile the
+            # frame-0 max is the untrained near-uniform profile, so scaling to
+            # it would saturate the panel the moment the peak sharpens. A fixed
+            # scale lets the peak visibly grow out of the flat prior.
+            prof_max = max(
+                float(middle_slice(profiles[f][slot], shape).max())
+                for f in range(n_frames)
+            ) or 1.0
+            resid_max = max(
+                float(
+                    np.abs(
+                        middle_slice(counts[slot] - rates[f][slot], shape)
+                    ).max()
+                )
+                for f in range(n_frames)
+            ) or 1.0
+            obs_im = imshow_panel(axes[r][0], obs, vmax=vmax)
             images[(r, "rate")] = imshow_panel(
                 axes[r][1], middle_slice(rates[0][slot], shape), vmax=vmax
             )
             images[(r, "profile")] = imshow_panel(
-                axes[r][2], middle_slice(profiles[0][slot], shape)
+                axes[r][2], middle_slice(profiles[0][slot], shape),
+                vmax=prof_max,
             )
             images[(r, "residual")] = imshow_panel(
                 axes[r][3],
                 middle_slice(counts[slot] - rates[0][slot], shape),
                 symmetric=True,
-                vmax=vmax,
+                vmax=resid_max,
             )
             axes[r][0].set_ylabel(
                 _row_label(selection, slot),
@@ -270,13 +336,17 @@ def animate_tracked(selection: dict, arrays: dict, max_rows: int = 6):
                 va="center",
                 labelpad=16,
             )
+            # Fixed scales, so one colorbar per panel stays valid every frame.
+            add_colorbar(obs_im, axes[r][0], label="counts")
+            add_colorbar(images[(r, "profile")], axes[r][2], label="p")
+            add_colorbar(images[(r, "residual")], axes[r][3], label="resid")
         for c, name in enumerate(panels):
             axes[0][c].set_title(name, fontsize=7)
-        suptitle = fig.suptitle(f"epoch {epochs[0]}", fontsize=9)
+        suptitle = fig.suptitle(f"epoch {fmt_epoch(epochs[0])}", fontsize=9)
 
         def update(frame):
             artists = [suptitle]
-            suptitle.set_text(f"epoch {epochs[frame]}")
+            suptitle.set_text(f"epoch {fmt_epoch(epochs[frame])}")
             for r, slot in enumerate(order):
                 rate = middle_slice(rates[frame][slot], shape)
                 images[(r, "rate")].set_data(rate)

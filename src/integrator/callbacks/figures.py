@@ -96,6 +96,23 @@ def _profile_decoder(pl_module):
     return getattr(surrogates["qp"], "decoder", None)
 
 
+def _dense_stride(trainer, per_epoch: int) -> int:
+    """Record every n-th training batch to get `per_epoch` frames an epoch.
+
+    Expressing the dense cadence as a fraction of an epoch keeps it robust
+    to batch size: `per_epoch=20` is twenty frames whether an epoch is 80
+    batches or 8000. Returns 0 when the batch count is unknown (iterable
+    datasets), which disables dense sampling.
+    """
+    try:
+        nb = int(getattr(trainer, "num_training_batches", 0))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    if nb <= 0:
+        return 0
+    return max(1, nb // max(1, per_epoch))
+
+
 class TrackedShoeboxLogger(Callback):
     """Replay a fixed set of shoeboxes each epoch and record the predictions.
 
@@ -104,10 +121,17 @@ class TrackedShoeboxLogger(Callback):
     shows how the posterior behaves where the data is informative and
     where it is not.
 
+    Profiles settle within the first epoch, so the first `dense_window`
+    epochs are sampled `dense_per_epoch` times each (via the training
+    batches) to give the movie a smooth start; later epochs keep the
+    one-frame-per-epoch cadence.
+
     Args:
         out_dir: Directory for the figure dumps.
         n_per_regime: Shoeboxes tracked per regime.
-        every_n_epochs: Record every n-th epoch.
+        every_n_epochs: Record every n-th epoch, once past the dense window.
+        dense_window: Epochs from the start to sample within an epoch.
+        dense_per_epoch: Frames per epoch inside the dense window.
         plot: Render the figures at the end of training.
         animate: Also write the training movie as a GIF.
     """
@@ -117,6 +141,8 @@ class TrackedShoeboxLogger(Callback):
         out_dir,
         n_per_regime: int = 4,
         every_n_epochs: int = 1,
+        dense_window: int = 2,
+        dense_per_epoch: int = 20,
         plot: bool = True,
         animate: bool = True,
     ):
@@ -124,10 +150,13 @@ class TrackedShoeboxLogger(Callback):
         self.out_dir = Path(out_dir)
         self.n_per_regime = n_per_regime
         self.every_n_epochs = max(1, int(every_n_epochs))
+        self.dense_window = max(0, int(dense_window))
+        self.dense_per_epoch = max(1, int(dense_per_epoch))
         self.plot = plot
         self.animate = animate
         self._recorder: TrackedRecorder | None = None
         self._batch = None
+        self._failed = False
 
     def _build(self, trainer, pl_module) -> None:
         base, indices = _val_dataset(trainer)
@@ -165,31 +194,60 @@ class TrackedShoeboxLogger(Callback):
             ),
         )
 
-    def on_validation_epoch_end(self, trainer, pl_module) -> None:
-        """Record one epoch of predictions for the tracked shoeboxes."""
-        if trainer.sanity_checking:
-            return
-        epoch = int(trainer.current_epoch)
-        if epoch % self.every_n_epochs:
-            return
-        if self._recorder is None:
-            try:
-                self._build(trainer, pl_module)
-            except Exception as exc:  # noqa: BLE001 - never break a run
-                logger.warning("tracked-shoebox selection failed: %s", exc)
-                self.every_n_epochs = 10**9
-                return
+    def _ensure_built(self, trainer, pl_module) -> bool:
+        """Build the tracked set once; never retry after a failure."""
+        if self._recorder is not None:
+            return True
+        if self._failed:
+            return False
+        try:
+            self._build(trainer, pl_module)
+        except Exception as exc:  # noqa: BLE001 - never break a run
+            logger.warning("tracked-shoebox selection failed: %s", exc)
+            self._failed = True
+            return False
+        return True
 
+    def _capture(self, coord: float, pl_module) -> None:
+        """Replay the tracked batch and record predictions at `coord`."""
         was_training = pl_module.training
         pl_module.eval()
         try:
             with torch.no_grad(), _frozen_rng():
                 batch = _to_device(self._batch, pl_module.device)
                 out = pl_module(*batch)["forward_out"]
-                self._recorder.record(epoch, out)
+                self._recorder.record(coord, out)
         finally:
             pl_module.train(was_training)
         self._recorder.save(self.out_dir)
+
+    def on_train_batch_end(
+        self, trainer, pl_module, outputs, batch, batch_idx
+    ) -> None:
+        """Sample the tracked shoeboxes within the first few epochs."""
+        if trainer.sanity_checking or trainer.current_epoch >= self.dense_window:
+            return
+        stride = _dense_stride(trainer, self.dense_per_epoch)
+        if stride == 0 or batch_idx % stride:
+            return
+        if not self._ensure_built(trainer, pl_module):
+            return
+        coord = trainer.current_epoch + batch_idx / int(
+            trainer.num_training_batches
+        )
+        self._capture(coord, pl_module)
+
+    def on_validation_epoch_end(self, trainer, pl_module) -> None:
+        """Record one whole-epoch frame once past the dense window."""
+        if trainer.sanity_checking:
+            return
+        epoch = int(trainer.current_epoch)
+        # Inside the dense window on_train_batch_end already covers this epoch.
+        if epoch < self.dense_window or epoch % self.every_n_epochs:
+            return
+        if not self._ensure_built(trainer, pl_module):
+            return
+        self._capture(float(epoch), pl_module)
 
     def on_fit_end(self, trainer, pl_module) -> None:
         """Write the dumps and render the tracked-shoebox figures."""
@@ -211,42 +269,74 @@ class TrackedShoeboxLogger(Callback):
 
 
 class ProfileBasisLogger(Callback):
-    """Snapshot the learned profile decoder once per epoch.
+    """Snapshot the learned profile decoder over training.
 
-    No-op when the profile surrogate has no linear decoder, which is the
-    case for the Dirichlet profile.
+    The first `dense_window` epochs are snapshot `dense_per_epoch` times
+    each so the basis movie shows the profile modes lifting out of the
+    initialization; later epochs snapshot once each. No-op when the
+    profile surrogate has no linear decoder (e.g. the Dirichlet profile).
+
+    Args:
+        out_dir: Directory for the figure dumps.
+        every_n_epochs: Snapshot every n-th epoch, once past the dense window.
+        dense_window: Epochs from the start to snapshot within an epoch.
+        dense_per_epoch: Snapshots per epoch inside the dense window.
+        plot: Render the figures at the end of training.
+        animate: Also write the basis movie as a GIF.
     """
 
     def __init__(
         self,
         out_dir,
         every_n_epochs: int = 1,
+        dense_window: int = 2,
+        dense_per_epoch: int = 20,
         plot: bool = True,
         animate: bool = True,
     ):
         super().__init__()
         self.out_dir = Path(out_dir)
         self.every_n_epochs = max(1, int(every_n_epochs))
+        self.dense_window = max(0, int(dense_window))
+        self.dense_per_epoch = max(1, int(dense_per_epoch))
         self.plot = plot
         self.animate = animate
         self._recorder: BasisRecorder | None = None
 
-    def on_train_epoch_end(self, trainer, pl_module) -> None:
-        """Store this epoch's decoder weight and bias."""
-        if trainer.sanity_checking:
-            return
-        epoch = int(trainer.current_epoch)
-        if epoch % self.every_n_epochs:
-            return
+    def _snapshot(self, coord: float, pl_module) -> None:
+        """Record the decoder weight and bias at `coord`, if there is one."""
         decoder = _profile_decoder(pl_module)
         if decoder is None:
             return
         if self._recorder is None:
             self._recorder = BasisRecorder(pl_module.shoebox_shape)
         self._recorder.record(
-            epoch, decoder.weight.detach(), decoder.bias.detach()
+            coord, decoder.weight.detach(), decoder.bias.detach()
         )
         self._recorder.save(self.out_dir)
+
+    def on_train_batch_end(
+        self, trainer, pl_module, outputs, batch, batch_idx
+    ) -> None:
+        """Snapshot the decoder within the first few epochs."""
+        if trainer.sanity_checking or trainer.current_epoch >= self.dense_window:
+            return
+        stride = _dense_stride(trainer, self.dense_per_epoch)
+        if stride == 0 or batch_idx % stride:
+            return
+        coord = trainer.current_epoch + batch_idx / int(
+            trainer.num_training_batches
+        )
+        self._snapshot(coord, pl_module)
+
+    def on_train_epoch_end(self, trainer, pl_module) -> None:
+        """Store a whole-epoch snapshot once past the dense window."""
+        if trainer.sanity_checking:
+            return
+        epoch = int(trainer.current_epoch)
+        if epoch < self.dense_window or epoch % self.every_n_epochs:
+            return
+        self._snapshot(float(epoch), pl_module)
 
     def on_fit_end(self, trainer, pl_module) -> None:
         """Write the snapshots and render the basis figures."""
