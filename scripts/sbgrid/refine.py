@@ -140,19 +140,27 @@ def ensure_free_flags(
 
     ds = rs.read_mtz(str(mtz))
     existing = [c for c in ds.columns if "free" in c.lower()]
-    if existing:
-        print(f"  free flags already present: {existing[0]}")
-        return mtz
-
     shared = out_dir.parent / "rfree.mtz"
+
+    # a named donor overrides flags already in the file. dials.merge writes a
+    # FreeR_flag of its own, drawn independently per run: two arms merged
+    # separately came out agreeing at chance, so trusting the column that is
+    # already there is what makes R-free incomparable.
     if donor is not None:
         if not donor.exists():
             raise SystemExit(f"--rfree-from {donor} does not exist")
         reference = rs.read_mtz(str(donor))
         if not [c for c in reference.columns if "free" in c.lower()]:
             raise SystemExit(f"--rfree-from {donor} carries no free flags")
+        ds = ds.drop(columns=existing) if existing else ds
         ds = rs.utils.copy_rfree(ds, reference)
-        print(f"  copied free flags from {donor}")
+        if existing:
+            print(f"  replaced {existing[0]} with the free flags from {donor}")
+        else:
+            print(f"  copied free flags from {donor}")
+    elif existing:
+        print(f"  free flags already present: {existing[0]}")
+        return mtz
     elif shared.exists():
         # a sibling arm already made one; copy it so both hold out the same
         # reflections
