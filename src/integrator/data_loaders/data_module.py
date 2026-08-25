@@ -88,6 +88,10 @@ DEFAULT_DS_COLS = [
     "is_coset",
     "group_label",
     "profile_group_label",
+    # which sweep a reflection came from, for datasets combined across
+    # several crystals: without it a prediction cannot be written back to
+    # the reflection table it belongs to
+    "sweep_id",
 ]
 
 
