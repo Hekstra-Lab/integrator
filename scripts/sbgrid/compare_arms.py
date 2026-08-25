@@ -41,6 +41,13 @@ def parse_args():
     p.add_argument("--reference", type=Path, required=True)
     p.add_argument("--integrator", type=Path, required=True)
     p.add_argument("--labels", nargs=2, default=("DIALS", "integrator"))
+    p.add_argument(
+        "--refine-subdir",
+        nargs=2,
+        default=("refine", "refine"),
+        help="refinement subdirectory within each arm; an arm refined more "
+        "than once keeps each attempt in its own directory",
+    )
     p.add_argument("--out", type=Path, default=None, help="write the peak table")
     p.add_argument(
         "--peak-tol",
@@ -56,13 +63,13 @@ def merging_stats(arm: Path) -> pl.DataFrame | None:
     return pl.read_csv(path) if path.exists() else None
 
 
-def rfactors(arm: Path) -> tuple[float, float] | None:
+def rfactors(arm: Path, subdir: str = "refine") -> tuple[float, float] | None:
     """The last R-work/R-free phenix printed.
 
     The last, not the first: a refinement prints one pair per macro-cycle and
     only the final one describes the model that was written out.
     """
-    log = arm / "refine" / "phenix_refine.log"
+    log = arm / subdir / "phenix_refine.log"
     if not log.exists():
         return None
     found = RFACTOR.findall(log.read_text(errors="replace"))
@@ -72,8 +79,8 @@ def rfactors(arm: Path) -> tuple[float, float] | None:
     return float(work), float(free)
 
 
-def peaks(arm: Path) -> pl.DataFrame | None:
-    path = arm / "refine" / "peaks.csv"
+def peaks(arm: Path, subdir: str = "refine") -> pl.DataFrame | None:
+    path = arm / subdir / "peaks.csv"
     if not path.exists():
         return None
     frame = pl.read_csv(path)
@@ -196,14 +203,17 @@ def main():
 
     print("\nrefinement")
     print(f"  {'':>16s}{labels[0]:>12s}{labels[1]:>12s}")
-    ra, rb = rfactors(args.reference), rfactors(args.integrator)
+    sub_a, sub_b = args.refine_subdir
+    ra = rfactors(args.reference, sub_a)
+    rb = rfactors(args.integrator, sub_b)
     if ra and rb:
         for i, name in enumerate(("R-work", "R-free")):
             print(f"  {name:>16s}{ra[i]:>12.4f}{rb[i]:>12.4f}")
     else:
         print(f"  {'':>16s}{str(ra):>12s}{str(rb):>12s}   (incomplete)")
 
-    pa, pb = peaks(args.reference), peaks(args.integrator)
+    pa = peaks(args.reference, sub_a)
+    pb = peaks(args.integrator, sub_b)
     if pa is not None and pb is not None:
         show_peaks(pa, pb, labels, args.out, args.peak_tol)
         print(f"\n  peaks above 5 sigma: {labels[0]} {len(pa)}, "
