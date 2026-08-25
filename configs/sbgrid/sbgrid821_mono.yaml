@@ -14,6 +14,9 @@ integrator:
   args:
     encoder_out: 64
     mc_samples: 100
+    # sweep_id routes each prediction back to the reflection table it came
+    # from; without it a multi-sweep dataset cannot be written back
+    additional_predict_keys: [sweep_id]
     predict_keys: default
 # no `encoders:` -> the factory synthesizes 3D encoders from dataset.yaml
 
