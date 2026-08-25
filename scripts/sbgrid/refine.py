@@ -208,22 +208,38 @@ def ligand_restraints(
 def anomalous_map_columns(mtz: Path) -> tuple[str, str] | None:
     """Find the anomalous difference map's amplitude and phase columns.
 
-    Their names depend on how the map was requested: phenix writes
-    ANOM/PHANOM by default and `anomalous`/`PHanomalous` when the map type is
-    named explicitly. Detecting beats assuming -- a wrong guess fails inside
-    rs.find_peaks with a KeyError naming a column, long after refinement has
-    spent its time.
+    By MTZ column *type*, not by name. Names vary with how the map was
+    requested -- phenix writes ANOM/PHANOM by default and
+    `anomalous`/`PHanomalous` when the map type is named explicitly -- but
+    the types do not: a map coefficient pair is an amplitude (type F) and a
+    phase (type P) sharing an MTZ dataset. The model's own F-model columns
+    are type G, an anomalous amplitude pair, so they fall out on their own.
+
+    Among candidate pairs the one whose name mentions the anomalous map wins;
+    otherwise the first is returned, since a refinement asked for one map.
     """
     import gemmi
 
-    columns = [c.label for c in gemmi.read_mtz_file(str(mtz)).columns]
-    for amplitude in ("ANOM", "anomalous", "DELFWT"):
-        if amplitude not in columns:
-            continue
-        for phase in (f"PH{amplitude}", f"PHI{amplitude}", "PHDELWT"):
-            if phase in columns:
-                return amplitude, phase
-    return None
+    columns = gemmi.read_mtz_file(str(mtz)).columns
+    amplitudes = [c for c in columns if c.type == "F"]
+    phases = [c for c in columns if c.type == "P"]
+
+    pairs = []
+    for amplitude in amplitudes:
+        for phase in phases:
+            if phase.dataset_id != amplitude.dataset_id:
+                continue
+            # a phase column is conventionally the amplitude's name with a
+            # PH prefix, which disambiguates when a dataset holds several
+            if amplitude.label in phase.label or len(amplitudes) == 1:
+                pairs.append((amplitude.label, phase.label))
+
+    if not pairs:
+        return None
+    for amplitude, phase in pairs:
+        if "anom" in amplitude.lower():
+            return amplitude, phase
+    return pairs[0]
 
 
 def main():
