@@ -11,7 +11,7 @@ DIALS merged.html; the poly side derives the same columns from careless output.
 
 Usage:
     python emit_merging_stats.py MERGED_HTML [-o OUT_CSV]
-    python emit_merging_stats.py --run-dir RUN     # every predictions/epoch_*/dials/merged.html
+    python emit_merging_stats.py --run-dir RUN     # every <predictions>/*/dials/merged.html
 """
 
 import argparse
@@ -57,6 +57,25 @@ def _num(v):
 
 def _to_int(x):
     return int(x) if x is not None else None
+
+
+def _predictions_dir(run: Path) -> Path:
+    """Resolve the predictions dir for a run.
+
+    With W&B the output root moves under the wandb run dir, so
+    `<run>/predictions` is wrong; `run_paths.yaml` records the real
+    location (matching how 03_pipeline.sh resolves the checkpoint). Fall
+    back to `<run>/predictions` for local-only runs without that file.
+    """
+    rp = run / "run_paths.yaml"
+    if rp.exists():
+        import yaml
+
+        info = yaml.safe_load(rp.read_text()) or {}
+        pred = info.get("predictions_dir")
+        if pred:
+            return Path(pred)
+    return run / "predictions"
 
 
 def stats_from_merged_html(path: Path) -> pd.DataFrame | None:
@@ -128,9 +147,12 @@ def main() -> None:
 
     if args.run_dir:
         run = Path(args.run_dir)
-        htmls = sorted(run.glob("predictions/epoch_*/dials/merged.html"))
+        pred_dir = _predictions_dir(run)
+        # The partition subdir is named after the checkpoint stem (e.g. `last`),
+        # not `epoch_*`; match any single-level partition dir.
+        htmls = sorted(pred_dir.glob("*/dials/merged.html"))
         if not htmls:
-            raise SystemExit(f"no merged.html under {run}/predictions/epoch_*/dials/")
+            raise SystemExit(f"no merged.html under {pred_dir}/*/dials/")
         for h in htmls:
             emit(h)
     elif args.merged_html:
