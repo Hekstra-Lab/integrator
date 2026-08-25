@@ -50,6 +50,13 @@ def parse_args():
     p.add_argument("--macro-cycles", type=int, default=3)
     p.add_argument("--rfree-fraction", type=float, default=0.05)
     p.add_argument(
+        "--rfree-from",
+        type=Path,
+        default=None,
+        help="MTZ whose R-free flags to copy, so two arms hold out the same "
+        "reflections; pass the arm that was refined first",
+    )
+    p.add_argument(
         "--rfree-seed",
         type=int,
         default=2026,
@@ -107,13 +114,27 @@ def anomalous_sites(model: Path) -> dict[str, int]:
     return counts
 
 
-def ensure_free_flags(mtz: Path, out_dir: Path, fraction: float, seed: int) -> Path:
+def ensure_free_flags(
+    mtz: Path,
+    out_dir: Path,
+    fraction: float,
+    seed: int,
+    donor: Path | None = None,
+) -> Path:
     """Add an R-free set to the merged MTZ, or reuse one already there.
 
     One free set is generated per dataset and then copied to every arm, not
     generated per arm: each arm holding out different reflections would make
     R-free incomparable between them, which is the comparison the whole
-    exercise exists for. The seed is fixed for the same reason.
+    exercise exists for. The seed is fixed for the same reason, but a fixed
+    seed is not enough on its own -- `add_rfree` draws over whichever
+    reflections the arm actually measured, and two arms rarely measure the
+    same set -- so the second arm copies rather than redraws.
+
+    `donor` names that first arm's MTZ explicitly. Relying on a shared file
+    turning up at a fixed relative path is how the arms silently stop sharing:
+    the reference's flags ended up inside its own merged MTZ, where no
+    sibling-directory lookup would ever have found them.
     """
     import reciprocalspaceship as rs
 
@@ -124,7 +145,15 @@ def ensure_free_flags(mtz: Path, out_dir: Path, fraction: float, seed: int) -> P
         return mtz
 
     shared = out_dir.parent / "rfree.mtz"
-    if shared.exists():
+    if donor is not None:
+        if not donor.exists():
+            raise SystemExit(f"--rfree-from {donor} does not exist")
+        reference = rs.read_mtz(str(donor))
+        if not [c for c in reference.columns if "free" in c.lower()]:
+            raise SystemExit(f"--rfree-from {donor} carries no free flags")
+        ds = rs.utils.copy_rfree(ds, reference)
+        print(f"  copied free flags from {donor}")
+    elif shared.exists():
         # a sibling arm already made one; copy it so both hold out the same
         # reflections
         reference = rs.read_mtz(str(shared))
@@ -268,7 +297,7 @@ def main():
     mtz = args.mtz
     if not args.dry_run:
         mtz = ensure_free_flags(
-            mtz, out_dir, args.rfree_fraction, args.rfree_seed
+            mtz, out_dir, args.rfree_fraction, args.rfree_seed, args.rfree_from
         )
     labels = None if args.dry_run else xray_labels(mtz, anomalous)
     if labels:

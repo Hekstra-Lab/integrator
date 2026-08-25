@@ -56,7 +56,10 @@ echo "===== dials.scale over ${#refls[@]} sweep(s)"
 python "$INTEGRATOR_ROOT/scripts/mono/emit_merging_stats.py" "$work/merged.html"
 
 echo "===== refine and find peaks"
+# the reference's free flags, not a fresh draw: R-free only compares between
+# the arms if both hold out the same reflections
 python "$INTEGRATOR_ROOT/scripts/sbgrid/refine.py" \
-    --mtz "$work/merged.mtz" --data-dir "$DATA_DIR"
+    --mtz "$work/merged.mtz" --data-dir "$DATA_DIR" \
+    --rfree-from "$DATA_DIR/dials_reference/merged.mtz"
 
 echo "===== done: $work"
