@@ -246,10 +246,16 @@ def main():
             f"and {dB:.2f} A^2 in B"
         )
 
-    label, _, (G, B) = frames[0]
-    print(f"\nfor a config whose lp_correction matches '{label.split(' (')[0]}':")
-    print(f"    init_G: {G:.4g}")
-    print(f"    init_B: {B:.1f}")
+    # one recommendation per frame. Printing only the first invites pasting
+    # the raw numbers into an lp_correction: true config, which mis-inits G by
+    # the mean lp -- a factor of several, and the classic route to a collapsed
+    # G/B.
+    for label, _, (G, B) in frames:
+        setting = "true" if label.startswith("as-stored") else "false"
+        print(f"\nfor lp_correction: {setting}   ({label})")
+        print(f"    init_G: {G:.4g}")
+        print(f"    init_B: {B:.1f}")
+    B = frames[0][2][1]
     if B <= 0:
         print(
             "\nNOTE: B <= 0 means <I> rises with resolution -- suspicious. Check the "
