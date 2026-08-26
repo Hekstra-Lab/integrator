@@ -152,7 +152,7 @@ def integrator_arms(dataset: Path) -> list[tuple[str, Path, Path]]:
 
 def main():
     args = parse_args()
-    rows = []
+    rows, missing = [], []
     for dataset in args.dataset:
         card = {}
         card_path = dataset / "dataset_card.json"
@@ -164,13 +164,29 @@ def main():
         row = arm_row(f"DIALS ({args.dials_arm})", html, refine)
         if row:
             rows.append({"dataset": label, **row})
-        for name, merged, refined in integrator_arms(dataset):
+        else:
+            # say so rather than dropping the dataset: an absent row reads as
+            # "nothing to report" when it means "this merge was never made"
+            missing.append(
+                f"{label}: no DIALS '{args.dials_arm}' merge at {html.parent}"
+                + ("  -- run cannon/07_intensity_choice.sh"
+                   if args.dials_arm != "combine" else "")
+            )
+        arms = integrator_arms(dataset)
+        if not arms:
+            missing.append(f"{label}: no integrator arm has finished the pipeline")
+        for name, merged, refined in arms:
             row = arm_row(name, merged, refined)
             if row:
                 rows.append({"dataset": label, **row})
+            else:
+                missing.append(f"{label}/{name}: no merged.html at {merged.parent}")
 
     if not rows:
-        raise SystemExit("no finished arms found under the given datasets")
+        raise SystemExit(
+            "no finished arms found under the given datasets:\n  "
+            + "\n  ".join(missing)
+        )
 
     order = ["dataset", "arm", "resolution", "cc_half", "cc_half_outer",
              "i_over_sigma", "i_over_sigma_outer", "r_pim", "r_pim_outer",
@@ -196,7 +212,16 @@ def main():
     print(f"DIALS arm: {args.dials_arm}"
           + ("  (the no-borrowing benchmark)" if args.dials_arm == "sum" else
              "  -- profile borrowing inflates CC-half at low signal"))
+    if args.dials_arm != "combine":
+        # the alternative merges are diagnostics and are not refined, so the
+        # DIALS row's merging columns and its refinement columns come from
+        # different merges. Same intensities, different weighting of them.
+        print(f"  note: DIALS merging columns are from the '{args.dials_arm}' "
+              "merge; its r_work/r_free/peaks are from the refined 'combine' "
+              "merge, which is the only DIALS arm that is refined")
     print(text)
+    for line in missing:
+        print(f"  missing: {line}")
     if args.out:
         args.out.write_text(text)
         print(f"\nwrote {args.out}")
