@@ -66,6 +66,13 @@ def parse_args():
         action="store_true",
         help="archive every epoch, not just the last",
     )
+    p.add_argument(
+        "--method",
+        choices=("rotation", "laue"),
+        default=None,
+        help="override the detected method; needed for a raw-only dataset, "
+        "which has no dataset_card yet, and useful if detection is ever wrong",
+    )
     p.add_argument("--dry-run", action="store_true")
     return p.parse_args()
 
@@ -148,7 +155,36 @@ def write_tar(items, destination: Path, dry: bool) -> int:
     return destination.stat().st_size
 
 
-def index_row(dataset: Path, tiers: dict) -> dict:
+def detect_method(dataset: Path, override: str | None) -> str:
+    """rotation / laue / blank, but never a guess dressed as a fact.
+
+    The flag lives in dataset_card.json, which `mksbox` writes during
+    processing -- so a dataset that has only been downloaded has no card, and
+    reading `polychromatic` off an empty dict returns falsy and labels it
+    "rotation". That is wrong precisely when the label is least verifiable,
+    and a wrong value in a durable index outlives whatever produced it.
+    Absent is reported as absent; `--method` states it when it is known.
+    """
+    if override:
+        return override
+    for path, key in (
+        (dataset / "dataset_card.json", "polychromatic"),
+        (dataset / "integrator" / "dataset" / "dataset.yaml", "polychromatic"),
+    ):
+        if not path.exists():
+            continue
+        if path.suffix == ".json":
+            record = json.loads(path.read_text())
+        else:
+            import yaml
+
+            record = yaml.safe_load(path.read_text()) or {}
+        if key in record:
+            return "laue" if record[key] else "rotation"
+    return ""
+
+
+def index_row(dataset: Path, tiers: dict, method: str | None = None) -> dict:
     card, source = {}, {}
     if (dataset / "dataset_card.json").exists():
         card = json.loads((dataset / "dataset_card.json").read_text())
@@ -156,8 +192,8 @@ def index_row(dataset: Path, tiers: dict) -> dict:
         source = json.loads((dataset / "sbgrid_source.json").read_text())
     return {
         "id": dataset.name,
-        "pdb": card.get("pdb_id", "?"),
-        "method": "laue" if card.get("polychromatic") else "rotation",
+        "pdb": card.get("pdb_id", ""),
+        "method": detect_method(dataset, method),
         # where the images are while the transition to netscratch is in progress
         "raw_location": str(dataset),
         "n_images": source.get("n_images", ""),
@@ -246,7 +282,7 @@ def main():
           f"in ~{files_written} files at {target}")
     print(f"  (the same content loose would be "
           f"{len(items) + len(ckpts)} files)")
-    update_index(args.archive_root, index_row(dataset, tiers), args.dry_run)
+    update_index(args.archive_root, index_row(dataset, tiers, args.method), args.dry_run)
     return 0
 
 
