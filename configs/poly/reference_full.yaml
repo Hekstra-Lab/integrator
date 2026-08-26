@@ -96,7 +96,7 @@ loss:
     lambda_max: 1.25
     spectrum_init_from: null    # path to a checkpoint to warm-start G/B
     # --- shared Wilson prior ---
-    init_B: 30.0                # init Wilson B (A^2): softplus(raw_B) + b_min
+    init_log_B: 3.0
     b_min: 0.0
     # --- fixed geometric corrections --- 
     polarization: false         # requires beam_center when true
