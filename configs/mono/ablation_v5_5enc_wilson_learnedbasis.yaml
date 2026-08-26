@@ -1,0 +1,135 @@
+# Ablation V5 -- learned-basis (W h + b) profile (micro), else as V4.
+#   encoders : 5 (profile + one encoder each for k_i, r_i, k_bg, r_bg)
+#   qi/qbg   : Gamma, shape_rate parameterization ("GammaA")
+#   profile  : learned-basis logistic-normal, prf = softmax(W h + b)
+#   prior    : Wilson intensity prior Gamma(1, tau(d)) + global background Gamma
+#
+# Final link of the chain (V4 -> V5): the only change from V4 is the profile
+# model, Dirichlet -> learned basis. This version has a qp decoder, so
+# decoder_weight_decay applies (it was null for the Dirichlet versions).
+mode: monochromatic              # rotation-method monochromatic crystallography
+
+integrator:
+  name: hierarchical             # 5 encoders: profile, k_i, r_i, k_bg, r_bg
+  args:
+    encoder_out: 32              # micro embedding width feeding the surrogates (full: 64)
+    mc_samples: 100              # Monte Carlo samples per forward pass
+    # data_dim: 3d               # 2d | 3d (filled from <data_dir>/dataset.yaml if omitted)
+    # d: 3                       # shoebox depth (z-slices); from dataset.yaml if omitted
+    # h: 21                      # shoebox height
+    # w: 21                      # shoebox width
+    predict_keys: default        # 'default' -> mode-minimal columns; or an explicit list
+    # additional_predict_keys: [qp_mean, qp_loc, qp_scale]   # learned-basis extras
+
+encoders:                        # positionally matched to the integrator's slots
+- name: profile_encoder
+  args:
+    data_dim: 3d
+    encoder_out: 32
+    conv1_out_channels: 16
+    conv2_out_channels: 32
+    dropout: 0.0
+- &intensity_encoder             # reused for the 4 intensity/background slots
+  name: intensity_encoder
+  args:
+    data_dim: 3d
+    encoder_out: 32
+    conv1_out_channels: 16
+    conv2_out_channels: 32
+    conv3_out_channels: 64
+- *intensity_encoder             # r_i
+- *intensity_encoder             # k_bg
+- *intensity_encoder             # r_bg
+
+optimizer:
+  lr: 0.001                      # base Adam learning rate
+  weight_decay: 0.0              # Adam weight decay on all params
+  decoder_weight_decay: 1.0e-3   # separate decay for the learned-basis qp decoder W
+  lr_schedule: null              # null | cosine_warmup | step_linear_warmup
+  warmup_epochs: 5               # used by cosine_warmup
+  warmup_steps: 0                # used by step_linear_warmup
+  lr_min: 1.0e-5                 # schedule floor LR (<= lr)
+
+surrogates:
+  qi:                            # intensity posterior q(I)
+    name: gamma                  # the only intensity/background surrogate family
+    args:
+      reparameterization: shape_rate   # shape_rate ("GammaA") | mean_fano | nakagami
+      k_min: 0.01                       # floor on the Gamma shape k (rsample stability)
+      eps: 1.0e-6                        # numerical floor on the rate
+      positive_constraint: softplus     # softplus | exp; or a [k_head, r_head] pair
+      # in_features: 32                  # auto-injected from integrator.encoder_out
+      # --- nakagami-only (reparameterization: nakagami) ---
+      # m_min: 0.1
+      # m_init: 1.0
+      # mean_init: null                  # init Omega so the mean starts near this value
+  qbg:                           # background posterior q(bg)
+    name: gamma
+    args:
+      reparameterization: shape_rate
+      k_min: 0.01
+      eps: 1.0e-6
+      positive_constraint: softplus
+  qp:                            # profile posterior q(prf)
+    name: learned_basis_profile  # prf = softmax(W h + b), learned basis W
+    args:
+      latent_dim: 12             # dimension of the latent profile code h
+      init_std: 0.5              # initial posterior std of h
+      prior_scale: 3.0           # std of the N(0, prior_scale) latent prior
+      smoothness_weight: 0.0     # >0 penalizes spatial roughness of the basis W
+      # input_dim: 32            # auto-injected from integrator.encoder_out
+      # output_dim: 1323         # auto-injected from geometry (d*h*w)
+
+loss:
+  name: monochromatic_wilson
+  args:
+    # init_G: 200.0              # pin the initial scale G; default G = 1
+    init_B: 30.0                 # init Wilson B (A^2): softplus(raw_B) + b_min
+    b_min: 0.0                   # floor on the B factor
+    lp_correction: false         # multiply tau by metadata['lp'] (Lorentz-polarization)
+    n_bins: 1                    # 1 -> single global background Gamma (as in V4)
+    # bg_concentration: 1.7      # background Gamma prior; auto-filled per bin by MLE
+    # bg_rate: 1.8               # (prepare_per_bin_priors) when omitted
+    intensity_kl_weight: 1.0     # weight on KL(q(I) || Wilson Gamma(1, tau))
+    background_kl_weight: 1.0     # weight on KL(q(bg) || background Gamma)
+    profile_kl_weight: 1.0       # weight on KL(q(prf) || N(0, prior_scale) latent)
+
+data_loader:
+  name: rotation_data
+  args:
+    data_dir: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data
+    batch_size: 2048
+    validation_split: 0.2
+    num_workers: 8
+    include_test: true           # include test-set reflections when loading
+    min_valid_pixels: 10         # drop shoeboxes with fewer valid pixels
+    subset_size: null            # cap reflections loaded (debugging); null = all
+    resolution_cutoff: null      # keeps d < cutoff, i.e. drops LOW
+    # resolution; for a high-resolution limit use d_min instead
+    transform: anscombe        # anscombe | log1p | standardization (from dataset.yaml)
+
+trainer:
+  max_epochs: 50
+  accelerator: gpu               # cpu | gpu | auto
+  devices: 1
+  precision: '32'                # '16' | '32'
+  check_val_every_n_epoch: 5
+  log_every_n_steps: 1
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm  # norm | value
+  deterministic: false
+
+# Optional; omit a block to disable it.
+# early_stop:
+#   monitor: val elbo              # any logged metric: {train,val} {elbo,kl,nll}
+#   mode: min
+#   patience: 10
+#   min_delta: 0.0
+
+checkpoint:
+  save_top_k: -1                 # -1 keeps every written ckpt; N keeps best N by monitor
+  monitor: val elbo
+  mode: min
+
+# output:
+#   refl_file: /path/to/reflections.refl   # filled from dataset.yaml if omitted

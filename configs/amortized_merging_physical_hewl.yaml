@@ -1,0 +1,177 @@
+# Amortized merging with the DIALS-style PhysicalScale -- FROM SCRATCH (no
+# warm-start, no freeze). The fully-joint test of the scale fix: integration,
+# scale, and merge all learn together.
+#
+# Identical to amortized_merging_hewl.yaml except the unconstrained 4-layer MLP
+# scale is replaced by PhysicalScale:
+#
+#     s_i = scale(frame) x decay(frame, d) x absorption(Y_lm(crystal-frame dir))
+#
+# Here the scale lives INSIDE the conjugate sum-of-potentials merge (beta_h =
+# tau_h + sigma_i scale_i·sigma_p prf), so it does NOT collapse the way the frozen
+# hierarchical-scaling model did (the derived I_h + Wilson prior partially pin
+# it -- that's why this family reaches ~29, not 7). Its failure mode is the
+# opposite: the MLP scale converged to NO within-image structure (r_detrended~0)
+# because the merge absorbs scale errors into I_h, starving the scale of
+# gradient. A low-dim crystal-frame SH surface is identifiable from that weak
+# gradient where a high-capacity MLP is not.
+#
+# Expectation: closes the 29 -> ~32 scaling gap (match DIALS scaling). It will
+# NOT reach 36 -- that needs the standalone neural integrator's per-obs quality,
+# which this merging model lacks (its profile-fit integration is degraded).
+#
+# PREREQUISITE: scripts/extract_crystal_frame_sh.py --lmax 4 -> metadata_sh.pt
+# (needs s1.* and xyzcal.mm.2 in metadata.pt). Pair with group_by_asu_id: true.
+integrator:
+  name: amortized_merging
+  args:
+    data_dim: 3d
+    d: &d 3
+    h: &h 21
+    w: &w 21
+    lr: 0.001
+
+    merge_aggregation: sum
+    merge_attention: false
+    merge_overdispersion: false
+
+    # Train from scratch (no warm-start, no freeze).
+    init_from_checkpoint: null
+    scaling_lr: 3.0e-3           # decoupled scale-LR group (own Adam group)
+    lr_schedule: step_linear_warmup
+    warmup_steps: 1000
+
+    encoder_out: &encoder_out 64
+    weight_decay: 0.0
+    decoder_weight_decay: 0.0
+    qp_smoothness_weight: 1.0e-2
+    qp_orthogonality_weight: 0.0
+    mc_samples: &mc_samples 100
+    predict_keys: [refl_ids, is_test, qi_mean, qi_var, qbg_mean, qbg_var, intensity.prf.value, intensity.prf.variance, background.mean, d, group_label, qp_mean, qp_loc, qp_scale, asu_id]
+
+    n_hkl: 86402
+    wilson_alpha: 1.0
+    merge_kl_weight: 1.0
+    consistency_weight: 0.1
+
+    # PhysicalScale (DIALS-style). scale_sh_lmax MUST equal the extractor --lmax.
+    scale_physical: true
+    scale_mlp: false
+    scale_sh_lmax: 4             # 24 harmonics (DIALS "low"); 6 -> 48 ("medium")
+    scale_degree: 6             # rotation scale(frame) Chebyshev order
+    scale_degree_decay: 2       # B-factor(frame) order (resolution falloff)
+    scale_absorption_init_std: 0.0   # absorption starts flat; data identifies it
+    # L2 restraint (l(l+1)-weighted) on absorption + decay coeffs -- the term that
+    # opposes the merge/consistency absorbing the Bijvoet signal and stops the
+    # surface running away. Sweep it; watch abs_c_rms/scale_std (run-away) and
+    # compare_scale_to_dials r_detrended / diagnose_bijvoet (over/under-correct).
+    scale_absorption_restraint: 1.0e-2
+    scale_frame_min: -2.0
+    scale_frame_max: 1442.0
+
+# Five encoders: profile + (k_i, r_i, k_bg, r_bg).
+encoders:
+- name: profile_encoder
+  args:
+    data_dim: 3d
+    input_shape: [*d, *h, *w]
+    encoder_out: *encoder_out
+    conv1_out_channels: 64
+    conv2_out_channels: 128
+    dropout: 0.2
+- &int_enc
+  name: intensity_encoder
+  args:
+    data_dim: 3d
+    encoder_out: *encoder_out
+    conv1_out_channels: 64
+    conv2_out_channels: 128
+    conv3_out_channels: 256
+- *int_enc
+- *int_enc
+- *int_enc
+
+surrogates:
+  qp:
+    name: learned_basis_profile
+    args:
+      latent_dim: 12
+      input_dim: *encoder_out
+      output_dim: 1323
+      init_std: 0.5
+  qbg:
+    name: gammaB
+    args:
+      in_features: *encoder_out
+      eps: 1.0e-06
+      k_min: 0.01
+      mu_positive_constraint: softplus
+
+loss:
+  name: monochromatic_wilson
+  args:
+    lp_correction: false
+    mc_samples: *mc_samples
+    eps: 1.0e-06
+    n_bins: 30
+    profile_prior_scale: 3.0
+    pi_weight: 0.0
+    pbg_weight: 1.0
+    pprf_weight: 1.0
+
+data_loader:
+  name: rotation_data
+  args:
+    data_dir: &data_dir /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data
+    batch_size: 2048
+    val_split: 0.2
+    test_split: 0.0
+    num_workers: 8
+    include_test: true
+    subset_size: null
+    cutoff: null
+    group_by_asu_id: true
+    max_obs_per_hkl: null
+    shoebox_file_names:
+      data_dir: *data_dir
+      counts: counts.npy
+      masks: masks.npy
+      stats: anscombe_stats.pt
+      # Augmented metadata WITH absorption_sh (from extract_crystal_frame_sh.py).
+      reference: metadata_sh.pt
+      standardized_counts: null
+    D: *d
+    H: *h
+    W: *w
+    anscombe: true
+
+trainer:
+  max_epochs: 100
+  accelerator: gpu
+  devices: 1
+  logger: true
+  precision: '32'
+  check_val_every_n_epoch: 5
+  log_every_n_steps: 1
+  deterministic: false
+  enable_checkpointing: true
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+
+checkpoint:
+  every_n_epochs: 5
+  save_top_k: -1
+
+logger:
+  d: *d
+  h: *h
+  w: *w
+
+output:
+  refl_file: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data/reflections_.refl
+  dials_merge_html: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/merged_reference.html
+  phenix_refine_log: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/refine_001.log
+  anomalous_peaks: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/reference_peaks.csv
+  phenix_eff: /n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/reference_data/phenix.eff
+  pdb: /n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/reference_data/9b7c.pdb
+  expt_file: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/dials_2026-05-14/integrated.expt

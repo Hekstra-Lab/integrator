@@ -1,0 +1,102 @@
+mode: monochromatic # rotation-method monochromatic crystallography
+integrator:
+  name: hierarchical
+  args:
+    encoder_out: &encoder_out 32 # hidden representation width
+    mc_samples: 100 # monte carlo samples for the reconstruction ELBO
+
+encoders:                        # positionally matched to the integrator's slots
+- name: profile_encoder
+  args:
+    data_dim: 3d
+    encoder_out: *encoder_out
+    conv1_out_channels: 16
+    conv2_out_channels: 32
+    dropout: 0.0
+- &intensity_encoder             # reused for the 4 intensity/background slots
+  name: intensity_encoder
+  args:
+    data_dim: 3d
+    encoder_out: *encoder_out
+    conv1_out_channels: 16
+    conv2_out_channels: 32
+    conv3_out_channels: 64
+- *intensity_encoder             # r_i
+- *intensity_encoder             # k_bg
+- *intensity_encoder             # r_bg
+
+surrogates:
+  qp:
+    name: learned_basis_profile
+    args:
+      input_dim: *encoder_out
+      latent_dim: 12
+      output_dim: 1323
+      init_std: 0.5
+      prior_scale: 3.0
+  qbg:
+    name: gamma
+    args:
+      reparameterization: shape_rate
+      in_features: *encoder_out
+      eps: 1.0e-06
+      k_min: 0.01
+  qi:
+    name: gamma
+    args:
+      reparameterization: shape_rate
+      in_features: *encoder_out
+      eps: 1.0e-06
+      k_min: 0.01
+
+loss:
+  name: monochromatic_wilson
+  args:
+    lp_correction: true         # multiply tau by metadata['lp']; mono-only
+    init_B: 30.0                # init Wilson B (A^2): B = softplus(raw_B) + b_min
+    b_min: 1.0
+    intensity_kl_weight: 1.0
+    background_kl_weight: 1.0
+    profile_kl_weight: 1.0
+    bg_rate: 1.0
+    bg_concentration: 1.0
+    n_bins: 30
+    # --- scale stabilization: prevents G/B collapse to the floor; DIALS-free ---
+    stabilize_scale: true       # log-space G + a one-time scale init fit from raw counts
+    # init_G: 200.0             # pin the initial scale here instead (skips the count fit)
+    # --- likelihood ablation knob (only difference vs hierarchical_nbinom.yaml) ---
+    likelihood: poisson             # poisson | negative_binomial
+
+optimizer:
+  lr: 0.001 # Adam learning rate
+  decoder_weight_decay: 1.0e-3 # weight decay on the qp decoder basis only
+
+data_loader:
+  args:
+    data_dir: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/scaling_dataset
+    batch_size: 2048
+    validation_split: 0.2
+    num_workers: 8
+    include_test: true
+    subset_size: null           # cap on reflections loaded (debugging)
+    resolution_cutoff: null     # resolution cutoff, or null
+    min_valid_pixels: 10        # drop shoeboxes with fewer valid pixels
+    transform: anscombe         # anscombe | log1p | standardization (derived from dataset.yaml if omitted)
+
+trainer:
+  max_epochs: 25
+  accelerator: gpu
+  devices: 1
+  logger: true
+  precision: '32'
+  check_val_every_n_epoch: 2
+  log_every_n_steps: 1
+  enable_checkpointing: true
+  deterministic: false
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+
+checkpoint:
+  save_top_k: -1                # -1 keeps every (written) ckpt; N keeps best N by monitor
+  monitor: val elbo
+  mode: min

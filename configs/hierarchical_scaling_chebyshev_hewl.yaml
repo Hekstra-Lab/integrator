@@ -1,0 +1,168 @@
+# Hierarchical scaling -- CONFIRMATION TEST (constrained scale, no new data).
+#
+# Purpose: confirm the 7-sigma collapse is caused by scale OVER-FLEXIBILITY, not
+# by anything in the integration. Identical to hierarchical_scaling_hewl.yaml
+# (warm-start + freeze the trained hierarchical "36" checkpoint) EXCEPT the
+# 4-layer MLP scale is replaced by a low-order frame-only Chebyshev scale
+# s(frame)/lp -- a few DOF that physically CANNOT fit per-observation intensity,
+# so it cannot drive the consistency loss to the signal-absorbing optimum
+# s_i = m_i / I_hat.
+#
+# Expected outcome: the anomalous signal returns to a meaningful level (well off
+# the 7-sigma noise floor), even though a frame-only scale UNDER-corrects (no
+# crystal-frame absorption, so it won't reach DIALS's 32). If it does, the
+# non-identifiability diagnosis is confirmed and the path to 36 is the
+# PhysicalScale (hierarchical_scaling_physical_hewl.yaml). If it does NOT, the
+# problem is elsewhere (merge / extraction / variance), not scale flexibility.
+#
+# Uses the plain metadata.pt (no absorption_sh needed). Pair with
+# group_by_asu_id: true. To tighten further, lower scale_degree to 2-3.
+integrator:
+  name: hierarchical_scaling
+  args:
+    data_dim: 3d
+    d: &d 3
+    h: &h 21
+    w: &w 21
+    lr: 0.001
+    encoder_out: &encoder_out 32
+    weight_decay: 0.0
+    decoder_weight_decay: 0.0
+    qp_smoothness_weight: 1.0e-2
+    qp_orthogonality_weight: 0.0
+    mc_samples: &mc_samples 100
+    predict_keys: [refl_ids, is_test, qi_mean, qi_var, qbg_mean, qbg_var, intensity.prf.value, intensity.prf.variance, background.mean, d, group_label, qp_mean, qp_loc, qp_scale, asu_id]
+
+    # --- warm-start + freeze (REQUIRED; same checkpoint as the MLP run) ---
+    init_from_checkpoint: null   # <-- set to .../checkpoints/epoch=*.ckpt
+    freeze_integration: true
+
+    # --- merge / scale head ---
+    n_hkl: 86402
+    wilson_alpha: 1.0
+    merge_kl_weight: 0.0
+    consistency_weight: 1.0      # the Gaussian-NLL scaling-consistency objective
+    merge_overdispersion: true   # intensity-dependent error model (SdAdd-style)
+    scaling_lr: 3.0e-3           # decoupled LR for the scale coefficients
+
+    # Frame-only Chebyshev scale s(frame)/lp -- the constrained control.
+    scale_mlp: false
+    scale_spatial: false
+    scale_physical: false
+    scale_degree: 4              # ~5 DOF over the whole sweep; lower = tighter
+    scale_frame_min: -2.0
+    scale_frame_max: 1442.0
+
+# Five encoders: profile + (k_i, r_i, k_bg, r_bg) -- IDENTICAL to the hierarchical
+# config so the warm-start matches (conv 16/32 profile, 16/32/64 intensity).
+encoders:
+- name: profile_encoder
+  args:
+    data_dim: 3d
+    input_shape: [*d, *h, *w]
+    encoder_out: *encoder_out
+    conv1_out_channels: 16
+    conv2_out_channels: 32
+- &int_enc
+  name: intensity_encoder
+  args:
+    data_dim: 3d
+    encoder_out: *encoder_out
+    conv1_out_channels: 16
+    conv2_out_channels: 32
+    conv3_out_channels: 64
+- *int_enc
+- *int_enc
+- *int_enc
+
+# Surrogates IDENTICAL to the hierarchical config (so qp/qbg/qi warm-start).
+surrogates:
+  qp:
+    name: learned_basis_profile
+    args:
+      input_dim: *encoder_out
+      latent_dim: 14
+      output_dim: 1323
+      init_std: 0.5
+  qbg:
+    name: gammaB
+    args:
+      in_features: *encoder_out
+      eps: 1.0e-06
+      k_min: 0.01
+      mu_positive_constraint: exp
+  qi:
+    name: gammaB
+    args:
+      in_features: *encoder_out
+      eps: 1.0e-06
+      k_min: 0.01
+      mu_positive_constraint: exp
+
+loss:
+  name: monochromatic_wilson
+  args:
+    lp_correction: false
+    mc_samples: *mc_samples
+    eps: 1.0e-06
+    n_bins: 30
+    profile_prior_scale: 3.0
+    pi_weight: 0.0
+    pbg_weight: 1.0
+    pprf_weight: 1.0
+
+data_loader:
+  name: rotation_data
+  args:
+    data_dir: &data_dir /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data
+    batch_size: 2048
+    val_split: 0.2
+    test_split: 0.0
+    num_workers: 8
+    include_test: true
+    subset_size: null
+    cutoff: null
+    group_by_asu_id: true
+    max_obs_per_hkl: null
+    shoebox_file_names:
+      data_dir: *data_dir
+      counts: counts.npy
+      masks: masks.npy
+      stats: anscombe_stats.pt
+      reference: metadata.pt
+      standardized_counts: null
+    D: *d
+    H: *h
+    W: *w
+    anscombe: true
+
+trainer:
+  max_epochs: 100
+  accelerator: gpu
+  devices: 1
+  logger: true
+  precision: '32'
+  check_val_every_n_epoch: 5
+  log_every_n_steps: 1
+  deterministic: false
+  enable_checkpointing: true
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+
+checkpoint:
+  every_n_epochs: 5
+  save_top_k: -1
+
+logger:
+  d: *d
+  h: *h
+  w: *w
+
+output:
+  refl_file: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data/reflections_.refl
+  dials_merge_html: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/merged_reference.html
+  phenix_refine_log: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/refine_001.log
+  anomalous_peaks: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/reference_peaks.csv
+  phenix_eff: /n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/reference_data/phenix.eff
+  pdb: /n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/reference_data/9b7c.pdb
+  expt_file: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/integrated.expt

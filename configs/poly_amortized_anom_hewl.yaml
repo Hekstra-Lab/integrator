@@ -1,0 +1,171 @@
+integrator:
+  name: amortized_merging
+  args:
+    data_dim: 2d
+    d: &d 1
+    h: &h 25
+    w: &w 25
+    lr: 0.001
+    encoder_out: &encoder_out 32
+    weight_decay: 0.0
+    decoder_weight_decay: 0.0
+    qp_smoothness_weight: 0.02
+    qp_orthogonality_weight: 0.0
+    scaling_lr: 0.001          # decoupled LR for the slow scale field
+    mc_samples: &mc_samples 100   # ok at 2D (625 px) -- less memory than mono 3D
+    init_from_checkpoint: null
+    # The learned bg works once bg_prior.pt is correct (self-heal). To use the
+    # frozen-bg transplant instead (like the conjugate config), set
+    # bg_init_from_checkpoint to the good-run ckpt + match the bg encoders to 16/32/64.
+
+    # Merge
+    n_hkl: 22949               # from hkl_meta.pt (anomalous asu_id count)
+    merge_aggregation: sum
+    merge_kl_weight: 1.0
+    wilson_alpha: 1.0
+    merge_attention: false
+    merge_overdispersion: false
+
+    # --- anomalous-preserving terms (need nonanom_id/centric metadata + the
+    #     group_by_key: nonanom_id loader so both mates share a batch) ---
+    consistency_weight: 0.5
+    consistency_pool_friedel: true
+    centric_anchor_weight: 0.000     # tune up watching `train centric_anchor`
+    double_wilson_weight: 1.0        # tune watching `train double_wilson` + CCanom
+    wilson_centric_prior: true
+
+    # --- STRUCTURED spectral scale (replaces the black-box MLP) ---
+    # G(lambda) as a ChebyshevSpectrum -- the same form the WORKING
+    # polychromatic_wilson integrator uses (its prior), but placed in the per-obs
+    # scale where the merge needs it (I_h = wavelength-independent F^2). The MLP
+    # scale stalled at a near-constant (CV 0.08); a structured spectrum is the
+    # right inductive bias and is warm-startable from the working model.
+    scale_laue_spectral: true
+    scale_lambda_min: 0.97
+    scale_lambda_max: 1.25
+    scale_spectrum_degree: 40
+    # Warm-start G(lambda) from the working poly_5enc run (de-risking):
+    #   uv run python scripts/extract_spectrum.py <poly_5enc_ckpt> --save spectrum_init.pt
+    # then set the ABSOLUTE path here. null = learn from scratch (still structured).
+    scale_spectrum_init_from: null
+    scale_freeze_spectrum: false     # set true (with a warm-start) for the freeze test
+    # Physical Lorentz (Ren & Moffat) folded into the scale; polarization optional.
+    scale_lorentz: true
+    scale_polarization: false
+    scale_beam_center: [1993.8, 1973.7]
+    scale_r_max: 1600.0
+    scale_residual: false            # add a learned geometry residual later if needed
+    scale_mlp_hidden: 64             # reused only if scale_residual: true
+    scale_mlp_layers: 2
+
+    log_intensity_scatter: true      # per-epoch model scale*I_h vs DIALS, + log-CC
+    log_background_scatter: true      # per-epoch model bg vs DIALS background.sum.value
+
+# 5 encoders (2D): profile, k_i, r_i, k_bg, r_bg. No qi surrogate in sum mode.
+encoders:
+- name: profile_encoder
+  args:
+    data_dim: 2d
+    input_shape: [*h, *w]
+    encoder_out: *encoder_out
+    conv1_out_channels: 8
+    conv2_out_channels: 16
+    dropout: 0.2
+- &intensity_enc
+  name: intensity_encoder
+  args:
+    data_dim: 2d
+    encoder_out: *encoder_out
+    conv1_out_channels: 8
+    conv2_out_channels: 16
+    conv3_out_channels: 32
+- *intensity_enc
+- *intensity_enc
+- *intensity_enc
+
+surrogates:
+  qp:
+    name: learned_basis_profile
+    args:
+      warmstart_basis_path: hermite_profile_basis_poly.pt
+      hermite_max_order: 4
+      hermite_basis_sigma: 1.5
+      input_dim: *encoder_out
+      output_dim: 625
+      init_std: 0.5
+  qbg:
+    name: gammaB
+    args:
+      in_features: *encoder_out
+      eps: 1.0e-06
+      k_min: 0.01
+      mu_positive_constraint: exp
+      # Start the background at the empirical Laue level (~11 counts/pixel) so it
+      # claims the flat field at init; with the now-correct bg_prior.pt the
+      # learned background holds there (no frozen transplant needed).
+      mean_init: 11.0
+
+loss:
+  name: monochromatic_wilson
+  args:
+    lp_correction: false
+    mc_samples: *mc_samples
+    eps: 1.0e-06
+    n_bins: 30
+    profile_prior_scale: 3.0
+    pi_weight: 0.0
+    pbg_weight: 1.0
+    pprf_weight: 1.0
+    b_min: 1.0
+
+data_loader:
+  name: polychromatic_data
+  args:
+    data_dir: &data_dir /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_1118/pytorch_data
+    batch_size: 2048
+    val_split: 0.2
+    test_split: 0.0
+    num_workers: 8
+    include_test: true
+    subset_size: null
+    cutoff: null
+    group_by_asu_id: true
+    # Friedel-pooled batching so I(+)/I(-) of a reflection share a batch (the
+    # anomalous terms need both mates). Still yields complete asu_id groups.
+    group_by_key: asu_id
+    max_obs_per_hkl: 150
+    ice_ring_ranges: [[1.34, 1.42]]
+    shoebox_file_names:
+      data_dir: *data_dir
+      counts: counts.npy
+      masks: masks.npy
+      stats: anscombe_stats.pt
+      # Fully augmented metadata: asu_id + nonanom_id/centric/friedel_plus
+      # (+ absorption_sh once the stills SH extract is run).
+      reference: metadata.pt
+      standardized_counts: null
+    D: *d
+    H: *h
+    W: *w
+    anscombe: true
+
+trainer:
+  max_epochs: 100
+  accelerator: gpu
+  devices: 1
+  logger: true
+  precision: '32'
+  check_val_every_n_epoch: 5
+  log_every_n_steps: 1
+  deterministic: false
+  enable_checkpointing: true
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+
+logger:
+  d: *d
+  h: *h
+  w: *w
+
+output:
+  refl_file: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_1118/pytorch_data/reflections_.refl

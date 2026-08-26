@@ -1,0 +1,154 @@
+# Hierarchical SVAE with FREE OBSERVATION-level signal potentials.
+#
+# Identical to hierarchical_svae.yaml except `obs_level_potential: true`: the
+# per-pixel responsibility gate is replaced by a single per-observation
+# responsibility g_i, so the signal count is g_i * sum_p c_{i,p} instead of
+# sum_p g_{i,p} c_{i,p}. The encoder still reads pixels; only the conjugate
+# combine moves to the observation level -- mirroring the winning amortized
+# merger / standalone integrator. The GIG merge and exposure are unchanged, so
+# this is a drop-in ablation. Pixel-level modeling stays the default everywhere
+# else (obs_level_potential defaults to false), so existing configs, checkpoints
+# and scripts are untouched.
+integrator:
+  name: hierarchical_svae
+  args:
+    data_dim: 3d
+    d: 3
+    h: 21
+    w: 21
+    lr: 0.001
+    encoder_out: 64
+    weight_decay: 0.0
+    decoder_weight_decay: 0.0
+    qp_smoothness_weight: 0.01
+    qp_orthogonality_weight: 0.0
+    mc_samples: 100
+    wilson_alpha: 1.0
+    link_nu: 1.0
+    amortize_merge: true
+    sample_I_h: true
+    merge_kl_weight: 1.0
+    obs_level_potential: true        # <-- observation-level signal potential
+    obs_potential_free: true         # <-- FREE potential: exp(head), untied from counts
+    learn_nu: true
+    nu_lr: 0.1
+    nu_warmup_epochs: 5
+    nu_init: 50.0
+    nu_per_bin: false
+    nu_n_bins: 20
+    nu_restraint_weight: 0.05
+    nu_restraint_log_sigma: 0.5
+    nu_max: 500.0
+    n_hkl: 86402
+    scale_mlp: true
+    scale_mlp_hidden: 64
+    scale_mlp_layers: 4
+    scale_frame_min: 0.0
+    scale_frame_max: 1442.0
+    scale_beam_center: [2058.2, 2193.9]
+    scale_r_max: 3022
+    scale_mlp_absorption: true
+    scale_sh_lmax: 4
+    scale_mlp_absorption_even_only: true
+    log_intensity_scatter: true
+    log_background_scatter: true
+    predict_keys: [refl_ids, is_test, qi_mean, qi_var, scale # <-- writes OBSERVED s*E[J] to the .refl
+, I_h_mean, qbg_mean, qbg_var, intensity.prf.value, intensity.prf.variance, background.mean, d, group_label, qp_mean, asu_id]
+encoders:
+- name: profile_encoder
+  args:
+    data_dim: 3d
+    input_shape: [3, 21, 21]
+    encoder_out: 64
+    conv1_out_channels: 64
+    conv2_out_channels: 128
+    dropout: 0.2
+- &id001 # k_i
+  name: intensity_encoder
+  args:
+    data_dim: 3d
+    encoder_out: 64
+    conv1_out_channels: 64
+    conv2_out_channels: 128
+    conv3_out_channels: 256
+- *id001 # r_i
+- *id001 # k_bg
+- *id001 # r_bg
+# order: profile, k_i, r_i, k_bg, r_bg (one encoder per potential)
+surrogates:
+  qp:
+    name: learned_basis_profile
+    args:
+      warmstart_basis_path: hermite_profile_basis.pt
+      hermite_max_order: 4
+      hermite_basis_sigma: 3.0
+      hermite_sigma_z: 1.0
+      hermite_max_order_z: 1
+      input_dim: 64
+      output_dim: 1323
+      init_std: 0.5
+  qbg:
+    name: gammaB
+    args:
+      in_features: 64
+      eps: 1.0e-06
+      k_min: 0.01
+      mu_positive_constraint: softplus
+loss:
+  name: monochromatic_wilson
+  args:
+    lp_correction: false
+    mc_samples: 100
+    eps: 1.0e-06
+    n_bins: 30
+    profile_prior_scale: 3.0
+    pi_weight: 0.0
+    pbg_weight: 1.0
+    pprf_weight: 1.0
+data_loader:
+  name: rotation_data
+  args:
+    data_dir: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data
+    batch_size: 2048
+    val_split: 0.2
+    test_split: 0.0
+    num_workers: 8
+    include_test: true
+    subset_size: null
+    cutoff: null
+    group_by_asu_id: true
+    shoebox_file_names:
+      data_dir: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data
+      counts: counts.npy
+      masks: masks.npy
+      stats: anscombe_stats.pt
+      reference: metadata_sh_friedel.pt
+      standardized_counts: null
+    D: 3
+    H: 21
+    W: 21
+    anscombe: true
+trainer:
+  max_epochs: 100
+  accelerator: gpu
+  devices: 1
+  logger: true
+  precision: '32'
+  check_val_every_n_epoch: 5
+  log_every_n_steps: 1
+  deterministic: false
+  enable_checkpointing: true
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+logger:
+  d: 3
+  h: 21
+  w: 21
+output:
+  refl_file: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data/reflections_.refl
+  dials_merge_html: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/merged_reference.html
+  phenix_refine_log: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/refine_001.log
+  anomalous_peaks: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/reference_peaks.csv
+  phenix_eff: /n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/reference_data/phenix.eff
+  pdb: /n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/reference_data/9b7c.pdb
+  expt_file: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/dials_2026-05-14/integrated.expt

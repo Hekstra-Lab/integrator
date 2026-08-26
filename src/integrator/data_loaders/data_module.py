@@ -165,6 +165,8 @@ class RotationDataModule(pl.LightningDataModule):
         include_test: bool = False,
         subset_size: int | None = None,
         resolution_cutoff: float | None = None,
+        d_min: float | None = None,
+        d_max: float | None = None,
         min_valid_pixels: int = 10,
         shoebox_file_names: dict | None = None,
         transform: str | None = None,
@@ -178,6 +180,8 @@ class RotationDataModule(pl.LightningDataModule):
         self.subset_size = subset_size
         self.num_workers = num_workers
         self.resolution_cutoff = resolution_cutoff
+        self.d_min = d_min
+        self.d_max = d_max
         self.min_valid_pixels = min_valid_pixels
         self.full_dataset = None
         if shoebox_file_names is None:
@@ -236,7 +240,36 @@ class RotationDataModule(pl.LightningDataModule):
             counts, masks, reference
         )
 
-        # Apply resolution cutoff before standardization
+        # Resolution limits, before standardization so the statistics describe
+        # the data actually trained on.
+        #
+        # d_min/d_max keep d_min <= d <= d_max, the crystallographic convention
+        # and the one dials_port/stats.py already uses: d_min is the
+        # high-resolution limit. Prefer them.
+        #
+        # resolution_cutoff predates these and keeps d < cutoff, which discards
+        # the LOW-resolution data -- the opposite of what its name suggests and
+        # of what several config comments claim. It is left alone rather than
+        # redefined, because silently reversing a parameter would change the
+        # meaning of any config that already sets it.
+        if self.d_min is not None or self.d_max is not None:
+            selection = torch.ones_like(reference["d"], dtype=torch.bool)
+            if self.d_min is not None:
+                selection &= reference["d"] >= self.d_min
+            if self.d_max is not None:
+                selection &= reference["d"] <= self.d_max
+            n_cut = (~selection).sum().item()
+            if n_cut > 0:
+                logger.info(
+                    "Removed %d reflections outside d in [%s, %s]",
+                    n_cut,
+                    "-inf" if self.d_min is None else f"{self.d_min:.2f}",
+                    "inf" if self.d_max is None else f"{self.d_max:.2f}",
+                )
+            counts = counts[selection]
+            masks = masks[selection]
+            reference = {k: v[selection] for k, v in reference.items()}
+
         if self.resolution_cutoff is not None:
             selection = reference["d"] < self.resolution_cutoff
             n_cut = (~selection).sum().item()

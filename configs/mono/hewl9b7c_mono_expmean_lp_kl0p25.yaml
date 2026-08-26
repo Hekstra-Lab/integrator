@@ -1,0 +1,128 @@
+# ABLATION off hewl9b7c_mono_expmean_lp: intensity_kl_weight = 0.25 (weaken the intensity prior; test whether it recovers the high-res sd/mean over-shrink / variance collapse). Baseline = run 105gh86k (kl 1.0).
+#
+# Variant of hewl9b7c_mono.yaml built to Luis's spec (Aug 2026):
+#   - q(I): mean_fano with an exp (log-space) mean  -> the mean_fano+exp-mean
+#     setting our notes tie to preserving anomalous peaks.
+#   - no weight decay or smoothness penalty on the learned profile basis.
+#   - lp_correction: true. The forward rate never applies lp, so this is a
+#     single (not double) application: the model fits raw shoebox counts, and
+#     DIALS' convention is corrected = raw x lp (lp in [0.004, 0.9], median
+#     0.58 on this data), so the Wilson prior mean on the raw intensity is
+#     G*exp(-2 B s^2) / lp -- exactly what `tau *= lp` produces.
+#   - init_G / init_B use the current loss API (the pasted init_log_G/init_log_B
+#     are the old names; init_log_G: 0 would start G ~= 0.69, ~3.7 orders below
+#     the measured 3782 and straight into the softplus dead-gradient collapse).
+mode: monochromatic
+
+integrator:
+  name: hierarchical            # 5 encoders: profile, k_i, r_i, k_bg, r_bg
+  args:
+    encoder_out: 32             # micro width (the 33-sigma run used 64)
+    mc_samples: 100
+    predict_keys: default
+
+encoders:                       # positionally matched to the integrator's slots
+- name: profile_encoder
+  args:
+    data_dim: 3d
+    encoder_out: 32
+    conv1_out_channels: 16
+    conv2_out_channels: 32
+    dropout: 0.0
+- &intensity_encoder
+  name: intensity_encoder
+  args:
+    data_dim: 3d
+    encoder_out: 32
+    conv1_out_channels: 16
+    conv2_out_channels: 32
+    conv3_out_channels: 64
+- *intensity_encoder            # r_i
+- *intensity_encoder            # k_bg
+- *intensity_encoder            # r_bg
+
+optimizer:
+  lr: 0.001
+  weight_decay: 0.0             # no global decay
+  decoder_weight_decay: 0.0     # explicitly no decay on the learned basis W
+  lr_schedule: null
+  warmup_epochs: 5
+  lr_min: 1.0e-5
+
+surrogates:
+  qi:                           # intensity posterior q(I)
+    name: gamma
+    args:
+      reparameterization: mean_fano
+      positive_constraint: exp  # log-space mean (the "log_transform")
+      k_min: 0.01
+      eps: 1.0e-6
+  qbg:                          # background posterior q(bg)
+    name: gamma
+    args:
+      reparameterization: mean_fano
+      positive_constraint: softplus
+      k_min: 0.01
+      eps: 1.0e-6
+  qp:                           # profile posterior q(prf) = softmax(W h + b)
+    name: learned_basis_profile
+    args:
+      latent_dim: 12
+      init_std: 0.5
+      prior_scale: 3.0
+      smoothness_weight: 0.0    # no roughness penalty on the basis
+
+loss:
+  name: monochromatic_wilson
+  args:
+    # G, B measured from raw counts with scripts/poly/estimate_wilson_init.py
+    # (Wilson-plot fit over 20k shoeboxes): G = 3782 counts, B = 7.5 A^2.
+    init_G: 3781.8
+    init_B: 7.5
+    b_min: 0.0
+    lp_correction: true         # single application; see header note
+    intensity_kl_weight: 0.25
+    background_kl_weight: 1.0
+    profile_kl_weight: 1.0
+    bg_rate: 1.0
+    bg_concentration: 1.0
+    n_bins: 1                   # bg_prior_1.npy is present in the data dir
+
+data_loader:
+  name: rotation_data
+  args:
+    data_dir: &data_dir /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/scaling_dataset
+    batch_size: 2048            # 33-sigma run used 512; 2048 needs a full GPU (OOMs on a MIG slice)
+    validation_split: 0.2
+    num_workers: 8
+    include_test: true
+    subset_size: null
+    resolution_cutoff: null
+    min_valid_pixels: 10
+    transform: anscombe         # unchanged: "log_transform" was the exp mean, not the data transform
+    shoebox_file_names:
+      data_dir: *data_dir
+      counts: counts.npy
+      masks: masks.npy
+      reference: metadata.npy
+
+trainer:
+  max_epochs: 50
+  accelerator: gpu
+  devices: 1
+  logger: true
+  precision: '32'
+  check_val_every_n_epoch: 5
+  log_every_n_steps: 1
+  deterministic: false
+  enable_checkpointing: true
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+
+checkpoint:
+  save_top_k: -1
+  monitor: val elbo
+  mode: min
+
+output:
+  refl_file: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/scaling_dataset/reflections_.refl

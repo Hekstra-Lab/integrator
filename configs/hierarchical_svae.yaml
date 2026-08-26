@@ -1,0 +1,200 @@
+# =============================================================================
+# Hierarchical SVAE integrator (Option 3 + 3a, GIG-exact).
+#
+# The full two-level model in one graph:
+#   I_h       ~ Gamma(alpha_W, tau_h)                  # Wilson prior, per HKL
+#   J_i | I_h ~ Gamma(nu, nu/I_h)                       # random effect, per obs
+#   c_{i,p}   ~ Poisson(s_i J_i prof + bg)              # pixels (+ augmentation)
+# Bottom half = the per-obs SVAE (amortized per-pixel potentials -> q(J_i)).
+# Top half    = the merge: q(I_h) is the EXACT conjugate posterior, a GIG (the
+#               Wilson Gamma is its b=0 special case). The Bessel order-derivative
+#               cancels out of the ELBO, so only GIG moments + log-partition are
+#               needed. nu (link_nu) is the dispersion = the merging error model.
+#
+# Requirements (asserted in __init__):
+#   wilson_alpha == 1.0, loss.pi_weight == 0.0 (the model supplies the intensity
+#   ELBO), lp_correction == false (LP lives in the scale). Needs a grouped loader
+#   (group_by_asu_id: true) so each HKL's observations are complete per batch.
+# =============================================================================
+
+integrator:
+  name: hierarchical_svae
+  args:
+    data_dim: 3d
+    d: &d 3
+    h: &h 21
+    w: &w 21
+    lr: 0.001
+    encoder_out: &encoder_out 64
+    weight_decay: 0.0
+    decoder_weight_decay: 0.0
+    qp_smoothness_weight: 1.0e-2
+    qp_orthogonality_weight: 0.0
+    mc_samples: &mc_samples 100
+
+    # --- Hierarchical intensity (the model's core) ------------------------
+    wilson_alpha: 1.0                 # alpha_W = 1 (acentric / exponential Wilson)
+    # n_hkl = number of unique asu_ids; REQUIRED for the merged-MTZ export
+    # (integrator.pred --write-merged-mtz: finalize_merge fills per-HKL buffers).
+    # Set to your dataset's unique-reflection count (e.g. from asu_id_to_hkl.pt).
+    n_hkl: 86402
+    link_nu: 1.0                      # nu when learn_nu=false (CV=1/sqrt(nu); 1=loose)
+    amortize_merge: true              # single-pass amortized merge (1 Bessel call)
+    sample_I_h: true                  # MC-sample J_i from q(J_i) for the NLL term
+    merge_kl_weight: 1.0              # weight on the intensity ELBO term
+
+    # --- Learnable dispersion nu (the merge error model; OFF by default) ---
+    # Learning nu fits the error model instead of guessing it, but makes the GIG
+    # order p = alpha_W - nu*N_h nu-dependent, so the Bessel order-derivative is
+    # used (gig._d_p_log_besselk; cheap, fixed-nu path unaffected). nu_init ~ 50
+    # gives CV ~14%. Warm-start from a fixed-nu checkpoint (init_from_checkpoint)
+    # and use nu_warmup_epochs so the scale settles before nu learns; the weak
+    # restraint pins nu near nu_init. Watch nu_mean rising + CCanom dropping =
+    # nu absorbing scale error.
+    learn_nu: false
+    nu_init: 50.0
+    nu_per_bin: false                 # true: per-resolution-bin nu(d) (AIMLESS-style)
+    nu_n_bins: 10
+    nu_warmup_epochs: 5               # freeze nu at nu_init for the first N epochs
+    nu_restraint_weight: 0.05         # weak log-Normal pin toward nu_init (0 = off)
+    nu_restraint_log_sigma: 0.5
+    nu_max: 200.0
+
+    # --- Scale: learned MLP scale for monochromatic data (LP folded in) ---
+    # log s = MLP([frame, x, y, lp, d] (+ crystal-frame SH absorption)); the MLP
+    # owns the full per-obs correction. `frame` is the ROTATION frame (lab-frame).
+    scale_mlp: true
+    scale_mlp_hidden: 64
+    scale_mlp_layers: 2
+    scale_frame_min: 0.0
+    scale_frame_max: 1442.0
+    scale_beam_center: [2058.2, 2193.9]
+    scale_r_max: 3022
+    # Crystal-frame spherical-harmonic absorption as EXTRA MLP inputs (the
+    # direction the anomalous-safe absorption surface needs). OFF by default: it
+    # requires `absorption_sh` in metadata -- run scripts/extract_crystal_frame_sh.py
+    # with --lmax = scale_sh_lmax and point the loader's `reference` at
+    # metadata_sh.pt. even_only keeps Friedel-symmetric (even-l) harmonics only.
+    scale_mlp_absorption: true
+    scale_sh_lmax: 4
+    scale_mlp_absorption_even_only: true
+
+    # --- End-of-epoch model-vs-DIALS scatters (merge-quality readouts) -----
+    # intensity: scale * E[J_i] vs DIALS intensity.sum.value (log-log + log-CC).
+    # background: model qbg.mean vs the per-shoebox data background median.
+    log_intensity_scatter: true
+    log_background_scatter: true
+
+    predict_keys: [refl_ids, is_test, qi_mean, qi_var, scale, I_h_mean, qbg_mean, qbg_var, intensity.prf.value, intensity.prf.variance, background.mean, d, group_label, qp_mean, asu_id]
+
+# Three encoders only: profile + (k_bg, r_bg). NO intensity encoder.
+encoders:
+- name: profile_encoder
+  args:
+    data_dim: 3d
+    input_shape: [*d, *h, *w]
+    encoder_out: *encoder_out
+    conv1_out_channels: 64
+    conv2_out_channels: 128
+    dropout: 0.2
+- &int_enc # k_i
+  name: intensity_encoder
+  args:
+    data_dim: 3d
+    encoder_out: *encoder_out
+    conv1_out_channels: 64
+    conv2_out_channels: 128
+    conv3_out_channels: 256
+- *int_enc # r_i
+- *int_enc # k_bg
+- *int_enc # r_bg
+# Encoder order = profile, k_i (signal), r_i (exposure), k_bg, r_bg -- one per
+# potential, matching the standalone integrator.
+
+# Two surrogates: profile + background. NO qi (intensities built from potentials).
+surrogates:
+  qp:
+    name: learned_basis_profile
+    args:
+      warmstart_basis_path: hermite_profile_basis.pt
+      hermite_max_order: 4
+      hermite_basis_sigma: 3.0
+      hermite_sigma_z: 1.0
+      hermite_max_order_z: 1
+      input_dim: *encoder_out
+      output_dim: 1323               # = d*h*w = 3*21*21
+      init_std: 0.5
+  qbg:
+    name: gammaB
+    args:
+      in_features: *encoder_out
+      eps: 1.0e-06
+      k_min: 0.01
+      mu_positive_constraint: softplus
+
+loss:
+  name: monochromatic_wilson
+  args:
+    lp_correction: false
+    mc_samples: *mc_samples
+    eps: 1.0e-06
+    n_bins: 30
+    profile_prior_scale: 3.0
+    # REQUIRED == 0.0: the hierarchical model supplies the intensity ELBO (the
+    # J random-effect term + the GIG log-partition); the loss must not also add
+    # its Gamma-Gamma KL_i.
+    pi_weight: 0.0
+    pbg_weight: 1.0
+    pprf_weight: 1.0
+
+# --- Dataset (grouped by HKL so each merge is complete in-batch) --------------
+data_loader:
+  name: rotation_data
+  args:
+    data_dir: &data_dir /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data
+    batch_size: 2048
+    val_split: 0.2
+    test_split: 0.0
+    num_workers: 8
+    include_test: true
+    subset_size: null
+    cutoff: null
+    group_by_asu_id: true            # REQUIRED: complete HKL groups per batch
+    shoebox_file_names:
+      data_dir: *data_dir
+      counts: counts.npy
+      masks: masks.npy
+      stats: anscombe_stats.pt
+      reference: metadata_sh_friedel.pt
+      standardized_counts: null
+    D: *d
+    H: *h
+    W: *w
+    anscombe: true                   # encoder input only; potentials use raw counts
+
+trainer:
+  max_epochs: 100
+  accelerator: gpu
+  devices: 1
+  logger: true
+  precision: '32'
+  check_val_every_n_epoch: 5
+  log_every_n_steps: 1
+  deterministic: false
+  enable_checkpointing: true
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+
+logger:
+  d: *d
+  h: *h
+  w: *w
+
+output:
+  refl_file: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data/reflections_.refl
+  dials_merge_html: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/merged_reference.html
+  phenix_refine_log: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/refine_001.log
+  anomalous_peaks: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/reference_peaks.csv
+  phenix_eff: /n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/reference_data/phenix.eff
+  pdb: /n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/reference_data/9b7c.pdb
+  expt_file: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/dials_2026-05-14/integrated.expt
