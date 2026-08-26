@@ -57,6 +57,13 @@ def parse_args():
         help="which DIALS intensities to compare against; sum is the "
         "no-borrowing benchmark and the honest default",
     )
+    p.add_argument(
+        "--outer-criterion",
+        type=float,
+        default=1.0,
+        help="the outer shell reported is the weakest one whose I/sigma on the "
+        "DIALS reference reaches this; 0 disables and uses the last shell",
+    )
     p.add_argument("--format", default="text", choices=("text", "markdown", "csv"))
     p.add_argument("--out", type=Path, default=None)
     return p.parse_args()
@@ -93,6 +100,44 @@ def summary(html: Path) -> dict | None:
     return None
 
 
+def outer_shell(reference_csv: Path, criterion: float) -> tuple[float, float] | None:
+    """The weakest shell still carrying signal, chosen on the reference arm.
+
+    834 and 845 were integrated to 1.70 A but die near 1.85, so the last shell
+    of the range is noise -- CC-half -0.012 there on 834. Reporting it as
+    "outer" compares two arms on which fits noise better.
+
+    The shell is chosen once, on the DIALS reference, and then applied to every
+    arm. Letting each arm pick its own would let the metric under test select
+    its own domain, which is exactly how a borrowing-confounded CC-half
+    flatters whichever arm borrows more.
+    """
+    if criterion <= 0 or not reference_csv.exists():
+        return None
+    frame = pl.read_csv(reference_csv)
+    keep = frame.filter(pl.col("i_over_sigma") >= criterion)
+    if not len(keep):
+        return None
+    row = keep.row(-1, named=True)
+    return float(row["d_max"]), float(row["d_min"])
+
+
+def shell_stats(csv: Path, bounds: tuple[float, float] | None) -> dict:
+    """Per-shell columns for the chosen outer shell, matched by d_min."""
+    if bounds is None or not csv.exists():
+        return {}
+    frame = pl.read_csv(csv)
+    hit = frame.filter((pl.col("d_min") - bounds[1]).abs() < 1e-6)
+    if not len(hit):
+        return {}
+    row = hit.row(0, named=True)
+    return {
+        "cc_half_outer": row.get("cc_half"),
+        "i_over_sigma_outer": row.get("i_over_sigma"),
+        "r_pim_outer": row.get("r_pim"),
+    }
+
+
 def rfactors(refine_dir: Path) -> dict:
     log = refine_dir / "phenix_refine.log"
     if not log.exists():
@@ -114,11 +159,14 @@ def peak_stats(refine_dir: Path) -> dict:
     return {"n_peaks": len(frame), "top_peak": float(frame["peakz"].max())}
 
 
-def arm_row(name: str, merged_html: Path, refine_dir: Path) -> dict | None:
+def arm_row(name: str, merged_html: Path, refine_dir: Path,
+            bounds: tuple[float, float] | None = None) -> dict | None:
     stats = summary(merged_html)
     if stats is None:
         return None
     row = {"arm": name, **stats}
+    # replace the html's last-shell columns with the chosen outer shell
+    row.update(shell_stats(merged_html.parent / "merging_stats.csv", bounds))
     row.update(rfactors(refine_dir))
     row.update(peak_stats(refine_dir))
     return row
@@ -152,7 +200,7 @@ def integrator_arms(dataset: Path) -> list[tuple[str, Path, Path]]:
 
 def main():
     args = parse_args()
-    rows, missing = [], []
+    rows, missing, shells = [], [], {}
     for dataset in args.dataset:
         card = {}
         card_path = dataset / "dataset_card.json"
@@ -161,7 +209,10 @@ def main():
         label = f"{dataset.name} ({card.get('pdb_id', '?')})"
 
         html, refine = dials_arm(dataset, args.dials_arm)
-        row = arm_row(f"DIALS ({args.dials_arm})", html, refine)
+        bounds = outer_shell(html.parent / "merging_stats.csv", args.outer_criterion)
+        if bounds:
+            shells[label] = f"{bounds[0]:.2f}-{bounds[1]:.2f}"
+        row = arm_row(f"DIALS ({args.dials_arm})", html, refine, bounds)
         if row:
             rows.append({"dataset": label, **row})
         else:
@@ -176,7 +227,7 @@ def main():
         if not arms:
             missing.append(f"{label}: no integrator arm has finished the pipeline")
         for name, merged, refined in arms:
-            row = arm_row(name, merged, refined)
+            row = arm_row(name, merged, refined, bounds)
             if row:
                 rows.append({"dataset": label, **row})
             else:
@@ -220,6 +271,11 @@ def main():
               "merge; its r_work/r_free/peaks are from the refined 'combine' "
               "merge, which is the only DIALS arm that is refined")
     print(text)
+    if shells:
+        print("  outer shell per dataset (weakest with reference "
+              f"I/sigma >= {args.outer_criterion:g}, applied to every arm):")
+        for label, bounds in shells.items():
+            print(f"    {label}: {bounds} A")
     for line in missing:
         print(f"  missing: {line}")
     if args.out:
