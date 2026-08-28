@@ -4,7 +4,7 @@ name: hewl_1118
 
 dataset:
   sbgrid_id: 1118
-  frames: [1, 20]     # inclusive [first, last]; limits download *and* import
+  frames: [1, 350]     # inclusive [first, last]; limits download *and* import
   # template: HEWL_NaI_3_2_####.mccd   # pin the sweep if auto-detection is wrong
   # images_dir: ../my_images   # optional: use local images instead of fetching
   host: data.sbgrid.org        # or a Tier-1 mirror: sbgrid.icm.uu.se, etc.
@@ -27,6 +27,51 @@ processing:
   wav_min: 0.97
   wav_max: 1.25
   d_min: 1.4
+
+# Optional: each section below runs one integrator step after the pipeline.
+# Delete a section to stop there.
+
+shoeboxes:            # integrator.make_shoeboxes -> <base_dir>/<name>/shoebox_data
+  refl: predicted.refl
+  expt: poly_refined.expt
+  w: 25                        # shoebox width in pixels (odd)
+  h: 25                        # shoebox height in pixels (odd)
+  test_fraction: 0.1           # fraction of reflections held out as is_test
+  # max_images: 21             # default: dataset.frames upper bound + 1
+
+train:                # integrator.train -> <base_dir>/<name>/run
+  config: /n/holylabs/LABS/hekstra_lab/Users/fgiehr/integrator/configs/poly/poly_minimal.yaml   # data_dir is overridden
+
+predict:              # integrator.predict -> <base_dir>/<name>/run/predictions
+  write_mtz: true
+
+evaluate:             # careless -> phenix.refine + rs.find_peaks -> plots
+                      # -> <run>/ckpt_eval/{eval_summary.txt,*.png}
+  # phenix_nosymm.eff is phenix.eff with the crystal_symmetry block removed, so
+  # phenix takes the cell from the MTZ instead of the pinned 79.424/37.793.
+  # NOTE: this dataset's integrated.mtz is 77.496 77.496 35.744 vs 79.405/37.837
+  # for the 9b7c model — traced to geometry.wavelength above being 1.05 while the
+  # image headers say 1.0264. Reprocess before trusting any R-values; dropping
+  # crystal_symmetry only stops phenix being fed a cell that contradicts the data.
+  eff_template: /n/holylabs/LABS/hekstra_lab/Users/fgiehr/jobs/anomalous_peaks_files/phenix_nosymm.eff
+  pdb: /n/holylabs/LABS/hekstra_lab/Users/fgiehr/jobs/anomalous_peaks_files/pdb_model/9b7c.pdb
+  # 1.21.1-5286 -- the build this eff and merge_eval were written against.
+  # /n/hekstra_lab was remapped to /n/lab_storage/hekstra_lab; the rest of the
+  # old factory path is unchanged. Point at setpaths.sh, NOT the sibling
+  # phenix_env.sh: that still hardcodes PHENIX=/n/hekstra_lab/... and would
+  # break again. setpaths.sh locates itself via BASH_SOURCE, and merge_eval
+  # sources it with /bin/bash.
+  phenix_env: /n/lab_storage/hekstra_lab/garden_backup/phenix-1.21/phenix-1.21.1-5286/build/setpaths.sh
+  # careless needs its own env: its TensorFlow pins numpy<2.1, integrator needs >=2.3
+  careless_bin: /n/home08/fgiehr/micromamba/envs/careless/bin/careless
+  n_checkpoints: 4          # the last + 3 evenly spaced earlier ones (never the first); 0 = all
+  dials_reference: true     # also merge+refine proc/integrated.mtz as the reference arm
+  dmin: 1.4
+  iterations: 10000         # careless gradient steps (its own default; examples use 30000)
+  # Extra careless flags, passed verbatim in order; one list entry per token,
+  # so multi-value flags just take several entries.
+  # careless_args: ["--merge-half-datasets", "--disable-image-scales",
+  #                 "--wavelength-range", "0.97", "1.25"]
 
 # # Any additional PHIL parameters, passed verbatim to a given step.
 # # e.g.  find_spots: ["spotfinder.filter.d_min=1.5"]
