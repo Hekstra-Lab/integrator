@@ -1,3 +1,4 @@
+import logging
 from abc import abstractmethod
 
 import torch
@@ -16,6 +17,9 @@ from integrator.model.loss.count_likelihood import (
 from integrator.model.loss.kl_helpers import compute_profile_kl
 
 _DEFAULT_PROFILE_PRIOR_SCALE = 3.0
+
+
+logger = logging.getLogger(__name__)
 
 
 class WilsonLoss(nn.Module):
@@ -59,6 +63,8 @@ class WilsonLoss(nn.Module):
         intensity_kl_weight: float = 1.0,
     ):
         super().__init__()
+        # warn once, not once per batch, if the dataset predates the flag
+        self._warned_centric = False
         self.b_min = b_min  # minimum B-factor
         self.n_bins = n_bins
         self.stabilize_scale = stabilize_scale
@@ -224,7 +230,38 @@ class WilsonLoss(nn.Module):
 
         tau = self._get_tau(metadata, s_sq, device)
 
-        p_i = Gamma(concentration=torch.ones_like(tau), rate=tau)
+        # Wilson statistics differ between centric and acentric reflections.
+        # An acentric |F|^2 is exponential -- Gamma(1, 1/Sigma) -- while a
+        # centric one is Sigma times a chi-squared with ONE degree of freedom,
+        # Gamma(1/2, 1/(2 Sigma)). Both have mean Sigma, but the centric has
+        # twice the variance and far more mass near zero, so imposing shape 1
+        # on a centric under-weights small intensities and pulls weak centrics
+        # up. They are 13.8% of reflections on SBGrid 821, and 23% below 3 A.
+        #
+        # `centric` is a per-reflection flag carried in the metadata. Datasets
+        # cut before it existed do not have it, and fall back to the acentric
+        # form -- the previous behaviour -- rather than failing.
+        concentration = torch.ones_like(tau)
+        # not `rate`: that name already holds the Poisson pixel rate, which is
+        # passed to the likelihood further down
+        prior_rate = tau
+        centric = metadata.get("centric")
+        if centric is not None:
+            centric = centric.to(device).reshape(tau.shape).bool()
+            concentration = torch.where(centric, 0.5, 1.0)
+            # halving the rate alongside the shape holds the prior mean at
+            # Sigma; only the shape of the distribution changes
+            prior_rate = torch.where(centric, tau * 0.5, tau)
+        elif not self._warned_centric:
+            logger.warning(
+                "metadata has no 'centric' flag; treating every reflection as "
+                "acentric. Centric reflections are Gamma(1/2), so their prior "
+                "is too tight near zero. Add the column with "
+                "scripts/sbgrid/add_centric_flag.py."
+            )
+            self._warned_centric = True
+
+        p_i = Gamma(concentration=concentration, rate=prior_rate)
 
         kl_i = kl_divergence(qi, p_i) * self.intensity_kl_weight
         kl = kl + kl_i

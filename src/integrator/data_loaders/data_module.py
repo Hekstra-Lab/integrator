@@ -92,6 +92,9 @@ DEFAULT_DS_COLS = [
     # several crystals: without it a prediction cannot be written back to
     # the reflection table it belongs to
     "sweep_id",
+    # centric reflections follow Gamma(1/2), acentric Gamma(1); the Wilson
+    # prior needs to know which is which
+    "centric",
 ]
 
 
