@@ -50,6 +50,10 @@ class WilsonLoss(nn.Module):
         # is the default so existing configs are unchanged.
         refit_prior_every_n_epochs: int = 0,
         refit_bins: int = 30,
+        # shoebox shape, needed to place the foreground disc
+        shoebox_dhw: tuple[int, int, int] | None = None,
+        refit_fg_radius: int = 5,
+        refit_guard: int = 3,
         refit_start_epoch: int = 1,
         refit_damping: float = 0.5,
         # bins below this resolution are excluded from the SLOPE: the Wilson
@@ -81,6 +85,11 @@ class WilsonLoss(nn.Module):
         self.learn_B = learn_B
         self.refit_every = int(refit_prior_every_n_epochs)
         self.refit_bins = int(refit_bins)
+        self.shoebox_dhw = tuple(shoebox_dhw) if shoebox_dhw else None
+        self.refit_fg_radius = int(refit_fg_radius)
+        self.refit_guard = int(refit_guard)
+        self._fg_mask = None
+        self._ann_mask = None
         self.refit_start_epoch = int(refit_start_epoch)
         self.refit_damping = float(refit_damping)
         self.wilson_fit_d_max = float(wilson_fit_d_max)
@@ -143,7 +152,7 @@ class WilsonLoss(nn.Module):
                     f"refit_bins={self.refit_bins} is too few to fit a slope; "
                     "use at least 10"
                 )
-            for name in ("_fit_n", "_fit_i", "_fit_i2", "_fit_s2", "_fit_qi"):
+            for name in ("_fit_n", "_fit_i", "_fit_i2", "_fit_s2", "_fit_qi", "_fit_qi2"):
                 self.register_buffer(
                     name, torch.zeros(self.refit_bins), persistent=True
                 )
@@ -256,10 +265,11 @@ class WilsonLoss(nn.Module):
         mean = sum_i[keep] / nb
         var = (sum_i2[keep] / nb - mean.pow(2)).clamp_min(0.0)
         x = sum_s2[keep] / nb
-        good = mean > 0
-        if int(good.sum()) < 3:
-            return float("nan"), float("nan"), 0.0, int(good.sum())
-        nb, mean, var, x = nb[good], mean[good], var[good], x[good]
+        # a negative bin mean means the background subtraction is biased.
+        # Dropping those bins silently deletes the evidence of the problem and
+        # tilts the line, so fail instead and let the sanity gate skip.
+        if bool((mean <= 0).any()):
+            return float("nan"), float("nan"), 0.0, 0
         y = torch.log(mean)
 
         w = nb / (1.0 + var / mean.pow(2).clamp_min(1e-12))
@@ -278,8 +288,69 @@ class WilsonLoss(nn.Module):
             int(len(y)),
         )
 
+    def _region_masks(self, n_pixels: int, device):
+        """Flat boolean masks for the foreground disc and its background annulus.
+
+        Built once. The disc is a fixed in-plane radius across every z slice --
+        the shoebox is centred on the predicted position, so a concentric disc
+        captures the peak while the annulus beyond a guard ring sees only
+        background (profile leak is ~1e-4 of the mass at these radii).
+        """
+        if self._fg_mask is not None and self._fg_mask.numel() == n_pixels:
+            return self._fg_mask, self._ann_mask
+        if not self.shoebox_dhw:
+            if not getattr(self, "_warned_dhw", False):
+                logger.warning(
+                    "refit needs shoebox_dhw to place the foreground disc; "
+                    "skipping accumulation"
+                )
+                self._warned_dhw = True
+            return None, None
+        d, h, w = self.shoebox_dhw
+        if d * h * w != n_pixels:
+            raise ValueError(
+                f"shoebox_dhw {self.shoebox_dhw} is {d * h * w} pixels but the "
+                f"batch has {n_pixels}"
+            )
+        yy, xx = torch.meshgrid(
+            torch.arange(h, device=device, dtype=torch.float32),
+            torch.arange(w, device=device, dtype=torch.float32),
+            indexing="ij",
+        )
+        r = torch.sqrt((yy - (h - 1) / 2).pow(2) + (xx - (w - 1) / 2).pow(2))
+        fg2d = r <= self.refit_fg_radius
+        ann2d = r > self.refit_fg_radius + self.refit_guard
+        self._fg_mask = fg2d.reshape(1, -1).expand(d, -1).reshape(-1)
+        self._ann_mask = ann2d.reshape(1, -1).expand(d, -1).reshape(-1)
+        logger.info(
+            "refit regions: %d foreground px, %d annulus px of %d",
+            int(self._fg_mask.sum()), int(self._ann_mask.sum()), n_pixels,
+        )
+        return self._fg_mask, self._ann_mask
+
+    @staticmethod
+    def _trimmed_mean(counts, valid, n_valid):
+        """Annulus mean with the bright tail trimmed.
+
+        A neighbouring spot clipping the annulus would otherwise raise the
+        background and eat real signal. A mean over values below the 90th
+        percentile is enough; a median is a poor choice here because at a
+        background of a few counts the Poisson median is badly quantized.
+        """
+        big = torch.where(valid, counts, torch.zeros_like(counts))
+        total = big.sum(-1)
+        mean = total / n_valid
+        # one pass: drop anything above 3x the mean, which at bg ~ 2.5 counts
+        # keeps the Poisson bulk and removes neighbour contamination
+        cut = (3.0 * mean + 3.0).unsqueeze(-1)
+        keep = valid & (counts <= cut)
+        n_keep = keep.sum(-1).clamp_min(1.0)
+        return torch.where(counts <= cut, counts, torch.zeros_like(counts)).mul(
+            keep
+        ).sum(-1) / n_keep
+
     def _accumulate_fit(
-        self, counts, mask, s_sq, qbg, qi, metadata, device
+        self, counts, mask, s_sq, qi, metadata, device
     ) -> None:
         """Add this batch's per-bin sums toward the next refit.
 
@@ -293,9 +364,23 @@ class WilsonLoss(nn.Module):
         """
         with torch.no_grad():
             m = mask.squeeze(-1) if mask.dim() > 2 else mask
-            npix = m.sum(-1).clamp_min(1.0)
-            bg = qbg.mean.detach().reshape(-1)
-            i_hat = (counts.squeeze(-1) * m).sum(-1) - bg * npix
+            c = counts.squeeze(-1) if counts.dim() > 2 else counts
+            fg, ann = self._region_masks(c.shape[-1], c.device)
+            if fg is None:
+                return
+            # foreground sum minus a background measured in an annulus the
+            # signal cannot reach. Deliberately model-free: at the ELBO's
+            # stationary point the background solves b = (C - E_q[I])/npix, so
+            # subtracting qbg over the whole box returns E_q[I] almost exactly
+            # -- the "raw count" proxy was the posterior mean in disguise, and
+            # its npix-fold gain on any resolution-correlated qbg error is what
+            # tilted the fit. Measuring background off-peak removes both.
+            fg_v, ann_v = m & fg, m & ann
+            n_fg = fg_v.sum(-1)
+            n_ann = ann_v.sum(-1).clamp_min(1.0)
+            bg = self._trimmed_mean(c, ann_v, n_ann)
+            i_hat = (c * fg_v).sum(-1) - bg * n_fg
+            usable = (n_fg > 0) & (ann_v.sum(-1) >= 20)
             if self._apply_lp and "lp" in metadata:
                 # with lp_correction the prior mean of the raw counts is
                 # G exp(-2Bs^2)/lp, so i_hat*lp is the Wilson-distributed one
@@ -309,12 +394,14 @@ class WilsonLoss(nn.Module):
             nb = self._fit_n.numel()
             idx = (flat_s2 / self._fit_s2_max.clamp_min(1e-12) * nb).long()
             idx = idx.clamp(0, nb - 1)
-            ones = torch.ones_like(i_hat)
-            self._fit_n.scatter_add_(0, idx, ones)
-            self._fit_i.scatter_add_(0, idx, i_hat)
-            self._fit_i2.scatter_add_(0, idx, i_hat.pow(2))
-            self._fit_s2.scatter_add_(0, idx, s_sq.reshape(-1))
-            self._fit_qi.scatter_add_(0, idx, qi.mean.detach().reshape(-1))
+            keep = usable.float()
+            qi_m = qi.mean.detach().reshape(-1)
+            self._fit_n.scatter_add_(0, idx, keep)
+            self._fit_i.scatter_add_(0, idx, i_hat * keep)
+            self._fit_i2.scatter_add_(0, idx, i_hat.pow(2) * keep)
+            self._fit_s2.scatter_add_(0, idx, flat_s2 * keep)
+            self._fit_qi.scatter_add_(0, idx, qi_m * keep)
+            self._fit_qi2.scatter_add_(0, idx, qi_m.pow(2) * keep)
 
     def refit_prior(self, epoch: int) -> dict[str, float]:
         """Solve for (G, B) from the epoch's sums and take a damped step.
@@ -336,8 +423,8 @@ class WilsonLoss(nn.Module):
         # the same regression on the posterior means: not used to update
         # anything, logged as an echo meter
         _, B_hat_q, _, _ = self.wilson_fit_binned(
-            self._fit_n, self._fit_qi, self._fit_qi.pow(2) / self._fit_n.clamp_min(1),
-            self._fit_s2, d_max=self.wilson_fit_d_max,
+            self._fit_n, self._fit_qi, self._fit_qi2, self._fit_s2,
+            d_max=self.wilson_fit_d_max,
         )
         out.update(
             wilson_G_fit=G_hat, wilson_B_fit=B_hat, wilson_fit_r2=r2,
@@ -351,7 +438,7 @@ class WilsonLoss(nn.Module):
         sane = (
             epoch >= self.refit_start_epoch
             and B_hat == B_hat and G_hat == G_hat  # not NaN
-            and r2 > 0.8
+            and r2 > 0.95
             and self.b_min <= B_hat <= 200.0
             and current_G / 10.0 <= G_hat <= current_G * 10.0
         )
@@ -377,7 +464,7 @@ class WilsonLoss(nn.Module):
         return out
 
     def _zero_fit_buffers(self) -> None:
-        for name in ("_fit_n", "_fit_i", "_fit_i2", "_fit_s2", "_fit_qi"):
+        for name in ("_fit_n", "_fit_i", "_fit_i2", "_fit_s2", "_fit_qi", "_fit_qi2"):
             getattr(self, name).zero_()
 
     def _maybe_init_scale(
@@ -442,8 +529,8 @@ class WilsonLoss(nn.Module):
 
         self._maybe_init_scale(counts, s_sq, mask)
 
-        if self.refit_enabled:
-            self._accumulate_fit(counts, mask, s_sq, qbg, qi, metadata, device)
+        if self.refit_enabled and self.training:
+            self._accumulate_fit(counts, mask, s_sq, qi, metadata, device)
 
         tau = self._get_tau(metadata, s_sq, device)
         if self.refit_enabled:

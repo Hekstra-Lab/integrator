@@ -345,6 +345,14 @@ def _get_loss_module(
         if k not in kwargs:
             kwargs[k] = v
 
+    # the prior refit places a foreground disc inside the shoebox, so it needs
+    # the shape; the integrator config is the one place that already knows it
+    if "shoebox_dhw" in _valid_loss_keys(loss_cls) and "shoebox_dhw" not in kwargs:
+        geom = cfg.get("integrator", {}).get("args", {})
+        dhw = tuple(geom.get(k) for k in ("d", "h", "w"))
+        if all(type(v) is int for v in dhw):
+            kwargs["shoebox_dhw"] = dhw
+
     data_dir = _get_data_dir(cfg)
 
     if "wavelength_bin_edges" in kwargs and isinstance(
