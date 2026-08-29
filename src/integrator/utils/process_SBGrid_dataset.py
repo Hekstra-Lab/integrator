@@ -567,9 +567,6 @@ def predict(cfg, train_dir: Path | None, st: Stamps, dry_run: bool) -> None:
 
 def eval_imports():
     """merge_eval + plot_ckpt_eval from scripts/, imported only when evaluating.
-
-    They pull in torch and matplotlib, which the laue-dials half of this script
-    has no use for.
     """
     for p in (SCRIPTS, SCRIPTS / "merging"):
         if str(p) not in sys.path:
@@ -587,10 +584,7 @@ def eval_root(train_dir: Path) -> Path:
 
 
 def select_checkpoints(dirs: list[Path], n: int) -> list[Path]:
-    """`n` evenly spaced checkpoints ending on the last, never the first.
-
-    The first checkpoint is barely-trained and costs a full careless run to
-    learn nothing, so it is dropped before spacing.  n <= 0 keeps every
+    """`n` evenly spaced checkpoints ending on the last,  n <= 0 keeps every
     checkpoint but that first one.
     """
     pool = dirs[1:] if len(dirs) > 1 else dirs
@@ -654,9 +648,9 @@ def normalize(src: Path, out: Path) -> None:
     """Rewrite careless output with the column names phenix.eff selects.
 
     careless writes its structure factor posterior as `F`/`SigF`, and
-    `--anomalous` merges into the anomalous ASU rather than splitting columns,
+    `--anomalous` merges into the anomalous ASU,
     so the Friedel mates arrive as separate rows.  The eff template selects
-    `F(+),SIGF(+),F(-),SIGF(-)`, so unstack them and uppercase SIG.
+    `F(+),SIGF(+),F(-),SIGF(-)`.
     """
     import reciprocalspaceship as rs
 
@@ -726,13 +720,6 @@ def careless_merge(label: str, mtz: Path, work: Path, e: dict,
 
 def make_flags(src: Path, out: Path, e: dict, st: Stamps) -> Path:
     """One R-free flag set, generated once and shared by every arm.
-
-    Fresh random flags per arm would make R-free incomparable across them, which
-    is the whole point of the comparison; the flags cover the full ASU to dmin,
-    so the same set joins onto each arm's slightly different HKL list.
-
-    They are regenerated when the arm they are drawn from changes: flags from a
-    superseded HKL list would silently stop covering part of the new one.
     """
     cmd = ["rs.rfree", "-f", src, "-r", e.get("rfree_fraction", 0.05),
            "-s", e.get("rfree_seed", 0), "-o", out]
@@ -747,9 +734,6 @@ def make_flags(src: Path, out: Path, e: dict, st: Stamps) -> Path:
 
 def attach_flags(src: Path, flags: Path, out: Path) -> Path:
     """Join the shared R-free flags onto an arm's merged MTZ.
-
-    Skipped when the join is already newer than both its inputs: rewriting it
-    every run would move its mtime and make refine look stale forever.
     """
     if out.exists() and out.stat().st_mtime_ns >= max(
             src.stat().st_mtime_ns, flags.stat().st_mtime_ns):
@@ -780,10 +764,6 @@ def peak_stats(peaks_csv: Path | None) -> dict:
 
 def refine(label: str, work: Path, template: str, st: Stamps) -> dict:
     """phenix.refine + rs.find_peaks on this arm, into its result.json.
-
-    Everything from the MTZ onward is merge_eval's, so an arm evaluated here and
-    a checkpoint evaluated by scripts/merging/process_single_ckpt.py produce the
-    same numbers in the same layout.
     """
     me, _ = eval_imports()
     result_path = work / "result.json"
@@ -832,9 +812,6 @@ def refine(label: str, work: Path, template: str, st: Stamps) -> dict:
 
 def eval_plots(root: Path, dials_dir: Path | None) -> None:
     """R-factors and per-residue anomalous peaks over the evaluated epochs.
-
-    The DIALS arm lives outside the epoch_* dirs the plots iterate, so it enters
-    as reference lines: its peak height per site, its R-factors.
     """
     _, pce = eval_imports()
 
