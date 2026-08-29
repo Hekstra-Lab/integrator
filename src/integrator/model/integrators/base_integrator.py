@@ -348,40 +348,59 @@ class BaseIntegrator(pl.LightningModule):
                 on_epoch=True,
             )
 
-    def _build_optimizer(self) -> torch.optim.Optimizer:
-        if self.decoder_weight_decay is None:
-            return torch.optim.Adam(
-                self.parameters(),
-                lr=self.lr,
-                weight_decay=self.weight_decay,
-            )
+    # the Wilson prior's scalars: physical quantities, not network weights
+    _PRIOR_SCALARS = ("raw_G", "raw_B", "raw_scale")
 
+    def _is_prior_scalar(self, name: str) -> bool:
+        return name.startswith("loss.") and name.split(".")[-1] in self._PRIOR_SCALARS
+
+    def _build_optimizer(self) -> torch.optim.Optimizer:
+        """Adam, with the Wilson scalars held out of weight decay.
+
+        G and B are physical quantities in counts and A^2, not network weights,
+        and decaying them toward zero is not regularization -- it is a constant
+        force on the prior. Under plain Adam the L2 term enters the gradient
+        before the second-moment normalization, and for G it swamps the data
+        term by ~4 orders of magnitude: dKL/draw_G is (1 - r)/G, order 1e-5,
+        against wd * raw_G of order 0.4. The logged trace shows the result --
+        G declines smoothly at a rate set by the learning-rate schedule and
+        then stops dead when cosine decay reaches lr_min, never having been
+        moved by the data at all.
+        """
         decoder_params: list[nn.Parameter] = []
+        prior_params: list[nn.Parameter] = []
         other_params: list[nn.Parameter] = []
         for name, param in self.named_parameters():
             if not param.requires_grad:
                 continue
+            if self._is_prior_scalar(name):
+                prior_params.append(param)
             # any surrogate decoder weight (e.g. surrogates.qp.decoder.weight)
-            if name.startswith("surrogates.") and name.endswith(
+            elif name.startswith("surrogates.") and name.endswith(
                 ".decoder.weight"
             ):
                 decoder_params.append(param)
             else:
                 other_params.append(param)
-        if not decoder_params:
+
+        if self.decoder_weight_decay is not None and not decoder_params:
             raise RuntimeError(
                 "decoder_weight_decay is set but no surrogate '.decoder.weight' parameter was found "
             )
-        return torch.optim.Adam(
-            [
-                {"params": other_params, "weight_decay": self.weight_decay},
-                {
-                    "params": decoder_params,
-                    "weight_decay": self.decoder_weight_decay,
-                },
-            ],
-            lr=self.lr,
-        )
+
+        groups: list[dict] = [
+            {"params": other_params, "weight_decay": self.weight_decay}
+        ]
+        if prior_params:
+            groups.append({"params": prior_params, "weight_decay": 0.0})
+        if decoder_params:
+            decay = (
+                self.weight_decay
+                if self.decoder_weight_decay is None
+                else self.decoder_weight_decay
+            )
+            groups.append({"params": decoder_params, "weight_decay": decay})
+        return torch.optim.Adam(groups, lr=self.lr)
 
     def _cosine_warmup_lambda(self, max_epochs: int):
         """Linear warmup for `warmup_epochs`, then cosine decay to lr_min."""
