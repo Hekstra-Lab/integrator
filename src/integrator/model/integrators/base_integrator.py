@@ -348,6 +348,22 @@ class BaseIntegrator(pl.LightningModule):
                 on_epoch=True,
             )
 
+    def on_train_epoch_end(self) -> None:
+        """Re-estimate the Wilson prior from the epoch's raw counts.
+
+        A module hook rather than a Callback because it mutates model state,
+        it inherits into every integrator subclass, and Lightning runs it
+        before the monitoring callbacks -- so a checkpoint saved this epoch
+        holds the refitted prior rather than the one it replaced.
+        """
+        loss = getattr(self, "loss", None)
+        if not getattr(loss, "refit_enabled", False):
+            return
+        stats = loss.refit_prior(self.current_epoch)
+        for key, value in stats.items():
+            if value == value:  # skip NaN
+                self.log(key, float(value), on_step=False, on_epoch=True)
+
     # the Wilson prior's scalars: physical quantities, not network weights
     _PRIOR_SCALARS = ("raw_G", "raw_B", "raw_scale")
 

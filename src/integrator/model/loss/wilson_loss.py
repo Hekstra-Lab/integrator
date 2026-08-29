@@ -46,6 +46,14 @@ class WilsonLoss(nn.Module):
         learn_B: bool = True,
         init_scale_from_counts: bool = True,
         wilson_init_bins: int = 20,
+        # Periodic re-estimation of (G, B) from raw counts. 0 disables, which
+        # is the default so existing configs are unchanged.
+        refit_prior_every_n_epochs: int = 0,
+        refit_start_epoch: int = 1,
+        refit_damping: float = 0.5,
+        # bins below this resolution are excluded from the SLOPE: the Wilson
+        # plot is not linear through the solvent region
+        wilson_fit_d_max: float = 3.5,
         # Resolution bins for per-bin background prior
         n_bins: int = 1,
         # Pixel count likelihood: "poisson" (default) or "negative_binomial"
@@ -70,6 +78,12 @@ class WilsonLoss(nn.Module):
         self.n_bins = n_bins
         self.stabilize_scale = stabilize_scale
         self.learn_B = learn_B
+        self.refit_every = int(refit_prior_every_n_epochs)
+        self.refit_start_epoch = int(refit_start_epoch)
+        self.refit_damping = float(refit_damping)
+        self.wilson_fit_d_max = float(wilson_fit_d_max)
+        self.refit_enabled = self.refit_every > 0
+        self._last_fit: dict[str, float] = {}
         self.init_scale_from_counts = init_scale_from_counts
         self.wilson_init_bins = wilson_init_bins
         self.register_buffer(
@@ -112,6 +126,19 @@ class WilsonLoss(nn.Module):
             self.register_buffer(
                 "scale_initialized", torch.tensor(False), persistent=True
             )
+        if self.refit_enabled:
+            if not stabilize_scale:
+                raise ValueError(
+                    "refit_prior_every_n_epochs needs stabilize_scale: true. "
+                    "In the softplus-G frame a raw-space step moves G by about "
+                    "one count, so G cannot travel to a refit value; log-space "
+                    "makes the step multiplicative."
+                )
+            # per-bin sums, accumulated over an epoch and solved at its end. A
+            # single batch is far too noisy for a slope; a whole epoch is not.
+            nb = max(int(n_bins), 1)
+            for name in ("_fit_n", "_fit_i", "_fit_i2", "_fit_s2", "_fit_qi"):
+                self.register_buffer(name, torch.zeros(nb), persistent=True)
 
         self.count_likelihood = CountLikelihood(
             likelihood,
@@ -124,10 +151,15 @@ class WilsonLoss(nn.Module):
 
     def diagnostics(self) -> dict[str, Tensor]:
         """Scalars to log each step: the Wilson B-factor + likelihood diagnostics."""
-        return {
+        out = {
             "wilson_B": self.get_B().detach(),
             **self.count_likelihood.diagnostics(),
         }
+        # what the count-evidence fit last said, so a trace shows at a glance
+        # whether the prior is tracking the data or drifting from it
+        for key, value in self._last_fit.items():
+            out[key] = torch.tensor(float(value))
+        return out
 
     def get_B(self) -> Tensor:
         return F.softplus(self.raw_B) + self.b_min
@@ -175,6 +207,161 @@ class WilsonLoss(nn.Module):
             1e-12
         )
         return float(torch.exp(ym - slope * xm)), float(-slope / 2.0)
+
+    @staticmethod
+    def wilson_fit_binned(
+        n: Tensor, sum_i: Tensor, sum_i2: Tensor, sum_s2: Tensor,
+        d_max: float = 3.5, min_count: int = 30,
+    ) -> tuple[float, float, float, int]:
+        """(G, B, weighted R^2, bins used) from per-bin sums of raw counts.
+
+        Regresses log(mean I per bin) on s^2, the same line as `wilson_fit`,
+        but from streaming sums and with three differences that matter once B
+        is taken from the slope and not just G from the intercept:
+
+        Negative bin members are KEPT. `wilson_fit` drops reflections with
+        i_hat <= 0, which at a bin I/sigma near 0.8 inflates the bin mean by
+        roughly 46% -- and only in the weak outer bins, so it tilts the line.
+        Over an s^2 lever arm of ~0.05 that is 3-4 A^2 of B, biased low,
+        exactly where B matters. The mean of noisy unbiased estimates is
+        unbiased; the truncation is what breaks it.
+
+        Bins below `d_max` are dropped from the fit: the Wilson plot is not
+        linear through the solvent region.
+
+        Bins are weighted by n / (1 + Var/mean^2). For clean exponential
+        intensities that is uniform over equal-count bins; where background
+        subtraction dominates it discounts the noise.
+        """
+        keep = n >= min_count
+        if d_max is not None:
+            # s^2 = 1/(4 d^2), so d > d_max is s^2 below this
+            keep = keep & (sum_s2 / n.clamp_min(1) > 1.0 / (4.0 * d_max**2))
+        if int(keep.sum()) < 3:
+            return float("nan"), float("nan"), 0.0, int(keep.sum())
+
+        nb = n[keep].clamp_min(1.0)
+        mean = sum_i[keep] / nb
+        var = (sum_i2[keep] / nb - mean.pow(2)).clamp_min(0.0)
+        x = sum_s2[keep] / nb
+        good = mean > 0
+        if int(good.sum()) < 3:
+            return float("nan"), float("nan"), 0.0, int(good.sum())
+        nb, mean, var, x = nb[good], mean[good], var[good], x[good]
+        y = torch.log(mean)
+
+        w = nb / (1.0 + var / mean.pow(2).clamp_min(1e-12))
+        w = w / w.sum().clamp_min(1e-12)
+        xm = (w * x).sum()
+        ym = (w * y).sum()
+        sxx = (w * (x - xm).pow(2)).sum().clamp_min(1e-12)
+        slope = (w * (x - xm) * (y - ym)).sum() / sxx
+        resid = y - (ym + slope * (x - xm))
+        ss_tot = (w * (y - ym).pow(2)).sum().clamp_min(1e-12)
+        r2 = float(1.0 - (w * resid.pow(2)).sum() / ss_tot)
+        return (
+            float(torch.exp(ym - slope * xm)),
+            float(-slope / 2.0),
+            r2,
+            int(len(y)),
+        )
+
+    def _accumulate_fit(
+        self, counts, mask, s_sq, qbg, qi, group_labels, metadata, device
+    ) -> None:
+        """Add this batch's per-bin sums toward the next refit.
+
+        The intensity proxy is summed counts above the model's own background
+        posterior -- raw pixels, no DIALS. The posterior is used rather than
+        the background prior because it is both more accurate and, since the
+        per-bin background prior is fitted offline from a reflection table,
+        the more self-contained of the two. It does not close the intensity
+        echo loop: q(bg) is pinned by the pixel likelihood, and G and B enter
+        only the intensity KL.
+        """
+        if group_labels is None:
+            return
+        with torch.no_grad():
+            m = mask.squeeze(-1) if mask.dim() > 2 else mask
+            npix = m.sum(-1).clamp_min(1.0)
+            bg = qbg.mean.detach().reshape(-1)
+            i_hat = (counts.squeeze(-1) * m).sum(-1) - bg * npix
+            if self._apply_lp and "lp" in metadata:
+                # with lp_correction the prior mean of the raw counts is
+                # G exp(-2Bs^2)/lp, so i_hat*lp is the Wilson-distributed one
+                i_hat = i_hat * metadata["lp"].to(device).reshape(-1).clamp(min=1e-8)
+            idx = group_labels.to(device).long().reshape(-1)
+            idx = idx.clamp(0, self._fit_n.numel() - 1)
+            ones = torch.ones_like(i_hat)
+            self._fit_n.scatter_add_(0, idx, ones)
+            self._fit_i.scatter_add_(0, idx, i_hat)
+            self._fit_i2.scatter_add_(0, idx, i_hat.pow(2))
+            self._fit_s2.scatter_add_(0, idx, s_sq.reshape(-1))
+            self._fit_qi.scatter_add_(0, idx, qi.mean.detach().reshape(-1))
+
+    def refit_prior(self, epoch: int) -> dict[str, float]:
+        """Solve for (G, B) from the epoch's sums and take a damped step.
+
+        This is the M-step. Given q, the objective in (log G, B) is convex and
+        its exact solution IS this weighted regression, so an iterative
+        optimizer on the same fixed point would only be a slower version of
+        it. Fitting raw counts rather than E_q[I] is what keeps the prior from
+        grading its own homework: in the weak shells q collapses onto p, and a
+        fit to q would then confirm whatever p already said.
+        """
+        out: dict[str, float] = {}
+        if not self.refit_enabled or int(self._fit_n.sum()) == 0:
+            return out
+        G_hat, B_hat, r2, nbins = self.wilson_fit_binned(
+            self._fit_n, self._fit_i, self._fit_i2, self._fit_s2,
+            d_max=self.wilson_fit_d_max,
+        )
+        # the same regression on the posterior means: not used to update
+        # anything, logged as an echo meter
+        _, B_hat_q, _, _ = self.wilson_fit_binned(
+            self._fit_n, self._fit_qi, self._fit_qi.pow(2) / self._fit_n.clamp_min(1),
+            self._fit_s2, d_max=self.wilson_fit_d_max,
+        )
+        out.update(
+            wilson_G_fit=G_hat, wilson_B_fit=B_hat, wilson_fit_r2=r2,
+            wilson_fit_bins=float(nbins), wilson_B_fit_q=B_hat_q,
+            wilson_echo_gap=(B_hat_q - B_hat)
+            if (B_hat == B_hat and B_hat_q == B_hat_q) else float("nan"),
+        )
+        self._zero_fit_buffers()
+
+        current_G = float(self.get_G().reshape(-1)[0])
+        sane = (
+            epoch >= self.refit_start_epoch
+            and B_hat == B_hat and G_hat == G_hat  # not NaN
+            and r2 > 0.8
+            and self.b_min <= B_hat <= 200.0
+            and current_G / 10.0 <= G_hat <= current_G * 10.0
+        )
+        out["wilson_fit_skipped"] = 0.0 if sane else 1.0
+        if not sane:
+            return out
+
+        # damped in the frame each parameter lives in: multiplicative for G,
+        # additive for B
+        eta = self.refit_damping
+        with torch.no_grad():
+            self._set_scale_from_fit(
+                float(torch.exp(
+                    (1 - eta) * torch.log(torch.tensor(max(current_G, 1e-8)))
+                    + eta * torch.log(torch.tensor(max(G_hat, 1e-8)))
+                ))
+            )
+            target_B = max(B_hat, self.b_min + 1e-3)
+            new_B = (1 - eta) * float(self.get_B()) + eta * target_B
+            y = torch.tensor(max(new_B - self.b_min, 1e-3))
+            self.raw_B.copy_(_inv_softplus(y))
+        self._last_fit = out
+        return out
+
+    def _zero_fit_buffers(self) -> None:
+        for name in ("_fit_n", "_fit_i", "_fit_i2", "_fit_s2", "_fit_qi"):
+            getattr(self, name).zero_()
 
     def _maybe_init_scale(
         self, counts: Tensor, s_sq: Tensor, mask: Tensor
@@ -238,7 +425,18 @@ class WilsonLoss(nn.Module):
 
         self._maybe_init_scale(counts, s_sq, mask)
 
+        if self.refit_enabled:
+            self._accumulate_fit(
+                counts, mask, s_sq, qbg, qi, group_labels, metadata, device
+            )
+
         tau = self._get_tau(metadata, s_sq, device)
+        if self.refit_enabled:
+            # the scalars are set by the M-step, so they take no gradient.
+            # Detaching also drops them out of the global gradient clip, where
+            # the one-sided dKL/dB would otherwise compete with the network for
+            # the clip budget.
+            tau = tau.detach()
 
         # Wilson statistics differ between centric and acentric reflections.
         # An acentric |F|^2 is exponential -- Gamma(1, 1/Sigma) -- while a
