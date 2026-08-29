@@ -49,6 +49,7 @@ class WilsonLoss(nn.Module):
         # Periodic re-estimation of (G, B) from raw counts. 0 disables, which
         # is the default so existing configs are unchanged.
         refit_prior_every_n_epochs: int = 0,
+        refit_bins: int = 30,
         refit_start_epoch: int = 1,
         refit_damping: float = 0.5,
         # bins below this resolution are excluded from the SLOPE: the Wilson
@@ -79,6 +80,7 @@ class WilsonLoss(nn.Module):
         self.stabilize_scale = stabilize_scale
         self.learn_B = learn_B
         self.refit_every = int(refit_prior_every_n_epochs)
+        self.refit_bins = int(refit_bins)
         self.refit_start_epoch = int(refit_start_epoch)
         self.refit_damping = float(refit_damping)
         self.wilson_fit_d_max = float(wilson_fit_d_max)
@@ -136,9 +138,19 @@ class WilsonLoss(nn.Module):
                 )
             # per-bin sums, accumulated over an epoch and solved at its end. A
             # single batch is far too noisy for a slope; a whole epoch is not.
-            nb = max(int(n_bins), 1)
+            if self.refit_bins < 10:
+                raise ValueError(
+                    f"refit_bins={self.refit_bins} is too few to fit a slope; "
+                    "use at least 10"
+                )
             for name in ("_fit_n", "_fit_i", "_fit_i2", "_fit_s2", "_fit_qi"):
-                self.register_buffer(name, torch.zeros(nb), persistent=True)
+                self.register_buffer(
+                    name, torch.zeros(self.refit_bins), persistent=True
+                )
+            # the s^2 range is a property of the dataset, learned from the
+            # first batch and then held fixed so bins mean the same thing in
+            # every epoch
+            self.register_buffer("_fit_s2_max", torch.tensor(0.0), persistent=True)
 
         self.count_likelihood = CountLikelihood(
             likelihood,
@@ -267,7 +279,7 @@ class WilsonLoss(nn.Module):
         )
 
     def _accumulate_fit(
-        self, counts, mask, s_sq, qbg, qi, group_labels, metadata, device
+        self, counts, mask, s_sq, qbg, qi, metadata, device
     ) -> None:
         """Add this batch's per-bin sums toward the next refit.
 
@@ -279,8 +291,6 @@ class WilsonLoss(nn.Module):
         echo loop: q(bg) is pinned by the pixel likelihood, and G and B enter
         only the intensity KL.
         """
-        if group_labels is None:
-            return
         with torch.no_grad():
             m = mask.squeeze(-1) if mask.dim() > 2 else mask
             npix = m.sum(-1).clamp_min(1.0)
@@ -290,8 +300,15 @@ class WilsonLoss(nn.Module):
                 # with lp_correction the prior mean of the raw counts is
                 # G exp(-2Bs^2)/lp, so i_hat*lp is the Wilson-distributed one
                 i_hat = i_hat * metadata["lp"].to(device).reshape(-1).clamp(min=1e-8)
-            idx = group_labels.to(device).long().reshape(-1)
-            idx = idx.clamp(0, self._fit_n.numel() - 1)
+            # own binning, equal width in s^2. Borrowing the background
+            # prior's labels would tie the refit to a separate feature and
+            # silently disable it whenever that prior is a scalar.
+            flat_s2 = s_sq.reshape(-1)
+            if float(self._fit_s2_max) <= 0:
+                self._fit_s2_max.fill_(float(flat_s2.max()) * 1.001)
+            nb = self._fit_n.numel()
+            idx = (flat_s2 / self._fit_s2_max.clamp_min(1e-12) * nb).long()
+            idx = idx.clamp(0, nb - 1)
             ones = torch.ones_like(i_hat)
             self._fit_n.scatter_add_(0, idx, ones)
             self._fit_i.scatter_add_(0, idx, i_hat)
@@ -426,9 +443,7 @@ class WilsonLoss(nn.Module):
         self._maybe_init_scale(counts, s_sq, mask)
 
         if self.refit_enabled:
-            self._accumulate_fit(
-                counts, mask, s_sq, qbg, qi, group_labels, metadata, device
-            )
+            self._accumulate_fit(counts, mask, s_sq, qbg, qi, metadata, device)
 
         tau = self._get_tau(metadata, s_sq, device)
         if self.refit_enabled:
