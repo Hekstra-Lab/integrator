@@ -17,8 +17,13 @@ LP convention (this is the easy thing to get wrong -- see --lp):
     Our generative model is the inverse: the Poisson likelihood is on RAW counts,
     so the loss divides by lp. That means
 
-        lp_correction: false  ->  G is on RAW intensity      ->  fit I_dials / lp
-        lp_correction: true   ->  G is on LP-CORRECTED I     ->  fit I_dials
+        lp_correction: false  ->  prior mean is G exp(-2Bs^2)      -> fit I_dials
+        lp_correction: true   ->  prior mean is G exp(-2Bs^2)/lp   -> fit I_dials * lp
+
+    The `true` frame follows from the loss: `tau *= lp`, so the prior mean of
+    the RAW counts is G exp(-2Bs^2)/lp, and the quantity that is Wilson-
+    distributed is therefore I*lp, not I. Fitting I there gave B = 44 on
+    SBGrid 845 where the correct frame gives 33.
 
     Both are printed. Match the row to the `lp_correction` in your config.
 """
@@ -221,11 +226,10 @@ def main():
     want_raw = args.lp in ("both", "raw") and has_lp
     want_corr = args.lp in ("both", "corrected") or not has_lp
     if want_raw:
-        i_raw = i_all / np.clip(lp, 1e-8, None)
-        frames.append(("raw (lp_correction: false)", i_raw, fit_frame(i_raw, s_sq, args.bins)))
+        frames.append(("lp_correction: false", i_all, fit_frame(i_all, s_sq, args.bins)))
     if want_corr:
         frames.append(
-            ("as-stored (lp_correction: true)", i_all, fit_frame(i_all, s_sq, args.bins))
+            ("lp_correction: true", i_all * lp, fit_frame(i_all * lp, s_sq, args.bins))
         )
 
     print(f"\n{'frame':34s} {'G':>12s} {'B (A^2)':>10s} {'R^2':>8s}")
@@ -251,7 +255,7 @@ def main():
     # the mean lp -- a factor of several, and the classic route to a collapsed
     # G/B.
     for label, _, (G, B) in frames:
-        setting = "true" if label.startswith("as-stored") else "false"
+        setting = "true" if label.endswith("true") else "false"
         print(f"\nfor lp_correction: {setting}   ({label})")
         print(f"    init_G: {G:.4g}")
         print(f"    init_B: {B:.1f}")

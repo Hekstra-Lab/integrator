@@ -43,6 +43,7 @@ class WilsonLoss(nn.Module):
         # scale init from raw counts. Off by default (legacy behavior,
         # checkpoint-compatible). See _maybe_init_scale / MonochromaticWilsonLoss.
         stabilize_scale: bool = False,
+        learn_B: bool = True,
         init_scale_from_counts: bool = True,
         wilson_init_bins: int = 20,
         # Resolution bins for per-bin background prior
@@ -68,6 +69,7 @@ class WilsonLoss(nn.Module):
         self.b_min = b_min  # minimum B-factor
         self.n_bins = n_bins
         self.stabilize_scale = stabilize_scale
+        self.learn_B = learn_B
         self.init_scale_from_counts = init_scale_from_counts
         self.wilson_init_bins = wilson_init_bins
         self.register_buffer(
@@ -98,6 +100,14 @@ class WilsonLoss(nn.Module):
         # invert B = softplus(raw_B) + b_min so that B == init_B at init
         y = torch.tensor(max(float(init_B) - b_min, 1e-3))
         self.raw_B = nn.Parameter(_inv_softplus(y))
+        if not learn_B:
+            # B is well determined by a Wilson plot, and learning it jointly
+            # is not reliable: on SBGrid 845 it collapsed 47 -> 1.5 and on 821
+            # 12 -> 4.0, against classical fits of 22-44 A^2 in every lp
+            # frame. A flattened prior costs little where the likelihood is
+            # strong, and destroys the weak shells where it is not.
+            # Kept as a Parameter so checkpoints stay compatible.
+            self.raw_B.requires_grad_(False)
         if stabilize_scale:
             self.register_buffer(
                 "scale_initialized", torch.tensor(False), persistent=True
