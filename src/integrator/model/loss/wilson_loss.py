@@ -1,4 +1,5 @@
 import logging
+import math
 from abc import abstractmethod
 
 import torch
@@ -54,6 +55,9 @@ class WilsonLoss(nn.Module):
         shoebox_dhw: tuple[int, int, int] | None = None,
         refit_fg_radius: int = 5,
         refit_guard: int = 3,
+        # per-bin correction to the fitted Wilson line, shrunk toward zero
+        refit_residual: bool = False,
+        refit_residual_max: float = 1.5,
         refit_start_epoch: int = 1,
         refit_damping: float = 0.5,
         # bins below this resolution are excluded from the SLOPE: the Wilson
@@ -88,6 +92,8 @@ class WilsonLoss(nn.Module):
         self.shoebox_dhw = tuple(shoebox_dhw) if shoebox_dhw else None
         self.refit_fg_radius = int(refit_fg_radius)
         self.refit_guard = int(refit_guard)
+        self.refit_residual = bool(refit_residual)
+        self.refit_residual_max = float(refit_residual_max)
         self._fg_mask = None
         self._ann_mask = None
         self.refit_start_epoch = int(refit_start_epoch)
@@ -156,6 +162,11 @@ class WilsonLoss(nn.Module):
                 self.register_buffer(
                     name, torch.zeros(self.refit_bins), persistent=True
                 )
+            # log-space correction to the fitted line, one value per bin, and
+            # the bin edges needed to look it up
+            self.register_buffer(
+                "_resid", torch.zeros(self.refit_bins), persistent=True
+            )
             # the s^2 range is a property of the dataset, learned from the
             # first batch and then held fixed so bins mean the same thing in
             # every epoch
@@ -432,6 +443,8 @@ class WilsonLoss(nn.Module):
             wilson_echo_gap=(B_hat_q - B_hat)
             if (B_hat == B_hat and B_hat_q == B_hat_q) else float("nan"),
         )
+        if self.refit_residual:
+            out.update(self._solve_residual(G_hat, B_hat))
         self._zero_fit_buffers()
 
         current_G = float(self.get_G().reshape(-1)[0])
@@ -462,6 +475,60 @@ class WilsonLoss(nn.Module):
             self.raw_B.copy_(_inv_softplus(y))
         self._last_fit = out
         return out
+
+    def _resid_for(self, s_sq: Tensor, device) -> Tensor:
+        """The per-bin correction, looked up for each reflection."""
+        if float(self._fit_s2_max) <= 0:
+            return torch.zeros_like(s_sq.reshape(-1))
+        nb = self._resid.numel()
+        idx = (s_sq.reshape(-1) / self._fit_s2_max.clamp_min(1e-12) * nb).long()
+        return self._resid.to(device)[idx.clamp(0, nb - 1)]
+
+    def _solve_residual(self, G_hat: float, B_hat: float) -> dict[str, float]:
+        """Per-bin departure of the data from the fitted Wilson line.
+
+        The line is fitted only above `wilson_fit_d_max`, because the Wilson
+        plot bends through the solvent region -- and then the prior
+        extrapolates that line straight back through the very bins the fit
+        excluded. On 845 the result was a prior mean of 1650 counts in the
+        99-4.0 A shell against a true 1140, a 45% overestimate with a
+        perfectly good B.
+
+        So the residual is measured where the line was never asked to hold.
+        Each bin gets ln(mean observed) - ln(line), shrunk toward zero by its
+        own standard error, so a noisy outer bin with three reflections cannot
+        move the prior while a well-populated low-resolution bin can. Clamped,
+        because this corrects a smooth misfit and is not a licence to fit
+        anything.
+        """
+        if G_hat != G_hat or B_hat != B_hat:
+            return {}
+        n = self._fit_n
+        ok = n >= 30
+        if int(ok.sum()) < 3:
+            return {}
+        mean = torch.where(ok, self._fit_i / n.clamp_min(1), torch.zeros_like(n))
+        x = torch.where(ok, self._fit_s2 / n.clamp_min(1), torch.zeros_like(n))
+        line = math.log(max(G_hat, 1e-8)) - 2.0 * B_hat * x
+        resid = torch.where(mean > 0, torch.log(mean.clamp_min(1e-8)) - line,
+                            torch.zeros_like(mean))
+
+        # James-Stein style shrinkage by the bin's own noise: var(log mean) is
+        # about Var/(n*mean^2)
+        var = (self._fit_i2 / n.clamp_min(1) - mean.pow(2)).clamp_min(0.0)
+        se2 = (var / n.clamp_min(1) / mean.pow(2).clamp_min(1e-12)).clamp_min(1e-12)
+        spread = resid[ok].pow(2).mean().clamp_min(1e-12)
+        shrunk = resid * (spread / (spread + se2))
+        shrunk = shrunk.clamp(-self.refit_residual_max, self.refit_residual_max)
+        shrunk = torch.where(ok, shrunk, torch.zeros_like(shrunk))
+
+        eta = self.refit_damping
+        with torch.no_grad():
+            self._resid.mul_(1 - eta).add_(eta * shrunk)
+        return {
+            "wilson_resid_max": float(self._resid.abs().max()),
+            "wilson_resid_rms": float(self._resid.pow(2).mean().sqrt()),
+        }
 
     def _zero_fit_buffers(self) -> None:
         for name in ("_fit_n", "_fit_i", "_fit_i2", "_fit_s2", "_fit_qi", "_fit_qi2"):
@@ -533,6 +600,11 @@ class WilsonLoss(nn.Module):
             self._accumulate_fit(counts, mask, s_sq, qi, metadata, device)
 
         tau = self._get_tau(metadata, s_sq, device)
+        if self.refit_residual and self.refit_enabled:
+            # the prior mean is G exp(-2Bs^2) * exp(r(s^2)), so tau divides by
+            # the same factor. Bins are the ones the fit used, so a reflection
+            # is corrected by the departure measured where it actually sits.
+            tau = tau * torch.exp(-self._resid_for(s_sq, device))
         if self.refit_enabled:
             # the scalars are set by the M-step, so they take no gradient.
             # Detaching also drops them out of the global gradient clip, where
