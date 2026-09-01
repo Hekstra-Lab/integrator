@@ -144,6 +144,17 @@ def parse_args():
         help="skip overlap masking",
     )
     common.add_argument(
+        "--dials-foreground",
+        action="store_true",
+        help="also write DIALS' foreground/background/overlapped codes per "
+        "shoebox (dials_mask.npy), from the profile model in the .expt",
+    )
+    common.add_argument(
+        "--dials-mask-fname",
+        default="dials_mask.npy",
+        help="filename for the DIALS mask codes when --dials-foreground is set",
+    )
+    common.add_argument(
         "--shoebox-format",
         type=str,
         default="npy",
@@ -334,6 +345,62 @@ def _apply_overlap_mask(
         f"({any_ov.mean() * 100:.1f}%)"
     )
     print(f"    refl with >30% overlap:  {int((ov_frac > 0.30).sum()):,}")
+
+
+def _apply_foreground_mask(
+    expt_path,
+    reflections,
+    dz,
+    dy,
+    dx,
+    out_path,
+    chunk,
+):
+    """Write DIALS' own foreground/background/overlapped codes per shoebox.
+
+    Our masks.npy is a validity mask -- dead pixels and detector gaps -- and
+    the overlap step (a nearest-centroid Voronoi split) only resolves pixels
+    shared between two *predicted* reflections. Neither marks which pixels are
+    this reflection's foreground: a compact region set by the profile model.
+    Without it the integrator sees the whole window, so an absent reflection
+    with a neighbour at the edge, or plain background, gets integrated as
+    signal -- 94-99% of the window on SBGrid 845's worst reflections.
+
+    DIALS defines the foreground in `profile.compute_mask` from the reflection's
+    predicted position and the profile model's n_sigma. The `.expt` carries
+    that model, and reflections["bbox"] is already the fixed window, so the
+    codes computed here align with counts.npy row for row. Stored as the raw
+    MaskCode bits (uint8: Valid 1, Background 2, Foreground 4, Overlapped 32)
+    so the loss can take foreground, background, or both.
+    """
+    from dials.array_family import flex
+    from dxtbx.model.experiment_list import ExperimentListFactory
+
+    experiments = ExperimentListFactory.from_json_file(
+        str(expt_path), check_format=False
+    )
+    ex = experiments[0]
+    n = len(reflections)
+    codes = np.lib.format.open_memmap(
+        out_path, mode="w+", dtype=np.uint8, shape=(n, dz * dy * dx)
+    )
+    for i in range(0, n, chunk):
+        sub = reflections[i : min(i + chunk, n)]
+        sub["shoebox"] = flex.shoebox(sub["panel"], sub["bbox"], allocate=True)
+        ex.profile.compute_mask(
+            sub, ex.crystal, ex.beam, ex.detector, ex.goniometer, ex.scan
+        )
+        for k, sb in enumerate(sub["shoebox"]):
+            m = sb.mask.as_numpy_array().astype(np.uint8)  # (dz, dy, dx)
+            codes[i + k] = m.reshape(-1)
+    codes.flush()
+
+    fg = (np.asarray(codes) & 4) != 0
+    fg_frac = fg.mean(-1)
+    print("  DIALS foreground masking:")
+    print(f"    mean foreground per refl: {fg_frac.mean() * 100:.2f}% of the window")
+    print(f"    median foreground pixels: {int(np.median(fg.sum(-1)))}")
+    del codes
 
 
 def _get_bounding_boxes(x, y, z, nx, ny, nz):
@@ -627,6 +694,17 @@ def run_dials(args):
             dy=dy,
             dx=dx,
             nproc=max_workers,
+            chunk=args.stats_chunk,
+        )
+
+    if args.dials_foreground:
+        _apply_foreground_mask(
+            expt_path=expt_path_in,
+            reflections=reflections,
+            dz=dz,
+            dy=dy,
+            dx=dx,
+            out_path=out_dir / args.dials_mask_fname,
             chunk=args.stats_chunk,
         )
 
