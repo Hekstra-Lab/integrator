@@ -31,6 +31,21 @@ def _add_group_outputs(out: dict, metadata: dict, loss) -> None:
 
 
 
+
+def _shape_signal(counts: Tensor, mask: Tensor, qbg) -> Tensor:
+    """Signal photons per shoebox, as the gate on how much shape it can infer itself.
+
+    The background estimate is the one the model has already formed, so this costs a
+    reduction and no extra inference. Detached: this selects how much the profile may
+    bend toward the data, and letting the selection itself carry gradient would let the
+    model open the gate to reduce its loss rather than because the shoebox earned it.
+    """
+    with torch.no_grad():
+        m = mask.to(counts.dtype)
+        total = (counts * m).sum(dim=-1)
+        background = qbg.mean.reshape(-1) * m.sum(dim=-1)
+        return (total - background).clamp(min=0.0)
+
 def _apply_background_plane(
     surrogates, x: Tensor, zbg: Tensor, mc_samples: int
 ):
@@ -87,6 +102,7 @@ class HierarchicalIntegrator(BaseIntegrator):
             mc_samples=self.mc_samples,
             group_labels=prf_labels,
             metadata=metadata,
+            shape_signal=_shape_signal(counts, mask, qbg),
         )
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
@@ -166,6 +182,7 @@ class HierarchicalIntegrator2Enc(BaseIntegrator):
             mc_samples=self.mc_samples,
             group_labels=prf_labels,
             metadata=metadata,
+            shape_signal=_shape_signal(counts, mask, qbg),
         )
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
@@ -247,6 +264,7 @@ class HierarchicalIntegrator3EncIB(BaseIntegrator):
             mc_samples=self.mc_samples,
             group_labels=prf_labels,
             metadata=metadata,
+            shape_signal=_shape_signal(counts, mask, qbg),
         )
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
@@ -328,6 +346,7 @@ class HierarchicalIntegrator3Enc(BaseIntegrator):
             mc_samples=self.mc_samples,
             group_labels=prf_labels,
             metadata=metadata,
+            shape_signal=_shape_signal(counts, mask, qbg),
         )
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)

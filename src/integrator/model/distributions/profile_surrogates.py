@@ -193,6 +193,8 @@ class GeometricProfileSurrogate(ProfileSurrogate):
         steer: bool = False,
         geom_hidden: int = 32,
         max_log_extent: float = 1.0,
+        gate_extent: bool = False,
+        extent_half_signal: float = 100.0,
     ) -> None:
         super().__init__(
             input_dim=input_dim,
@@ -251,6 +253,26 @@ class GeometricProfileSurrogate(ProfileSurrogate):
             self._geometry_mlp(geom_hidden, 2) if self.steer else None
         )
 
+        # Measured on PDZ2: the geometry-predicted extent rescues weak reflections
+        # (effective pixel count 196 -> 49) but fits BRIGHT spots worse than a freely
+        # inferred profile does -- cos(profile, data) 0.956 against 0.982 at the top
+        # of the I/sigma range. A bright shoebox has the photons to determine its own
+        # shape, and constraining it to the neighbourhood's costs first-order
+        # normalisation bias, which scales with I. So the extent gets a residual that
+        # only opens up where the shoebox can pay for it.
+        self.gate_extent = bool(gate_extent) and self.steer
+        self.extent_residual_head = None
+        if self.gate_extent:
+            head = nn.Linear(input_dim, 2)
+            nn.init.zeros_(head.weight)
+            nn.init.zeros_(head.bias)
+            self.extent_residual_head = head
+            self.register_buffer(
+                "extent_half_signal",
+                torch.tensor(float(extent_half_signal)),
+                persistent=True,
+            )
+
     @staticmethod
     def _cover(side: int) -> int:
         """Smallest odd grid that contains a `side`-wide box rotated to any angle."""
@@ -268,6 +290,24 @@ class GeometricProfileSurrogate(ProfileSurrogate):
         nn.init.zeros_(mlp[-1].weight)
         nn.init.zeros_(mlp[-1].bias)
         return mlp
+
+    def _extent_gate(self, shape_signal: Tensor | None, like: Tensor) -> Tensor:
+        """How much this shoebox is allowed to set its own extent, in [0, 1).
+
+        The information a shoebox carries about its own profile shape grows with the
+        number of signal photons in it, so the gate is a saturating function of that
+        count: `s / (s + k)`, half-open at `s = k`. It is deliberately built from the
+        counts rather than from the latent's posterior width, because the latent is
+        gauge-equivalent under `h -> h/c`, `W -> cW` -- any gate read off `scale`
+        would inherit that freedom and mean nothing.
+
+        Without a signal estimate the gate is closed, which reproduces the ungated
+        geometry warp exactly.
+        """
+        if shape_signal is None:
+            return torch.zeros(like.shape[0], 1, device=like.device, dtype=like.dtype)
+        s = shape_signal.to(like.dtype).to(like.device).reshape(-1, 1).clamp(min=0.0)
+        return s / (s + self.extent_half_signal.clamp(min=1e-3))
 
     def _warp(self, profile: Tensor, phi: Tensor, log_extent: Tensor) -> Tensor:
         """Affinely steer profiles that are already on the simplex.
@@ -348,6 +388,10 @@ class GeometricProfileSurrogate(ProfileSurrogate):
 
         if self.extent_head is not None:
             log_extent = self.extent_head(features)
+            if self.extent_residual_head is not None:
+                log_extent = log_extent + self._extent_gate(
+                    kwargs.get("shape_signal"), loc
+                ) * self.extent_residual_head(x)
             zp = self._warp(zp, phi, log_extent)
             mean_profile = self._warp(
                 mean_profile.unsqueeze(0), phi, log_extent
