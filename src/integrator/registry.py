@@ -4,6 +4,7 @@ from integrator.data_loaders import (
     RotationDataModule,
 )
 from integrator.model.distributions import (
+    BackgroundPlaneSurrogate,
     DirichletDistribution,
     GeometricProfileSurrogate,
     ProfileSurrogate,
@@ -50,6 +51,7 @@ REGISTRY = {
         "dirichlet": DirichletDistribution,
         "learned_basis_profile": ProfileSurrogate,
         "geometric_basis_profile": GeometricProfileSurrogate,
+        "background_plane": BackgroundPlaneSurrogate,
     },
     "data_loader": {
         "rotation_data": RotationDataModule,

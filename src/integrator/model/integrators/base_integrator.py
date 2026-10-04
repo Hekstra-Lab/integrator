@@ -186,6 +186,7 @@ class BaseIntegrator(pl.LightningModule):
             mask=forward_out["mask"],
             group_labels=group_labels,
             metadata=metadata,
+            qbg_plane=outputs.get("qbg_plane"),
         )
 
         total_loss = loss_dict["loss"]

@@ -6,6 +6,11 @@ from .gamma import (
     GammaDistributionRepamE,
     build_gamma,
 )
+from .background_plane import (
+    BackgroundPlaneOutput,
+    BackgroundPlaneSurrogate,
+    compute_background_plane_kl,
+)
 from .profile_surrogates import (
     GeometricProfileSurrogate,
     ProfileSurrogate,
@@ -14,6 +19,8 @@ from .profile_surrogates import (
 
 __all__ = [
     "GAMMA_REPARAMETERIZATIONS",
+    "BackgroundPlaneOutput",
+    "BackgroundPlaneSurrogate",
     "DirichletDistribution",
     "GammaDistributionRepamA",
     "GammaDistributionRepamB",
@@ -22,4 +29,5 @@ __all__ = [
     "ProfileSurrogate",
     "ProfileSurrogateOutput",
     "build_gamma",
+    "compute_background_plane_kl",
 ]

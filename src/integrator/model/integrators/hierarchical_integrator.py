@@ -30,6 +30,21 @@ def _add_group_outputs(out: dict, metadata: dict, loss) -> None:
         )
 
 
+
+def _apply_background_plane(
+    surrogates, x: Tensor, zbg: Tensor, mc_samples: int
+):
+    """Tilt the per-shoebox background across the box when a plane is configured.
+
+    Returns the tilted background and the plane output, or the background unchanged
+    and None. Keeping it optional means a config without `qbg_plane` behaves exactly
+    as before.
+    """
+    if "qbg_plane" not in surrogates:
+        return zbg, None
+    plane = surrogates["qbg_plane"](x, mc_samples=mc_samples)
+    return zbg * plane.tilt, plane
+
 class HierarchicalIntegrator(BaseIntegrator):
     """Hierarchical integrator with 5 decoupled encoders."""
 
@@ -75,6 +90,9 @@ class HierarchicalIntegrator(BaseIntegrator):
         )
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        zbg, bg_plane = _apply_background_plane(
+            self.surrogates, x_k_bg, zbg, self.mc_samples
+        )
         zp = _sample_profile(qp, self.mc_samples)
         zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
@@ -96,6 +114,11 @@ class HierarchicalIntegrator(BaseIntegrator):
             metadata=metadata,
         )
         out = _assemble_outputs(out)
+        if bg_plane is not None:
+            # the tilt averages to one over the box, so qbg_mean stays the mean
+            # background per pixel and this is its distribution across pixels
+            out["bg_plane_mean"] = bg_plane.mean_tilt * out["qbg_mean"].reshape(-1, 1)
+            out["bg_gradient"] = bg_plane.gradient
         _add_group_outputs(out, metadata, self.loss)
 
         return {
@@ -103,6 +126,7 @@ class HierarchicalIntegrator(BaseIntegrator):
             "qp": qp,
             "qi": qi,
             "qbg": qbg,
+            "qbg_plane": bg_plane,
         }
 
 
@@ -145,6 +169,9 @@ class HierarchicalIntegrator2Enc(BaseIntegrator):
         )
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        zbg, bg_plane = _apply_background_plane(
+            self.surrogates, x_int, zbg, self.mc_samples
+        )
         zp = _sample_profile(qp, self.mc_samples)
         zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
@@ -166,6 +193,11 @@ class HierarchicalIntegrator2Enc(BaseIntegrator):
             metadata=metadata,
         )
         out = _assemble_outputs(out)
+        if bg_plane is not None:
+            # the tilt averages to one over the box, so qbg_mean stays the mean
+            # background per pixel and this is its distribution across pixels
+            out["bg_plane_mean"] = bg_plane.mean_tilt * out["qbg_mean"].reshape(-1, 1)
+            out["bg_gradient"] = bg_plane.gradient
         _add_group_outputs(out, metadata, self.loss)
 
         return {
@@ -173,6 +205,7 @@ class HierarchicalIntegrator2Enc(BaseIntegrator):
             "qp": qp,
             "qi": qi,
             "qbg": qbg,
+            "qbg_plane": bg_plane,
         }
 
 
@@ -217,6 +250,9 @@ class HierarchicalIntegrator3EncIB(BaseIntegrator):
         )
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        zbg, bg_plane = _apply_background_plane(
+            self.surrogates, x_bg, zbg, self.mc_samples
+        )
         zp = _sample_profile(qp, self.mc_samples)
         zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
@@ -238,6 +274,11 @@ class HierarchicalIntegrator3EncIB(BaseIntegrator):
             metadata=metadata,
         )
         out = _assemble_outputs(out)
+        if bg_plane is not None:
+            # the tilt averages to one over the box, so qbg_mean stays the mean
+            # background per pixel and this is its distribution across pixels
+            out["bg_plane_mean"] = bg_plane.mean_tilt * out["qbg_mean"].reshape(-1, 1)
+            out["bg_gradient"] = bg_plane.gradient
         _add_group_outputs(out, metadata, self.loss)
 
         return {
@@ -245,6 +286,7 @@ class HierarchicalIntegrator3EncIB(BaseIntegrator):
             "qp": qp,
             "qi": qi,
             "qbg": qbg,
+            "qbg_plane": bg_plane,
         }
 
 
@@ -289,6 +331,9 @@ class HierarchicalIntegrator3Enc(BaseIntegrator):
         )
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
+        zbg, bg_plane = _apply_background_plane(
+            self.surrogates, x_k, zbg, self.mc_samples
+        )
         zp = _sample_profile(qp, self.mc_samples)
         zI = qi.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
 
@@ -310,6 +355,11 @@ class HierarchicalIntegrator3Enc(BaseIntegrator):
             metadata=metadata,
         )
         out = _assemble_outputs(out)
+        if bg_plane is not None:
+            # the tilt averages to one over the box, so qbg_mean stays the mean
+            # background per pixel and this is its distribution across pixels
+            out["bg_plane_mean"] = bg_plane.mean_tilt * out["qbg_mean"].reshape(-1, 1)
+            out["bg_gradient"] = bg_plane.gradient
         _add_group_outputs(out, metadata, self.loss)
 
         return {
@@ -317,4 +367,5 @@ class HierarchicalIntegrator3Enc(BaseIntegrator):
             "qp": qp,
             "qi": qi,
             "qbg": qbg,
+            "qbg_plane": bg_plane,
         }

@@ -8,6 +8,9 @@ import torch.nn.functional as F
 from torch import Tensor
 from torch.distributions import Distribution, Gamma, kl_divergence
 
+from integrator.model.distributions.background_plane import (
+    compute_background_plane_kl,
+)
 from integrator.model.distributions.profile_surrogates import (
     ProfileSurrogateOutput,
 )
@@ -78,6 +81,7 @@ class WilsonLoss(nn.Module):
         # KL weights
         profile_kl_weight: float = 1.0,
         background_kl_weight: float = 1.0,
+        background_plane_kl_weight: float = 1.0,
         intensity_kl_weight: float = 1.0,
     ):
         super().__init__()
@@ -124,6 +128,7 @@ class WilsonLoss(nn.Module):
         self.background_kl_weight = (
             pbg_cfg.weight if pbg_cfg is not None else background_kl_weight
         )
+        self.background_plane_kl_weight = background_plane_kl_weight
         self.intensity_kl_weight = (
             pi_cfg.weight if pi_cfg is not None else intensity_kl_weight
         )
@@ -664,6 +669,18 @@ class WilsonLoss(nn.Module):
         kl_bg = kl_divergence(qbg, p_bg) * self.background_kl_weight
         kl = kl + kl_bg
 
+        # tilted-plane background, when one is configured. The slopes are shrunk to
+        # flat by their own prior, so the tilt is only paid for where the pixels
+        # support it -- otherwise two more per-shoebox nuisances would make the
+        # intensity estimator nonlinear in the counts it is fitted to.
+        kl_bg_plane = compute_background_plane_kl(
+            kwargs.get("qbg_plane"),
+            self.background_plane_kl_weight,
+            batch_size,
+            device,
+        )
+        kl = kl + kl_bg_plane
+
         neg_ll = self.count_likelihood.neg_ll(
             rate, counts, mask, group_labels=group_labels
         )
@@ -677,4 +694,5 @@ class WilsonLoss(nn.Module):
             "kl_prf_mean": kl_prf.mean(),
             "kl_i_mean": kl_i.mean(),
             "kl_bg_mean": kl_bg.mean(),
+            "kl_bg_plane_mean": kl_bg_plane.mean(),
         }
