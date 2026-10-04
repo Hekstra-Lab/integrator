@@ -747,6 +747,38 @@ def _inject_poly_metadata(cfg: dict) -> None:
             loss_args.setdefault(key, crystal[key])
 
 
+def _inject_profile_geometry(cfg: dict) -> None:
+    """Fill the geometric profile surrogate's detector geometry from dataset.yaml.
+
+    Keeps the beam centre and profile grid in one place: the dataset manifest,
+    which is also what the shoeboxes were cut against.
+    """
+    qp = cfg.get("surrogates", {}).get("qp", {})
+    if qp.get("name") != "geometric_basis_profile":
+        return
+    from integrator.io import read_dataset_spec
+
+    args = qp.setdefault("args", {})
+    data_dir = cfg.get("data_loader", {}).get("args", {}).get("data_dir")
+    spec = (read_dataset_spec(data_dir) or {}) if data_dir else {}
+    crystal = spec.get("crystal", {}) or {}
+
+    if crystal.get("beam_center_px") is not None:
+        args.setdefault("beam_center", list(crystal["beam_center_px"]))
+    # the spectrum lives in the manifest for some datasets and only in the poly
+    # loss for others; either way it is the same spectrum
+    loss_args = cfg.get("loss", {}).get("args", {}) or {}
+    for key in ("lambda_min", "lambda_max"):
+        value = crystal.get(key, loss_args.get(key))
+        if value is not None:
+            args.setdefault(key, value)
+
+    geom = spec.get("geometry", {}) or {}
+    d, h, w = geom.get("d"), geom.get("h"), geom.get("w")
+    if None not in (d, h, w):
+        args.setdefault("profile_shape", [d, h, w])
+
+
 def _default_encoders(
     integrator_cls: type[BaseIntegrator],
     data_dim: str | None,
@@ -834,6 +866,7 @@ def resolve_config(cfg: dict) -> dict:
     cfg = apply_dataset_defaults(cfg)
     _apply_mode_defaults(cfg)
     _inject_poly_metadata(cfg)
+    _inject_profile_geometry(cfg)
     _resolve_predict_keys(cfg)
 
     iargs = cfg.get("integrator", {}).get("args", {})

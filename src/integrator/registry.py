@@ -5,6 +5,7 @@ from integrator.data_loaders import (
 )
 from integrator.model.distributions import (
     DirichletDistribution,
+    GeometricProfileSurrogate,
     ProfileSurrogate,
     build_gamma,
 )
@@ -48,6 +49,7 @@ REGISTRY = {
         "gamma": build_gamma,
         "dirichlet": DirichletDistribution,
         "learned_basis_profile": ProfileSurrogate,
+        "geometric_basis_profile": GeometricProfileSurrogate,
     },
     "data_loader": {
         "rotation_data": RotationDataModule,

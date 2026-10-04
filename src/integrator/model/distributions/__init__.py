@@ -7,6 +7,7 @@ from .gamma import (
     build_gamma,
 )
 from .profile_surrogates import (
+    GeometricProfileSurrogate,
     ProfileSurrogate,
     ProfileSurrogateOutput,
 )
@@ -17,6 +18,7 @@ __all__ = [
     "GammaDistributionRepamA",
     "GammaDistributionRepamB",
     "GammaDistributionRepamE",
+    "GeometricProfileSurrogate",
     "ProfileSurrogate",
     "ProfileSurrogateOutput",
     "build_gamma",
