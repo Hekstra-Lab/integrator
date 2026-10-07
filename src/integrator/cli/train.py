@@ -308,6 +308,7 @@ def main():
         construct_data_loader,
         construct_integrator,
         construct_trainer,
+        fit_wilson_bg_from_chunks,
         inject_binning_labels,
         load_config,
         prepare_per_bin_priors,
@@ -332,10 +333,14 @@ def main():
     # (prepare_per_bin_priors logs each file action itself)
     prepare_per_bin_priors(cfg)
 
+    # Fit per-image Wilson B/G from cctbx intensities (lazy, cached).
+    # No-op unless loss.args.image_level_wilson=true AND wilson_bg_init=cctbx.
+    fit_wilson_bg_from_chunks(cfg)
+
     data_loader = construct_data_loader(cfg)
 
-    #we already calculate n_images inside this RotationDataModule.setup() function 
-    
+    # we already calculate n_images inside this RotationDataModule.setup() function
+
     data_loader.setup()
     inject_binning_labels(data_loader, cfg)
 
@@ -343,16 +348,16 @@ def main():
     if loss_args.get("image_level_wilson", False):
         if data_loader.n_images is None:
             raise ValueError(
-             "image_level_wilson=True requires image_id metadata."
+                "image_level_wilson=True requires image_id metadata."
             )
 
         loss_args["n_images"] = data_loader.n_images
-    
+
         logger.info(
             "Detected n_image=%d from the data module",
             data_loader.n_images,
         )
-        
+
     tags = [
         cfg["integrator"]["name"],
         cfg["integrator"]["args"]["data_dim"],

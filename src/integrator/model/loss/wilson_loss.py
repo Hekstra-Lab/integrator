@@ -1,4 +1,3 @@
-import math
 from abc import abstractmethod
 
 import torch
@@ -91,21 +90,14 @@ class ObservationLikelihood(nn.Module):
         self.student_t_df = float(student_t_df)
         self.eps = eps
 
-        if self.name in {"normal", "student_t"}:
-            init_scale = max(float(init_scale), self.eps)
-            raw_init = math.log(math.expm1(init_scale))
-            self.raw_scale = nn.Parameter(
-                torch.tensor(raw_init, dtype=torch.float32)
-            )
-
-    def get_scale(self, device: torch.device, dtype: torch.dtype) -> Tensor:
-        """Return positive scale for Normal/Student-t."""
-        if not hasattr(self, "raw_scale"):
-            raise RuntimeError(
-                "Observation scale is only defined for normal/student_t."
-            )
-
-        return F.softplus(self.raw_scale).to(device=device, dtype=dtype) + self.eps
+        # NOTE 2026-10-03 (Thao): the old Student-t branch used a learned
+        # global scale (self.raw_scale / get_scale()). That has been
+        # removed: Student-t now shares the SAME brightness-dependent
+        # scale as Normal (see forward() below), so this controlled
+        # experiment isolates the likelihood family (Normal vs
+        # Student-t) without introducing an extra learned parameter.
+        # init_scale is kept as a constructor arg for backward
+        # compatibility with existing configs/call sites but is unused.
 
     def forward(self, rate: Tensor, counts: Tensor) -> Tensor:
         """Compute pixel log probability.
@@ -126,11 +118,34 @@ class ObservationLikelihood(nn.Module):
             return Poisson(rate.clamp(min=1e-12)).log_prob(y)
 
         if self.name == "normal":
-            scale = self.get_scale(device=rate.device, dtype=rate.dtype)
+            # CHANGED 2026-09-04 (Thao): use observed counts to set sigma,
+            # with correct Poisson + gain noise model: Var(y) = g * E[y].
+            #
+            # Previously: scale = sqrt(rate) + eps
+            #   - used predicted rate instead of observed counts
+            #   - missing gain factor g → underestimated sigma by sqrt(g) ~ 3×
+            #
+            # Now: scale = sqrt(g * counts.clamp(min=g)) + eps
+            #   - g = 9.5 ADU/photon, measured from Jungfrau single-photon
+            #     peaks in mfx101555026 pixel histogram (beam ~9.70 keV)
+            #   - uses observed counts so gradient flows only through the
+            #     (y - rate) residual, not through scale (Kevin's suggestion)
+            #   - floor at g: sigma >= g = 9.5 ADU (1-photon noise level),
+            #     handles negative ADU pixels from Jungfrau pedestal correction
+            g = 9.5
+            scale = torch.sqrt(g * y.clamp(min=g)) + self.eps
             return Normal(loc=rate, scale=scale).log_prob(y)
 
         if self.name == "student_t":
-            scale = self.get_scale(device=rate.device, dtype=rate.dtype)
+            # CHANGED 2026-10-03 (Thao): use the SAME brightness-dependent
+            # scale as the "normal" branch above, instead of the old
+            # learned global scale (self.get_scale()). This isolates the
+            # likelihood-family comparison (Normal vs Student-t) while
+            # holding the noise model fixed. df is NOT rescaled to
+            # variance-match Normal; see wilson_loss.py docstring /
+            # experiment notes for rationale.
+            g = 9.5
+            scale = torch.sqrt(g * y.clamp(min=g)) + self.eps
             df = torch.tensor(
                 self.student_t_df,
                 device=rate.device,
@@ -178,7 +193,6 @@ class WilsonLoss(nn.Module):
         observation_likelihood: str = "poisson",
         init_obs_scale: float = 1.0,
         student_t_df: float = 4.0,
-        
         # Optional image-level Wilson options.
         image_level_wilson: bool = False,
         n_images: int | None = None,
@@ -194,7 +208,7 @@ class WilsonLoss(nn.Module):
         self.image_level_wilson = image_level_wilson
         self.n_images = n_images
         self.init_log_B = init_log_B
-        
+
         self.register_buffer(
             "bg_concentration",
             torch.as_tensor(bg_concentration, dtype=torch.float32),

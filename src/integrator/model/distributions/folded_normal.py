@@ -123,6 +123,9 @@ class FoldedNormalDistribution(nn.Module):
         self.linear_scale = nn.Linear(in_features, 1)
 
     def forward(self, x: torch.Tensor, x_: torch.Tensor):
+        #x is input features used to predict the mean (loc): x-> network -> loc
+        #x_ is input features used to predict the standard deviation (scale): x_ ->nn -> scle
+        
         loc = self.linear_loc(x)
         scale = self.scale_constrain(self.linear_scale(x_))
         scale = scale + self.scale_min + self.eps

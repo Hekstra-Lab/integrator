@@ -1,8 +1,11 @@
+import logging
 import os
 from dataclasses import asdict
 from importlib.resources import as_file
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 import pytorch_lightning as pl
 import torch.nn as nn
@@ -476,6 +479,35 @@ def _get_loss_module(
                 "Alternatively, set bg_rate and bg_concentration explicitly "
                 "under loss.args in your config YAML to override the prior."
             )
+
+    # ── Per-image Wilson B/G initialization ──────────────────────────────────
+    # wilson_bg_init is a factory routing key — it tells us where to find the
+    # cached .npy file.  It is NOT a loss constructor argument, so it must be
+    # popped before loss_cls(**kwargs) is called, otherwise the loss will see
+    # an unexpected keyword argument and raise TypeError.
+    wilson_bg_init = kwargs.pop("wilson_bg_init", None)
+
+    wilson_bg_init_path = None
+    if kwargs.get("image_level_wilson", False) and wilson_bg_init == "cctbx":
+        wilson_bg_path = Path(data_dir) / "wilson_bg_running_sums.npy"
+        if not wilson_bg_path.exists():
+            raise FileNotFoundError(
+                f"wilson_bg_init=cctbx but {wilson_bg_path} does not exist.\n"
+                "fit_wilson_bg_from_chunks() is called before this point in "
+                "train.py, so a missing file means something went wrong.\n"
+                "Check that image_id and intensity.sum.value are present in "
+                "the chunk metadata.npz (see Open Questions Q1, Q2 in the "
+                "plan notes)."
+            )
+        wilson_bg_init_path = str(wilson_bg_path)
+        logger.info(
+            "Per-image Wilson B/G init: loading from %s", wilson_bg_path
+        )
+
+    # Inject the resolved path so the loss constructor receives it.
+    # wilson_bg_trainable is already in kwargs from the YAML (defaults to True)
+    # and flows through to loss_cls(**kwargs) naturally — no manual injection.
+    kwargs["wilson_bg_init_path"] = wilson_bg_init_path
 
     valid_keys = _valid_loss_keys(loss_cls)
     unknown = set(kwargs) - valid_keys
