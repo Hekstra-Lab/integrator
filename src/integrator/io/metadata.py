@@ -43,24 +43,38 @@ def data_path(path) -> Path | None:
     return p if p.exists() else None
 
 
+def is_numeric_array(v):
+    arr = np.asarray(v)
+    #it is numeric if this is true
+    return arr.dtype.kind not in {"O", "U", "S"}
+
+
 def load_data(path, map_location="cpu"):
-    """Load a tensor or dict-of-tensors"""
+    """Load a tensor or dict-of-tensors/string arrays."""
     target = data_path(path) or Path(path)
+
     if target.suffix == ".npy":
         arr = np.load(target, allow_pickle=True)
+
         if arr.dtype == object:
             obj = arr.item()
+
             if isinstance(obj, dict):
-                return {k: torch.as_tensor(v) for k, v in obj.items()}
+                return {
+                    k: torch.as_tensor(np.asarray(v))
+                    if is_numeric_array(v)
+                    else np.asarray(v)
+                    for k, v in obj.items()
+                }
+
             return torch.as_tensor(obj)
+
         return torch.as_tensor(arr)
+
     try:
         return torch.load(target, weights_only=True, map_location=map_location)
     except Exception:
-        return torch.load(
-            target, weights_only=False, map_location=map_location
-        )
-
+        return torch.load(target, weights_only=False, map_location=map_location)
 
 def load_metadata(path, map_location="cpu") -> dict:
     """Load a per-reflection metadata dict."""

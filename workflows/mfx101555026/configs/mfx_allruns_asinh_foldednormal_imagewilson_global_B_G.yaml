@@ -1,0 +1,135 @@
+# MFX 10-file smoke test
+# Goal: test latest code path:
+# make_shoeboxes -> data loading -> training -> prediction/write-back
+# Uses image-level Wilson B/G parameters.
+
+mode: monochromatic
+
+integrator:
+  name: hierarchical
+  args:
+    encoder_out: 32
+    mc_samples: 20
+    data_dim: 2d
+    d: 1
+    h: 25
+    w: 25
+
+    predict_keys:
+      - refl_ids
+      - is_test
+
+      - qi_mean
+      - qi_var
+
+      - qp_mean
+
+      - qbg_mean
+      - qbg_var
+
+      - intensity.sum.value
+      - intensity.sum.variance
+
+      - d
+      - H
+      - K
+      - L
+
+      - image_id
+      - image_num
+      - source_refl
+      - source_expt
+
+optimizer:
+  lr: 0.001
+  weight_decay: 0.0
+
+data_loader:
+  name: rotation_data
+  args:
+    data_dir: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_allruns_269_289_no275_024_rg101
+    batch_size: 2048
+    validation_split: 0.2
+    num_workers: 4
+
+    transform: asinh
+    resolution_cutoff: null
+
+    shoebox_file_names:
+      data_dir: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_allruns_269_289_no275_024_rg101
+      counts: counts.npy
+      masks: masks.npy
+      reference: metadata.npy
+      standardized_counts: null
+
+loss:
+  name: monochromatic_wilson
+  args:
+    observation_likelihood: normal
+    init_obs_scale: 10.0
+    n_bins: 1
+    lp_correction: false
+
+trainer:
+  max_epochs: 25
+  accelerator: gpu
+  devices: 1
+  gradient_clip_val: 1.0
+  check_val_every_n_epoch: 1
+
+checkpoint:
+  save_top_k: -1
+
+encoders:
+  - name: profile_encoder
+    args:
+      data_dim: 2d
+      encoder_out: 32
+      input_shape:
+        - 25
+        - 25
+
+  - name: intensity_encoder
+    args:
+      data_dim: 2d
+      encoder_out: 32
+
+  - name: intensity_encoder
+    args:
+      data_dim: 2d
+      encoder_out: 32
+
+  - name: intensity_encoder
+    args:
+      data_dim: 2d
+      encoder_out: 32
+
+  - name: intensity_encoder
+    args:
+      data_dim: 2d
+      encoder_out: 32
+
+surrogates:
+  qp:
+    name: learned_basis_profile
+    args:
+      latent_dim: 12
+      init_std: 0.5
+      prior_scale: 3.0
+      input_dim: 32
+      output_dim: 625
+
+  qbg:
+    name: gamma
+    args:
+      reparameterization: mean_fano
+      eps: 1.0e-06
+      k_min: 0.01
+      in_features: 32
+
+  qi:
+    name: foldednormal
+    args:
+      eps: 1.0e-06
+      scale_min: 1.0e-04
+      in_features: 32

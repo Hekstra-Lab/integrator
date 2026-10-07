@@ -36,8 +36,10 @@ def write_mtz_from_preds(
     crystal = spec["crystal"]
 
     refl_ids = pred_data["refl_ids"]
+
     if isinstance(refl_ids, torch.Tensor):
-        refl_ids = refl_ids.numpy()
+        refl_ids = refl_ids.detach().cpu().numpy()
+
     refl_ids = refl_ids.astype(int)
 
     idx = np.argsort(refl_ids)
@@ -46,15 +48,26 @@ def write_mtz_from_preds(
     def _get(key):
         v = pred_data[key]
         if isinstance(v, torch.Tensor):
-            v = v.numpy()
+            v = v.detach().cpu().numpy()
         return v[idx]
 
     qi_mean = _get("qi_mean")
     qi_var = _get("qi_var")
     qbg_mean = _get("qbg_mean")
 
+
+    def _as_numpy(v):
+        """
+        if v is torch tensor -> convert to NumPy
+        if v is already NumPy/list -> make sure it is NumPy
+        """
+        if isinstance(v, torch.Tensor):
+            return v.detach().cpu().numpy()
+        return np.asarray(v)
+
     def _meta(key):
-        return meta[key].numpy()[refl_ids]
+        return _as_numpy(meta[key])[refl_ids]
+
 
     H = _meta("H").astype(np.int32)
     K = _meta("K").astype(np.int32)

@@ -1,0 +1,289 @@
+# ADAPTED FOR MFX:
+# Uses monochromatic mode because Kevin suggested avoiding the polychromatic Wilson prior here.
+mode: monochromatic
+
+
+# Main integrator model settings.
+integrator:
+  # SAME AS LUIS CONFIG:
+  # Uses the hierarchical integrator model.
+  name: hierarchical
+
+  args:
+    # ADJUSTED FOR MFX:
+    # Luis's HEWL config used encoder_out: 64.
+    # This uses 32 to make early MFX debugging runs faster and lighter on GPU memory.
+    encoder_out: 32
+
+    # ADJUSTED FOR MFX:
+    # Luis's HEWL config used mc_samples: 100.
+    # This uses 20 to reduce training/prediction time during MFX pipeline validation.
+    mc_samples: 20
+
+    # ADAPTED FOR MFX:
+    # Luis's HEWL config used 3D shoeboxes.
+    # MFX still-image data uses 2D detector shoeboxes.
+    data_dim: 2d
+
+    # ADAPTED FOR MFX:
+    # For still images, each reflection comes from one detector image/event.
+    # Therefore the shoebox depth is 1.
+    d: 1
+
+    # ADAPTED FOR MFX:
+    # Uses 25x25 shoeboxes for MFX instead of Luis's 21x21 HEWL shoeboxes.
+    h: 25
+    w: 25
+
+    # Prediction output fields.
+    # These values are saved during prediction, usually in pred.parquet.
+    predict_keys:
+      - refl_ids                 # copied metadata: reflection ID for tracking each reflection
+      - is_test                  # copied metadata: whether this reflection is in the test split
+
+      - qi_mean                  # predicted mean reflection intensity
+      - qi_var                   # predicted intensity uncertainty/variance
+
+      # ADDED FROM LUIS'S SUGGESTION:
+      # Saves the predicted 25x25 spot profile for each reflection.
+      # Useful for checking whether the model learns reasonable spot shapes.
+      - qp_mean                  # predicted 25x25 spot profile from the posterior mean
+
+      - qbg_mean                 # predicted mean background
+      - qbg_var                  # predicted background uncertainty/variance
+
+      #- intensity.prf.value      # copied reference: traditional profile-fitted intensity, if present
+      #- intensity.prf.variance   # copied reference: variance of profile-fitted intensity, if present
+
+      - intensity.sum.value      # copied reference: traditional cctbx/DIALS summed intensity
+      - intensity.sum.variance   # copied reference: variance of summed intensity
+
+      #- background.mean          # copied reference: traditional background estimate, if present
+
+      # ADDED/KEPT FOR VALIDATION:
+      # Useful for checking prediction quality by resolution and Miller index.
+      - d                        # copied metadata: d-spacing / resolution
+      - H                        # copied metadata: Miller index H
+      - K                        # copied metadata: Miller index K
+      - L                        # copied metadata: Miller index L
+
+
+# Optimizer settings.
+optimizer:
+  # Standard learning rate for model training.
+  lr: 0.001
+
+  # No extra L2 regularization in this first MFX setup.
+  weight_decay: 0.0
+
+
+# Data loader settings.
+data_loader:
+  args:
+    # ADAPTED FOR MFX:
+    # Points to the generated MFX shoebox dataset.
+    data_dir: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_stream_test_25
+
+    # Number of reflections per training batch.
+    batch_size: 1024
+
+    # Fraction of data used for validation.
+    validation_split: 0.2
+
+    # ADJUSTED FOR MFX:
+    # Moderate worker count for safer loading during MFX debugging.
+    num_workers: 4
+
+    # ADAPTED FOR MFX:
+    # Uses standardization because MFX/Jungfrau pixel values can be float/negative.
+    # This avoids Anscombe/Poisson-style assumptions.
+    transform: standardization
+
+    # SIMPLE FIRST MFX SETUP:
+    # No resolution cutoff yet; keeps all reflections.
+    resolution_cutoff: null
+
+    # ADAPTED FOR MFX:
+    # Luis's HEWL config used .pt files.
+    # This MFX extraction path saves NumPy .npy files.
+    shoebox_file_names:
+      data_dir: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_stream_test_25
+
+      counts: counts.npy          # MFX pixel shoebox values
+      masks: masks.npy            # valid-pixel masks
+      reference: metadata.npy      # reflection metadata
+
+      # No precomputed standardized counts file.
+      # The loader computes standardization during loading.
+      standardized_counts: null
+
+  # SAME AS LUIS STRUCTURE:
+  # Uses the rotation_data loader path with the current dataset format.
+  name: rotation_data
+
+
+# Loss function settings.
+loss:
+  # SAME LOSS FAMILY AS LUIS CONFIG:
+  # Uses monochromatic Wilson loss, not polychromatic_wilson.
+  name: monochromatic_wilson
+
+  args:
+    # ADDED FOR MFX:
+    # Poisson assumes nonnegative count-like data.
+    # MFX/Jungfrau pixel values can be floating-point and sometimes negative.
+    # Normal likelihood is a better first-pass observation model.
+    observation_likelihood: normal
+
+    # Initial noise scale for the Normal observation model.
+    init_obs_scale: 10.0
+
+    # ADJUSTED FOR MFX FIRST PASS:
+    # Luis's HEWL config used more resolution bins, such as 25.
+    # This uses one global bin first to simplify validation before testing resolution-bin priors.
+    n_bins: 1
+
+
+# PyTorch Lightning trainer settings.
+trainer:
+  # Trains for 25 epochs in this MFX run.
+  max_epochs: 25
+
+  # Uses GPU training.
+  accelerator: gpu
+
+  # Uses one GPU.
+  devices: 1
+
+  # Prevents very large gradients from destabilizing training.
+  gradient_clip_val: 1.0
+
+  # Runs validation every epoch for closer monitoring.
+  check_val_every_n_epoch: 1
+
+
+# Checkpoint settings.
+checkpoint:
+  # Saves all checkpoints for later inspection.
+  # -1 means keep all checkpoints, not only the top k.
+  save_top_k: -1
+
+
+# Encoder networks.
+# These turn input shoeboxes into learned feature vectors.
+encoders:
+  - name: profile_encoder
+    args:
+      # ADAPTED FOR MFX:
+      # Profile encoder sees 2D shoebox images instead of 3D HEWL stacks.
+      data_dim: 2d
+
+      # ADJUSTED FOR MFX:
+      # Matches integrator.args.encoder_out.
+      encoder_out: 32
+
+      # ADAPTED FOR MFX:
+      # Input shoebox shape is 25x25 pixels.
+      input_shape:
+        - 25
+        - 25
+
+  # SAME STRUCTURE AS LUIS CONFIG:
+  # Multiple intensity encoders are used by the surrogate distributions.
+  # ADAPTED FOR MFX:
+  # Uses data_dim: 2d and encoder_out: 32.
+  - name: intensity_encoder
+    args:
+      data_dim: 2d
+      encoder_out: 32
+
+  - name: intensity_encoder
+    args:
+      data_dim: 2d
+      encoder_out: 32
+
+  - name: intensity_encoder
+    args:
+      data_dim: 2d
+      encoder_out: 32
+
+  - name: intensity_encoder
+    args:
+      data_dim: 2d
+      encoder_out: 32
+
+
+# Surrogate/posterior distributions.
+# These are the three main hidden quantities predicted by the model:
+# qp = profile, qbg = background, qi = intensity.
+surrogates:
+  # SAME AS LUIS STRUCTURE:
+  # qp = profile posterior.
+  # Models the reflection spot shape across the shoebox pixels.
+  qp:
+    name: learned_basis_profile
+    args:
+      # ADJUSTED FOR MFX:
+      # Luis's config used latent_dim: 8.
+      # This run uses 12, but this is a tunable hyperparameter.
+      # It can be changed back to 8 for a simpler first-pass model.
+      latent_dim: 12
+
+      # Initial uncertainty for the hidden profile variable.
+      init_std: 0.5
+
+      # Prior scale used in profile KL regularization.
+      prior_scale: 3.0
+
+      # ADJUSTED FOR MFX:
+      # Must match encoder_out: 32.
+      input_dim: 32
+
+      # ADAPTED FOR MFX:
+      # Output profile size is 25x25 = 625 pixels.
+      # Luis's 3D HEWL config used 3x21x21 = 1323.
+      output_dim: 625
+
+  # SAME GENERAL ROLE AS LUIS CONFIG:
+  # qbg = background posterior.
+  # Models the background level.
+  qbg:
+    # ADJUSTED FROM LUIS EXAMPLE:
+    # Luis's example used gammaA.
+    # This config uses gamma, matching the current run that completed successfully.
+    name: gamma
+    args:
+      # Gamma parameterization used by this setup.
+      reparameterization: mean_fano
+
+      # Small value for numerical stability.
+      eps: 1.0e-06
+
+      # Minimum Gamma parameter to avoid unstable tiny values.
+      k_min: 0.01
+
+      # ADJUSTED FOR MFX:
+      # Must match encoder_out: 32.
+      in_features: 32
+
+  # SAME GENERAL ROLE AS LUIS CONFIG:
+  # qi = intensity posterior.
+  # Models the reflection intensity.
+  qi:
+    # ADJUSTED FROM LUIS EXAMPLE:
+    # Luis's example used gammaA.
+    # This config uses gamma, matching the current run that completed successfully.
+    name: gamma
+    args:
+      # Gamma parameterization used by this setup.
+      reparameterization: mean_fano
+
+      # Small value for numerical stability.
+      eps: 1.0e-06
+
+      # Minimum Gamma parameter to avoid unstable tiny values.
+      k_min: 0.01
+
+      # ADJUSTED FOR MFX:
+      # Must match encoder_out: 32.
+      in_features: 32

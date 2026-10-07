@@ -1,3 +1,6 @@
+import logging
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -5,33 +8,188 @@ from torch import Tensor
 
 from integrator.model.loss.wilson_loss import WilsonLoss
 
+logger = logging.getLogger(__name__)
+
+
+def _softplus_inverse(x: Tensor) -> Tensor:
+    """Numerically stable inverse of softplus.
+
+    Uses the algebraic identity:
+        log(exp(x) - 1) = x + log(1 - exp(-x))
+    implemented as x + log(-expm1(-x)).
+
+    For large x (e.g. G~1000): exp(-x) → 0, so log(-expm1(-x)) → log(1) = 0
+    and the result is simply x.  This avoids the overflow in the naive
+    log(exp(x)-1) formula, which produces inf for x~1000.
+    """
+    return x + torch.log(-torch.expm1(-x))
+
 
 class MonochromaticWilsonLoss(WilsonLoss):
-    """Wilson loss for monochromatic data with scalar G."""
+    """Wilson loss for monochromatic data with optional per-image B/G."""
 
     def __init__(
         self,
         *,
-        init_log_G: float = 0.0,
+        # init_log_G is captured directly.
+        init_log_G: float = 1000.0,
         lp_correction: bool = False,
+        # Per-image B/G initialization from cctbx (factory injects this path).
+        wilson_bg_init_path: str | None = None,
+        # Whether to keep per-image B/G embeddings trainable (default) or frozen.
+        wilson_bg_trainable: bool = True,
+        # init_log_B goes inside kwargs
         **kwargs,
     ):
         super().__init__(**kwargs)
+
+        self.init_log_G = init_log_G
         self._apply_lp = lp_correction
+
+        # Global G parameter used when image_level_wilson=False.
         self.raw_G = nn.Parameter(torch.tensor(float(init_log_G)))
+
+        # Optional per-image B/G parameters.
+        # Requires WilsonLoss.__init__ to define:
+        #   self.image_level_wilson
+        #   self.n_images
+        #   self.init_log_B
+        if self.image_level_wilson:
+            if self.n_images is None:
+                raise ValueError("image_level_wilson=True requires n_images.")
+
+            self.raw_B_by_image = nn.Embedding(self.n_images, 1)
+            self.raw_G_by_image = nn.Embedding(self.n_images, 1)
+
+            nn.init.constant_(
+                self.raw_B_by_image.weight,
+                float(self.init_log_B),
+            )
+            nn.init.constant_(
+                self.raw_G_by_image.weight,
+                float(self.init_log_G),
+            )
+
+            # ADDITION A — override with per-image cctbx initialization
+            if wilson_bg_init_path is not None:
+                data = np.load(wilson_bg_init_path, allow_pickle=True).item()
+                B_arr = torch.as_tensor(data["B_array"], dtype=torch.float32)
+                G_arr = torch.as_tensor(data["G_array"], dtype=torch.float32)
+
+                # Length check — protects against stale .npy from a different
+                # dataset silently misaligning image_id → embedding rows.
+                if len(B_arr) != self.n_images or len(G_arr) != self.n_images:
+                    raise ValueError(
+                        "Loaded Wilson B/G arrays do not match n_images: "
+                        f"len(B)={len(B_arr)}, len(G)={len(G_arr)}, "
+                        f"n_images={self.n_images}"
+                    )
+
+                # Convert fitted B, G to raw (unconstrained) embedding values.
+                # softplus_inverse is applied after clamping to avoid log(0).
+                raw_B = _softplus_inverse(
+                    torch.clamp(B_arr - self.b_min, min=1e-4)
+                )
+                raw_G = _softplus_inverse(torch.clamp(G_arr, min=1e-4))
+
+                with torch.no_grad():
+                    self.raw_B_by_image.weight.copy_(raw_B.unsqueeze(1))
+                    self.raw_G_by_image.weight.copy_(raw_G.unsqueeze(1))
+
+                logger.info(
+                    "Per-image B/G initialized from %s "
+                    "(B: [%.2f, %.2f], G: [%.2f, %.2f])",
+                    wilson_bg_init_path,
+                    float(B_arr.min()),
+                    float(B_arr.max()),
+                    float(G_arr.min()),
+                    float(G_arr.max()),
+                )
+
+            # ADDITION B — freeze embeddings if requested
+            if not wilson_bg_trainable:
+                self.raw_B_by_image.requires_grad_(False)
+                self.raw_G_by_image.requires_grad_(False)
+                logger.info(
+                    "raw_B_by_image and raw_G_by_image frozen "
+                    "(wilson_bg_trainable=false)"
+                )
+
+    def get_wilson_stats(self) -> dict[str, Tensor]:
+        """Return summary statistics for the learned Wilson B/G values
+        it reads the current (trained) values and summarizes them
+
+        So the structure is:
+        monochromatic_wilson_loss.py -> calculates B/G statistics
+        WilsonParamLogger callback -> calls get_wilson_stats() every epoch
+        train.py -> already registers the callback
+        """
+        with torch.no_grad():
+            if self.image_level_wilson:
+                # torch.arange: creates a tensor of integers from 0 to n - 1.
+                image_id = torch.arange(
+                    self.n_images,
+                    device=self.raw_B_by_image.weight.device,
+                )
+
+                B, G = self._get_image_B_G(image_id)
+
+            else:
+                B = self.get_B().reshape(1)
+                G = self.get_G().reshape(1)
+            return {
+                "B_mean": B.mean(),
+                # population standard deviation formula: divide by N,
+                # if = True means: sample standard deviation formula: divide by N - 1
+                "B_std": B.std(unbiased=False),
+                "B_min": B.min(),
+                "B_max": B.max(),
+                "G_mean": G.mean(),
+                "G_std": G.std(unbiased=False),
+                "G_min": G.min(),
+                "G_max": G.max(),
+            }
 
     def get_G(self) -> Tensor:
         return F.softplus(self.raw_G)
 
     def _get_tau(
-        self, metadata: dict, s_sq: Tensor, device: torch.device
+        self,
+        metadata: dict,
+        s_sq: Tensor,
+        device: torch.device,
     ) -> Tensor:
-        G = self.get_G()
-        B = self.get_B()
-        tau = (1.0 / G) * torch.exp(2.0 * B * s_sq)
+        if self.image_level_wilson:
+            if "image_id" not in metadata:
+                raise ValueError(
+                    "image_level_wilson=True requires metadata['image_id']."
+                )
+
+            image_id = metadata["image_id"].to(device).long()
+
+            B, G = self._get_image_B_G(image_id)
+        else:
+            B = self.get_B()
+            G = self.get_G()
+
+        tau = (1.0 / G.clamp(min=self.eps)) * torch.exp(2.0 * B * s_sq)
 
         if self._apply_lp:
+            if "lp" not in metadata:
+                raise ValueError("lp_correction=True requires metadata['lp'].")
             lp = metadata["lp"].to(device).clamp(min=1e-8)
             tau = tau * lp
 
         return tau
+
+    def _get_image_B_G(
+        self,
+        image_id: Tensor,
+    ) -> tuple[Tensor, Tensor]:
+        raw_B = self.raw_B_by_image(image_id).squeeze(-1)
+        raw_G = self.raw_G_by_image(image_id).squeeze(-1)
+
+        B = F.softplus(raw_B) + self.b_min
+        G = F.softplus(raw_G)
+
+        return B, G

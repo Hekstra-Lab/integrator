@@ -1,0 +1,146 @@
+# MFX still-image setup: use monochromatic Wilson loss, not polychromatic.
+mode: monochromatic
+
+# Main model.
+integrator:
+  name: hierarchical
+  args:
+    # Smaller encoder for faster MFX debugging.
+    encoder_out: 32
+
+    # Fewer Monte Carlo samples for faster train/predict.
+    mc_samples: 20
+
+    # MFX shoeboxes are 2D still images: 1 x 25 x 25.
+    data_dim: 2d
+    d: 1
+    h: 25
+    w: 25
+
+    # Fields saved during prediction.
+    predict_keys:
+      - refl_ids
+      - is_test
+      - qi_mean
+      - qi_var
+      - qp_mean
+      - qbg_mean
+      - qbg_var
+      - intensity.sum.value
+      - intensity.sum.variance
+      - d
+      - H
+      - K
+      - L
+
+# Optimizer.
+optimizer:
+  lr: 0.001
+  weight_decay: 0.0
+
+# Dataset and loading.
+data_loader:
+  name: rotation_data
+  args:
+    # Use the file MFX shoebox dataset.
+    data_dir: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_stream_test_25
+
+    batch_size: 1024
+    validation_split: 0.2
+    num_workers: 4
+
+    # MFX/Jungfrau pixels can be float/negative, so use standardization.
+    transform: standardization
+    resolution_cutoff: null
+
+    # Files inside data_dir.
+    shoebox_file_names:
+      data_dir: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_stream_test_25
+      counts: counts.npy
+      masks: masks.npy
+      reference: metadata.npy
+      standardized_counts: null
+
+# Loss.
+loss:
+  name: monochromatic_wilson
+  args:
+    # Normal likelihood handles float/negative detector values better than Poisson.
+    observation_likelihood: normal
+    init_obs_scale: 10.0
+
+    # One global resolution bin for first-pass validation.
+    n_bins: 1
+
+# Trainer.
+trainer:
+  max_epochs: 25
+  accelerator: gpu
+  devices: 1
+  gradient_clip_val: 1.0
+  check_val_every_n_epoch: 1
+
+# Save all checkpoints.
+checkpoint:
+  save_top_k: -1
+
+# Encoders create learned feature vectors from shoeboxes.
+encoders:
+  - name: profile_encoder
+    args:
+      data_dim: 2d
+      encoder_out: 32
+      input_shape:
+        - 25
+        - 25
+
+  # Four intensity encoders are used by the hierarchical integrator.
+  - name: intensity_encoder
+    args:
+      data_dim: 2d
+      encoder_out: 32
+
+  - name: intensity_encoder
+    args:
+      data_dim: 2d
+      encoder_out: 32
+
+  - name: intensity_encoder
+    args:
+      data_dim: 2d
+      encoder_out: 32
+
+  - name: intensity_encoder
+    args:
+      data_dim: 2d
+      encoder_out: 32
+
+# Surrogate/posterior distributions:
+# qp = profile, qbg = background, qi = intensity.
+surrogates:
+  # Profile posterior: predicts 25x25 spot shape.
+  qp:
+    name: learned_basis_profile
+    args:
+      latent_dim: 12
+      init_std: 0.5
+      prior_scale: 3.0
+      input_dim: 32
+      output_dim: 625
+
+  # Keep background posterior as Gamma baseline.
+  qbg:
+    name: gamma
+    args:
+      reparameterization: mean_fano
+      eps: 1.0e-06
+      k_min: 0.01
+      in_features: 32
+
+  # Test FoldedNormal intensity posterior.
+  qi:
+    name: foldednormal
+    args:
+      eps: 1.0e-06
+      scale_min: 1.0e-04
+      in_features: 32

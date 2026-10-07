@@ -8,8 +8,11 @@ from torch.distributions import Normal
 
 
 def _softplus_inverse(x: float) -> float:
-    """Inverse of softplus: log(exp(x) - 1)."""
-    return math.log(math.exp(x) - 1.0)
+    """Inverse of softplus: log(exp(x) - 1).
+
+    Uses math.expm1(x) = exp(x) - 1 to avoid overflow for x > 709.
+    """
+    return math.log(math.expm1(x))
 
 
 def _sample_and_decode(

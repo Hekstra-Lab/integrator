@@ -42,6 +42,7 @@ laue = ['laue-dials']
 "integrator.predict" = "integrator.cli.predict:main"
 "integrator.make_shoeboxes" = "integrator.cli.make_shoeboxes:main"
 "integrator.resolve" = "integrator.cli.resolve:main"
+"integrator.preprocess" = "integrator.cli.preprocess:main"
 
 [project.urls]
 Homepage = "https://github.com/Hekstra-Lab/integrator/tree/integrator_mvn"

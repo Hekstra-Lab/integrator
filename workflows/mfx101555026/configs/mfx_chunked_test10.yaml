@@ -1,0 +1,169 @@
+# MFX chunked pipeline example config (v8 chunk layout)
+#
+# Template:
+#   mfx_allruns_asinh_foldednormal_imagewilson_global_B_G.yaml
+#
+# Purpose:
+#   First end-to-end smoke test of the chunked pipeline using:
+#   - global Wilson B/G
+#   - asinh-preprocessed shoeboxes
+#   - folded-normal qi
+#   - gamma qbg
+#   - one GPU
+#   - one training epoch
+#
+# Prerequisite:
+#   Run integrator.preprocess before training.
+#
+# Preprocess command:
+#   integrator.preprocess \
+#       --data-dir /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_allruns_269_289_no275_024_rg101 \
+#       --validation-split 0.2 \
+#       --split-seed 42 \
+#       --transform asinh \
+#       --chunk-size 50000 \
+#       --n-bins 1 \
+#       --out-dir /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_allruns_269_289_no275_024_rg101/chunks \
+#       --min-valid-pixels 10 \
+#       -v
+
+mode: monochromatic
+
+integrator:
+  name: hierarchical
+  args:
+    encoder_out: 32
+    mc_samples: 20
+
+    data_dim: 2d
+    d: 1
+    h: 25
+    w: 25
+
+    predict_keys:
+      - refl_ids
+      - is_test
+
+      - qi_mean
+      - qi_var
+
+      - qp_mean
+
+      - qbg_mean
+      - qbg_var
+
+      - intensity.sum.value
+      - intensity.sum.variance
+
+      - d
+      - H
+      - K
+      - L
+
+      - image_id
+      - image_num
+      - reflection_id
+      - source_refl
+      - source_expt
+
+optimizer:
+  lr: 0.001
+  weight_decay: 0.0
+
+# Chunked loader:
+# - train/validation split was created during preprocessing
+# - transform was applied during preprocessing
+# - filtering was applied during preprocessing
+# - file locations and metadata columns are read from manifest.yaml
+data_loader:
+  name: chunked_rotation_data
+  args:
+    chunk_dir: /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/mfx_shoebox_5000_269_289_no275_024_rg101/chunks
+    batch_size: 2048
+    num_workers: 20
+
+# Global Wilson B/G:
+# - image_level_wilson is explicitly false
+# - init_log_B and init_log_G are passed through softplus
+# - therefore the initial values are approximately B=20 and G=1000
+# - init_obs_scale controls Normal pixel-noise scale, not B or G
+# - n_bins must match integrator.preprocess --n-bins
+loss:
+  name: monochromatic_wilson
+  args:
+    image_level_wilson: false
+
+    init_log_B: 20.0
+    init_log_G: 1000.0
+
+    observation_likelihood: normal
+    init_obs_scale: 10.0
+
+    n_bins: 1
+    lp_correction: false
+
+# First smoke test: one epoch only.
+# Increase after preprocess, train, validation, checkpointing, and prediction work.
+trainer:
+  max_epochs: 25
+  accelerator: gpu
+  devices: 1
+  gradient_clip_val: 1.0
+  check_val_every_n_epoch: 1
+
+checkpoint:
+  save_top_k: -1
+
+encoders:
+  - name: profile_encoder
+    args:
+      data_dim: 2d
+      encoder_out: 32
+      input_shape:
+        - 25
+        - 25
+
+  - name: intensity_encoder
+    args:
+      data_dim: 2d
+      encoder_out: 32
+
+  - name: intensity_encoder
+    args:
+      data_dim: 2d
+      encoder_out: 32
+
+  - name: intensity_encoder
+    args:
+      data_dim: 2d
+      encoder_out: 32
+
+  - name: intensity_encoder
+    args:
+      data_dim: 2d
+      encoder_out: 32
+
+surrogates:
+  qp:
+    name: learned_basis_profile
+    args:
+      latent_dim: 12
+      init_std: 0.5
+      prior_scale: 3.0
+      input_dim: 32
+      output_dim: 625
+
+  qbg:
+    name: gamma
+    args:
+      reparameterization: mean_fano
+      eps: 1.0e-06
+      k_min: 0.01
+      in_features: 32
+
+  qi:
+    name: foldednormal
+    args:
+      eps: 1.0e-06
+      scale_min: 1.0e-04
+      in_features: 32

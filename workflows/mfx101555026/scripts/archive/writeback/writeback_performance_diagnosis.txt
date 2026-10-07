@@ -1,0 +1,218 @@
+================================================================================
+MFX WRITE-BACK PERFORMANCE DIAGNOSIS
+write_mfx_refl_with_predictions() — src/integrator/io/refl_io.py
+pred_io.py                        — src/integrator/io/pred_io.py
+================================================================================
+Date: 2026-08-06
+Author: code review (opencode)
+
+DATASET SCALE
+  Prediction rows (N) : ~117 M   (5758 parquet files x 10 batches x 2048 rows)
+  Source .refl files  : 124,975
+  Metadata rows       : ~117 M   (metadata.npy — one row per original reflection)
+
+================================================================================
+ISSUE 1 — 4 SEPARATE POLARS SCANS
+File: src/integrator/io/pred_io.py  lines 38-41
+================================================================================
+
+CURRENT CODE:
+  lf = pl.scan_parquet(pred_files)
+  refl_ids = lf.select("refl_ids").collect().to_numpy().ravel()   # scan 1
+  qi_mean  = lf.select("qi_mean").collect().to_numpy().ravel()    # scan 2
+  qi_var   = lf.select("qi_var").collect().to_numpy().ravel()     # scan 3
+  qbg_mean = lf.select("qbg_mean").collect().to_numpy().ravel()   # scan 4
+
+PROBLEM:
+  Each .collect() re-opens and re-reads all 5758 parquet files to extract
+  one column. Parquet is column-oriented so each pass reads only the target
+  column, but there is still file-open + footer-parse + column-read overhead
+  per file, repeated four times.
+
+  5758 files x 4 passes = 23,032 file operations
+  vs optimized: 5758 file operations (1 pass)
+
+ESTIMATE:
+  Current  : ~60-120 seconds
+  Optimized: ~15-30 seconds
+  Speedup  : ~4x
+
+FIX:
+  df = lf.select(["refl_ids", "qi_mean", "qi_var", "qbg_mean"]).collect()
+  refl_ids = df["refl_ids"].to_numpy()
+  qi_mean  = df["qi_mean"].to_numpy()
+  qi_var   = df["qi_var"].to_numpy()
+  qbg_mean = df["qbg_mean"].to_numpy()
+
+SEVERITY: Minor — parquet loading is already fast per file with column pruning.
+
+================================================================================
+ISSUE 2 — TWO PYTHON LOOPS OVER ~117 M ROWS
+File: src/integrator/io/refl_io.py  lines 183-208
+================================================================================
+
+CURRENT CODE:
+  source_refl = np.array(
+      [_mfx_source_name(metadata, "source_refl", row, image_numbers[row], ".refl")
+       for row in metadata_rows],    # <- Python loop, 117 M iterations
+      dtype=object,
+  )
+  source_expt = np.array(
+      [_mfx_source_name(metadata, "source_expt", row, image_numbers[row], ".expt")
+       for row in metadata_rows],    # <- Python loop, 117 M iterations
+      dtype=object,
+  )
+
+PROBLEM:
+  Pure Python list comprehension over 117 M elements. Each iteration does:
+    - NumPy array index: metadata["source_refl"][row]
+    - isinstance() check inside _as_numpy()
+    - _as_text() conversion (bytes decode or str())
+    - image_numbers[row] fallback logic
+  Python loops run at ~3-7 M iterations/second for this access pattern.
+
+ESTIMATE:
+  117 M / 5 M iter/s = ~23 seconds per loop
+  Two loops           = ~46 seconds total
+  Optimized (vectorized numpy fancy indexing): ~0.5 seconds
+  Speedup: ~90x
+
+FIX:
+  # Extract entire arrays once, then index with metadata_rows in one shot.
+  raw_refl = _as_numpy(metadata["source_refl"])   # full array, one call
+  raw_expt = _as_numpy(metadata["source_expt"])   # full array, one call
+  source_refl = raw_refl[metadata_rows]            # vectorized fancy index
+  source_expt = raw_expt[metadata_rows]            # vectorized fancy index
+
+  # Convert bytes -> str in one vectorized pass if needed:
+  if source_refl.dtype.kind in ('S', 'V'):
+      source_refl = source_refl.astype('U')
+      source_expt = source_expt.astype('U')
+  else:
+      # dtype=object: apply _as_text once per element (still faster because
+      # metadata lookup happens only once outside the loop)
+      source_refl = np.array([_as_text(x) for x in source_refl], dtype=object)
+      source_expt = np.array([_as_text(x) for x in source_expt], dtype=object)
+
+  NOTE: The key win is pulling the metadata dict lookup and _as_numpy() call
+  outside the loop. The full metadata["source_refl"] array is loaded once
+  and indexed with a numpy fancy-index in C rather than 117 M Python steps.
+
+SEVERITY: Moderate — slow but completes in under a minute.
+
+================================================================================
+ISSUE 3 — O(N x n_files) SCAN IN THE WRITE LOOP  [CRITICAL]
+File: src/integrator/io/refl_io.py  lines 212-213
+================================================================================
+
+CURRENT CODE:
+  for refl_name in sorted(set(source_refl.tolist())):   # 124,975 unique files
+      group = np.nonzero(source_refl == refl_name)[0]   # scans all 117 M each time
+      ...
+
+PROBLEM:
+  For each of the 124,975 source .refl files, the code scans the entire
+  source_refl array (dtype=object, 117 M elements) to find matching rows.
+  numpy object-array comparison calls PyObject_RichCompareBool() for every
+  element from a C loop — faster than pure Python but still expensive because
+  it cannot use SIMD and must dereference 117 M Python object pointers.
+
+TIMING BREAKDOWN:
+  numpy dtype=object string comparison speed  : ~10-30 ns per element
+  Per-file scan : 117 M x 20 ns               = ~2.3 seconds
+  124,975 files x 2.3 seconds                 = ~288,000 seconds
+                                              ~ 80 HOURS
+
+  This is the dominant bottleneck. The previous successful run (124,975 pairs)
+  almost certainly spent most of its 2-day wall-time budget here.
+
+FIX OPTION A — dict-based groupby, O(N):
+  from collections import defaultdict
+
+  groups = defaultdict(list)
+  for i, name in enumerate(source_refl):     # one Python pass, builds index
+      groups[name].append(i)
+
+  for refl_name, idx_list in groups.items():
+      group = np.array(idx_list, dtype=np.int64)
+      src_refl = original_refl_dir / refl_name
+      ...
+
+  Estimated time: ~60 seconds (one Python loop + dict insertions)
+
+FIX OPTION B — numpy argsort, O(N log N), fully vectorized:
+  sort_idx    = np.argsort(source_refl)           # sorts once in C
+  sorted_refl = source_refl[sort_idx]
+  boundaries  = np.flatnonzero(sorted_refl[:-1] != sorted_refl[1:]) + 1
+  splits      = np.split(sort_idx, boundaries)
+  names       = sorted_refl[np.concatenate([[0], boundaries])]
+
+  for refl_name, group in zip(names, splits):
+      src_refl = original_refl_dir / refl_name
+      ...
+
+  Estimated time: ~5-30 seconds (numpy argsort on object array + split)
+  NOTE: np.argsort on dtype=object uses Python comparisons but only O(N log N)
+  total comparisons instead of O(N x n_files).
+
+RECOMMENDATION: Option B (argsort) for minimum Python overhead.
+
+SEVERITY: CRITICAL — this is the ~80-hour bottleneck.
+  Estimated current  : ~80 hours
+  Estimated optimized: ~30 seconds (argsort)
+  Speedup            : ~10,000x
+
+================================================================================
+OVERALL TIMING SUMMARY
+================================================================================
+
+  Stage                           Current       Optimized     Speedup
+  -----------------------------------------------------------------------
+  Parquet loading (4 scans)       ~90 s         ~25 s         ~4x
+  Python loops (source arrays x2) ~46 s         ~1 s          ~90x
+  Write loop  (O(N x n_files))    ~80 hours     ~30 s         ~10,000x
+  DIALS file I/O (124,975 files)  ~2-4 hours    ~2-4 hours    1x  (I/O bound)
+  -----------------------------------------------------------------------
+  TOTAL (estimated)               ~82-84 hours  ~2-4 hours    ~20-40x
+
+  The DIALS file I/O — reading 124,975 source .refl files, writing 124,975
+  output .refl files, linking .expt files — is unavoidably sequential and
+  disk-bound. That stage cannot be improved without multiprocessing.
+
+================================================================================
+NO CORRECTNESS BUGS FOUND
+================================================================================
+
+  The code is functionally correct. The previous run (124,975 pairs written)
+  confirms this. All changes described above are performance optimizations only.
+
+  Additional design notes:
+  - out_dir is hardcoded as pred_dir/"mfx_refl_writeback" (predict.py:328).
+    Running write-back twice for different epochs overwrites .refl files but
+    skips existing .expt symlinks (_copy_or_link_expt returns early if dst
+    already exists). This is intentional and correct since .expt files do
+    not change between epochs.
+  - .expt symlinks use absolute paths (os.symlink). Works fine on S3DF but
+    would break if storage is remounted under a different path.
+  - qi_var is clipped to variance_floor=1e-6 before writing. Correct.
+
+================================================================================
+PROPOSED IMPLEMENTATION ORDER
+================================================================================
+
+  1. Fix Issue 3 (write loop) first — largest impact by far.
+     Change:   np.nonzero(source_refl == refl_name) inside loop
+     To:       argsort-based groupby computed once before loop
+     File:     src/integrator/io/refl_io.py  lines 211-213
+
+  2. Fix Issue 2 (Python loops) — easy vectorization.
+     Change:   list comprehensions over metadata_rows
+     To:       raw_arr = _as_numpy(metadata[key]); result = raw_arr[metadata_rows]
+     File:     src/integrator/io/refl_io.py  lines 183-208
+
+  3. Fix Issue 1 (polars scans) — minor, one-liner.
+     Change:   4 separate .collect() calls
+     To:       single lf.select([...]).collect()
+     File:     src/integrator/io/pred_io.py  lines 37-48
+
+================================================================================

@@ -1,0 +1,19 @@
+dispatch.step_list = input model_scaling statistics_unitcell statistics_beam model_statistics group errors_merge statistics_intensity merge statistics_intensity_cxi
+
+input.path = /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/scale_matched_cctbx_sqrt_dmin2
+input.reflections_suffix = .refl
+input.experiments_suffix = .expt
+
+scaling.model = /sdf/data/lcls/ds/mfx/mfx101555026/results/offline/datasets/ClCRY4_wt_1us_74mJcm2_ellipse/processing/v01_new_defaults/diffmaps/dimple_dark/final.pdb
+scaling.unit_cell = 53.814 86.750 140.465 90 90 90
+scaling.space_group = P 21 21 21
+scaling.resolution_scalar = 0.96
+
+merging.d_min = 2.0
+merging.merge_anomalous = True
+merging.error.model = mm24
+
+statistics.n_bins = 20
+
+output.prefix = mfx_merge_matched_cctbx_sqrt_dmin2
+output.output_dir = /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/merge_matched_cctbx_sqrt_dmin2

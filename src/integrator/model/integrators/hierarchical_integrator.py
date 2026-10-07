@@ -48,7 +48,9 @@ class HierarchicalIntegrator(BaseIntegrator):
         mask: Tensor,
         metadata: dict,
     ) -> dict[str, Any]:
-        counts = torch.clamp(counts, min=0)
+        obs_name = getattr(self.loss.observation_model, "name", None)
+        if obs_name == "poisson":
+            counts = torch.clamp(counts, min=0)
 
         b = shoebox.shape[0]
         shoebox_masked = shoebox * mask
@@ -122,7 +124,9 @@ class HierarchicalIntegrator3Enc(BaseIntegrator):
         mask: Tensor,
         metadata: dict,
     ) -> dict[str, Any]:
-        counts = torch.clamp(counts, min=0)
+        obs_name = getattr(self.loss.observation_model, "name", None)
+        if obs_name == "poisson":
+            counts = torch.clamp(counts, min=0)
 
         b = shoebox.shape[0]
         shoebox_masked = shoebox * mask

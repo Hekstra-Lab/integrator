@@ -117,3 +117,31 @@ logs/
 pytorch_*.err
 pytorch_*.out
 scratch/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local accidental CLI files
+--config
+--log-dir
+
+# Local backups
+*.bak
+*.bak_*
+
+# Large MFX/generated outputs
+runs/
+outputs/
+mfx_shoebox*/
+mfx_shoebox_chunks*/
+diagnostics_qi_25files/
+diagnostics_qi_meeting_25files/
+diagnostics_qp_mean_profiles/
+diagnostics_qp_mean_three_models_25files/
+*.npy
+*.parquet
+*.ckpt
+*.mtz
+*.png
+*.log

@@ -1,11 +1,66 @@
 import argparse
 import logging
 import re
+from pathlib import Path
 
 from integrator.cli.utils.logger import setup_logging
 from integrator.io import write_mtz_from_preds, write_refl_from_preds
+from integrator.utils import resolve_source_data_dir
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_and_check_metadata(config: dict) -> Path:
+    """Resolve source_data_dir and verify metadata.npy exists.
+
+    Used by --mfx-writeback to obtain the metadata.npy path automatically
+    from manifest.yaml (chunked_rotation_data) or from data_loader.args.data_dir
+    (rotation_data).
+
+    Raises:
+        FileNotFoundError: metadata.npy not found under the resolved directory,
+                           with the expected path included in the message.
+        ValueError / KeyError: propagated from resolve_source_data_dir when the
+                               config or manifest is malformed.
+    """
+    source_data_dir = resolve_source_data_dir(config)
+    metadata_path = source_data_dir / "metadata.npy"
+    if not metadata_path.exists():
+        raise FileNotFoundError(
+            f"metadata.npy not found at expected path:\n"
+            f"  {metadata_path}\n"
+            "Verify that source_data_dir in manifest.yaml points to the correct "
+            "original shoebox dataset directory, or check that the file has not "
+            "been moved or deleted."
+        )
+    return metadata_path
+
+
+def _resolve_and_check_mtz_sources(config: dict) -> Path:
+    """Resolve source_data_dir and verify metadata.npy + dataset.yaml both exist.
+
+    Used by --write-mtz.  MTZ export requires both metadata.npy (wavelength data)
+    and dataset.yaml (crystal geometry).
+
+    Raises:
+        FileNotFoundError: either required file not found under source_data_dir,
+                           with the expected path included in the message.
+        ValueError / KeyError: propagated from resolve_source_data_dir when the
+                               config or manifest is malformed.
+    """
+    source_data_dir = resolve_source_data_dir(config)
+    for fname in ("metadata.npy", "dataset.yaml"):
+        fpath = source_data_dir / fname
+        if not fpath.exists():
+            raise FileNotFoundError(
+                f"--write-mtz requires {fname} under source_data_dir but it was "
+                f"not found:\n"
+                f"  {fpath}\n"
+                "Verify that source_data_dir in manifest.yaml points to the correct "
+                "original shoebox dataset directory, or check that the file has not "
+                "been moved or deleted."
+            )
+    return source_data_dir
 
 
 def parse_args():
@@ -43,6 +98,27 @@ def parse_args():
         "--write-refl",
         action="store_true",
         help="Write predictions as a .refl file",
+    )
+    # MFX write-back extension (Thao): keep Luis's --write-refl path,
+    # but allow writing predictions into many original MFX .refl files.
+    parser.add_argument(
+        "--mfx-writeback",
+        action="store_true",
+        help=(
+            "Use MFX many-file .refl write-back instead of the default "
+            "single-source .refl write-back. Requires --write-refl and "
+            "--original-refl-dir."
+        ),
+    )
+    parser.add_argument(
+        "--original-refl-dir",
+        type=str,
+        default=None,
+        help=(
+            "Original MFX/cctbx out folder containing "
+            "idx-data_*_integrated.refl/.expt files. Used only with "
+            "--write-refl --mfx-writeback."
+        ),
     )
     parser.add_argument(
         "--write-mtz",
@@ -166,12 +242,20 @@ def main():
             print(f"  {k}")
         return
 
-    # path to input refl file (only needed for --write-refl)
+    # Path to input refl file for Luis's original single-file write-back.
+    # MFX write-back extension (Thao): the many-file MFX path uses
+    # --original-refl-dir + metadata.npy instead, so it does not require
+    # output.refl_file in the YAML config.
     refl_file = config.get("output", {}).get("refl_file")
-    if args.write_refl and not refl_file:
+    if args.write_refl and not args.mfx_writeback and not refl_file:
         raise ValueError(
             "--write-refl requires 'output.refl_file' in the YAML config"
         )
+    if args.mfx_writeback:
+        if not args.write_refl:
+            raise ValueError("--mfx-writeback must be used with --write-refl")
+        if args.original_refl_dir is None:
+            raise ValueError("--mfx-writeback requires --original-refl-dir")
 
     epoch_re = re.compile(r"epoch=(\d+)")
     for ckpt in checkpoints:
@@ -227,23 +311,41 @@ def main():
 
         if args.write_refl:
             logger.info("Writing .refl output for epoch %d", epoch)
-            write_refl_from_preds(
-                ckpt_dir=ckpt_dir,
-                refl_file=refl_file,
-                epoch=epoch,
-                filetype="parquet",
-            )
+
+            if args.mfx_writeback:
+                # MFX write-back: resolve and validate the original shoebox data
+                # directory automatically from manifest.yaml (chunked) or from
+                # data_loader.args.data_dir (rotation_data).
+                # --original-refl-dir remains separate: it points to the
+                # original .refl/.expt files, which may differ from source_data_dir.
+                from integrator.io.pred_io import write_mfx_refl_from_preds
+
+                metadata_path = _resolve_and_check_metadata(config)
+                write_mfx_refl_from_preds(
+                    ckpt_dir=ckpt_dir,
+                    metadata_path=metadata_path,
+                    original_refl_dir=Path(args.original_refl_dir),
+                    out_dir=pred_dir / "mfx_refl_writeback",
+                    filetype="parquet",
+                )
+            else:
+                write_refl_from_preds(
+                    ckpt_dir=ckpt_dir,
+                    refl_file=refl_file,
+                    epoch=epoch,
+                    filetype="parquet",
+                )
 
         if args.write_mtz:
             from integrator.io import get_pred_files
 
             logger.info("Writing .mtz output for epoch %d", epoch)
             pred_data = get_pred_files(ckpt_dir=ckpt_dir, filetype="parquet")
-            data_dir = Path(config["data_loader"]["args"]["data_dir"])
+            source_data_dir = _resolve_and_check_mtz_sources(config)
             write_mtz_from_preds(
                 pred_data=pred_data,
-                metadata_path=data_dir / "metadata.npy",
-                data_dir=data_dir,
+                metadata_path=source_data_dir / "metadata.npy",
+                data_dir=source_data_dir,
                 out_path=ckpt_dir / f"preds_epoch_{epoch:04d}.mtz",
             )
 

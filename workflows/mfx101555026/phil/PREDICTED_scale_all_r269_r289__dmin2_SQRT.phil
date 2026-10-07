@@ -1,0 +1,28 @@
+dispatch.step_list = input balance model_scaling modify filter errors_premerge scale postrefine statistics_unitcell statistics_beam model_statistics statistics_resolution
+
+input.path =/sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/runs/run_20260805-183129_a8b9/predictions/mfx_refl_writeback
+input.reflections_suffix = _integrated.refl
+input.experiments_suffix = _integrated.expt
+input.parallel_file_load.method = uniform
+
+filter.algorithm = unit_cell
+filter.unit_cell.value.target_unit_cell = 53.814 86.750 140.465 90 90 90
+filter.unit_cell.value.target_space_group = P 21 21 21
+filter.unit_cell.value.relative_length_tolerance = 0.1
+filter.unit_cell.value.absolute_angle_tolerance = 2.0
+filter.outlier.min_corr = 0.1
+
+scaling.model = /sdf/data/lcls/ds/mfx/mfx101555026/results/offline/datasets/ClCRY4_wt_1us_74mJcm2_ellipse/processing/v01_new_defaults/diffmaps/dimple_dark/final.pdb
+scaling.unit_cell = 53.814 86.750 140.465 90 90 90
+scaling.space_group = P 21 21 21
+scaling.resolution_scalar = 0.96
+
+merging.d_min = 2.0
+merging.merge_anomalous = True
+
+postrefinement.enable = True
+statistics.n_bins = 20
+
+output.prefix = PREDICTED_scale_all_r269_r289_sqrt_dmin2
+output.output_dir = /sdf/scratch/lcls/ds/prj/prjlumine22/scratch/thaoh/mfx101555026_cctbx/PREDICTED_scale_all_r269_r289_sqrt_dmin2
+output.save_experiments_and_reflections = True
