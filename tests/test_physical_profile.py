@@ -5,9 +5,7 @@ free softmax and the `h -> h/c, W -> cW` gauge should both be structurally absen
 and the widths should follow the measured law sigma^2 = a sin^2(theta) + b.
 """
 
-import math
 
-import pytest
 import torch
 
 from integrator.model.distributions.profile_surrogates import (

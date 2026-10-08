@@ -7,9 +7,7 @@ algebra, the direction of the correction, and the guard for the case where it
 cannot be done.
 """
 
-import pytest
 import torch
-from torch.distributions import Gamma
 
 
 def deconvolve(alpha, beta, c, lam):
