@@ -50,6 +50,9 @@ def test_factory_builds_and_trains_one_step():
     model = construct_integrator(cfg)
     qp = model.surrogates["qp"]
     assert type(qp).__name__ == "NanoBraggProfileSurrogate"
+    # the optimizer is built from the config too; options that assume a learned
+    # decoder matrix must not be set for a surrogate that has none
+    model.configure_optimizers()
 
     batch = next(iter(dm.train_dataloader()))
     model.train()

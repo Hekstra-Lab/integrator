@@ -14,7 +14,6 @@ integrator:
 optimizer:
   lr: 0.001
   weight_decay: 0.0
-  decoder_weight_decay: 0.001
   lr_schedule: null
 surrogates:
   qp:
