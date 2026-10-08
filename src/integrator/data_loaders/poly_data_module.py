@@ -34,6 +34,12 @@ POLY_DS_COLS = [
     "xyzcal.px.2",
     "panel",
     "flags",
+    # window origin on the panel (fast, slow), so a physics profile can be
+    # rendered on the shoebox's own pixels
+    "bbox.0",
+    "bbox.2",
+    # orders of the same direction in band; >1 means the spot is a harmonic sum
+    "n_harmonics",
 ]
 
 
