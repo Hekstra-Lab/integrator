@@ -84,7 +84,9 @@ class HierarchicalIntegrator(BaseIntegrator):
         shoebox_masked = shoebox * mask
         shoebox_reshaped = shoebox_masked.reshape(b, 1, *self.shoebox_shape)
 
-        x_profile = self.encoders["profile"](shoebox_reshaped)
+        x_profile = self.encoders["profile"](
+            self._profile_encoder_input(shoebox_reshaped, metadata)
+        )
         x_k_i = self.encoders["k_i"](shoebox_reshaped)
         x_r_i = self.encoders["r_i"](shoebox_reshaped)
         x_k_bg = self.encoders["k_bg"](shoebox_reshaped)
@@ -102,6 +104,7 @@ class HierarchicalIntegrator(BaseIntegrator):
             mc_samples=self.mc_samples,
             group_labels=prf_labels,
             metadata=metadata,
+            mask=mask,
             shape_signal=_shape_signal(counts, mask, qbg),
         )
 
@@ -167,7 +170,9 @@ class HierarchicalIntegrator2Enc(BaseIntegrator):
         shoebox_masked = shoebox * mask
         shoebox_reshaped = shoebox_masked.reshape(b, 1, *self.shoebox_shape)
 
-        x_profile = self.encoders["profile"](shoebox_reshaped)
+        x_profile = self.encoders["profile"](
+            self._profile_encoder_input(shoebox_reshaped, metadata)
+        )
         x_int = self.encoders["intensity"](shoebox_reshaped)
 
         qbg = self.surrogates["qbg"](x_int, x_int)
@@ -182,6 +187,7 @@ class HierarchicalIntegrator2Enc(BaseIntegrator):
             mc_samples=self.mc_samples,
             group_labels=prf_labels,
             metadata=metadata,
+            mask=mask,
             shape_signal=_shape_signal(counts, mask, qbg),
         )
 
@@ -248,7 +254,9 @@ class HierarchicalIntegrator3EncIB(BaseIntegrator):
         shoebox_masked = shoebox * mask
         shoebox_reshaped = shoebox_masked.reshape(b, 1, *self.shoebox_shape)
 
-        x_profile = self.encoders["profile"](shoebox_reshaped)
+        x_profile = self.encoders["profile"](
+            self._profile_encoder_input(shoebox_reshaped, metadata)
+        )
         x_int = self.encoders["intensity"](shoebox_reshaped)
         x_bg = self.encoders["background"](shoebox_reshaped)
 
@@ -264,6 +272,7 @@ class HierarchicalIntegrator3EncIB(BaseIntegrator):
             mc_samples=self.mc_samples,
             group_labels=prf_labels,
             metadata=metadata,
+            mask=mask,
             shape_signal=_shape_signal(counts, mask, qbg),
         )
 
@@ -330,7 +339,9 @@ class HierarchicalIntegrator3Enc(BaseIntegrator):
         shoebox_masked = shoebox * mask
         shoebox_reshaped = shoebox_masked.reshape(b, 1, *self.shoebox_shape)
 
-        x_profile = self.encoders["profile"](shoebox_reshaped)
+        x_profile = self.encoders["profile"](
+            self._profile_encoder_input(shoebox_reshaped, metadata)
+        )
         x_k = self.encoders["k"](shoebox_reshaped)
         x_r = self.encoders["r"](shoebox_reshaped)
 
@@ -346,6 +357,7 @@ class HierarchicalIntegrator3Enc(BaseIntegrator):
             mc_samples=self.mc_samples,
             group_labels=prf_labels,
             metadata=metadata,
+            mask=mask,
             shape_signal=_shape_signal(counts, mask, qbg),
         )
 

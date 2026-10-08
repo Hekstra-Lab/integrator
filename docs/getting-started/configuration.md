@@ -86,18 +86,15 @@ Below are the default configuration settings.
         data_dir: "/path/to/data"
         batch_size: 256
         val_split: 0.3
-        test_split: 0.0
         num_workers: 3
         include_test: false
         subset_size: null
         cutoff: null
-        use_metadata: true
         shoebox_file_names:
           counts: "counts_2d_subset.pt"
           masks: "masks_2d_subset.pt"
           stats: 'stats_2d.pt'
           reference: 'reference_2d_subset.pt'
-          standardized_counts: null
 
     trainer:
       args:
@@ -213,18 +210,15 @@ Below are the default configuration settings.
         data_dir: *data
         batch_size: 256
         val_split: 0.3
-        test_split: 0.0
         num_workers: 0
         include_test: false
         subset_size: 100
         cutoff: 2000
-        use_metadata: true
         shoebox_file_names:
           counts: "counts_3d_subset.pt"
           masks: "masks_3d_subset.pt"
           stats: "stats_3d.pt"
           reference: "reference_3d_subset.pt"
-          standardized_counts: null
 
     trainer:
       args:

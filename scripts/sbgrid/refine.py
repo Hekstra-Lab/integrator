@@ -48,6 +48,19 @@ def parse_args():
         help="default: <mtz parent>/refine",
     )
     p.add_argument("--macro-cycles", type=int, default=3)
+    p.add_argument(
+        "--anisotropic",
+        action="store_true",
+        help=(
+            "Refine anisotropic ADPs (six per atom) instead of isotropic (one). "
+            "Only worth it where the data can pay for the parameters: at 1.1 A "
+            "HEWL gives about 4 observations per anisotropic parameter, while at "
+            "1.7 A PDZ2 gives 0.5, so the same flag that is justified on one "
+            "dataset is meaningless on the other. Compare arms under BOTH "
+            "settings rather than switching: extra parameters can absorb a data "
+            "difference as easily as expose one."
+        ),
+    )
     p.add_argument("--rfree-fraction", type=float, default=0.05)
     p.add_argument(
         "--rfree-from",
@@ -321,6 +334,11 @@ def main():
         + restraints
         + "refinement.output.prefix=refined --overwrite"
     )
+    if args.anisotropic:
+        # hydrogens stay isotropic: they ride on their parent atom and carry no
+        # independent displacement information at any resolution
+        refine += ' refinement.refine.adp.individual.anisotropic="not element H"'
+
     if anomalous:
         # ask for the anomalous difference map the peak search reads
         refine += (

@@ -1,6 +1,7 @@
 import math
 from dataclasses import dataclass
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,6 +10,7 @@ from torch.distributions import Normal
 
 from integrator.model.distributions.profile_geometry import (
     N_GEOM_FEATURES,
+    detector_polar,
     geometry_features,
 )
 
@@ -59,6 +61,9 @@ class ProfileSurrogateOutput:
         loc: Posterior mean of h, shape (B, d).
         scale: Posterior std of h, shape (B, d).
         prior_scale: Std of the N(0, prior_scale) prior on the latent h
+        kl: Per-reflection KL, shape (B,), for surrogates whose prior is not a
+            single scalar scale; `None` leaves the caller to form it from
+            `prior_scale`.
     """
 
     zp: Tensor
@@ -66,6 +71,7 @@ class ProfileSurrogateOutput:
     loc: Tensor
     scale: Tensor
     prior_scale: float = 3.0
+    kl: Tensor | None = None
 
 
 class ProfileSurrogate(nn.Module):
@@ -128,6 +134,588 @@ class ProfileSurrogate(nn.Module):
             loc=loc,
             scale=scale,
             prior_scale=self.prior_scale,
+        )
+
+
+def _monomial_basis(
+    shape: tuple[int, int, int], max_order: int = 2
+) -> tuple[Tensor, list[tuple[int, int, int]]]:
+    """Monomials in normalized pixel coordinates, constant term excluded.
+
+    The constant is left out because softmax is invariant to it and the decoder bias
+    already carries whatever shape every reflection shares. Columns are scaled to
+    unit norm so the latent lives in fixed logit units.
+
+    Returns the `(P, d)` basis and the exponent tuple of each column.
+    """
+    d, h, w = shape
+    axes = [
+        torch.linspace(-1.0, 1.0, n) if n > 1 else torch.zeros(1)
+        for n in (d, h, w)
+    ]
+    zz, yy, xx = torch.meshgrid(*axes, indexing="ij")
+    coords = {"z": zz.reshape(-1), "y": yy.reshape(-1), "x": xx.reshape(-1)}
+
+    exponents = [
+        (i, j, k)
+        for i in range(max_order + 1)
+        for j in range(max_order + 1)
+        for k in range(max_order + 1)
+        if 1 <= i + j + k <= max_order
+        and (d > 1 or i == 0)
+        and (h > 1 or j == 0)
+        and (w > 1 or k == 0)
+    ]
+    cols = [
+        coords["z"].pow(i) * coords["y"].pow(j) * coords["x"].pow(k)
+        for i, j, k in exponents
+    ]
+    basis = torch.stack(cols, dim=-1)
+    return basis / basis.norm(dim=0, keepdim=True).clamp_min(1e-12), exponents
+
+
+class FixedBasisProfileSurrogate(ProfileSurrogate):
+    """Learned-basis profile with the basis FROZEN to an analytic polynomial family.
+
+    `softmax(W h + b)` with a learned `W` carries a gauge: `h -> h/c`, `W -> cW`
+    leaves the likelihood unchanged. Nothing then pins the scale of `h`, so the KL
+    weight, the prior scale, and any penalty written in terms of `W` are not
+    well-posed quantities. Freezing `W` removes the gauge and puts `h` in logit
+    units.
+
+    It also bounds which profiles are reachable. A free softmax over `P` pixels has
+    two attractors, one-hot and uniform, and falls into both; with quadratic columns
+    the family is the anisotropic Gaussians, so a near-delta needs a coefficient of
+    order `P^(2/3)` logits and uniform needs every coefficient at zero against a
+    bias that the likelihood is pushing away from flat.
+
+    The linear columns are a sub-pixel translation and the quadratic ones the inverse
+    covariance, so `max_order=2` is a Gaussian whose centre and anisotropy the
+    encoder predicts. Higher orders add skew at the cost of reopening sharper
+    features.
+
+    Args:
+        max_order: Highest total monomial degree. 2 gives the Gaussians.
+        profile_shape: Profile grid as `(D, H, W)`; inferred as a square when unset.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int = 441,
+        init_std: float = 0.5,
+        prior_scale: float = 1.0,
+        max_order: int = 2,
+        profile_shape: tuple[int, int, int] | list[int] | None = None,
+        **kwargs,
+    ) -> None:
+        if profile_shape is not None:
+            shape = tuple(int(v) for v in profile_shape)
+        else:
+            side = int(round(math.sqrt(output_dim)))
+            if side * side != output_dim:
+                raise ValueError(
+                    f"output_dim {output_dim} is not square; pass profile_shape"
+                )
+            shape = (1, side, side)
+        if shape[0] * shape[1] * shape[2] != output_dim:
+            raise ValueError(
+                f"profile_shape {shape} has {shape[0] * shape[1] * shape[2]} "
+                f"pixels, but output_dim is {output_dim}"
+            )
+
+        basis, exponents = _monomial_basis(shape, max_order)
+        super().__init__(
+            input_dim=input_dim,
+            latent_dim=basis.shape[1],
+            output_dim=output_dim,
+            init_std=init_std,
+            prior_scale=prior_scale,
+            **kwargs,
+        )
+        self.profile_shape = shape
+        self.max_order = int(max_order)
+        self.exponents = exponents
+
+        with torch.no_grad():
+            self.decoder.weight.copy_(basis)
+            nn.init.zeros_(self.decoder.bias)
+        self.decoder.weight.requires_grad_(False)
+
+
+def _hermite_1d(u: Tensor, n_max: int) -> Tensor:
+    """Orthonormal Hermite functions `phi_0..phi_n_max` at `u`, stacked on dim -2.
+
+    Uses the stable three-term recursion rather than explicit Hermite polynomials,
+    which overflow by order 6. The `1/sqrt(beta)` normalization of the continuous
+    basis is omitted: it is common to every column, so it cancels when the profile
+    is normalized over the grid.
+    """
+    phi = [math.pi**-0.25 * torch.exp(-0.5 * u * u)]
+    if n_max >= 1:
+        phi.append(math.sqrt(2.0) * u * phi[0])
+    for n in range(1, n_max):
+        phi.append(
+            math.sqrt(2.0 / (n + 1)) * u * phi[n]
+            - math.sqrt(n / (n + 1)) * phi[n - 1]
+        )
+    return torch.stack(phi, dim=-2)
+
+
+class ShapeletProfileSurrogate(nn.Module):
+    """Squared Gauss-Hermite profile in a geometry-aligned anisotropic frame.
+
+        pi ~ (sum_k c_k Phi_k)^2,   c = (1, eps)/sqrt(1 + |eps|^2),   eps ~ q
+
+    Three properties the learned-softmax profile does not have.
+
+    **It cannot be uniform or a near-delta.** The Gaussian envelope bounds the
+    support from above and the Christoffel inequality `pi <= sum_n phi_n^2` bounds
+    the peak from below, so both attractors of a free softmax are outside the
+    family. Truncation order alone does not do this -- the envelope and the
+    order-decaying prior do.
+
+    **It has no gauge.** The basis is analytic and the coefficient vector is
+    normalized, with `c_0` fixed at 1, so there is no `h -> h/c, W -> cW` freedom
+    and the KL weight and prior scale are well-posed for the first time.
+
+    **Its coefficients mean something.** Order 1 is a centroid shift, order 2 an
+    ellipticity, order 3 the skew -- which is what a wavelength-dependent Laue
+    streak needs and a symmetric Gaussian cannot express. Each order therefore gets
+    its own prior width, `tau_n = tau0 (1+n)^-decay`. The decay is load-bearing, not
+    cosmetic: with a flat prior across orders the degeneracy returns as the order
+    rises.
+
+    The frame -- azimuth, centre and the two extents -- is predicted from detector
+    geometry rather than inferred per reflection, because a free per-reflection
+    scale re-admits the `(beta, c)` non-identification that the analytic basis
+    otherwise removes.
+
+    Args:
+        n_par: Hermite order along the streak (azimuthal) direction.
+        n_perp: Hermite order across it.
+        n_z: Hermite order along the frame axis; 0 for 2D stills.
+        beta_par: Envelope scale along the streak, in pixels, before the
+            geometry-predicted correction.
+        beta_perp: Envelope scale across it.
+        beta_z: Envelope scale along frames.
+        max_log_beta: Bound on the geometry correction to each log extent.
+        tau0: Prior width of the order-1 coefficients.
+        tau_decay: Exponent in `tau_n = tau0 (1+n)^-decay`.
+        quad: Gauss-Legendre points per axis for pixel integration. 1 samples pixel
+            centres, which costs ~0.3 in basis error once an extent falls below a
+            pixel; 3 brings that to ~4e-4.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int = 441,
+        profile_shape: tuple[int, int, int] | list[int] | None = None,
+        beam_center: tuple[float, float] | list[float] | None = None,
+        n_par: int = 4,
+        n_perp: int = 2,
+        n_z: int = 0,
+        beta_par: float = 2.0,
+        beta_perp: float = 1.2,
+        beta_z: float = 1.0,
+        max_log_beta: float = 1.0,
+        tau0: float = 0.5,
+        tau_decay: float = 1.5,
+        init_std: float = 0.1,
+        quad: int = 3,
+        geom_hidden: int = 32,
+        lambda_min: float | None = None,
+        lambda_max: float | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__()
+
+        if profile_shape is not None:
+            shape = tuple(int(v) for v in profile_shape)
+        else:
+            side = int(round(math.sqrt(output_dim)))
+            if side * side != output_dim:
+                raise ValueError(
+                    f"output_dim {output_dim} is not square; pass profile_shape"
+                )
+            shape = (1, side, side)
+        if shape[0] * shape[1] * shape[2] != output_dim:
+            raise ValueError(
+                f"profile_shape {shape} has {shape[0] * shape[1] * shape[2]} "
+                f"pixels, but output_dim is {output_dim}"
+            )
+        self.profile_shape = shape
+        self.output_dim = int(output_dim)
+
+        if shape[0] == 1:
+            n_z = 0
+        self.n_par, self.n_perp, self.n_z = int(n_par), int(n_perp), int(n_z)
+        self.n_coeff = (self.n_par + 1) * (self.n_perp + 1) * (self.n_z + 1)
+        self.d = self.n_coeff - 1
+
+        self.beta_par, self.beta_perp, self.beta_z = (
+            float(beta_par), float(beta_perp), float(beta_z),
+        )
+        self.max_log_beta = float(max_log_beta)
+        self.quad = max(1, int(quad))
+        self.beam_center = tuple(beam_center) if beam_center is not None else None
+        self.lambda_min, self.lambda_max = lambda_min, lambda_max
+        self.prior_scale = float(tau0)
+
+        self.loc_head = nn.Linear(input_dim, self.d)
+        self.scale_head = nn.Linear(input_dim, self.d)
+        nn.init.zeros_(self.loc_head.weight)
+        nn.init.zeros_(self.loc_head.bias)
+        nn.init.zeros_(self.scale_head.weight)
+        nn.init.constant_(self.scale_head.bias, _softplus_inverse(init_std))
+
+        # the frame is a function of geometry, never a per-reflection latent
+        n_frame = 4 + (1 if self.n_z > 0 else 0)
+        self.frame_head = None
+        if beam_center is not None:
+            mlp = nn.Sequential(
+                nn.Linear(N_GEOM_FEATURES, geom_hidden),
+                nn.SiLU(),
+                nn.Linear(geom_hidden, n_frame),
+            )
+            nn.init.zeros_(mlp[-1].weight)
+            nn.init.zeros_(mlp[-1].bias)
+            self.frame_head = mlp
+
+        orders = torch.tensor(
+            [
+                i + j + k
+                for i in range(self.n_par + 1)
+                for j in range(self.n_perp + 1)
+                for k in range(self.n_z + 1)
+            ],
+            dtype=torch.float32,
+        )
+        tau = float(tau0) * (1.0 + orders).pow(-float(tau_decay))
+        self.register_buffer("tau", tau[1:].clone(), persistent=True)
+
+        self.register_buffer("_grid", self._pixel_grid(shape), persistent=False)
+        pts, wts = np.polynomial.legendre.leggauss(self.quad)
+        self.register_buffer(
+            "_qp", torch.tensor(pts / 2.0, dtype=torch.float32), persistent=False
+        )
+        self.register_buffer(
+            "_qw", torch.tensor(wts / 2.0, dtype=torch.float32), persistent=False
+        )
+
+    @staticmethod
+    def _pixel_grid(shape: tuple[int, int, int]) -> Tensor:
+        """Pixel-centre offsets from the grid centre, shape (3, P) as (z, y, x)."""
+        d, h, w = shape
+        zz, yy, xx = torch.meshgrid(
+            torch.arange(d, dtype=torch.float32) - (d - 1) / 2,
+            torch.arange(h, dtype=torch.float32) - (h - 1) / 2,
+            torch.arange(w, dtype=torch.float32) - (w - 1) / 2,
+            indexing="ij",
+        )
+        return torch.stack([zz.reshape(-1), yy.reshape(-1), xx.reshape(-1)], 0)
+
+    def _frame(self, features: Tensor | None, batch: int, device, dtype):
+        """Centre offset and log extents, from geometry when it is available."""
+        zeros = torch.zeros(batch, 1, device=device, dtype=dtype)
+        if self.frame_head is None or features is None:
+            dx = dy = zeros
+            lp = lq = zeros
+            lz = zeros
+        else:
+            raw = self.frame_head(features)
+            dx, dy = raw[:, 0:1], raw[:, 1:2]
+            lp = self.max_log_beta * torch.tanh(raw[:, 2:3])
+            lq = self.max_log_beta * torch.tanh(raw[:, 3:4])
+            lz = (
+                self.max_log_beta * torch.tanh(raw[:, 4:5])
+                if raw.shape[1] > 4
+                else zeros
+            )
+        return dx, dy, lp, lq, lz
+
+    def _amplitude(self, c: Tensor, phi: Tensor, frame, offset) -> Tensor:
+        """`sum_k c_k Phi_k` on the grid for one quadrature offset, shape (S, B, P)."""
+        dx, dy, lp, lq, lz = frame
+        ox, oy = offset
+        grid = self._grid
+        gz, gy, gx = grid[0], grid[1], grid[2]
+
+        ddx = gx.unsqueeze(0) - dx - ox
+        ddy = gy.unsqueeze(0) - dy - oy
+        cos, sin = torch.cos(phi).unsqueeze(-1), torch.sin(phi).unsqueeze(-1)
+        u = (cos * ddx + sin * ddy) / (self.beta_par * torch.exp(lp))
+        v = (-sin * ddx + cos * ddy) / (self.beta_perp * torch.exp(lq))
+
+        pu = _hermite_1d(u, self.n_par)
+        pv = _hermite_1d(v, self.n_perp)
+        if self.n_z > 0:
+            w = gz.unsqueeze(0) / (self.beta_z * torch.exp(lz))
+            pw = _hermite_1d(w, self.n_z)
+            return torch.einsum("bip,bjp,bkp,sbijk->sbp", pu, pv, pw, c)
+        return torch.einsum("bip,bjp,sbij->sbp", pu, pv, c[..., 0])
+
+    def _profile(self, eps: Tensor, phi: Tensor, frame) -> Tensor:
+        """Pixel-integrated squared amplitude, normalized, shape (S, B, P)."""
+        s, b = eps.shape[0], eps.shape[1]
+        ones = eps.new_ones(s, b, 1)
+        c = torch.cat([ones, eps], dim=-1)
+        c = c / c.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+        c = c.reshape(s, b, self.n_par + 1, self.n_perp + 1, self.n_z + 1)
+
+        p = None
+        for ix, wx in zip(self._qp, self._qw):
+            for iy, wy in zip(self._qp, self._qw):
+                g = self._amplitude(c, phi, frame, (ix, iy))
+                term = (wx * wy) * g * g
+                p = term if p is None else p + term
+        return p / p.sum(dim=-1, keepdim=True).clamp_min(1e-12)
+
+    def forward(
+        self,
+        x: Tensor,
+        mc_samples: int = 1,
+        metadata: dict | None = None,
+        **kwargs,
+    ) -> ProfileSurrogateOutput:
+        loc = self.loc_head(x)
+        scale = F.softplus(self.scale_head(x)) + 1e-6
+
+        phi = x.new_zeros(x.shape[0])
+        features = None
+        if self.frame_head is not None:
+            if metadata is None:
+                raise ValueError(
+                    "ShapeletProfileSurrogate needs metadata when beam_center is set"
+                )
+            features, phi = geometry_features(
+                metadata, self.beam_center, self.lambda_min, self.lambda_max
+            )
+            features = features.to(loc.dtype).to(loc.device)
+            phi = phi.to(loc.dtype).to(loc.device)
+
+        frame = self._frame(features, x.shape[0], loc.device, loc.dtype)
+
+        eps = loc.unsqueeze(0) + scale.unsqueeze(0) * torch.randn(
+            mc_samples, *loc.shape, device=loc.device, dtype=loc.dtype
+        )
+        zp = self._profile(eps, phi, frame)
+        mean_profile = self._profile(loc.unsqueeze(0), phi, frame).squeeze(0)
+
+        tau = self.tau.to(loc.dtype)
+        kl = (
+            torch.log(tau / scale)
+            + (scale.pow(2) + loc.pow(2)) / (2 * tau.pow(2))
+            - 0.5
+        ).sum(dim=-1)
+
+        return ProfileSurrogateOutput(
+            zp=zp,
+            mean_profile=mean_profile,
+            loc=loc,
+            scale=scale,
+            prior_scale=self.prior_scale,
+            kl=kl,
+        )
+
+
+class PhysicalProfileSurrogate(nn.Module):
+    """Profile computed from diffraction geometry, with the physics fitted globally.
+
+    The data do not identify the intensity: `pi' = (f/f')pi + (1-f/f')u` gives an
+    identical likelihood at every signal level, so `I` is pinned only by the profile
+    family. A profile with per-reflection freedom in the uniform and delta directions
+    therefore leaves `I` unidentified, and a free `softmax(Wh + b)` falls into both
+    of those directions in practice.
+
+    This surrogate removes that freedom. Each reflection's profile is *computed* from
+    its own geometry; the only learned quantities are a handful of numbers shared by
+    the whole dataset, which bright reflections pin down. There is no per-reflection
+    latent and no basis matrix, so there is no `h -> h/c, W -> cW` gauge either.
+
+    The form is the one that convolution of near-Gaussian kernels gives, with
+    mosaicity entering through the scattering angle and divergence, crystal size and
+    detector PSF as a floor:
+
+        sigma_tangential^2 = a sin^2(theta) + b
+        sigma_radial^2     = a sin^2(theta) + b + c
+
+    `a` carries the mosaic spread, `b` the angle-independent terms, and `c` the
+    wavelength spread, which acts along the radial direction only and is therefore
+    zero for monochromatic data. Measured on real bright reflections this holds with
+    R^2 0.96-0.97 on HEWL Laue and 0.56-0.59 on monochromatic HEWL; the fitted radial
+    excess is 2.59 px^2 on the Laue data against 0.06 px^2 monochromatic, which is
+    what `c` represents.
+
+    Args:
+        beam_center: Detector beam centre in pixels; sets the radial direction.
+        profile_shape: Profile grid as `(D, H, W)`.
+        init_a, init_b, init_c: Starting values in px^2. Defaults are the measured
+            Laue values; a method-of-moments fit on bright reflections is a better
+            start, and the globals are cheap to refit.
+        init_z: Starting variance along the frame axis, for 3D data.
+        quad: Gauss-Legendre points per axis for pixel integration. Spots can be
+            narrower than a pixel -- monochromatic HEWL sits at sigma 0.76-1.27 px --
+            so sampling pixel centres is not adequate there.
+        learn_globals: Fit the globals through the ELBO. False freezes them, which is
+            the warm-start-and-hold used for the first epoch.
+        lambda_min, lambda_max: Spectrum band from the dataset manifest. Used only
+            to supply a wavelength when the batch carries none.
+    """
+
+    def __init__(
+        self,
+        input_dim: int = 64,
+        output_dim: int = 441,
+        profile_shape: tuple[int, int, int] | list[int] | None = None,
+        beam_center: tuple[float, float] | list[float] | None = None,
+        init_a: float = 250.0,
+        init_b: float = 3.0,
+        init_c: float = 2.6,
+        init_z: float = 1.0,
+        wavelength: float | None = None,
+        lambda_min: float | None = None,
+        lambda_max: float | None = None,
+        quad: int = 2,
+        learn_globals: bool = True,
+        **kwargs,
+    ) -> None:
+        super().__init__()
+
+        if profile_shape is not None:
+            shape = tuple(int(v) for v in profile_shape)
+        else:
+            side = int(round(math.sqrt(output_dim)))
+            if side * side != output_dim:
+                raise ValueError(
+                    f"output_dim {output_dim} is not square; pass profile_shape"
+                )
+            shape = (1, side, side)
+        if shape[0] * shape[1] * shape[2] != output_dim:
+            raise ValueError(
+                f"profile_shape {shape} has {shape[0] * shape[1] * shape[2]} "
+                f"pixels, but output_dim is {output_dim}"
+            )
+        self.profile_shape = shape
+        self.output_dim = int(output_dim)
+        self.is_3d = shape[0] > 1
+        self.beam_center = tuple(beam_center) if beam_center is not None else None
+        # a monochromatic batch carries no per-reflection wavelength, so fall back
+        # to the band centre when the dataset manifest supplies one
+        if wavelength is None and None not in (lambda_min, lambda_max):
+            wavelength = 0.5 * (float(lambda_min) + float(lambda_max))
+        self.wavelength = wavelength
+        self.quad = max(1, int(quad))
+        self.prior_scale = 1.0
+
+        def _p(v):
+            return nn.Parameter(
+                torch.tensor(math.log(max(float(v), 1e-6))), requires_grad=learn_globals
+            )
+
+        self.log_a = _p(init_a)
+        self.log_b = _p(init_b)
+        self.log_c = _p(init_c)
+        self.log_z = _p(init_z)
+
+        self.register_buffer("_grid", self._pixel_grid(shape), persistent=False)
+        pts, wts = np.polynomial.legendre.leggauss(self.quad)
+        self.register_buffer("_qp", torch.tensor(pts / 2.0, dtype=torch.float32), persistent=False)
+        self.register_buffer("_qw", torch.tensor(wts / 2.0, dtype=torch.float32), persistent=False)
+
+    @staticmethod
+    def _pixel_grid(shape: tuple[int, int, int]) -> Tensor:
+        """Pixel-centre offsets from the grid centre, shape (3, P) as (z, y, x)."""
+        d, h, w = shape
+        zz, yy, xx = torch.meshgrid(
+            torch.arange(d, dtype=torch.float32) - (d - 1) / 2,
+            torch.arange(h, dtype=torch.float32) - (h - 1) / 2,
+            torch.arange(w, dtype=torch.float32) - (w - 1) / 2,
+            indexing="ij",
+        )
+        return torch.stack([zz.reshape(-1), yy.reshape(-1), xx.reshape(-1)], 0)
+
+    def widths(self, metadata: dict, device, dtype):
+        """Radial, tangential and frame-axis variances, in px^2, per reflection."""
+        d_sp = metadata["d"].reshape(-1).to(device=device, dtype=dtype).clamp_min(1e-6)
+        if "wavelength" in metadata:
+            lam = metadata["wavelength"].reshape(-1).to(device=device, dtype=dtype)
+        elif self.wavelength is not None:
+            lam = torch.full_like(d_sp, float(self.wavelength))
+        else:
+            raise ValueError(
+                "PhysicalProfileSurrogate needs metadata['wavelength'] or a "
+                "`wavelength` argument to form sin(theta)"
+            )
+        sin2 = (lam / (2.0 * d_sp)).clamp(0.0, 1.0).pow(2)
+
+        a, b = self.log_a.exp(), self.log_b.exp()
+        # the wavelength term acts along the radial direction only, and is absent
+        # when the beam is monochromatic
+        c = self.log_c.exp() if "wavelength" in metadata else torch.zeros_like(a)
+        v_tan = a * sin2 + b
+        v_rad = v_tan + c
+        return v_rad, v_tan, self.log_z.exp().expand_as(v_tan)
+
+    def _profile(self, metadata: dict, mask: Tensor) -> Tensor:
+        """Pixel-integrated oriented Gaussian on the shoebox grid, shape (B, P)."""
+        device, dtype = mask.device, torch.float32
+        v_rad, v_tan, v_z = self.widths(metadata, device, dtype)
+        b = v_rad.shape[0]
+
+        if self.beam_center is not None:
+            _, _, phi = detector_polar(metadata, self.beam_center)
+            phi = phi.to(device=device, dtype=dtype)
+        else:
+            phi = torch.zeros(b, device=device, dtype=dtype)
+
+        gz, gy, gx = self._grid[0], self._grid[1], self._grid[2]
+        cos, sin = torch.cos(phi).unsqueeze(-1), torch.sin(phi).unsqueeze(-1)
+        vr, vt, vz = (v.unsqueeze(-1).clamp_min(1e-6) for v in (v_rad, v_tan, v_z))
+
+        acc = None
+        for ix, wx in zip(self._qp, self._qw):
+            for iy, wy in zip(self._qp, self._qw):
+                dx = gx.unsqueeze(0) - ix
+                dy = gy.unsqueeze(0) - iy
+                u = cos * dx + sin * dy
+                v = -sin * dx + cos * dy
+                e = u * u / vr + v * v / vt
+                if self.is_3d:
+                    e = e + gz.unsqueeze(0).pow(2) / vz
+                term = (wx * wy) * torch.exp(-0.5 * e)
+                acc = term if acc is None else acc + term
+
+        acc = acc * mask.reshape(b, -1).to(dtype)
+        return acc / acc.sum(-1, keepdim=True).clamp_min(1e-12)
+
+    def forward(
+        self,
+        x: Tensor,
+        mc_samples: int = 1,
+        metadata: dict | None = None,
+        mask: Tensor | None = None,
+        **kwargs,
+    ) -> ProfileSurrogateOutput:
+        if metadata is None:
+            raise ValueError("PhysicalProfileSurrogate needs metadata")
+        if mask is None:
+            mask = torch.ones(x.shape[0], self.output_dim, device=x.device)
+
+        profile = self._profile(metadata, mask)
+        b = profile.shape[0]
+        zeros = profile.new_zeros(b, 1)
+
+        return ProfileSurrogateOutput(
+            # the profile is deterministic given the geometry, so every draw is
+            # the same; the ELBO then carries no profile entropy, which is correct
+            zp=profile.unsqueeze(0).expand(mc_samples, -1, -1),
+            mean_profile=profile,
+            loc=zeros,
+            scale=profile.new_ones(b, 1),
+            prior_scale=self.prior_scale,
+            kl=profile.new_zeros(b),
         )
 
 

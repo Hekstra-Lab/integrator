@@ -14,6 +14,17 @@ class IntegratorCfg:
         encoder_out: Width of the encoder embedding consumed by the surrogates.
         mc_samples: Monte Carlo samples drawn from each surrogate per forward pass; must be `>= 1`.
         predict_keys: Output columns to emit at predict time, or `default` for the built-in set.
+        profile_support: Voxels the profile softmax is normalized over. `valid`
+            spreads the profile across every valid voxel (default, unchanged
+            behavior); `foreground` restricts it to the DIALS foreground bit,
+            the learned-model analog of foreground summation. Ragged integrators
+            only; falls back to `valid` per reflection when a shoebox has no
+            foreground voxel.
+        rb_gate_half_signal: Signal photons at which the profile-uncertainty term of
+            the Rao-Blackwellized sigma is half-weighted. `None` applies it in full.
+            Only consulted when an `i_rb`/`var_rb` column is requested; the term is
+            unreliable where the data cannot constrain the profile, so a few hundred
+            photons is a reasonable guard on weak data.
     """
 
     data_dim: Literal["2d", "3d"]
@@ -23,6 +34,15 @@ class IntegratorCfg:
     encoder_out: int = 64
     mc_samples: int = 4
     predict_keys: Literal["default"] | list[str] = "default"
+    profile_support: Literal["valid", "foreground"] = "valid"
+    rb_gate_half_signal: float | None = None
+    profile_coord_channels: bool = False
+    """Give the profile encoder two extra channels holding each pixel's offset
+    in the beam-centred radial/tangential frame. A conv encoder is translation
+    equivariant and so cannot otherwise know the azimuth that sets the streak
+    direction. Requires `xyzcal.px.0/1` in the metadata and a beam centre."""
+    beam_center: list[float] | None = None
+    """Detector beam centre in pixels; filled from dataset.yaml when unset."""
 
     def __post_init__(self):
         if self.data_dim not in ("2d", "3d"):

@@ -83,6 +83,32 @@ class WilsonLoss(nn.Module):
         background_kl_weight: float = 1.0,
         background_plane_kl_weight: float = 1.0,
         intensity_kl_weight: float = 1.0,
+        # Self-calibrating, per-resolution-bin intensity KL weight. Off by
+        # default: a scalar intensity_kl_weight, exactly the legacy behaviour.
+        # When enabled (needs n_bins > 1) each shell holds its own weight,
+        # recalibrated at epoch end so the posterior acentric coefficient of
+        # variation sd/mean matches `intensity_kl_target` -- the Wilson moment
+        # the data should show (acentric sd/mean = 1). A too-strong prior
+        # collapses sd/mean below the target in the weak high-resolution shells;
+        # the controller relaxes just those shells until it recovers, so no
+        # single global weight has to be swept per dataset.
+        intensity_kl_calibrate: bool = False,
+        intensity_kl_target: float = 1.0,
+        # Temper the intensity prior by the inverse multiplicity. The Wilson
+        # prior belongs to one unique reflection, but it is applied here once
+        # per OBSERVATION, so with N observations of a reflection it enters N
+        # times. Raising it to the power 1/N makes the product over
+        # observations telescope back to a single application,
+        #     prod_i [ p(I)^(1/N) L_i(I) ] = p(I) prod_i L_i(I),
+        # and since the KL weight is the prior's exponent in the ELBO that is
+        # exactly a per-reflection weight of 1/N. Needs a `multiplicity` column
+        # in the metadata (scripts/add_multiplicity.py); only the INTENSITY KL
+        # is tempered, because the background and profile are genuine
+        # per-observation nuisance parameters and are not over-counted.
+        kl_per_multiplicity: bool = False,
+        intensity_kl_gain: float = 0.7,
+        intensity_kl_min: float = 0.02,
+        intensity_kl_max: float = 1.0,
     ):
         super().__init__()
         # warn once, not once per batch, if the dataset predates the flag
@@ -132,6 +158,31 @@ class WilsonLoss(nn.Module):
         self.intensity_kl_weight = (
             pi_cfg.weight if pi_cfg is not None else intensity_kl_weight
         )
+
+        self.kl_per_multiplicity = bool(kl_per_multiplicity)
+        self._warned_multiplicity = False
+
+        # Per-resolution-bin intensity KL weight, self-calibrated at epoch end.
+        # Only active with more than one bin; otherwise the scalar above is used
+        # and the loss behaves exactly as before.
+        self.intensity_kl_target = float(intensity_kl_target)
+        self.intensity_kl_gain = float(intensity_kl_gain)
+        self.intensity_kl_min = float(intensity_kl_min)
+        self.intensity_kl_max = float(intensity_kl_max)
+        self.intensity_kl_calibrate = bool(intensity_kl_calibrate) and n_bins > 1
+        self.register_buffer(
+            "intensity_kl_bins",
+            torch.full((n_bins,), float(self.intensity_kl_weight)),
+            persistent=True,
+        )
+        if self.intensity_kl_calibrate:
+            # per-bin sums of the posterior mean intensity over an epoch's
+            # acentric reflections, reduced to sd/mean at its end. float64 so a
+            # 2M-reflection epoch of squared intensities does not lose precision.
+            for name in ("_ikl_n", "_ikl_mu", "_ikl_mu2"):
+                self.register_buffer(
+                    name, torch.zeros(n_bins, dtype=torch.float64), persistent=True
+                )
 
         # invert B = softplus(raw_B) + b_min so that B == init_B at init
         y = torch.tensor(max(float(init_B) - b_min, 1e-3))
@@ -562,6 +613,129 @@ class WilsonLoss(nn.Module):
             self._set_scale_from_fit(g0)
             self.scale_initialized.fill_(True)
 
+    def _multiplicity_weight(self, metadata: dict, like: Tensor, device) -> Tensor:
+        """1/N per reflection, N being how many observations share its latent.
+
+        Falls back to 1 with one warning when the column is absent, so datasets
+        cut before `multiplicity` existed keep the previous behaviour instead of
+        failing. N is clamped at 1 because a reflection observed once needs the
+        full prior.
+        """
+        mult = metadata.get("multiplicity")
+        if mult is None:
+            if not self._warned_multiplicity:
+                logger.warning(
+                    "kl_per_multiplicity is on but metadata has no "
+                    "'multiplicity' column; the intensity prior is being "
+                    "applied once per observation. Add it with "
+                    "scripts/add_multiplicity.py."
+                )
+                self._warned_multiplicity = True
+            return torch.ones((), device=device)
+        mult = mult.to(device).reshape(like.shape).to(like.dtype)
+        return 1.0 / mult.clamp(min=1.0)
+
+    def _intensity_kl_weight_for(self, group_labels, device):
+        """Per-reflection intensity KL weight.
+
+        A per-resolution-bin vector gathered by `group_labels` when calibration
+        is on; otherwise the scalar `intensity_kl_weight` -- the legacy path,
+        bit-for-bit unchanged.
+        """
+        if not self.intensity_kl_calibrate:
+            return self.intensity_kl_weight
+        if group_labels is None:
+            raise ValueError(
+                "intensity_kl_calibrate needs per-reflection group_labels "
+                "(set n_bins > 1 so resolution bins exist)"
+            )
+        groups = group_labels.to(device).long()
+        return self.intensity_kl_bins.to(device)[groups]
+
+    def _accumulate_intensity_kl(self, qi, group_labels, centric, device):
+        """Accumulate per-bin sums of the posterior mean intensity over the
+        epoch's acentric reflections, for the epoch-end sd/mean calibration.
+
+        The per-batch bincount is done in float32 (safe on CUDA) and added into
+        the float64 running buffers.
+        """
+        groups = group_labels.to(device).long()
+        mu = qi.mean.detach().reshape(-1).to(device).float()
+        if centric is not None:
+            keep = ~centric.reshape(-1).to(device).bool()
+            groups, mu = groups[keep], mu[keep]
+        n = self.intensity_kl_bins.shape[0]
+        self._ikl_n += torch.bincount(groups, minlength=n).double()
+        self._ikl_mu += torch.bincount(groups, weights=mu, minlength=n).double()
+        self._ikl_mu2 += torch.bincount(
+            groups, weights=mu * mu, minlength=n
+        ).double()
+
+    def calibrate_intensity_kl(self, epoch: int) -> dict[str, float]:
+        """Epoch-end M-step for the per-bin intensity KL weight.
+
+        Drives each shell's posterior acentric sd/mean toward
+        `intensity_kl_target` (1.0 = the Wilson moment). A lower weight lets the
+        posterior spread, so a shell measured below target has its weight cut.
+        The step is multiplicative, damped by `intensity_kl_gain`, and clamped
+        both per step (x0.5..x2) and to [min, max], so one noisy shell cannot
+        swing the weight. Shells with too little acentric evidence hold.
+        """
+        dev = self.intensity_kl_bins.device
+        n = self._ikl_n.clamp(min=1.0)
+        mean = self._ikl_mu / n
+        var = (self._ikl_mu2 / n - mean * mean).clamp(min=0.0)
+        cv = var.sqrt() / mean.clamp(min=1e-6)
+        seen = self._ikl_n >= 50
+        ratio = (cv / self.intensity_kl_target).clamp(min=1e-3)
+        step = ratio.pow(self.intensity_kl_gain).clamp(0.5, 2.0)
+        step = step.to(dev, dtype=self.intensity_kl_bins.dtype)
+        new = (self.intensity_kl_bins * step).clamp(
+            self.intensity_kl_min, self.intensity_kl_max
+        )
+        updated = torch.where(seen.to(dev), new, self.intensity_kl_bins)
+        self.intensity_kl_bins.copy_(updated)
+        stats = {
+            "ikl/cv_mean": float(cv[seen].mean()) if bool(seen.any()) else float("nan"),
+            "ikl/weight_mean": float(self.intensity_kl_bins.mean()),
+            "ikl/weight_min": float(self.intensity_kl_bins.min()),
+            "ikl/weight_max": float(self.intensity_kl_bins.max()),
+        }
+        self._ikl_n.zero_()
+        self._ikl_mu.zero_()
+        self._ikl_mu2.zero_()
+        return stats
+
+
+    def intensity_prior_params(
+        self, metadata: dict, device: torch.device
+    ) -> tuple[Tensor, Tensor]:
+        """`(concentration, rate)` of the Wilson intensity prior, per reflection.
+
+        This is the same prior `forward` builds for the KL, exposed so a
+        prediction can be divided by it. A Gamma posterior over a Gamma prior is
+        again a Gamma, so the likelihood-only distribution is recoverable in
+        closed form -- which is what lets us hand careless something that has not
+        already been shrunk toward this prior once.
+
+        Returns the acentric `Gamma(1, tau)` or, where the metadata carries the
+        flag, the centric `Gamma(1/2, tau/2)`.
+        """
+        d = metadata["d"].to(device)
+        s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))
+        tau = self._get_tau(metadata, s_sq, device)
+        if self.refit_residual and self.refit_enabled:
+            tau = tau * torch.exp(-self._resid_for(s_sq, device))
+
+        concentration = torch.ones_like(tau)
+        prior_rate = tau
+        centric = metadata.get("centric")
+        if centric is not None:
+            centric = centric.to(device).reshape(tau.shape).bool()
+            concentration = torch.where(centric, 0.5, 1.0)
+            prior_rate = torch.where(centric, tau * 0.5, tau)
+        return concentration, prior_rate
+
     def forward(
         self,
         rate: Tensor,
@@ -650,8 +824,13 @@ class WilsonLoss(nn.Module):
 
         p_i = Gamma(concentration=concentration, rate=prior_rate)
 
-        kl_i = kl_divergence(qi, p_i) * self.intensity_kl_weight
+        ikl_w = self._intensity_kl_weight_for(group_labels, device)
+        kl_i = kl_divergence(qi, p_i) * ikl_w
+        if self.kl_per_multiplicity:
+            kl_i = kl_i * self._multiplicity_weight(metadata, kl_i, device)
         kl = kl + kl_i
+        if self.intensity_kl_calibrate and self.training:
+            self._accumulate_intensity_kl(qi, group_labels, centric, device)
 
         # background prior: shared Gamma, or per-resolution-bin
         if self.bg_concentration.ndim == 1:

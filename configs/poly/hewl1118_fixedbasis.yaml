@@ -1,0 +1,177 @@
+# HEWL 1118 (Laue, 360 frames) with the profile basis FROZEN to a fixed
+# quadratic family. Identical to hewl_1118.yaml except the qp block, so an A/B
+# against it isolates the profile family.
+integrator:
+  name: hierarchical            # registered integrator; also: hierarchical_3enc
+  args:
+    data_dim: 2d                # Laue shoeboxes are single-slice images
+    d: 1
+    h: 25
+    w: 25
+    encoder_out: 64
+    mc_samples: 50
+    predict_keys: default
+    # the point of this run is whether the frozen basis removes the profile
+    # bimodality, so both breadth measures have to reach the predictions: n_eff is
+    # the exported profile, n_eff_mc the mixture the likelihood actually uses
+    additional_predict_keys: [n_eff, n_eff_mc, n_valid_px, num_pixels.foreground]
+
+optimizer:
+  lr: 0.001
+  weight_decay: 0.0
+  decoder_weight_decay: null
+  lr_schedule: cosine_warmup    # null | cosine_warmup | step_linear_warmup
+  warmup_epochs: 5
+  warmup_steps: 0
+  lr_min: 1.0e-5
+
+encoders:
+  - name: profile_encoder
+    args:
+      data_dim: 2d
+      in_channels: 1
+      input_shape: [25, 25]
+      encoder_out: 64
+      conv1_out_channels: 64
+      conv1_kernel_size: [3, 3]
+      conv1_padding: [1, 1]
+      norm1_num_groups: 4
+      pool_kernel_size: [2, 2]
+      pool_stride: [2, 2]
+      conv2_out_channels: 128
+      conv2_kernel_size: [3, 3]
+      conv2_padding: [0, 0]
+      norm2_num_groups: 4
+      dropout: 0.0
+  - &intensity_encoder          # 4 intensity encoders: k_i, r_i, k_bg, r_bg
+    name: intensity_encoder
+    args:
+      data_dim: 2d
+      in_channels: 1
+      encoder_out: 64
+      conv1_out_channels: 64
+      conv1_kernel_size: [3, 3]
+      conv1_padding: [1, 1]
+      norm1_num_groups: 4
+      pool_kernel_size: [2, 2]
+      pool_stride: [2, 2]
+      conv2_out_channels: 128
+      conv2_kernel_size: [3, 3]
+      conv2_padding: [0, 0]
+      norm2_num_groups: 4
+      conv3_out_channels: 256
+      conv3_kernel_size: [3, 3]
+      conv3_padding: [1, 1]
+      norm3_num_groups: 8
+  - *intensity_encoder
+  - *intensity_encoder
+  - *intensity_encoder
+
+surrogates:
+  qp:
+    # The basis is FROZEN to the quadratic monomials in (y, x) -- 5 columns in 2D --
+    # with only the bias learned. A learned basis carries the gauge h -> h/c,
+    # W -> cW, which leaves the likelihood unchanged and therefore leaves
+    # prior_scale, the profile KL weight and any penalty on W without a
+    # well-defined meaning. Freezing it bounds the family to the anisotropic
+    # Gaussians, so neither attractor of a free softmax -- one-hot and uniform --
+    # is reachable.
+    #
+    # Laue caveat: quadratic captures the streak's ELONGATION but not its skew, and
+    # a wavelength-dependent trail is asymmetric along its length. An
+    # under-flexible family shows up in the downstream error model as b, not a, so
+    # watch b. max_order: 3 adds the skew at the cost of admitting sharper features.
+    #
+    # latent_dim is set by the basis and must not be given. smoothness_weight is
+    # omitted because it acts on W, which no longer moves.
+    name: fixed_basis_profile
+    args:
+      input_dim: 64
+      output_dim: 625           # h*w for 2d (injected from geometry if omitted)
+      init_std: 0.5
+      prior_scale: 1.0
+  qbg:
+    name: gamma
+    args:
+      reparameterization: mean_fano   # shape_rate | mean_fano | nakagami
+      in_features: 64
+      eps: 1.0e-6
+      k_min: 0.1                       # minimum concentration (k) parameter
+      positive_constraint: softplus    # softplus | exp; or a [head1, head2] pair
+  qi:
+    name: gamma
+    args:
+      reparameterization: mean_fano
+      in_features: 64
+      eps: 1.0e-6
+      k_min: 0.1
+      positive_constraint: exp    # log-space mean: needed so the Gamma surrogate keeps bright anomalous peaks
+
+loss:
+  name: polychromatic_wilson
+  args:
+    # --- learned spectrum G(lambda); intensity prior is fixed Exponential Gamma(1, tau) ---
+    degree: 40                  # Chebyshev order of log G(lambda)
+    lambda_min: 0.97            # HEWL 1118 spectrum (tutorial: 0.97-1.25)
+    lambda_max: 1.25
+    spectrum_init_from: null    # path to a checkpoint to warm-start G/B
+    # --- shared Wilson prior ---
+    init_B: 30.0                # init Wilson B (A^2): softplus(raw_B) + b_min
+    b_min: 0.0
+    # --- fixed geometric corrections ---
+    polarization: false         # requires beam_center when true
+    polarization_fraction: 0.99
+    lorentz: false
+    beam_center: null           # [dx, dy]; from dataset.yaml if omitted
+    # --- KL weights ---
+    intensity_kl_weight: 1.0
+    background_kl_weight: 1.0
+    profile_kl_weight: 1.0
+    # --- background Gamma prior ---
+    bg_rate: 1.0
+    bg_concentration: 1.0
+    n_bins: 1      # resolution shells for the per-bin background prior
+
+data_loader:
+  name: polychromatic_data
+  args:
+    data_dir: /n/netscratch/hekstra_lab/Lab/laldama/laue_runs/1118_hewl360/shoeboxes
+    batch_size: 512
+    validation_split: 0.2
+    num_workers: 8
+    include_test: true
+    subset_size: null
+    resolution_cutoff: null
+    min_valid_pixels: 10
+    transform: anscombe         # anscombe | log1p | standardization
+    # shoebox_file_names omitted -> defaults to counts.npy/masks.npy/metadata.npy (what mksbox wrote)
+
+trainer:
+  max_epochs: 100
+  accelerator: gpu              # cpu | gpu | auto
+  devices: 1
+  logger: true
+  precision: '32'               # '16' | '32'
+  check_val_every_n_epoch: 2
+  log_every_n_steps: 1
+  enable_checkpointing: true
+  deterministic: false
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+
+# Optional: early stopping (omit the section to disable).
+early_stop:
+  monitor: val elbo
+  mode: min
+  patience: 3
+  min_delta: 0.0
+  strict: true
+
+# Optional: checkpoint selection.
+checkpoint:
+  save_top_k: -1                # -1 keeps every (written) ckpt; N keeps best N by monitor
+  monitor: val elbo
+  mode: min
+
+output:
+  refl_file: /n/netscratch/hekstra_lab/Lab/laldama/laue_runs/1118_hewl360/predictions.refl

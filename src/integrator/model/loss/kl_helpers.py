@@ -14,6 +14,11 @@ def compute_profile_kl(
     device: torch.device,
 ) -> Tensor:
     if isinstance(qp, ProfileSurrogateOutput):
+        # a surrogate whose prior differs per latent component reports its own KL,
+        # since a single scalar scale cannot express it
+        if qp.kl is not None:
+            return qp.kl * profile_kl_weight
+
         q = Normal(qp.loc, qp.scale)
         if isinstance(prior_scale, Tensor) and prior_scale.dim() >= 1:
             prior_scale = prior_scale.unsqueeze(-1)

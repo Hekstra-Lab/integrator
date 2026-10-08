@@ -25,6 +25,7 @@ from integrator.reporting.figure_data import (
     BasisRecorder,
     LatentRecorder,
     TrackedRecorder,
+    dials_sigma_usable,
     dials_snr,
     select_tracked,
 )
@@ -164,11 +165,15 @@ class TrackedShoeboxLogger(Callback):
             k: np.asarray(v)[indices] for k, v in base.reference.items()
         }
         counts = None
-        if dials_snr(reference) is None:
+        pair = dials_snr(reference)
+        if pair is None or not dials_sigma_usable(*pair):
             snr = _chunked_counts_snr(base, indices)
+            for key in ("intensity.prf.value", "intensity.prf.variance"):
+                reference.pop(key, None)
             reference["intensity.sum.value"] = snr
             reference["intensity.sum.variance"] = np.ones_like(snr)
-            logger.info("no DIALS columns; tracking on a counts-based SNR")
+            why = "no DIALS columns" if pair is None else "DIALS sigma is a placeholder"
+            logger.info("%s; tracking on a counts-based SNR", why)
         selection = select_tracked(
             reference, counts=counts, n_per_regime=self.n_per_regime
         )
@@ -403,7 +408,12 @@ class LatentSpaceLogger(Callback):
         forward_out = outputs.get("forward_out")
         if forward_out is None:
             return
-        metadata = batch[3] if len(batch) > 3 else None
+        # Fixed batches are (counts, standardized, masks, reference); ragged
+        # batches are a dict carrying metadata under its own key.
+        if isinstance(batch, dict):
+            metadata = batch.get("metadata")
+        else:
+            metadata = batch[3] if len(batch) > 3 else None
         self._recorder.add(forward_out, metadata)
 
     def on_validation_epoch_end(self, trainer, pl_module) -> None:

@@ -74,6 +74,24 @@ def dials_snr(reference: dict) -> tuple[np.ndarray, np.ndarray] | None:
     return None
 
 
+def dials_sigma_usable(intensity: np.ndarray, sigma: np.ndarray) -> bool:
+    """False when the DIALS sigma is a placeholder that cannot rank reflections.
+
+    laue-dials writes `intensity.sum.variance == intensity.sum.value`, so
+    I/sigma collapses to sqrt(I) and is undefined for the ~40% of
+    reflections at or below zero; a counts-based SNR ranks those better.
+    """
+    intensity = np.asarray(intensity, dtype=float)
+    sigma = np.asarray(sigma, dtype=float)
+    finite = np.isfinite(intensity) & np.isfinite(sigma)
+    if finite.sum() == 0:
+        return False
+    positive = (sigma > 0) & finite
+    if positive.mean() < 0.9:
+        return False
+    return not np.allclose(sigma[positive] ** 2, intensity[positive], rtol=1e-3, atol=1e-3)
+
+
 def _counts_snr(counts: np.ndarray, masks: np.ndarray | None) -> np.ndarray:
     """Crude per-shoebox SNR from raw counts, used when DIALS columns are absent."""
     counts = np.asarray(counts, dtype=float)
@@ -187,6 +205,8 @@ class TrackedRecorder:
         self.epochs: list[float] = []
         self._profiles: list[np.ndarray] = []
         self._rates: list[np.ndarray] = []
+        self._latent_loc: list[np.ndarray] = []
+        self._latent_scale: list[np.ndarray] = []
         self._rows: list[dict] = []
 
     def record(self, epoch: float, forward_out: dict) -> None:
@@ -208,6 +228,13 @@ class TrackedRecorder:
         self.epochs.append(float(epoch))
         self._profiles.append(profile)
         self._rates.append(rates)
+        # The learned-basis profile exposes q(h) = Normal(loc, scale); other
+        # profile models do not, so the latent arrays are optional in the dump.
+        if "qp_loc" in forward_out and "qp_scale" in forward_out:
+            self._latent_loc.append(_np(forward_out["qp_loc"]).astype(np.float32))
+            self._latent_scale.append(
+                _np(forward_out["qp_scale"]).astype(np.float32)
+            )
 
         mask = self.masks
         resid = (self.counts - rates) * mask
@@ -260,15 +287,18 @@ class TrackedRecorder:
         # early window a mid-epoch frame lands before the whole-epoch one it
         # precedes in time; sort by the coordinate so the movie plays forward.
         order = np.argsort(np.asarray(self.epochs, dtype=np.float64))
-        np.savez_compressed(
-            out_dir / "tracked_arrays.npz",
-            epochs=np.asarray(self.epochs, dtype=np.float32)[order],
-            counts=self.counts,
-            masks=self.masks,
-            profiles=np.stack(self._profiles)[order],
-            rates=np.stack(self._rates)[order],
-            shape=np.asarray(self.shape, dtype=np.int32),
-        )
+        arrays = {
+            "epochs": np.asarray(self.epochs, dtype=np.float32)[order],
+            "counts": self.counts,
+            "masks": self.masks,
+            "profiles": np.stack(self._profiles)[order],
+            "rates": np.stack(self._rates)[order],
+            "shape": np.asarray(self.shape, dtype=np.int32),
+        }
+        if len(self._latent_loc) == len(self.epochs):
+            arrays["latent_loc"] = np.stack(self._latent_loc)[order]
+            arrays["latent_scale"] = np.stack(self._latent_scale)[order]
+        np.savez_compressed(out_dir / "tracked_arrays.npz", **arrays)
 
 
 def effective_rank(singular_values: np.ndarray) -> float:

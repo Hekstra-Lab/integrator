@@ -64,6 +64,72 @@ class ProfileEncoderArgs:
         _check_spatial_ndims(self)
 
 
+def _check_positive(args) -> None:
+    """Shared validation for the shape-agnostic ragged encoder args."""
+    if args.in_channels < 1:
+        raise ValueError(f"in_channels must be >= 1, got {args.in_channels}")
+    if args.encoder_out < 1:
+        raise ValueError(f"encoder_out must be >= 1, got {args.encoder_out}")
+
+
+@dataclass
+class RaggedShoeboxEncoderArgs:
+    """Constructor arguments for `RaggedShoeboxEncoder`.
+
+    Shape-agnostic: unlike `ProfileEncoderArgs` there is no `input_shape` or
+    `data_dim` - the encoder handles variable-size (D, H, W) shoeboxes via a
+    mask propagated through pooling, so every field mirrors the encoder's own
+    3-D conv defaults and nothing needs a spatial-dim check.
+    """
+
+    in_channels: int = 1
+    encoder_out: int = 64
+    conv1_out_channels: int = 16
+    conv1_kernel_size: tuple[int, ...] = (1, 3, 3)
+    conv1_padding: tuple[int, ...] = (0, 1, 1)
+    norm1_num_groups: int = 4
+    pool_kernel_size: tuple[int, ...] = (1, 2, 2)
+    pool_stride: tuple[int, ...] = (1, 2, 2)
+    conv2_out_channels: int = 32
+    conv2_kernel_size: tuple[int, ...] = (3, 3, 3)
+    conv2_padding: tuple[int, ...] = (1, 1, 1)
+    norm2_num_groups: int = 4
+    dropout: float = 0.0
+
+    def __post_init__(self):
+        _check_positive(self)
+
+
+@dataclass
+class RaggedIntensityEncoderArgs:
+    """Constructor arguments for `RaggedIntensityEncoder`.
+
+    Shape-agnostic three-block CNN (see `RaggedShoeboxEncoderArgs`); mirrors
+    the encoder's own defaults with one extra conv/norm block over the
+    profile encoder.
+    """
+
+    in_channels: int = 1
+    encoder_out: int = 64
+    conv1_out_channels: int = 16
+    conv1_kernel_size: tuple[int, ...] = (3, 3, 3)
+    conv1_padding: tuple[int, ...] = (1, 1, 1)
+    norm1_num_groups: int = 4
+    pool_kernel_size: tuple[int, ...] = (1, 2, 2)
+    pool_stride: tuple[int, ...] = (1, 2, 2)
+    conv2_out_channels: int = 32
+    conv2_kernel_size: tuple[int, ...] = (3, 3, 3)
+    conv2_padding: tuple[int, ...] = (1, 1, 1)
+    norm2_num_groups: int = 4
+    conv3_out_channels: int = 64
+    conv3_kernel_size: tuple[int, ...] = (3, 3, 3)
+    conv3_padding: tuple[int, ...] = (1, 1, 1)
+    norm3_num_groups: int = 8
+
+    def __post_init__(self):
+        _check_positive(self)
+
+
 @dataclass
 class IntensityEncoderArgs:
     """Constructor arguments for the convolutional intensity/background encoder.

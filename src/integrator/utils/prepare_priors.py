@@ -225,7 +225,13 @@ def inject_binning_labels(data_loader, cfg: dict) -> None:
     n_bins = int(loss_args.get("n_bins", 1))
     data_dir = Path(cfg["data_loader"]["args"]["data_dir"])
 
-    ref = data_loader.full_dataset.reference
+    # The ragged data module has no `full_dataset.reference`; it carries its own
+    # resolution-bin labels (group_labels_*.pt) inside the dataset, so there is
+    # nothing to inject here.
+    full_dataset = getattr(data_loader, "full_dataset", None)
+    ref = getattr(full_dataset, "reference", None)
+    if ref is None:
+        return
 
     gl_path = _nbins_path("group_labels.npy", n_bins, data_dir)
     if data_path(gl_path) is not None:

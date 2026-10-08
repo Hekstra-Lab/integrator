@@ -230,11 +230,21 @@ def _parse_refine_log(path) -> tuple[float | None, float | None]:
     return None, None
 
 
+# phenix logs are named differently by the two pipelines: the Laue chain writes
+# `refine_1.log`/`refine_2.log`, the monochromatic one `phenix_refine.log` and
+# `refined_001.log`. Globbing only the first silently drops every mono R-factor,
+# so all three are matched and `_parse_refine_log` decides what is parseable.
+REFINE_LOG_GLOBS = ("**/refine_*.log", "**/refined_*.log", "**/phenix_refine.log")
+
+
 def _get_refine_log(run_dir):
     _yaml = list(run_dir.glob("run_paths.yaml"))[0]
     paths = load_config(_yaml)
     pred_dir = Path(paths["predictions_dir"])
-    return [p.as_posix() for p in list(pred_dir.glob("**/refine_*.log"))]
+    found = []
+    for pattern in REFINE_LOG_GLOBS:
+        found.extend(p.as_posix() for p in pred_dir.glob(pattern))
+    return sorted(set(found))
 
 
 def _get_refine_logs(

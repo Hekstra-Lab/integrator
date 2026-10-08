@@ -11,7 +11,15 @@ from .refl_io import unstack_preds, write_refl_with_predictions
 def get_pred_files(
     ckpt_dir: Path,
     filetype: Literal["pt", "parquet"],
+    extra_columns: tuple[str, ...] | list[str] = (),
 ):
+    """Load predictions for MTZ/refl writeback.
+
+    The parquet path selects named columns rather than reading the frame whole, so
+    anything not listed is dropped without warning -- `sweep_id` was lost this way
+    once already. `extra_columns` is how a caller asks for more, e.g. the
+    Rao-Blackwellized `i_rb`/`var_rb`.
+    """
     data = None
     if filetype == "pt":
         pred_files = list(ckpt_dir.glob("preds_epoch_*.pt"))
@@ -36,11 +44,23 @@ def get_pred_files(
         qi_var = lf.select("qi_var").collect().to_numpy().ravel()
         qbg_mean = lf.select("qbg_mean").collect().to_numpy().ravel()
 
+        available = set(lf.collect_schema().names())
+        missing = [c for c in extra_columns if c not in available]
+        if missing:
+            raise KeyError(
+                f"get_pred_files: requested columns {missing} are not in the "
+                f"predictions; add them to predict_keys. Available: {sorted(available)}"
+            )
+        extra = {
+            c: lf.select(c).collect().to_numpy().ravel() for c in extra_columns
+        }
+
         data = {
             "refl_ids": refl_ids,
             "qi_mean": qi_mean,
             "qi_var": qi_var,
             "qbg_mean": qbg_mean,
+            **extra,
         }
     else:
         raise ValueError(f"Unsupported filetype: {filetype}")

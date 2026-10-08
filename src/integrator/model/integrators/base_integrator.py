@@ -12,6 +12,25 @@ from integrator.configs import IntegratorCfg, OptimizerConfig
 
 _logger = logging.getLogger(__name__)
 
+_DECONVOLVED_KEYS = (
+    "i_deconv",
+    "var_deconv",
+    "deconv_floored",
+)
+
+_RAO_BLACKWELL_KEYS = (
+    "i_rb",
+    "var_rb",
+    "var_rb_cond",
+    "var_rb_profile",
+    "rb_gate",
+)
+
+from integrator.model.integrators.integrator_utils import (
+    _samples_first,
+    rao_blackwellized_intensity,
+)
+
 DEFAULT_PREDICT_KEYS = [
     "refl_ids",
     "is_test",
@@ -143,12 +162,39 @@ class BaseIntegrator(pl.LightningModule):
             if cfg.predict_keys == "default"
             else cfg.predict_keys
         )
+        self.rb_gate_half_signal = cfg.rb_gate_half_signal
+        self.profile_coord_channels = getattr(
+            cfg, "profile_coord_channels", False
+        )
+        self.beam_center = getattr(cfg, "beam_center", None)
 
         self.encoders = nn.ModuleDict(encoders)
         self.surrogates = nn.ModuleDict(surrogates)
         self.loss = loss
 
         self.automatic_optimization = True
+
+
+    def _profile_encoder_input(self, shoebox: Tensor, metadata: dict) -> Tensor:
+        """The profile encoder's input, with coordinate channels when enabled.
+
+        Off by default, so the tensor passes through untouched and the encoder
+        keeps its single channel.
+        """
+        if not getattr(self, "profile_coord_channels", False):
+            return shoebox
+        from integrator.model.integrators.integrator_utils import (
+            coordinate_channels,
+        )
+
+        coords = coordinate_channels(
+            metadata,
+            tuple(shoebox.shape[2:]),
+            self.beam_center,
+            device=shoebox.device,
+            dtype=shoebox.dtype,
+        )
+        return torch.cat((shoebox, coords), dim=1)
 
     def forward(
         self,
@@ -244,8 +290,83 @@ class BaseIntegrator(pl.LightningModule):
         counts, shoebox, mask, metadata = batch
         outputs = self(counts, shoebox, mask, metadata)
         forward_out = outputs["forward_out"]
+        self._add_rao_blackwell(forward_out)
+        if "qi" not in forward_out:
+            forward_out["qi"] = outputs.get("qi")
+        self._add_deconvolved(forward_out, metadata)
         self._warn_unknown_predict_keys(forward_out)
         return {k: v for k, v in forward_out.items() if k in self.predict_keys}
+
+
+    def _add_deconvolved(self, forward_out: dict, metadata: dict) -> None:
+        """Add the intensity with our own Wilson prior divided back out.
+
+        What we export is a posterior: `q(I) = Gamma(alpha, beta)` already shrunk
+        toward the Wilson prior by the integrator's loss. careless then applies a
+        Wilson prior of its own, so weak reflections are shrunk twice. Dividing a
+        Gamma posterior by its Gamma prior is exact and stays in the family:
+
+            Gamma(alpha, beta) / Gamma(c, lam)  ->  Gamma(alpha - c + 1, beta - lam)
+
+        so this reports what the data alone said, which is what a likelihood term
+        is supposed to carry.
+
+        `beta <= lam` means the posterior came out narrower than the prior, which
+        cannot happen if it really is likelihood times prior; those reflections
+        keep their posterior values and are flagged in `deconv_floored` rather
+        than being given a negative rate.
+        """
+        if not (set(_DECONVOLVED_KEYS) & set(self.predict_keys)):
+            return
+        qi = forward_out.get("qi")
+        if qi is None or not hasattr(qi, "concentration"):
+            raise RuntimeError(
+                "deconvolved export needs a Gamma q(I) exposing concentration "
+                "and rate; this integrator's qi does not"
+            )
+        loss = getattr(self, "loss", None)
+        if loss is None or not hasattr(loss, "intensity_prior_params"):
+            raise RuntimeError(
+                "deconvolved export needs a Wilson loss exposing "
+                "intensity_prior_params; got "
+                f"{type(loss).__name__}"
+            )
+
+        alpha = qi.concentration.reshape(-1)
+        beta = qi.rate.reshape(-1)
+        c, lam = loss.intensity_prior_params(metadata, alpha.device)
+        c = c.reshape(-1)
+        lam = lam.reshape(-1)
+
+        rate = beta - lam
+        floored = rate <= 0
+        conc_like = torch.clamp(alpha - c + 1.0, min=1e-3)
+        rate_like = torch.where(floored, beta, rate)
+        conc_like = torch.where(floored, alpha, conc_like)
+
+        forward_out["i_deconv"] = conc_like / rate_like
+        forward_out["var_deconv"] = conc_like / rate_like.pow(2)
+        forward_out["deconv_floored"] = floored.to(alpha.dtype)
+
+    def _add_rao_blackwell(self, forward_out: dict) -> None:
+        """Add the profile-uncertainty-propagated intensity, if it was asked for.
+
+        An export-time quantity, so it is not computed during training: the plug-in
+        `qi_mean`/`qi_var` are what the ELBO uses, while this is what a downstream
+        merge needs in order to weight correctly.
+        """
+        if not (set(_RAO_BLACKWELL_KEYS) & set(self.predict_keys)):
+            return
+        batch = forward_out["qp_mean"].shape[0]
+        forward_out.update(
+            rao_blackwellized_intensity(
+                forward_out["counts"],
+                forward_out["mask"],
+                _samples_first(forward_out["zp"], batch),
+                _samples_first(forward_out["zbg"], batch),
+                gate_half_signal=self.rb_gate_half_signal,
+            )
+        )
 
     def _warn_unknown_predict_keys(self, forward_out: dict) -> None:
         """Warn once if `predict_keys` requests columns the model never produces."""
@@ -358,6 +479,13 @@ class BaseIntegrator(pl.LightningModule):
         holds the refitted prior rather than the one it replaced.
         """
         loss = getattr(self, "loss", None)
+        # Self-calibrating per-bin intensity KL weight (independent of the G/B
+        # refit below): drive each shell's posterior sd/mean to the Wilson
+        # moment. Runs its own epoch-end M-step off sums gathered in forward.
+        if getattr(loss, "intensity_kl_calibrate", False):
+            for key, value in loss.calibrate_intensity_kl(self.current_epoch).items():
+                if value == value:  # skip NaN
+                    self.log(key, float(value), on_step=False, on_epoch=True)
         if not getattr(loss, "refit_enabled", False):
             return
         stats = loss.refit_prior(self.current_epoch)

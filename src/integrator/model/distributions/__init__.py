@@ -11,12 +11,16 @@ from .background_plane import (
     BackgroundPlaneSurrogate,
     compute_background_plane_kl,
 )
-from .nanobragg_profile import NanoBraggProfileSurrogate
 from .profile_surrogates import (
+    FixedBasisProfileSurrogate,
     GeometricProfileSurrogate,
+    PhysicalProfileSurrogate,
     ProfileSurrogate,
     ProfileSurrogateOutput,
+    ShapeletProfileSurrogate,
 )
+from .nanobragg_profile import NanoBraggProfileSurrogate
+from .ragged_logistic_normal import RaggedLogisticNormalSurrogate
 
 __all__ = [
     "GAMMA_REPARAMETERIZATIONS",
@@ -25,11 +29,15 @@ __all__ = [
     "DirichletDistribution",
     "GammaDistributionRepamA",
     "GammaDistributionRepamB",
+    "FixedBasisProfileSurrogate",
     "GammaDistributionRepamE",
     "GeometricProfileSurrogate",
     "NanoBraggProfileSurrogate",
+    "PhysicalProfileSurrogate",
     "ProfileSurrogate",
     "ProfileSurrogateOutput",
+    "RaggedLogisticNormalSurrogate",
+    "ShapeletProfileSurrogate",
     "build_gamma",
     "compute_background_plane_kl",
 ]

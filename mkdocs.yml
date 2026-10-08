@@ -5,14 +5,16 @@ repo_name: Hekstra-Lab/integrator
 nav:
   - Overview: index.md
   - Getting started:
-      - Installation: ./getting-started/installation.md
-      - Quickstart: ./getting-started/quickstart.md
-      - Configuration: ./getting-started/configuration.md
-  - Examples: ./examples/example.md
+      - Installation: getting-started/installation.md
+      - Quickstart: getting-started/quickstart.md
+      - Configuration: getting-started/configuration.md
+  - Analysis:
+      - Training figures: analysis/figures.md
   - Model:
-      - Integrator: ./Model/integrator.md
-      - Encoders: ./Model/encoders.md
-      - Distributions: ./Model/distributions/distributions.md
+      - Integrator: Model/integrator.md
+      - Encoders: Model/encoders.md
+      - Distributions: Model/distributions/distributions.md
+      - Configuration reference: Model/configs.md
 theme:
   name: material
   palette:
@@ -36,14 +38,12 @@ theme:
     code: IBM Plex Mono
     # text: IBM Plex Sans
     #text: Roboto
-  #logo: ./assets/intgrater.png
   icon:
     repo: fontawesome/brands/github
 extra_css:
   - stylesheets/extra.css
 plugins:
   - search
-  - mermaid2
   - mkdocstrings:
       handlers:
         python:
@@ -51,10 +51,16 @@ plugins:
           options:
             docstring_style: google
             merge_init_into_class: true
+            separate_signature: true          # required for signature_crossrefs
+            show_signature_annotations: true  # required for signature_crossrefs
+            signature_crossrefs: true         # makes cfg: IntegratorCfg clickable
+            show_if_no_docstring: true         # renders undocumented dataclass fields
+            filters: ["!^_"]                   # hide private/dunder members
             extensions:
               - griffe_inherited_docstrings:
                   merge: false
 markdown_extensions:
+  - mkdocs_autorefs:AutorefsExtension
   - pymdownx.inlinehilite
   - pymdownx.snippets
   - pymdownx.superfences:

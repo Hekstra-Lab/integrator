@@ -95,6 +95,9 @@ DEFAULT_DS_COLS = [
     # centric reflections follow Gamma(1/2), acentric Gamma(1); the Wilson
     # prior needs to know which is which
     "centric",
+    # how many observations share this reflection's latent, so the
+    # Wilson prior can be tempered by 1/N instead of applied per observation
+    "multiplicity",
 ]
 
 
@@ -157,6 +160,17 @@ class RotationDataModule(pl.LightningDataModule):
         transform: Count transform `anscombe`, `log1p`, `asinh`, or `standardization`.
             `asinh` is the one defined for negative counts, so it is the transform for
             real-valued detector output; `asinh_scale` sets its linear->log knee.
+        mask_fill: What a masked pixel becomes in the encoder input. The transforms
+            disagree under `legacy`, because `* masks` is applied on different sides
+            of the centering: `anscombe` yields 0 in standardized space, which reads
+            as an average-brightness pixel; `standardization` yields `-mean/sd`, a
+            deep hole; `log1p` and `asinh` yield a true zero count. `zero` makes
+            every transform give 0 in standardized space. `local_median` fills with
+            each shoebox's own median of valid pixels, so a masked region looks like
+            that shoebox's background instead of inventing an edge the convolutions
+            respond to. Masked pixels are excluded from the likelihood either way, so
+            this only changes what the encoder sees. It matters in proportion to how
+            much is masked: negligible at 0.2% (PDZ2), not at 35% (6VYN).
     """
 
     def __init__(
@@ -174,6 +188,7 @@ class RotationDataModule(pl.LightningDataModule):
         shoebox_file_names: dict | None = None,
         transform: str | None = None,
         asinh_scale: float = 1.0,
+        mask_fill: str = "legacy",
     ):
         super().__init__()
         self.data_dir = data_dir
@@ -202,8 +217,14 @@ class RotationDataModule(pl.LightningDataModule):
             )
         if asinh_scale <= 0:
             raise ValueError(f"asinh_scale must be > 0; got {asinh_scale}")
+        if mask_fill not in ("legacy", "zero", "local_median"):
+            raise ValueError(
+                "mask_fill must be 'legacy', 'zero', or 'local_median'; "
+                f"got {mask_fill!r}"
+            )
         self.transform = transform
         self.asinh_scale = asinh_scale
+        self.mask_fill = mask_fill
 
     def setup(self, stage=None):
         counts = _load_shoebox_array(
@@ -286,7 +307,34 @@ class RotationDataModule(pl.LightningDataModule):
             masks = masks[selection]
             reference = {k: v[selection] for k, v in reference.items()}
 
-        if counts.dim() == 2:
+        if counts.dim() == 2 and self.mask_fill != "legacy":
+            # One semantics for every transform: transform, standardize, then fill the
+            # masked pixels. Under `legacy` the `* masks` below lands on different
+            # sides of the centering, so a masked pixel means three different things
+            # depending on the transform.
+            if self.transform == "anscombe":
+                t = 2 * (counts.clamp(min=0) + 0.375).sqrt()
+                t = (t - stats[0]) / stats[1].sqrt()
+            elif self.transform == "log1p":
+                t = torch.log1p(counts.clamp(min=0))
+            elif self.transform == "asinh":
+                t = torch.asinh(counts / self.asinh_scale)
+            else:
+                t = (counts - stats[0]) / stats[1].sqrt()
+            valid = masks.bool()
+            if self.mask_fill == "zero":
+                standardized_counts = t * masks
+            else:
+                # each shoebox's own median over its valid pixels
+                big = torch.finfo(t.dtype).max
+                fill = torch.where(valid, t, torch.full_like(t, big)).median(
+                    dim=-1, keepdim=True
+                ).values
+                fill = torch.where(
+                    valid.any(dim=-1, keepdim=True), fill, torch.zeros_like(fill)
+                )
+                standardized_counts = torch.where(valid, t, fill.expand_as(t))
+        elif counts.dim() == 2:
             if self.transform == "anscombe":
                 anscombe_transformed = 2 * (counts.clamp(min=0) + 0.375).sqrt()
                 standardized_counts = (

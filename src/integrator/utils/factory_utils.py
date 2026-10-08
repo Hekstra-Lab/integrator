@@ -747,6 +747,41 @@ def _inject_poly_metadata(cfg: dict) -> None:
             loss_args.setdefault(key, crystal[key])
 
 
+def _inject_coord_channels(cfg: dict) -> None:
+    """Widen the profile encoder and supply the beam centre for coord channels.
+
+    `profile_coord_channels` adds two channels to the profile encoder's input, so
+    its `in_channels` has to grow to match or the first convolution fails at the
+    first batch. The beam centre comes from dataset.yaml, the same manifest the
+    shoeboxes were cut against, rather than being restated in the run config.
+
+    Only the profile encoder is widened: the intensity and background encoders
+    read totals, which carry no orientation.
+    """
+    iargs = cfg.get("integrator", {}).get("args", {}) or {}
+    if not iargs.get("profile_coord_channels"):
+        return
+
+    if iargs.get("beam_center") is None:
+        from integrator.io import read_dataset_spec
+
+        data_dir = cfg.get("data_loader", {}).get("args", {}).get("data_dir")
+        spec = (read_dataset_spec(data_dir) or {}) if data_dir else {}
+        bc = (spec.get("crystal", {}) or {}).get("beam_center_px")
+        if bc is None:
+            raise SystemExit(
+                "profile_coord_channels needs a beam centre: set "
+                "integrator.args.beam_center, or give the dataset a "
+                "crystal.beam_center_px in dataset.yaml"
+            )
+        iargs["beam_center"] = list(bc)
+
+    for enc in cfg.get("encoders", []) or []:
+        if enc.get("name") == "profile_encoder":
+            eargs = enc.setdefault("args", {})
+            eargs["in_channels"] = int(eargs.get("in_channels", 1)) + 2
+
+
 def _inject_profile_geometry(cfg: dict) -> None:
     """Fill the geometric profile surrogate's detector geometry from dataset.yaml.
 
@@ -754,7 +789,12 @@ def _inject_profile_geometry(cfg: dict) -> None:
     which is also what the shoeboxes were cut against.
     """
     qp = cfg.get("surrogates", {}).get("qp", {})
-    if qp.get("name") not in ("geometric_basis_profile", "nanobragg_profile"):
+    if qp.get("name") not in (
+        "geometric_basis_profile",
+        "shapelet_profile",
+        "physical_profile",
+        "nanobragg_profile",
+    ):
         return
     from integrator.io import read_dataset_spec
 
@@ -856,6 +896,10 @@ def _inject_runtime_surrogate_args(
         "in_features": encoder_out,
         "output_dim": profile_n,
         "sbox_shape": sbox_shape,
+        # a non-square shoebox cannot be inferred from `output_dim` alone, so any
+        # surrogate that builds a basis over the grid needs the shape itself;
+        # `setdefault` leaves a shape already taken from the dataset manifest alone
+        "profile_shape": sbox_shape,
     }
     for sur in (cfg.get("surrogates") or {}).values():
         if not isinstance(sur, dict):
@@ -876,6 +920,7 @@ def resolve_config(cfg: dict) -> dict:
     _apply_mode_defaults(cfg)
     _inject_poly_metadata(cfg)
     _inject_profile_geometry(cfg)
+    _inject_coord_channels(cfg)
     _resolve_predict_keys(cfg)
 
     iargs = cfg.get("integrator", {}).get("args", {})

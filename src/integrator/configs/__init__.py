@@ -2,6 +2,8 @@ from .config_utils import shallow_dict
 from .encoder import (
     IntensityEncoderArgs,
     ProfileEncoderArgs,
+    RaggedIntensityEncoderArgs,
+    RaggedShoeboxEncoderArgs,
 )
 from .integrator import IntegratorCfg
 from .loss import LossArgs
@@ -22,6 +24,8 @@ __all__ = [
     "IntegratorCfg",
     "IntensityEncoderArgs",
     "ProfileEncoderArgs",
+    "RaggedIntensityEncoderArgs",
+    "RaggedShoeboxEncoderArgs",
     "PriorConfig",
     "OptimizerConfig",
     "TrainerConfig",

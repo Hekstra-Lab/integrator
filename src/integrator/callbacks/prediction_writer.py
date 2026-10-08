@@ -9,6 +9,18 @@ from pytorch_lightning.callbacks import BasePredictionWriter
 logger = logging.getLogger(__name__)
 
 
+def _batch_refl_ids(batch) -> list[int]:
+    """Reflection ids from a batch, for both the fixed 4-tuple
+    (counts, standardized, masks, reference) and the ragged dict layout."""
+    if isinstance(batch, dict):
+        ids = batch.get("refl_ids", batch.get("refl_id"))
+    else:
+        reference = batch[-1]
+        refl_key = "refl_ids" if "refl_ids" in reference else "refl_id"
+        ids = reference[refl_key]
+    return ids.int().tolist()
+
+
 def assign_labels(
     dataset,
     save_dir: str,
@@ -18,19 +30,11 @@ def assign_labels(
 
     with torch.no_grad():
         for batch in dataset.train_dataloader():
-            _, _, _, reference = batch
-            refl_key = "refl_ids" if "refl_ids" in reference else "refl_id"
-            train_ids = pl.DataFrame(
-                {"train_ids": (reference[refl_key].int()).tolist()}
-            )
+            train_ids = pl.DataFrame({"train_ids": _batch_refl_ids(batch)})
             train_id_df = pl.concat([train_id_df, train_ids])
 
         for batch in dataset.val_dataloader():
-            _, _, _, reference = batch
-            refl_key = "refl_ids" if "refl_ids" in reference else "refl_id"
-            val_ids = pl.DataFrame(
-                {"val_ids": (reference[refl_key].int()).tolist()}
-            )
+            val_ids = pl.DataFrame({"val_ids": _batch_refl_ids(batch)})
             val_id_df = pl.concat([val_id_df, val_ids])
 
     train_id_df.write_csv(save_dir + "/train_labels.csv")

@@ -45,6 +45,24 @@ def parse_args():
         help="Write predictions as a .refl file",
     )
     parser.add_argument(
+        "--deconv-export",
+        action="store_true",
+        help=(
+            "write the prior-deconvolved intensity and sigma (i_deconv/var_deconv) "
+            "into the MTZ: our Wilson prior divided back out, so careless's own "
+            "prior is applied once rather than twice"
+        ),
+    )
+    parser.add_argument(
+        "--rb-export",
+        action="store_true",
+        help=(
+            "write the Rao-Blackwellized intensity and sigma (i_rb/var_rb) into the "
+            "MTZ instead of the posterior mean and variance; needs those columns in "
+            "predict_keys"
+        ),
+    )
+    parser.add_argument(
         "--write-mtz",
         action="store_true",
         help="Write predictions as an .mtz file; for polychromatic data only",
@@ -250,14 +268,30 @@ def main():
             from integrator.io import get_pred_files
 
             logger.info("Writing .mtz output for epoch %d", epoch)
-            pred_data = get_pred_files(ckpt_dir=ckpt_dir, filetype="parquet")
+            if args.rb_export and args.deconv_export:
+                raise SystemExit(
+                    "--rb-export and --deconv-export are different export "
+                    "modes; pick one"
+                )
+            keys = ()
+            if args.rb_export:
+                keys = ("i_rb", "var_rb")
+            elif args.deconv_export:
+                keys = ("i_deconv", "var_deconv")
+            pred_data = get_pred_files(
+                ckpt_dir=ckpt_dir, filetype="parquet", extra_columns=keys
+            )
             dl_args = config["data_loader"]["args"]
             data_dir = Path(dl_args["data_dir"])
+            if keys:
+                logger.info("Writing %s / %s to the MTZ", *keys)
             write_mtz_from_preds(
                 pred_data=pred_data,
                 metadata_path=data_dir / _reference_file(config),
                 data_dir=data_dir,
                 out_path=ckpt_dir / f"preds_epoch_{epoch:04d}.mtz",
+                intensity_key=keys[0] if keys else "qi_mean",
+                variance_key=keys[1] if keys else "qi_var",
             )
 
     logger.info("Prediction complete!")

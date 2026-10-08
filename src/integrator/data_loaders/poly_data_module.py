@@ -34,6 +34,9 @@ POLY_DS_COLS = [
     "xyzcal.px.2",
     "panel",
     "flags",
+    # how many observations share this reflection's latent, so the
+    # Wilson prior can be tempered by 1/N instead of applied per observation
+    "multiplicity",
     # window origin on the panel (fast, slow), so a physics profile can be
     # rendered on the shoebox's own pixels
     "bbox.0",
@@ -58,6 +61,7 @@ class PolychromaticDataModule(pl.LightningDataModule):
         min_valid_pixels: int = 10,
         shoebox_file_names: dict | None = None,
         transform: str | None = None,
+        mask_fill: str = "legacy",
     ):
         super().__init__()
         self.data_dir = str(data_dir)
@@ -81,7 +85,13 @@ class PolychromaticDataModule(pl.LightningDataModule):
                 f"transform must be 'anscombe', 'log1p', or 'standardization'; "
                 f"got {transform!r}"
             )
+        if mask_fill not in ("legacy", "zero", "local_median"):
+            raise ValueError(
+                "mask_fill must be 'legacy', 'zero', or 'local_median'; "
+                f"got {mask_fill!r}"
+            )
         self.transform = transform
+        self.mask_fill = mask_fill
 
         self.full_dataset = None
         self.beam_center_px = None
@@ -140,7 +150,30 @@ class PolychromaticDataModule(pl.LightningDataModule):
             reference = {k: v[selection] for k, v in reference.items()}
 
         # Standardize counts
-        if self.transform == "anscombe":
+        if self.mask_fill != "legacy":
+            # One semantics for every transform: transform, standardize, then fill the
+            # masked pixels. Under `legacy` the `* masks` lands on different sides of
+            # the centering, so a masked pixel means a different thing per transform.
+            if self.transform == "anscombe":
+                t = 2 * (counts.clamp(min=0) + 0.375).sqrt()
+                t = (t - stats[0]) / stats[1].sqrt()
+            elif self.transform == "log1p":
+                t = torch.log1p(counts.clamp(min=0))
+            else:
+                t = (counts - stats[0]) / stats[1].sqrt()
+            valid = masks.bool()
+            if self.mask_fill == "zero":
+                standardized_counts = t * masks
+            else:
+                big = torch.finfo(t.dtype).max
+                fill = torch.where(valid, t, torch.full_like(t, big)).median(
+                    dim=-1, keepdim=True
+                ).values
+                fill = torch.where(
+                    valid.any(dim=-1, keepdim=True), fill, torch.zeros_like(fill)
+                )
+                standardized_counts = torch.where(valid, t, fill.expand_as(t))
+        elif self.transform == "anscombe":
             anscombe_transformed = 2 * (counts.clamp(min=0) + 0.375).sqrt()
             standardized_counts = (
                 (anscombe_transformed - stats[0]) / stats[1].sqrt()

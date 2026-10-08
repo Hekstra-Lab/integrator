@@ -18,11 +18,17 @@ def write_mtz_from_preds(
     out_path: Path,
     expt_file: Path | None = None,
     drop_unmapped_batch: bool = True,
+    intensity_key: str = "qi_mean",
+    variance_key: str = "qi_var",
 ):
     """Build and write an MTZ file from integrator predictions.
 
     Args:
         pred_data: dict with keys refl_ids, qi_mean, qi_var, qbg_mean.
+        intensity_key: Column to write as `I`. The default is the variational
+            posterior mean. `i_rb` instead writes the Rao-Blackwellized profile fit,
+            whose sigma carries the profile-uncertainty term the plug-in drops.
+        variance_key: Column to write as `SIGI**2`; pair `var_rb` with `i_rb`.
         metadata_path: path to metadata.npy (has H,K,L, wavelength, xyzcal, etc.)
         data_dir: dataset directory holding dataset.yaml (cell + spacegroup).
         out_path: where to write the .mtz file.
@@ -59,8 +65,14 @@ def write_mtz_from_preds(
             v = v.numpy()
         return v[idx]
 
-    qi_mean = _get("qi_mean")
-    qi_var = _get("qi_var")
+    for key in (intensity_key, variance_key):
+        if key not in pred_data:
+            raise KeyError(
+                f"write_mtz_from_preds: '{key}' is not in the predictions. "
+                f"Add it to predict_keys; available: {sorted(pred_data)}"
+            )
+    qi_mean = _get(intensity_key)
+    qi_var = _get(variance_key)
     qbg_mean = _get("qbg_mean")
 
     def _meta(key):
