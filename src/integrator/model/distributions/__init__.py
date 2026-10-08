@@ -11,6 +11,7 @@ from .background_plane import (
     BackgroundPlaneSurrogate,
     compute_background_plane_kl,
 )
+from .nanobragg_profile import NanoBraggProfileSurrogate
 from .profile_surrogates import (
     GeometricProfileSurrogate,
     ProfileSurrogate,
@@ -26,6 +27,7 @@ __all__ = [
     "GammaDistributionRepamB",
     "GammaDistributionRepamE",
     "GeometricProfileSurrogate",
+    "NanoBraggProfileSurrogate",
     "ProfileSurrogate",
     "ProfileSurrogateOutput",
     "build_gamma",

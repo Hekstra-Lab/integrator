@@ -754,13 +754,22 @@ def _inject_profile_geometry(cfg: dict) -> None:
     which is also what the shoeboxes were cut against.
     """
     qp = cfg.get("surrogates", {}).get("qp", {})
-    if qp.get("name") != "geometric_basis_profile":
+    if qp.get("name") not in ("geometric_basis_profile", "nanobragg_profile"):
         return
     from integrator.io import read_dataset_spec
 
     args = qp.setdefault("args", {})
     data_dir = cfg.get("data_loader", {}).get("args", {}).get("data_dir")
     spec = (read_dataset_spec(data_dir) or {}) if data_dir else {}
+    if qp.get("name") == "nanobragg_profile":
+        # the renderer reads the panel, beam and per-image crystals from the
+        # manifest's physics block itself, so it takes the directory, not values
+        if data_dir is not None:
+            args.setdefault("data_dir", data_dir)
+        geom = spec.get("geometry", {}) or {}
+        if None not in (geom.get("d"), geom.get("h"), geom.get("w")):
+            args.setdefault("profile_shape", [geom["d"], geom["h"], geom["w"]])
+        return
     crystal = spec.get("crystal", {}) or {}
 
     if crystal.get("beam_center_px") is not None:

@@ -7,6 +7,7 @@ from integrator.model.distributions import (
     BackgroundPlaneSurrogate,
     DirichletDistribution,
     GeometricProfileSurrogate,
+    NanoBraggProfileSurrogate,
     ProfileSurrogate,
     build_gamma,
 )
@@ -51,6 +52,7 @@ REGISTRY = {
         "dirichlet": DirichletDistribution,
         "learned_basis_profile": ProfileSurrogate,
         "geometric_basis_profile": GeometricProfileSurrogate,
+        "nanobragg_profile": NanoBraggProfileSurrogate,
         "background_plane": BackgroundPlaneSurrogate,
     },
     "data_loader": {

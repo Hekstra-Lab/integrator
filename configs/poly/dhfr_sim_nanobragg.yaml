@@ -1,0 +1,91 @@
+# nanoBragg profile prior on Derek Mendez's ecDHFR Laue simulation, cut at the
+# TRUE orientation by scripts/physics/make_sim_shoeboxes.py (cut + finalize).
+mode: polychromatic
+integrator:
+  name: hierarchical_3enc
+  args:
+    encoder_out: 32
+    mc_samples: 50
+    predict_keys: default
+    d: 1
+    h: 21
+    w: 21
+    data_dim: 2d
+optimizer:
+  lr: 0.001
+  weight_decay: 0.0
+  decoder_weight_decay: 0.001
+  lr_schedule: null
+surrogates:
+  qp:
+    name: nanobragg_profile
+    args:
+      shape: gauss
+      init_n_cells: 10.0      # best match on the 3-shot check (cos 0.88); learned
+      n_domains: 50
+      n_lambda: 15
+      lambda_window_sd: 3.0
+      spectrum_knots: 8
+      residual: centroid
+      centroid_prior_px: 0.5
+      learn_globals: true
+      domain_chunk: 10
+      checkpoint: true
+      dtype: float32
+  qbg:
+    name: gamma
+    args:
+      reparameterization: shape_rate
+      eps: 1.0e-06
+      k_min: 0.01
+      positive_constraint: exp
+  qi:
+    name: gamma
+    args:
+      reparameterization: shape_rate
+      eps: 1.0e-06
+      k_min: 0.01
+      positive_constraint: exp
+loss:
+  name: polychromatic_wilson
+  args:
+    degree: 5
+    lambda_min: 1.02
+    lambda_max: 1.18
+    init_G: 5000.0
+    init_B: 30.0
+    b_min: 1.0
+    polarization: false
+    lorentz: false
+    intensity_kl_weight: 1.0
+    background_kl_weight: 1.0
+    profile_kl_weight: 1.0
+    bg_rate: 1.0
+    bg_concentration: 1.0
+    n_bins: 30
+data_loader:
+  name: polychromatic_data
+  args:
+    data_dir: /n/netscratch/hekstra_lab/Lab/laldama/laue_runs/dhfr_sim/nanobragg_prior/full180
+    batch_size: 256
+    validation_split: 0.2
+    num_workers: 8
+    include_test: true
+    subset_size: null
+    resolution_cutoff: null
+    min_valid_pixels: 10
+    transform: anscombe
+trainer:
+  max_epochs: 20
+  accelerator: gpu
+  devices: 1
+  logger: true
+  precision: '32'
+  check_val_every_n_epoch: 5
+  log_every_n_steps: 10
+  deterministic: false
+  enable_checkpointing: true
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+checkpoint:
+  save_top_k: -1

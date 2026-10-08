@@ -169,17 +169,19 @@ def polarization_factor(
 def subpixel_positions(
     fpix: Tensor, spix: Tensor, detector: Detector, oversample: int
 ) -> Tensor:
-    """Lab-frame position of every subpixel centre, shape (P, oversample^2, 3).
+    """Lab-frame position of every subpixel centre, shape (..., oversample^2, 3).
 
-    Subpixels are ordered slow-major, as nanoBragg's `subS` / `subF` loops are, so
-    subpixel 0 is the one the C program uses for `polar` and `omega`.
+    `fpix` and `spix` share any leading shape, (P,) or (B, P), and may be
+    fractional, which shifts the whole pixel. Subpixels are ordered slow-major, as
+    nanoBragg's `subS` / `subF` loops are, so subpixel 0 is the one the C program
+    uses for `polar` and `omega`.
     """
     sub = detector.pixel_size / oversample
     o = torch.arange(oversample, dtype=detector.pix0.dtype, device=detector.pix0.device)
     sub_s, sub_f = torch.meshgrid(o, o, indexing="ij")
     sub_s, sub_f = sub_s.reshape(-1), sub_f.reshape(-1)
-    f_mm = sub * (fpix[:, None] * oversample + sub_f[None, :]) + 0.5 * sub
-    s_mm = sub * (spix[:, None] * oversample + sub_s[None, :]) + 0.5 * sub
+    f_mm = sub * (fpix[..., None] * oversample + sub_f) + 0.5 * sub
+    s_mm = sub * (spix[..., None] * oversample + sub_s) + 0.5 * sub
     return (
         f_mm[..., None] * detector.fdet
         + s_mm[..., None] * detector.sdet
@@ -189,27 +191,39 @@ def subpixel_positions(
 
 def shape_transform(h: Tensor, crystal: Crystal) -> Tensor:
     """`F_latt` at fractional Miller indices `h`, shape (..., 3) -> (...)."""
-    n = crystal.n_cells.to(h.dtype)
-    if crystal.shape == "square":
-        f = torch.ones_like(h[..., 0])
-        for i in range(3):
-            if float(n[i]) > 1.0:
-                f = f * sincg(math.pi * h[..., i], n[i])
-        return f
+    return lattice_transform(h, crystal.n_cells, crystal.recip, crystal.shape, crystal.fudge)
+
+
+def lattice_transform(
+    h: Tensor, n_cells: Tensor, recip: Tensor, shape: str, fudge: float = 1.0
+) -> Tensor:
+    """`F_latt` with crystal size and reciprocal cell broadcast against `h`.
+
+    Args:
+        h: Fractional Miller indices, shape (..., 3).
+        n_cells: Cells along `a, b, c`, broadcastable to `h`.
+        recip: Unrotated reciprocal vectors as rows, broadcastable to (..., 3, 3).
+        shape: One of `SHAPES`.
+        fudge: nanoBragg's `-fudge` factor on the shape-transform radius.
+    """
+    n = n_cells.to(h.dtype)
+    if shape == "square":
+        # nanoBragg skips an axis with N <= 1 rather than evaluating sincg there
+        return torch.where(n > 1.0, sincg(math.pi * h, n), torch.ones_like(h)).prod(-1)
 
     dh = h - torch.ceil(h - 0.5)
-    n_prod = n.prod()
-    if crystal.shape == "round":
+    n_prod = n.prod(-1)
+    if shape == "round":
         hrad_sq = (dh**2 * n**2).sum(-1)
-        return n_prod * _ROUND_NORM * sinc3(math.pi * torch.sqrt(hrad_sq * crystal.fudge))
+        return n_prod * _ROUND_NORM * sinc3(math.pi * torch.sqrt(hrad_sq * fudge))
 
-    dq = dh @ crystal.recip.to(h.dtype)
+    dq = torch.einsum("...i,...ij->...j", dh, recip.to(h.dtype))
     rad_star_sq = (dq**2).sum(-1) * n_prod**2
-    if crystal.shape == "gauss":
-        return n_prod * torch.exp(-(rad_star_sq / 0.63 * crystal.fudge))
-    if crystal.shape == "tophat":
-        return n_prod * (rad_star_sq * crystal.fudge < 0.3969).to(h.dtype)
-    raise ValueError(f"unknown crystal shape {crystal.shape!r}; expected one of {SHAPES}")
+    if shape == "gauss":
+        return n_prod * torch.exp(-(rad_star_sq / 0.63 * fudge))
+    if shape == "tophat":
+        return n_prod * (rad_star_sq * fudge < 0.3969).to(h.dtype)
+    raise ValueError(f"unknown crystal shape {shape!r}; expected one of {SHAPES}")
 
 
 def render_pixels(
@@ -287,6 +301,185 @@ def render_pixels(
             beam.kahn, incident[0].expand_as(diffracted[:, 0]), diffracted[:, 0], beam.polar_vector
         )
     return R_E_SQR * beam.fluence * intensity / steps * polar * omega
+
+
+def render_shoeboxes(
+    fpix: Tensor,
+    spix: Tensor,
+    detector: Detector,
+    incident: Tensor,
+    wavelength: Tensor,
+    weight: Tensor,
+    cells: Tensor,
+    recip: Tensor,
+    n_cells: Tensor,
+    shape: str = "gauss",
+    fudge: float = 1.0,
+    target_hkl: Tensor | None = None,
+    kahn: float = 0.0,
+    polar_vector: Tensor | None = None,
+    fluence: float = 1.259320152e29,
+    oversample: int = 1,
+    domain_chunk: int | None = None,
+    checkpoint: bool = False,
+) -> Tensor:
+    """`render_pixels` for a batch of shoeboxes, each with its own crystal and sources.
+
+    Every shoebox shares the incident direction but has its own wavelength grid
+    (a spot only sees the band around the wavelength it diffracts at), its own
+    crystal (the orientation of the image it came from), and optionally only its
+    own reflection rendered, so that a neighbour's lattice point inside the box is
+    not counted as this spot's profile.
+
+    Args:
+        fpix, spix: Fast and slow pixel indices, shape (B, P); fractional values
+            shift the pixel.
+        detector: Panel geometry, shared.
+        incident: Unit direction of beam travel, shape (3,).
+        wavelength: Wavelengths in Angstrom, shape (B, L).
+        weight: Spectral weight of each wavelength, shape (B, L). Zero drops it.
+        cells: Real-space cells of each mosaic domain, rows `a, b, c`, shape (B, D, 3, 3).
+        recip: Unrotated reciprocal vectors as rows, shape (B, 3, 3).
+        n_cells: Cells along `a, b, c`, shape (3,) or (B, 3).
+        shape: One of `SHAPES`.
+        fudge: Shape-transform radius factor.
+        target_hkl: Miller indices to keep, shape (B, 3); None renders every lattice point.
+        kahn: Kahn polarization factor.
+        polar_vector: E-vector direction, shape (3,).
+        fluence: Photons per m^2.
+        oversample: Subpixels per pixel edge.
+        domain_chunk: Sum this many mosaic domains at a time.
+        checkpoint: Recompute each domain chunk in the backward pass instead of
+            storing it, trading time for memory.
+
+    Returns:
+        Photons per pixel, shape (B, P). With equal weights and one shoebox this
+        equals `render_pixels` on the same pixels.
+    """
+    dtype = detector.pix0.dtype
+    pos = subpixel_positions(fpix.to(dtype), spix.to(dtype), detector, oversample)
+    airpath = pos.norm(dim=-1)
+    diffracted = pos / airpath[..., None]
+    inc = incident.to(dtype)
+    lam = wavelength.to(dtype)
+    w = weight.to(dtype)
+
+    # (B, P, O, L, 3) scattering vectors in inverse Angstrom
+    scatter = (diffracted[:, :, :, None, :] - inc) / lam[:, None, None, :, None]
+    n = n_cells.to(dtype)
+    n = n.reshape(-1, 1, 1, 1, 1, 3) if n.dim() == 2 else n
+    rcp = recip.to(dtype).reshape(-1, 1, 1, 1, 1, 3, 3)
+    tgt = None if target_hkl is None else target_hkl.to(dtype).reshape(-1, 1, 1, 1, 1, 3)
+
+    def chunk_sum(scatter_, cells_):
+        h = torch.einsum("bpolj,bdij->bpoldi", scatter_, cells_)
+        f_latt = lattice_transform(h, n, rcp, shape, fudge)
+        term = f_latt**2
+        if tgt is not None:
+            term = term * (torch.ceil(h - 0.5) == tgt).all(-1).to(dtype)
+        return term.sum(-1)
+
+    n_dom = cells.shape[1]
+    step = domain_chunk or n_dom
+    total = 0.0
+    for start in range(0, n_dom, step):
+        cells_c = cells[:, start : start + step].to(dtype)
+        if checkpoint and torch.is_grad_enabled():
+            part = torch.utils.checkpoint.checkpoint(chunk_sum, scatter, cells_c, use_reentrant=False)
+        else:
+            part = chunk_sum(scatter, cells_c)
+        total = total + part
+
+    n_src = lam.shape[-1]
+    w_norm = w * n_src / w.sum(-1, keepdim=True).clamp_min(1e-30)
+    intensity = (total * w_norm[:, None, None, :]).sum(dim=(2, 3))
+    steps = oversample**2 * n_src * n_dom
+
+    omega = detector.pixel_size**2 / airpath[..., 0] ** 2 * detector.close_distance / airpath[..., 0]
+    polar = polarization_factor(kahn, inc.expand_as(diffracted[..., 0, :]), diffracted[..., 0, :], polar_vector)
+    return R_E_SQR * fluence * intensity / steps * polar * omega
+
+
+def render_shoeboxes_continuous(
+    fpix: Tensor,
+    spix: Tensor,
+    detector: Detector,
+    incident: Tensor,
+    spectrum: Callable[[Tensor], Tensor],
+    domain_rot: Tensor,
+    q_hkl: Tensor,
+    n_cells: Tensor,
+    kahn: float = 0.0,
+    polar_vector: Tensor | None = None,
+    fluence: float = 1.259320152e29,
+    oversample: int = 1,
+) -> Tensor:
+    """Gauss-shape render of one reflection per shoebox, integrated over wavelength exactly.
+
+    For the gauss crystal shape nanoBragg's lattice factor is
+    `F_latt^2 = N^2 exp(-alpha |S - R q_hkl|^2)` with `N = Na Nb Nc` and
+    `alpha = 2 N^2 / 0.63`; the distance is the same whether the domain rotation is
+    applied to the cell or to the lattice point. On a pixel the scattering vector is
+    `S = k u` with `k = 1 / lambda` and `u = s_hat_1 - s_hat_0` fixed, so `F_latt^2` is
+    a Gaussian in `k` along a line, and
+
+        int S(lambda) F_latt^2 dlambda
+          = N^2 S(lambda*) / k*^2 * sqrt(pi / (alpha |u|^2)) * exp(-alpha d_perp^2),
+
+    with `k* = u . q / |u|^2` the closest approach and `d_perp` the distance of the
+    lattice point from the line. The spectrum is evaluated at `lambda* = 1 / k*`,
+    which is exact when it is smooth over the lattice point's crossing, whose width
+    in `k` is `1 / sqrt(2 alpha |u|^2)`. Against a 30001-point grid it agrees to
+    1e-4 at 1000 cells under a 20%-wide spectrum, is 6% off when the spectrum is
+    2% wide, and fails for a 200-cell crystal under that narrow spectrum; a flat
+    band is exact except within a crossing-width of its edges. This replaces the
+    wavelength grid of nanoBragg (and of `render_shoeboxes`) by its limit, so there
+    is nothing to undersample.
+
+    Args:
+        fpix, spix: Pixel indices, shape (B, P).
+        detector: Panel geometry.
+        incident: Unit direction of beam travel, shape (3,).
+        spectrum: Spectral density as a function of wavelength in Angstrom; zero
+            outside the band.
+        domain_rot: Mosaic domain rotations, shape (D, 3, 3).
+        q_hkl: Each shoebox's reciprocal-lattice vector `A h` in the lab frame,
+            inverse Angstrom, shape (B, 3).
+        n_cells: Cells along `a, b, c`, shape (3,).
+
+    Returns:
+        `r_e^2 fluence polar omega / D * sum_domains int S F_latt^2 dlambda`, shape (B, P).
+        Equal to `render_shoeboxes` in the limit of a fine uniform wavelength grid
+        with weights `S`, times the integral of `S` over that grid.
+    """
+    dtype = detector.pix0.dtype
+    pos = subpixel_positions(fpix.to(dtype), spix.to(dtype), detector, oversample)
+    airpath = pos.norm(dim=-1)
+    diffracted = pos / airpath[..., None]
+    inc = incident.to(dtype)
+    u = diffracted - inc  # (B, P, O, 3)
+    u2 = (u**2).sum(-1)
+
+    q_dom = torch.einsum("dij,bj->bdi", domain_rot.to(dtype), q_hkl.to(dtype))  # (B, D, 3)
+    uq = torch.einsum("bpoi,bdi->bpod", u, q_dom)
+    q2 = (q_dom**2).sum(-1)[:, None, None, :]
+    k_star = uq / u2[..., None]
+    d_perp2 = (q2 - uq**2 / u2[..., None]).clamp_min(0.0)
+
+    n_prod = n_cells.to(dtype).prod()
+    alpha = 2.0 * n_prod**2 / 0.63
+    lam_star = 1.0 / k_star.clamp_min(1e-12)
+    s_val = spectrum(lam_star) * (k_star > 0).to(dtype)
+    integral = (
+        n_prod**2 * s_val * lam_star**2
+        * torch.sqrt(math.pi / (alpha * u2[..., None]))
+        * torch.exp(-alpha * d_perp2)
+    )
+    intensity = integral.mean(dim=(-1, -2))  # mean over domains and subpixels
+
+    omega = detector.pixel_size**2 / airpath[..., 0] ** 2 * detector.close_distance / airpath[..., 0]
+    polar = polarization_factor(kahn, inc.expand_as(diffracted[..., 0, :]), diffracted[..., 0, :], polar_vector)
+    return R_E_SQR * fluence * intensity * polar * omega
 
 
 def mosaic_domains(
