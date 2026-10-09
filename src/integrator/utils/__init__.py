@@ -9,6 +9,7 @@ from .factory_utils import (
 )
 from .prepare_priors import (
     inject_binning_labels,
+    prepare_bg_prior,
     prepare_global_priors,
     prepare_per_bin_priors,
 )
@@ -22,6 +23,8 @@ __all__ = [
     "resolve_config",
     "save_run_artifacts",
     "inject_binning_labels",
+    "prepare_bg_prior",
     "prepare_global_priors",
     "prepare_per_bin_priors",
+    "prepare_profile_basis",
 ]

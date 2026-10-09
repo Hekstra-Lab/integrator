@@ -11,11 +11,18 @@ from torch.utils.data import (
     Subset,
 )
 
+from integrator.data_loaders.grouped_sampler import (
+    GroupedAsuIdBatchSampler,
+    GroupedAsuIdSampler,
+)
+
 logger = logging.getLogger(__name__)
 
 
 def _load_shoebox_array(path, weights_only=True):
-    """Load counts/masks from either new .npy  or .pt. Returns torch.Tensor."""
+    """Load counts/masks from either new .npy (integrator.mksbox memmap era)
+    or .pt (torch.save). Returns torch.Tensor.
+    """
     p = Path(path)
     npy = p.with_suffix(".npy")
     if npy.exists():
@@ -98,6 +105,19 @@ DEFAULT_DS_COLS = [
     # how many observations share this reflection's latent, so the
     # Wilson prior can be tempered by 1/N instead of applied per observation
     "multiplicity",
+    "asu_id",
+    # Friedel-pair metadata for the anomalous coupling terms, precomputed by
+    # scripts/add_friedel_metadata.py. Absent unless the reference was augmented.
+    #   nonanom_id   - Friedel-POOLED reflection id (mates share an id).
+    #   centric      - bool, centric reflection (I(+)==I(-) by symmetry).
+    #   friedel_plus - bool, the I(+) member of the pair (ISYM odd).
+    "nonanom_id",
+    "centric",
+    "friedel_plus",
+    # Per-reflection crystal-frame spherical-harmonic absorption basis (B, n_sh),
+    # precomputed by scripts/extract_crystal_frame_sh.py and consumed by
+    # PhysicalScale. Absent unless the reference file was augmented.
+    "absorption_sh",
 ]
 
 
@@ -189,6 +209,10 @@ class RotationDataModule(pl.LightningDataModule):
         transform: str | None = None,
         asinh_scale: float = 1.0,
         mask_fill: str = "legacy",
+        group_by_asu_id: bool = False,
+        group_by_key: str = "asu_id",
+        max_obs_per_hkl: int | None = None,
+        ice_ring_ranges: list | None = None,
     ):
         super().__init__()
         self.data_dir = data_dir
@@ -225,6 +249,10 @@ class RotationDataModule(pl.LightningDataModule):
         self.transform = transform
         self.asinh_scale = asinh_scale
         self.mask_fill = mask_fill
+        self.group_by_asu_id = group_by_asu_id
+        self.group_by_key = group_by_key
+        self.max_obs_per_hkl = max_obs_per_hkl
+        self.ice_ring_ranges = ice_ring_ranges
 
     def setup(self, stage=None):
         counts = _load_shoebox_array(
@@ -246,6 +274,14 @@ class RotationDataModule(pl.LightningDataModule):
         reference = load_metadata(
             os.path.join(self.data_dir, self.shoebox_file_names["reference"])
         )
+
+        if self.group_by_asu_id and self.group_by_key not in reference:
+            raise KeyError(
+                f"group_by_key={self.group_by_key!r} is not in the reference "
+                f"metadata. Available keys include {sorted(reference)[:20]}... "
+                "For 'nonanom_id' run scripts/add_friedel_metadata.py and point "
+                "the loader's reference at the augmented file."
+            )
 
         # Filter out reflections with too few valid pixels
         all_dead = masks.sum(-1) < self.min_valid_pixels
@@ -374,6 +410,253 @@ class RotationDataModule(pl.LightningDataModule):
             standardized_counts,
             masks,
             reference,
+        )
+
+        # Split using is_test if available
+        is_test = reference.get("is_test")
+        all_indices = torch.arange(len(self.full_dataset))
+
+        if self.subset_size is not None and self.subset_size < len(
+            self.full_dataset
+        ):
+            all_indices = all_indices[
+                torch.randperm(len(all_indices))[: self.subset_size]
+            ]
+
+        if is_test is not None and is_test.any():
+            test_mask = is_test[all_indices].bool()
+            test_idx = all_indices[test_mask]
+            train_val_idx = all_indices[~test_mask]
+        else:
+            test_idx = torch.tensor([], dtype=torch.long)
+            train_val_idx = all_indices
+
+        self.test_dataset = Subset(self.full_dataset, test_idx.tolist())
+
+        perm = torch.randperm(len(train_val_idx))
+        val_size = int(len(train_val_idx) * self.validation_split)
+        val_idx = train_val_idx[perm[:val_size]]
+        train_idx = train_val_idx[perm[val_size:]]
+
+        self.val_dataset = Subset(self.full_dataset, val_idx.tolist())
+        self.train_dataset = Subset(self.full_dataset, train_idx.tolist())
+
+    def train_dataloader(self):
+        if self.group_by_asu_id:
+            sampler = GroupedAsuIdBatchSampler(
+                asu_ids=self.full_dataset.reference[self.group_by_key],
+                indices=torch.tensor(
+                    self.train_dataset.indices, dtype=torch.long
+                ),
+                batch_size=self.batch_size,
+                shuffle=True,
+                drop_last=False,
+                max_obs_per_hkl=self.max_obs_per_hkl,
+            )
+            return DataLoader(
+                self.full_dataset,
+                batch_sampler=sampler,
+                num_workers=self.num_workers,
+                pin_memory=True,
+            )
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+            pin_memory=True,
+        )
+
+    def val_dataloader(self):
+        if self.group_by_asu_id:
+            # Use the single-index GroupedAsuIdSampler (not BatchSampler) for
+            # val. Lightning's `Trainer.reset_val_dataloader` introspects
+            # dataloader.batch_size and dataloader.sampler — both are None
+            # when `batch_sampler=` is used, which silently breaks the val
+            # cadence after the sanity check. Using sampler= + batch_size=
+            # gives Lightning the standard surface area it expects. Batches
+            # are chunks of `batch_size` from the HKL-sorted index sequence,
+            # so they still contain mostly-complete HKL groups (~1 split per
+            # batch boundary).
+            sampler = GroupedAsuIdSampler(
+                asu_ids=self.full_dataset.reference[self.group_by_key],
+                indices=torch.tensor(
+                    self.val_dataset.indices, dtype=torch.long
+                ),
+                shuffle=False,
+            )
+            return DataLoader(
+                self.full_dataset,
+                sampler=sampler,
+                batch_size=self.batch_size,
+                num_workers=self.num_workers,
+                pin_memory=True,
+            )
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            pin_memory=True,
+        )
+
+    def test_dataloader(self):
+        if self.include_test:
+            return DataLoader(
+                self.test_dataset,
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=self.num_workers,
+                pin_memory=True,
+            )
+        else:
+            return None
+
+    def predict_dataloader(self, grouped: bool = False):
+        # `grouped=True` packs complete HKL groups per batch (requires
+        # group_by_asu_id), which the merging integrators' finalize_merge needs
+        # when an HKL must be processed as a set (e.g. merge_attention).
+        # max_obs_per_hkl is forced off so the merge sees every observation.
+        if grouped and self.group_by_asu_id:
+            sampler = GroupedAsuIdBatchSampler(
+                asu_ids=self.full_dataset.reference[self.group_by_key],
+                indices=torch.arange(len(self.full_dataset), dtype=torch.long),
+                batch_size=self.batch_size,
+                shuffle=False,
+                drop_last=False,
+                max_obs_per_hkl=None,
+            )
+            return DataLoader(
+                self.full_dataset,
+                batch_sampler=sampler,
+                num_workers=self.num_workers,
+                pin_memory=True,
+            )
+        return DataLoader(
+            self.full_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            pin_memory=True,
+        )
+
+
+class SimulatedShoeboxLoader(pl.LightningDataModule):
+    """
+
+    Attributes:
+        data_dir:
+        batch_size:
+        validation_split:
+        test_split:
+        include_test:
+        subset_size:
+        single_sample_index:
+        num_workers:
+        cutoff:
+        min_valid_pixels:
+        full_dataset:
+
+        shoebox_file_names:
+        H:
+        W:
+        D:
+        standardized_counts:
+        get_dxyz:
+        anscombe: Boolean indicating whether to use Anscombe transformation
+        full_dataset:
+    """
+
+    def __init__(
+        self,
+        data_dir: Path,
+        batch_size: int = 10,
+        validation_split: float = 0.2,
+        test_split: float = 0.1,
+        num_workers: int = 3,
+        include_test: bool = False,
+        subset_size: int | None = None,
+        single_sample_index=None,
+        cutoff: float | None = None,
+        min_valid_pixels: int = 10,
+        shoebox_file_names: dict | None = None,
+        H: int = 21,
+        W: int = 21,
+        D: int = 3,
+        get_dxyz: bool = False,
+        anscombe: bool = False,
+        transform: str | None = None,
+    ):
+        super().__init__()
+        self.data_dir = data_dir
+        self.batch_size = batch_size
+        self.validation_split = validation_split
+        self.test_split = test_split
+        self.include_test = include_test
+        self.subset_size = subset_size
+        self.single_sample_index = single_sample_index
+        self.num_workers = num_workers
+        self.cutoff = cutoff
+        self.min_valid_pixels = min_valid_pixels
+        self.full_dataset = None  # Will store the full dataset
+        if shoebox_file_names is None:
+            shoebox_file_names = {
+                "counts": "counts.pt",
+                "masks": "masks.pt",
+                "stats": "stats.pt",
+                "reference": "reference.pt",
+                "standardized_counts": None,
+            }
+        self.shoebox_file_names = shoebox_file_names
+        self.H = H
+        self.W = W
+        self.D = D
+        self.standardized_counts = shoebox_file_names["standardized_counts"]
+        self.get_dxyz = get_dxyz
+        self.anscombe = anscombe
+
+    def setup(self, stage=None):
+        counts = _load_shoebox_array(
+            os.path.join(self.data_dir, self.shoebox_file_names["counts"]),
+            weights_only=False,
+        ).squeeze(-1)
+        masks = _load_shoebox_array(
+            os.path.join(self.data_dir, self.shoebox_file_names["masks"]),
+            weights_only=False,
+        ).squeeze(-1)
+        stats = torch.load(
+            os.path.join(self.data_dir, self.shoebox_file_names["stats"]),
+            weights_only=False,
+        )
+        reference = torch.load(
+            os.path.join(self.data_dir, self.shoebox_file_names["reference"]),
+            weights_only=False,
+        )
+
+        # Alias refl_id -> refl_ids for compatibility with callbacks
+        if "refl_id" in reference and "refl_ids" not in reference:
+            reference["refl_ids"] = reference["refl_id"]
+
+        # Alias radial_bin -> group_label for hierarchical model
+        if "radial_bin" in reference and "group_label" not in reference:
+            reference["group_label"] = reference["radial_bin"]
+
+        if self.anscombe:
+            anscombe_transformed = 2 * (counts.clamp(min=0) + 0.375).sqrt()
+            standardized_counts = (
+                (anscombe_transformed - stats[0]) / stats[1].sqrt()
+            ) * masks
+        else:
+            standardized_counts = ((counts * masks) - stats[0]) / stats[
+                1
+            ].sqrt()
+
+        self.full_dataset = IntegratorDataset(
+            counts,
+            standardized_counts,
+            masks,
+            reference,
+            column_names=SIMULATED_COLS,
         )
 
         # Split using is_test if available

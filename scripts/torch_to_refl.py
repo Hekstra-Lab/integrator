@@ -1,4 +1,9 @@
+from pathlib import Path
+
 import numpy as np
+import reciprocalspaceship as rs
+import reciprocalspaceship.io as io
+import torch
 
 SCALAR_DTYPES: dict = {
     "zeta": "double",
@@ -214,37 +219,49 @@ def _dict_to_refl_columns(preds):
     return columns
 
 
-def write_refl(filename, data, identifiers=None):
-    """
-    Write a DIALS-compatible .refl file.
-    """
-    nrows = None
-    data = _unstack_preds(data)
-    data = _dict_to_refl_columns(data)
+DEFAULT_REFL_COLS = list(SCALAR_DTYPES.keys()) + list(VECTOR_COLUMNS.keys())
+DEFAULT_EXCLUDED_COLS = ["BATCH", "PARTIAL"]
 
-    for key, val in data.items():
-        arr, dtype_name = val
-        arr = np.ascontiguousarray(arr)
 
-        if nrows is None:
-            nrows = arr.shape[0]
-        elif arr.shape[0] != nrows:
-            raise ValueError(
-                f"Column '{key}' has {arr.shape[0]} rows, expected {nrows}"
-            )
+def refl_as_pt(
+    refl,
+    column_names: list[str] = DEFAULT_REFL_COLS,
+    excluded_columns: list[str] = DEFAULT_EXCLUDED_COLS,
+    out_dir: Path | None = None,
+    out_fname: str = "metadata.pt",
+) -> dict:
+    ds = io.read_dials_stills(
+        refl,
+        extra_cols=column_names,
+    )
+    assert isinstance(ds, rs.DataSet)
 
-        data[key] = (
-            dtype_name,
-            (nrows, arr.tobytes(order="C")),
+    data = {}
+    for k, v in ds.items():
+        if k not in excluded_columns:
+            data[k] = torch.tensor(v, dtype=torch.float32)
+
+    # write to output directory if specified
+    if out_dir is not None:
+        fname = Path(out_dir) / out_fname
+    else:
+        fname = Path(out_fname)
+
+    if fname.suffix == ".npy":
+        # numpy-native: a single pickled dict of arrays (loadable without
+        # torch). Mirrors the .npy counts/masks; read back via load_metadata.
+        np.save(
+            fname,
+            {k: v.numpy() for k, v in data.items()},
+            allow_pickle=True,
         )
+    else:
+        torch.save(data, fname)
+    return data
 
-    pack = {
-        "data": data,
-        "nrows": nrows,
-        "identifiers": identifiers or {},
-    }
 
-    outer = (REFL_TAG, REFL_VERSION, pack)
+def load_metadata(path, map_location="cpu") -> dict:
+    """Load a per-reflection metadata dict from `.npy` or `.pt`.
 
     with open(filename, "wb") as f:
         f.write(msgpack.packb(outer, use_bin_type=True))

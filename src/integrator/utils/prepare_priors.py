@@ -18,6 +18,399 @@ def _nbins_path(filename: str, n_bins: int, data_dir: Path) -> Path:
     return data_dir / suffixed
 
 
+def _gammaB_wants_mean_init(cfg: dict, sur_key: str) -> bool:
+    """True if surrogates[sur_key] is gammaB and has no explicit mean_init.
+
+    Used to decide whether we need to compute a dataset-level mean estimate
+    from raw counts to seed the Gamma head's bias.
+    """
+    sur = cfg.get("surrogates", {}).get(sur_key, {})
+    if not isinstance(sur, dict) or sur.get("name") != "gammaB":
+        return False
+    args = sur.get("args", {}) or {}
+    return "mean_init" not in args
+
+
+def _compute_qi_qbg_mean_init(
+    counts,
+    masks,
+    D: int,
+    H: int,
+    W: int,
+) -> dict:
+    """Estimate sensible (qi, qbg) mean_init values directly from counts.
+
+    Uses the same quiet-frame / border-pixel background subtraction as
+    `_bg_subtract_signal` — fully independent of DIALS estimates.
+    """
+    import torch as _t
+
+    signal = _bg_subtract_signal(counts, masks, D, H, W)
+    intensity = signal.sum(dim=1)
+    pos = intensity[intensity > 0]
+
+    counts_clean = counts.float().clamp(min=0)
+    masks_f = masks.float()
+    counts_3d = (counts_clean * masks_f).reshape(counts.shape[0], D, H * W)
+    masks_3d = masks_f.reshape(counts.shape[0], D, H * W)
+    if D > 1:
+        frame_sums = counts_3d.sum(dim=-1)
+        frame_n = masks_3d.sum(dim=-1)
+        min_idx = frame_sums.argmin(dim=-1)
+        bg_tot = frame_sums.gather(1, min_idx.unsqueeze(-1)).squeeze(-1)
+        bg_n = (
+            frame_n.gather(1, min_idx.unsqueeze(-1)).squeeze(-1).clamp(min=1)
+        )
+        bg_rate = bg_tot / bg_n
+    else:
+        frame = counts_clean.reshape(counts.shape[0], H, W)
+        border = _t.ones(H, W, dtype=_t.bool)
+        border[2:-2, 2:-2] = False
+        bg_rate = frame[:, border].mean(dim=-1)
+
+    return {
+        "qi_median": float(pos.median().item()) if pos.numel() > 0 else 1.0,
+        "qi_mean": float(pos.mean().item()) if pos.numel() > 0 else 1.0,
+        "qbg_median": float(bg_rate.median().item()),
+        "qbg_mean": float(bg_rate.mean().item()),
+        "n_reflections": int(counts.shape[0]),
+        "n_positive_intensity": int(pos.numel()),
+        "note": (
+            "Computed from raw counts only (no DIALS). Intensity = sum of "
+            "bg-subtracted counts per reflection; bg = per-pixel rate from "
+            "quiet-frame estimator. Use qi_median/qbg_median as default "
+            "mean_init for GammaB — more robust to heavy-tail peaks than "
+            "the mean."
+        ),
+    }
+
+
+def prepare_global_priors(
+    cfg: dict,
+    *,
+    force: bool = False,
+) -> None:
+    """Generate global prior .pt files for the default Loss if needed.
+
+
+    Args:
+        cfg: Full YAML config dict.
+        force: Regenerate even if file already exists.
+    """
+    loss_name = cfg.get("loss", {}).get("name", "")
+    if loss_name != "default":
+        return
+
+    loss_args = cfg["loss"].get("args", {})
+    pprf_cfg = loss_args.get("pprf_cfg")
+    if pprf_cfg is None or pprf_cfg.get("name") != "dirichlet":
+        return
+
+    params = pprf_cfg.get("params", {})
+    conc_value = params.get("concentration")
+    if not isinstance(conc_value, str):
+        # Scalar concentration, nothing to generate
+        return
+
+    data_dir = Path(cfg["data_loader"]["args"]["data_dir"])
+    conc_path = (
+        Path(conc_value)
+        if Path(conc_value).is_absolute()
+        else data_dir / conc_value
+    )
+
+    if conc_path.exists() and not force:
+        return
+
+    logger.info("Generating global Dirichlet concentration: %s", conc_path)
+
+    counts, masks, metadata = _load_raw_data(data_dir, cfg)
+
+    dl_args = cfg.get("data_loader", {}).get("args", {})
+    D_dim = int(dl_args.get("D", dl_args.get("d", 1)))
+    H_dim = int(dl_args.get("H", dl_args.get("h", 21)))
+    W_dim = int(dl_args.get("W", dl_args.get("w", 21)))
+
+    # Single bin = global MOM across all reflections
+    N = counts.shape[0]
+    all_one_bin = torch.zeros(N, dtype=torch.long)
+    concentration = _fit_dirichlet_per_group(
+        counts, masks, all_one_bin, 1, D=D_dim, H=H_dim, W=W_dim
+    )
+    # Squeeze from (1, D*H*W) to (D*H*W,)
+    concentration = concentration.squeeze(0)
+
+    torch.save(concentration, conc_path)
+    logger.info(
+        "Saved global concentration.pt (MOM bg-sub, sum(alpha)=%.1f)",
+        concentration.sum().item(),
+    )
+
+
+def prepare_profile_basis(
+    cfg: dict,
+    *,
+    force: bool = False,
+    events_out: list[dict] | None = None,
+) -> None:
+    """Auto-generate a fixed Hermite profile basis .pt file if missing.
+
+    Triggered when `surrogates.qp.args` references a basis file
+    (`warmstart_basis_path` for `learned_basis_profile` or `basis_path`
+    for `fixed_basis_profile`) that does not exist on disk. The basis is
+    built from the spatial shape in `data_loader.args` and the Hermite
+    knobs in `surrogates.qp.args`:
+
+      - `hermite_max_order` (default 4): max polynomial order in x, y
+      - `hermite_basis_sigma` (default 3.0): reference Gaussian width
+      - `hermite_sigma_z` (default 1.0): Gaussian width along z (3D only)
+      - `hermite_max_order_z` (default `min(1, D-1)`): max order in z
+
+    Idempotent: skips when file already exists unless `force=True`.
+
+    Args:
+        cfg: Full YAML config dict.
+        force: Regenerate even if file already exists.
+        events_out: Optional list appended with a structured event dict
+            describing the file action ("created").
+    """
+    qp_cfg = cfg.get("surrogates", {}).get("qp")
+    if not isinstance(qp_cfg, dict):
+        return
+    name = qp_cfg.get("name")
+    if name not in ("learned_basis_profile", "fixed_basis_profile"):
+        return
+    args = qp_cfg.get("args", {}) or {}
+
+    if name == "learned_basis_profile":
+        path_arg = args.get("warmstart_basis_path")
+    else:
+        path_arg = args.get("basis_path")
+    if not isinstance(path_arg, str):
+        return
+
+    data_dir = Path(cfg["data_loader"]["args"]["data_dir"])
+    n_bins_val = cfg.get("loss", {}).get("args", {}).get("n_bins")
+    if n_bins_val is not None:
+        basis_path = _nbins_path(path_arg, int(n_bins_val), data_dir)
+    else:
+        p = Path(path_arg)
+        basis_path = p if p.is_absolute() else data_dir / p
+
+    if basis_path.exists() and not force:
+        return
+
+    max_order = int(args.get("hermite_max_order", 4))
+    sigma_ref = float(args.get("hermite_basis_sigma", 3.0))
+    sigma_z = float(args.get("hermite_sigma_z", 1.0))
+    max_order_z_arg = args.get("hermite_max_order_z")
+    max_order_z = (
+        int(max_order_z_arg) if max_order_z_arg is not None else None
+    )
+
+    dl_args = cfg.get("data_loader", {}).get("args", {})
+    D_dim = int(dl_args.get("D", dl_args.get("d", 1)))
+    H_dim = int(dl_args.get("H", dl_args.get("h", 21)))
+    W_dim = int(dl_args.get("W", dl_args.get("w", 21)))
+
+    if D_dim > 1:
+        W_basis, b, orders = _build_hermite_basis_3d(
+            D_dim,
+            H_dim,
+            W_dim,
+            max_order,
+            sigma_ref,
+            sigma_z,
+            max_order_z=max_order_z,
+        )
+        max_order_z_used = (
+            max_order_z if max_order_z is not None else min(1, D_dim - 1)
+        )
+    else:
+        W_basis, b, orders = _build_hermite_basis_2d(
+            H_dim, W_dim, max_order, sigma_ref
+        )
+        max_order_z_used = 0
+    d = W_basis.shape[1]
+
+    basis_data = {
+        "W": W_basis,
+        "b": b,
+        "d": d,
+        "orders": orders,
+        "max_order": max_order,
+        "max_order_z": max_order_z_used,
+        "sigma_ref": sigma_ref,
+        "sigma_z": sigma_z,
+        "sigma_prior": 3.0,
+        "basis_type": "hermite",
+        "shape": (D_dim, H_dim, W_dim),
+    }
+    basis_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(basis_data, basis_path)
+    logger.info(
+        "Saved %s (Hermite basis: %dD, max_order=%d, max_order_z=%d, "
+        "sigma_ref=%.2f, d=%d)",
+        basis_path.name,
+        3 if D_dim > 1 else 2,
+        max_order,
+        max_order_z_used,
+        sigma_ref,
+        d,
+    )
+    if events_out is not None:
+        events_out.append(
+            {
+                "file": basis_path.name,
+                "action": "created",
+                "path": str(basis_path),
+                "reason": "Hermite basis warmstart auto-generated",
+                "max_order": max_order,
+                "max_order_z": max_order_z_used,
+                "sigma_ref": sigma_ref,
+                "d": d,
+            }
+        )
+
+
+def prepare_bg_prior(
+    cfg: dict,
+    *,
+    force: bool = False,
+    n_sample: int = 50000,
+    events_out: list[dict] | None = None,
+) -> None:
+    """Auto-generate `bg_prior.pt` (global background Gamma prior) if missing.
+
+    The Wilson losses default the background prior to mean 1.0 count/pixel,
+    which is right for monochromatic data but far too low for the high Laue
+    background -- the background then cannot claim the flat field and the
+    intensity x (uniform/skirted) profile absorbs it, so `scale*I_h` collapses
+    to ~constant (see scripts/diagnose_merge_collapse.py). This fits a Gamma to
+    the empirical per-pixel background (robust per-shoebox median) and writes
+    `bg_prior.pt`, which the loss factory auto-injects as `bg_rate` /
+    `bg_concentration` when they are not set explicitly.
+
+    Skipped when the loss is not a Wilson loss, when the config sets `bg_rate`
+    or `bg_concentration` explicitly (those win), or when `bg_prior.pt` already
+    exists (unless `force`). Idempotent.
+
+    Args:
+        cfg: Full YAML config dict.
+        force: Regenerate even if `bg_prior.pt` already exists.
+        n_sample: Reflections subsampled for the estimate; the global mean/var
+            is stable well below the full set.
+        events_out: Optional list appended with a structured file-action event.
+    """
+    loss_name = cfg.get("loss", {}).get("name", "")
+    if loss_name not in ("monochromatic_wilson", "polychromatic_wilson"):
+        return
+    loss_args = cfg.get("loss", {}).get("args", {}) or {}
+    if "bg_rate" in loss_args or "bg_concentration" in loss_args:
+        return  # explicit config wins; nothing to generate
+
+    data_dir = Path(cfg["data_loader"]["args"]["data_dir"])
+    bg_path = data_dir / "bg_prior.pt"
+    # NOTE: existence is checked AFTER the empirical mean is computed below, so a
+    # stale bg_prior.pt whose mean disagrees with the data is regenerated rather
+    # than silently reused (a wrong bg prior pulls the background to the wrong
+    # level and collapses the merge).
+
+    counts, masks = _try_load_counts_masks(data_dir, cfg)
+    if counts is None or masks is None:
+        return  # no counts/masks on disk; leave the loss default
+
+    counts = counts.reshape(counts.shape[0], -1).float()
+    masks = masks.reshape(masks.shape[0], -1).float()
+    n = counts.shape[0]
+    if n > n_sample:
+        idx = torch.randperm(n)[:n_sample]
+        counts, masks = counts[idx], masks[idx]
+
+    # Robust per-shoebox background = median over VALID pixels (the small Bragg
+    # peak does not move the median in a mostly-background box). Masked-out
+    # pixels are pushed to +inf so they sort to the end and the median index
+    # (n_valid-1)//2 lands among the valid entries only.
+    valid = masks > 0
+    filled = torch.where(
+        valid, counts.clamp(min=0), torch.full_like(counts, float("inf"))
+    )
+    n_valid = valid.sum(-1).clamp(min=1).long()
+    sorted_c, _ = filled.sort(dim=-1)
+    med_idx = ((n_valid - 1) // 2).unsqueeze(1)
+    bg_box = sorted_c.gather(1, med_idx).squeeze(1)
+    bg_box = bg_box[torch.isfinite(bg_box) & (bg_box > 0)]
+    if bg_box.numel() < 100:
+        logger.warning(
+            "bg_prior: only %d valid shoeboxes; leaving the loss default",
+            bg_box.numel(),
+        )
+        return
+
+    mean_bg = float(bg_box.mean())
+    var_bg = float(bg_box.var().clamp(min=1e-6))
+    bg_rate = 1.0 / max(mean_bg, 1e-6)
+    # Method-of-moments Gamma shape, clamped so the prior is informative but not
+    # rigid (it must pull the background UP without freezing per-reflection
+    # variation; concentration<=1 would be exponential and prefer bg->0).
+    bg_concentration = float(min(max(mean_bg**2 / var_bg, 1.5), 50.0))
+
+    # Self-heal: reuse an existing bg_prior.pt ONLY if its prior mean (1/bg_rate)
+    # agrees with the empirical background to within 2x; otherwise it is stale or
+    # was computed on different data and would silently mis-anchor the background.
+    if bg_path.exists() and not force:
+        try:
+            saved = torch.load(
+                bg_path, weights_only=False, map_location="cpu"
+            )
+            saved_mean = 1.0 / max(float(saved.get("bg_rate", 1.0)), 1e-12)
+        except Exception:
+            saved_mean = None
+        if saved_mean is not None and 0.5 <= saved_mean / mean_bg <= 2.0:
+            logger.info(
+                "Reusing %s (prior mean %.2f/px agrees with empirical %.2f/px)",
+                bg_path.name,
+                saved_mean,
+                mean_bg,
+            )
+            if events_out is not None:
+                events_out.append(
+                    {"file": bg_path.name, "action": "reused", "path": str(bg_path)}
+                )
+            return
+        logger.warning(
+            "%s has prior mean %s/px but the data's empirical background is "
+            "%.2f/px -- regenerating (stale or computed on other data).",
+            bg_path.name,
+            f"{saved_mean:.2f}" if saved_mean is not None else "unreadable",
+            mean_bg,
+        )
+
+    torch.save(
+        {"bg_rate": bg_rate, "bg_concentration": bg_concentration}, bg_path
+    )
+    logger.info(
+        "Saved %s (empirical per-pixel background mean=%.2f -> bg_rate=%.4f, "
+        "bg_concentration=%.2f; prior mean=%.2f counts/pixel)",
+        bg_path.name,
+        mean_bg,
+        bg_rate,
+        bg_concentration,
+        1.0 / bg_rate,
+    )
+    if events_out is not None:
+        events_out.append(
+            {
+                "file": bg_path.name,
+                "action": "created",
+                "path": str(bg_path),
+                "reason": f"empirical background mean={mean_bg:.2f}/pixel",
+                "bg_rate": bg_rate,
+                "bg_concentration": bg_concentration,
+            }
+        )
+
+
 def prepare_per_bin_priors(
     cfg: dict,
     *,
@@ -289,6 +682,294 @@ def _bin_by_resolution(
     group_labels = torch.zeros(len(d), dtype=torch.long)
     bin_edges = torch.tensor([d.min(), d.max()])
     return group_labels, bin_edges, 1
+
+
+def _crude_intensity_from_cfg(
+    counts: Tensor, masks: Tensor, cfg: dict
+) -> Tensor:
+    """Read shoebox dimensions from config and compute crude intensity."""
+    dl_args = cfg.get("data_loader", {}).get("args", {})
+    n_frames = int(dl_args.get("d", 3))
+    n_pixels = int(dl_args.get("h", 21)) * int(dl_args.get("w", 21))
+    return _compute_crude_intensity(counts, masks, n_frames, n_pixels)
+
+
+def _compute_crude_intensity(
+    counts: Tensor,
+    masks: Tensor,
+    n_frames: int,
+    n_pixels_per_frame: int,
+) -> Tensor:
+    """Estimate intensity from raw shoeboxes via quietest-frame bg subtraction.
+
+    For each shoebox, the frame with the lowest total (masked) counts is
+    treated as pure background.  The per-pixel background rate from that
+    frame is subtracted from the total shoebox counts to give a crude
+    intensity estimate.
+
+    Args:
+        counts: Raw shoebox counts, shape `(N, n_frames * n_pixels_per_frame)`.
+        masks: Valid-pixel masks, same shape as *counts*.
+        n_frames: Number of frames per shoebox (typically 3).
+        n_pixels_per_frame: Pixels per frame (e.g. 21*21 = 441).
+
+    Returns:
+        Crude intensity estimate per reflection, shape `(N,)`.
+        Can be negative for weak / noise-dominated reflections.
+    """
+    N = counts.shape[0]
+
+    # Clamp dead pixels (count == -1) to 0
+    counts_clean = counts.float().clamp(min=0)
+    masks_f = masks.float()
+
+    # Reshape to (N, n_frames, n_pixels_per_frame)
+    counts_3d = (counts_clean * masks_f).reshape(
+        N, n_frames, n_pixels_per_frame
+    )
+    masks_3d = masks_f.reshape(N, n_frames, n_pixels_per_frame)
+
+    # Total masked counts per frame: (N, n_frames)
+    frame_counts = counts_3d.sum(dim=-1)
+
+    # Number of valid pixels per frame: (N, n_frames)
+    frame_n_pixels = masks_3d.sum(dim=-1)
+
+    # Quietest frame = frame with minimum total counts
+    min_frame_idx = frame_counts.argmin(dim=-1)  # (N,)
+    bg_frame_counts = frame_counts.gather(
+        1, min_frame_idx.unsqueeze(-1)
+    ).squeeze(-1)
+    bg_frame_n_pixels = frame_n_pixels.gather(
+        1, min_frame_idx.unsqueeze(-1)
+    ).squeeze(-1)
+
+    # Background rate per pixel from quietest frame
+    bg_per_pixel = bg_frame_counts / bg_frame_n_pixels.clamp(min=1)
+
+    # Total counts and total valid pixels across all frames
+    total_counts = counts_3d.sum(dim=(1, 2))
+    total_n_pixels = masks_3d.sum(dim=(1, 2))
+
+    # Crude I = total_counts - n_valid_pixels * bg_per_pixel
+    crude_I = total_counts - total_n_pixels * bg_per_pixel
+
+    logger.info(
+        "Crude intensity: min=%.1f, median=%.1f, max=%.1f, "
+        "fraction negative=%.3f",
+        crude_I.min().item(),
+        crude_I.median().item(),
+        crude_I.max().item(),
+        (crude_I < 0).float().mean().item(),
+    )
+
+    return crude_I
+
+
+def _compute_wavelength_bin_edges(
+    metadata_path: Path,
+    n_lambda_bins: int,
+) -> Tensor:
+    """Quantile-based wavelength bin edges from metadata['wavelength'].
+
+    Returns a 1-D tensor of length `n_lambda_bins + 1` such that consecutive
+    edges define a half-open bin `[edges[i], edges[i+1])` (rightmost
+    inclusive). Equal-quantile spacing → roughly equal counts per bin → the
+    per-bin G_k posteriors get balanced gradient signal.
+    """
+    from .torch_to_refl import load_metadata
+
+    metadata = load_metadata(metadata_path)
+    if "wavelength" not in metadata:
+        raise KeyError(
+            f"metadata.pt at {metadata_path} has no 'wavelength' column; "
+            "this CLI step requires output from integrator.mksbox --laue."
+        )
+    wavelength = metadata["wavelength"].float()
+    if wavelength.numel() == 0:
+        raise ValueError("metadata['wavelength'] is empty")
+    qs = torch.linspace(0.0, 1.0, n_lambda_bins + 1)
+    edges = torch.quantile(wavelength, qs)
+    # Guard: degenerate spectra (all-equal λ) would collapse all edges to one
+    # value and break bucketize. Spread by a tiny epsilon if so.
+    if edges[-1] <= edges[0]:
+        raise ValueError(
+            f"wavelength range is degenerate: [{float(edges[0]):.6f}, "
+            f"{float(edges[-1]):.6f}]; cannot form {n_lambda_bins} bins"
+        )
+    return edges
+
+
+def _compute_tau_per_group(
+    intensity: Tensor,
+    group_labels: Tensor,
+    n_bins: int,
+    min_intensity: float = 0.01,
+) -> Tensor:
+    """Exponential rate for intensity: tau_k = 1 / mean(I_k)."""
+    tau = torch.zeros(n_bins)
+    for b in range(n_bins):
+        sel = intensity[group_labels == b]
+        sel = sel[sel > min_intensity]
+        if len(sel) > 0:
+            tau[b] = 1.0 / sel.mean()
+        else:
+            tau[b] = 1.0
+    return tau
+
+
+def _compute_s_squared_per_group(
+    d: Tensor,
+    group_labels: Tensor,
+    n_bins: int,
+) -> Tensor:
+    """Wilson resolution parameter: s_k^2 = 1 / (4 * mean_d_k^2)."""
+    s_sq = torch.zeros(n_bins)
+    for b in range(n_bins):
+        sel = d[group_labels == b]
+        if len(sel) > 0:
+            mean_d = sel.mean()
+            s_sq[b] = 1.0 / (4.0 * mean_d**2)
+    return s_sq
+
+
+def _fit_dirichlet_per_group(
+    counts: Tensor,
+    masks: Tensor,
+    group_labels: Tensor,
+    n_bins: int,
+    D: int = 1,
+    H: int = 21,
+    W: int = 21,
+) -> Tensor:
+    """Fit Dirichlet concentration per bin via MOM on bg-subtracted profiles.
+
+    For each bin:
+      1. Subtract per-reflection crude background (quietest-frame estimate)
+         to isolate the signal profile.
+      2. Clamp and normalize bg-subtracted counts to proportions over all
+         `D*H*W` pixels.
+      3. Estimate Dirichlet precision kappa via method of moments.
+      4. Return `concentration = kappa * p_bar`.
+
+    Handles both 2D (`D=1`, stills/Laue) and 3D (`D>1`, rotation) cases.
+
+    Args:
+        counts: Raw shoebox counts, shape `(N, D*H*W)`.
+        masks: Valid-pixel masks, same shape as *counts*.
+        group_labels: Bin assignment per reflection, shape `(N,)`.
+        n_bins: Number of resolution bins.
+        D: Shoebox depth (frames).
+        H: Shoebox height.
+        W: Shoebox width.
+
+    Returns:
+        Dirichlet concentration, shape `(n_bins, D*H*W)`.
+    """
+    n_pixels = D * H * W
+    n_pixels_per_frame = H * W
+    N = counts.shape[0]
+
+    counts_clean = counts.float().clamp(min=0)
+    masks_f = masks.float()
+    counts_masked = counts_clean * masks_f
+
+    # ── Crude background subtraction (quietest frame) ─────────────────────
+    counts_3d = counts_masked.reshape(N, D, n_pixels_per_frame)
+    masks_3d = masks_f.reshape(N, D, n_pixels_per_frame)
+
+    if D > 1:
+        # Quietest frame = frame with minimum total counts
+        frame_counts = counts_3d.sum(dim=-1)  # (N, D)
+        frame_n_pixels = masks_3d.sum(dim=-1)  # (N, D)
+        min_frame_idx = frame_counts.argmin(dim=-1)  # (N,)
+        bg_frame_counts = frame_counts.gather(
+            1, min_frame_idx.unsqueeze(-1)
+        ).squeeze(-1)
+        bg_frame_n_pixels = frame_n_pixels.gather(
+            1, min_frame_idx.unsqueeze(-1)
+        ).squeeze(-1)
+        bg_per_pixel = bg_frame_counts / bg_frame_n_pixels.clamp(min=1)
+    else:
+        # Single frame: estimate bg from border pixels (outer 2-pixel ring)
+        frame = counts_3d[:, 0, :]  # (N, H*W)
+        frame_2d = frame.reshape(N, H, W)
+        border_mask = torch.ones(H, W, dtype=torch.bool)
+        border_mask[2:-2, 2:-2] = False
+        border_vals = frame_2d[:, border_mask]  # (N, n_border)
+        bg_per_pixel = border_vals.mean(dim=-1)  # (N,)
+
+    # Subtract bg from all pixels: signal = counts - bg * mask
+    signal = counts_masked - bg_per_pixel.unsqueeze(-1) * masks_f
+    signal = signal.clamp(min=0)  # no negative signal
+
+    concentration = torch.zeros(n_bins, n_pixels)
+
+    for b in range(n_bins):
+        sel = signal[group_labels == b]
+        if len(sel) < 2:
+            concentration[b] = 1e-6
+            continue
+
+        # Normalize bg-subtracted signal to proportions
+        totals = sel.sum(dim=1, keepdim=True).clamp(min=1)
+        sel_norm = sel / totals  # (n_refl, n_pixels)
+
+        # Mean profile
+        p_bar = sel_norm.mean(dim=0)  # (n_pixels,)
+
+        # Estimate kappa (Dirichlet precision) via MOM
+        var_p = sel_norm.var(dim=0)
+        valid = p_bar > 1e-6
+        if valid.sum() > 0:
+            ratio = (p_bar[valid] * (1 - p_bar[valid])) / var_p[valid].clamp(
+                min=1e-12
+            ) - 1
+            kappa = ratio.median().clamp(min=1.0)
+        else:
+            kappa = torch.tensor(1.0)
+
+        concentration[b] = (kappa * p_bar).clamp(min=1e-6)
+
+        logger.debug(
+            "Bin %d: kappa=%.1f, sum(alpha)=%.1f, n_refl=%d",
+            b,
+            kappa.item(),
+            concentration[b].sum().item(),
+            len(sel),
+        )
+
+    return concentration
+
+
+def _get_intensity_for_prior(
+    tau_source: str,
+    counts: Tensor | None,
+    masks: Tensor | None,
+    metadata: dict,
+    cfg: dict,
+) -> Tensor:
+    """Return intensity tensor for prior fitting, respecting tau_source config."""
+    if tau_source == "crude":
+        if counts is None or masks is None:
+            raise FileNotFoundError()
+        return _crude_intensity_from_cfg(counts, masks, cfg)
+
+    intensity = metadata.get(
+        "intensity.prf.value",
+        metadata.get("intensity.sum.value"),
+    )
+    if intensity is not None:
+        return intensity
+
+    if counts is None or masks is None:
+        raise FileNotFoundError()
+
+    logger.warning(
+        "No intensity column found and tau_source='dials'; "
+        "falling back to crude bg-subtraction"
+    )
+    return _crude_intensity_from_cfg(counts, masks, cfg)
 
 
 def _fit_gamma_mle(

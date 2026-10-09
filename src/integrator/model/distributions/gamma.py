@@ -88,7 +88,11 @@ class GammaDistributionRepamB(nn.Module):
         in_features: int = 64,
         eps: float = 1e-6,
         k_min: float = 0.1,
+        # one constraint name, or a [head1, head2] pair; the merging branch's
+        # split fano_/mu_ arguments said the same thing with two names and had
+        # no callers, so they are not carried over
         positive_constraint: str | tuple[str, str] = "softplus",
+        mean_init: float | None = None,
         **kwargs,
     ):
         super().__init__()
@@ -105,6 +109,26 @@ class GammaDistributionRepamB(nn.Module):
 
         self.linear_mu = nn.Linear(in_features, 1)
         self.linear_fano = nn.Linear(in_features, 1)
+
+        # Optionally start the predicted mean at `mean_init` regardless of the
+        # encoder: zero the mu weight and set its bias so the constrained output
+        # equals mean_init. For the background surrogate on high-background (Laue)
+        # data this lets the background CLAIM the flat field at init, before the
+        # intensity/profile can grab it -- the race the bg_prior KL loses once the
+        # intensity has already explained the box (see diagnose_merge_collapse.py).
+        if mean_init is not None:
+            mean_init = float(mean_init)
+            with torch.no_grad():
+                nn.init.zeros_(self.linear_mu.weight)
+                if self._mu_constraint_name == "softplus":
+                    # Guarded inverse-softplus: returns the target directly for
+                    # large means (no expm1 overflow) and clamps non-positive
+                    # means (no log domain error).
+                    self.linear_mu.bias.fill_(
+                        _softplus_inverse_shifted(mean_init, 0.0)
+                    )
+                else:  # exp / log-domain constraint
+                    self.linear_mu.bias.fill_(math.log(max(mean_init, 1e-6)))
 
     def forward(self, x: torch.Tensor, x_: torch.Tensor):
         mu = self._mu_constrain(self.linear_mu(x))

@@ -5,6 +5,9 @@ from integrator.data_loaders import (
     RotationDataModule,
 )
 from integrator.model.distributions import (
+    GammaDistributionRepamE,
+    GammaDistributionRepamB,
+    GammaDistributionRepamA,
     BackgroundPlaneSurrogate,
     DirichletDistribution,
     FixedBasisProfileSurrogate,
@@ -31,10 +34,25 @@ from integrator.model.integrators import (
     SVAEHybridIntegrator,
     SVAEIntegrator,
 )
+from integrator.model.scaling import (
+    AmortizedMergingIntegrator,
+    ConjugateIntegrator,
+    ConjugateMergingIntegrator,
+    DeepSetsMergingIntegrator,
+    HierarchicalSVAEIntegrator,
+    HierarchicalScalingIntegrator,
+    MergingIntegrator,
+    RefinementIntegrator,
+    SVAEIntegrator as ScalingSVAEIntegrator,
+    ScalingIntegrator,
+    VariationalRefinementIntegrator,
+)
 from integrator.model.loss import (
     GlobalPriorLoss,
+    AmplitudeWilsonLoss,
     MonochromaticWilsonLoss,
     PolychromaticWilsonLoss,
+    RefinementLoss,
 )
 
 REGISTRY = {
@@ -47,7 +65,9 @@ REGISTRY = {
     "loss": {
         "global_prior": GlobalPriorLoss,
         "monochromatic_wilson": MonochromaticWilsonLoss,
+        "amplitude_wilson": AmplitudeWilsonLoss,
         "polychromatic_wilson": PolychromaticWilsonLoss,
+        "refinement": RefinementLoss,
     },
     "integrator": {
         "hierarchical": HierarchicalIntegrator,
@@ -57,8 +77,26 @@ REGISTRY = {
         "ragged_hierarchical": RaggedHierarchicalIntegrator,
         "svae": SVAEIntegrator,
         "svae_hybrid": SVAEHybridIntegrator,
+        "scaling": ScalingIntegrator,
+        "merging": MergingIntegrator,
+        "deepsets_merging": DeepSetsMergingIntegrator,
+        "amortized_merging": AmortizedMergingIntegrator,
+        "conjugate_merging": ConjugateMergingIntegrator,
+        "hierarchical_scaling": HierarchicalScalingIntegrator,
+        "conjugate": ConjugateIntegrator,
+        # the merging branch's variant, a different model that also
+        # called itself SVAEIntegrator
+        "svae_scaling": ScalingSVAEIntegrator,
+        "hierarchical_svae": HierarchicalSVAEIntegrator,
+        "refinement": RefinementIntegrator,
+        "variational_refinement": VariationalRefinementIntegrator,
     },
     "surrogates": {
+        # legacy per-variant names from the merging branch; the
+        # preferred spelling is `gamma` with `reparameterization`
+        "gammaA": GammaDistributionRepamA,
+        "gammaB": GammaDistributionRepamB,
+        "gammaE": GammaDistributionRepamE,
         "gamma": build_gamma,
         "dirichlet": DirichletDistribution,
         "learned_basis_profile": ProfileSurrogate,

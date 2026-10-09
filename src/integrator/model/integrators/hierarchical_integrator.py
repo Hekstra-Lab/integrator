@@ -21,6 +21,22 @@ def _sample_profile(qp, mc_samples: int) -> Tensor:
     return qp.rsample([mc_samples]).permute(1, 0, 2)
 
 
+def _get_normalized_position(metadata: dict, device) -> torch.Tensor | None:
+    """Build (B, 2) normalized detector position from metadata, or None.
+
+    Carried over from the merging branch, where the scaling models condition on
+    detector position. Kept module-level because `conjugate_merging` imports it
+    from here.
+    """
+    x = metadata.get("xyzcal.px.0")
+    y = metadata.get("xyzcal.px.1")
+    if x is None or y is None:
+        return None
+    x = x.to(device).float() / 2000.0 - 1.0
+    y = y.to(device).float() / 2000.0 - 1.0
+    return torch.stack([x, y], dim=-1)
+
+
 def _add_group_outputs(out: dict, metadata: dict, loss) -> None:
     group_labels = metadata["group_label"].long()
     out["group_label"] = group_labels
@@ -117,7 +133,15 @@ class HierarchicalIntegrator(BaseIntegrator):
 
         rate = zI * zp + zbg
 
-        if "is_coset" in metadata:
+        # Coset handling options:
+        # - override: replaces rate with zbg.mean
+        # - override_no_kl: override + masks kl_i and kl_prf
+        # - aux: override + auxilary L2 loss on cosets
+
+        if (
+            self.coset_mode in ("override", "override_no_kl", "aux")
+            and "is_coset" in metadata
+        ):
             coset = metadata["is_coset"].bool().view(-1, 1, 1)
             rate = torch.where(coset, zbg, rate)
 
@@ -370,7 +394,16 @@ class HierarchicalIntegrator3Enc(BaseIntegrator):
 
         rate = zI * zp + zbg
 
-        if "is_coset" in metadata:
+        # Coset handling (see IntegratorCfg.coset_mode). "override" and
+        # "override_no_kl" force the coset rate to background only, so intensity
+        # never enters the likelihood. "supervised" leaves rate = I*prf + bg so
+        # the background-only counts pull coset intensity to the floor and the
+        # shared encoder learns to map background-like shoeboxes to ~0 intensity.
+        # The intensity/profile KL is dropped (in the loss) for both no-KL modes.
+        if (
+            self.coset_mode in ("override", "override_no_kl", "aux")
+            and "is_coset" in metadata
+        ):
             coset = metadata["is_coset"].bool().view(-1, 1, 1)
             rate = torch.where(coset, zbg, rate)
 

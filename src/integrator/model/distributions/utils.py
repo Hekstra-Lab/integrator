@@ -6,6 +6,7 @@ import torch.nn.functional as F
 POSITIVE_CONSTRAINTS: dict[str, Callable[[torch.Tensor], torch.Tensor]] = {
     "softplus": F.softplus,
     "exp": torch.exp,
+    "log": torch.exp,  # log-domain parameterization (raw is log-value): exp(raw)
 }
 
 

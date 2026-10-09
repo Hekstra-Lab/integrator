@@ -6,7 +6,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from torch.distributions import Distribution, Gamma, kl_divergence
+from torch.distributions import (
+    Distribution,
+    Gamma,
+    NegativeBinomial,
+    Poisson,
+    kl_divergence,
+)
 
 from integrator.model.distributions.background_plane import (
     compute_background_plane_kl,
@@ -109,10 +115,25 @@ class WilsonLoss(nn.Module):
         intensity_kl_gain: float = 0.7,
         intensity_kl_min: float = 0.02,
         intensity_kl_max: float = 1.0,
+        # Coset auxiliary penalty, used when coset_mode == "aux": pushes the
+        # predicted intensity of background-only reflections toward a floor.
+        # Zero weight leaves it inert, which is the default.
+        eps: float = 1e-6,
+        coset_aux_weight: float = 0.0,
+        coset_i_floor: float = 1.0,
     ):
         super().__init__()
         # warn once, not once per batch, if the dataset predates the flag
         self._warned_centric = False
+        self.eps = eps
+        # the merging branch optionally fits spatially varying profile and
+        # background priors; those models are not carried over, so the
+        # attributes exist and are inert
+        self.profile_prior = None
+        self.profile_prior_scale = _DEFAULT_PROFILE_PRIOR_SCALE
+        self.bg_prior = None
+        self.coset_aux_weight = coset_aux_weight
+        self.coset_i_floor = coset_i_floor
         self.b_min = b_min  # minimum B-factor
         self.n_bins = n_bins
         self.stabilize_scale = stabilize_scale
@@ -760,6 +781,25 @@ class WilsonLoss(nn.Module):
         if metadata is None or "d" not in metadata:
             raise ValueError("Wilson loss requires metadata['d'].")
 
+        # Coset (background-only) reflections carry no Bragg latent. In the
+        # "no-KL" modes ("override_no_kl", "supervised", "aux") we drop their
+        # intensity and profile KL (toward the Wilson/profile priors) while
+        # keeping the background KL. `lattice` stays None for plain "override",
+        # reproducing the legacy behavior exactly.
+        coset_mode = kwargs.get("coset_mode", "override")
+        coset = (
+            metadata["is_coset"].bool().to(device)
+            if "is_coset" in metadata
+            else None
+        )
+        lattice = None
+        if coset is not None and coset_mode in (
+            "override_no_kl",
+            "supervised",
+            "aux",
+        ):
+            lattice = (~coset).float()
+
         # profile kl-divergence
         prf_prior_scale = getattr(
             qp, "prior_scale", _DEFAULT_PROFILE_PRIOR_SCALE
@@ -767,7 +807,6 @@ class WilsonLoss(nn.Module):
         kl_prf = compute_profile_kl(
             qp, prf_prior_scale, self.profile_kl_weight, device
         )
-        kl = kl + kl_prf
 
         # Wilson intensity KL
         d = metadata["d"].to(device)
@@ -864,14 +903,45 @@ class WilsonLoss(nn.Module):
             rate, counts, mask, group_labels=group_labels
         )
 
-        loss = (neg_ll + kl).mean()
+        # Auxiliary L2 penalty pulling coset intensity toward a small floor
+        # ("aux" mode). Penalized in log-space (toward log I_floor) so the
+        # gradient does not vanish as intensity shrinks — an intensity-space L2
+        # would, via the exp Jacobian. Per-reflection, nonzero only on cosets.
+        aux = torch.zeros_like(neg_ll)
+        if (
+            coset_mode == "aux"
+            and coset is not None
+            and self.coset_aux_weight > 0
+        ):
+            log_mu = torch.log(qi.mean.clamp(min=self.eps))
+            target = math.log(max(self.coset_i_floor, 1e-6))
+            aux = coset.float() * (log_mu - target).pow(2)
+
+        loss = (neg_ll + kl + self.coset_aux_weight * aux).mean()
+
+        # Average intensity/profile KL over contributing (lattice) reflections so
+        # the logged values stay interpretable when cosets are masked out.
+        if lattice is not None:
+            n_lat = lattice.sum().clamp(min=1.0)
+            kl_prf_mean = kl_prf.sum() / n_lat
+            kl_i_mean = kl_i.sum() / n_lat
+        else:
+            kl_prf_mean = kl_prf.mean()
+            kl_i_mean = kl_i.mean()
+
+        if coset is not None:
+            n_coset = coset.float().sum().clamp(min=1.0)
+            coset_aux_mean = (self.coset_aux_weight * aux).sum() / n_coset
+        else:
+            coset_aux_mean = torch.zeros((), device=device)
 
         return {
             "loss": loss,
             "neg_ll_mean": neg_ll.mean(),
             "kl_mean": kl.mean(),
-            "kl_prf_mean": kl_prf.mean(),
-            "kl_i_mean": kl_i.mean(),
+            "kl_prf_mean": kl_prf_mean,
+            "kl_i_mean": kl_i_mean,
             "kl_bg_mean": kl_bg.mean(),
             "kl_bg_plane_mean": kl_bg_plane.mean(),
+            "coset_aux_mean": coset_aux_mean,
         }

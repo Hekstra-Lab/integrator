@@ -9,6 +9,10 @@ from integrator.data_loaders.data_module import (
     IntegratorDataset,
     _load_shoebox_array,
 )
+from integrator.data_loaders.grouped_sampler import (
+    GroupedAsuIdBatchSampler,
+    GroupedAsuIdSampler,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +47,21 @@ POLY_DS_COLS = [
     "bbox.2",
     # orders of the same direction in band; >1 means the spot is a harmonic sum
     "n_harmonics",
+    # Merging/scaling identity + anomalous metadata. Each is included in the
+    # batch only when present in the reference file (IntegratorDataset filters by
+    # `if k in reference`), so older poly metadata without them is unaffected.
+    #   asu_id       - canonical reflection id (scripts/prepare_asu_ids.py),
+    #                  required for grouped merging.
+    #   nonanom_id   - Friedel-pooled id; centric / friedel_plus for the
+    #                  anomalous-preserving terms (scripts/add_friedel_metadata.py).
+    #   absorption_sh- per-obs crystal-frame real-SH basis for the MLP scale's
+    #                  absorption inputs (a stills variant of
+    #                  scripts/extract_crystal_frame_sh.py).
+    "asu_id",
+    "nonanom_id",
+    "centric",
+    "friedel_plus",
+    "absorption_sh",
 ]
 
 
@@ -62,6 +81,11 @@ class PolychromaticDataModule(pl.LightningDataModule):
         shoebox_file_names: dict | None = None,
         transform: str | None = None,
         mask_fill: str = "legacy",
+        group_by_asu_id: bool = False,
+        group_by_key: str = "asu_id",
+        max_obs_per_hkl: int | None = None,
+        extra_columns: list[str] | None = None,
+        ice_ring_ranges: list | None = None,
     ):
         super().__init__()
         self.data_dir = str(data_dir)
@@ -72,6 +96,17 @@ class PolychromaticDataModule(pl.LightningDataModule):
         self.num_workers = num_workers
         self.resolution_cutoff = resolution_cutoff
         self.min_valid_pixels = min_valid_pixels
+        # Grouped batching for merging/scaling: pack complete HKL groups per
+        # batch so the per-HKL sufficient-statistic sum is complete in one batch.
+        self.group_by_asu_id = group_by_asu_id
+        self.group_by_key = group_by_key
+        self.max_obs_per_hkl = max_obs_per_hkl
+        # Extra metadata keys to expose in the batch beyond POLY_DS_COLS (e.g. a
+        # custom grouping id, or scale inputs). Included only when present in the
+        # reference file, so listing an absent key is harmless.
+        self.column_names = POLY_DS_COLS + list(extra_columns or [])
+        # Drop resolution bands (e.g. ice rings) at load time.
+        self.ice_ring_ranges = ice_ring_ranges
 
         self.shoebox_file_names = shoebox_file_names or {
             "counts": "counts.npy",
@@ -125,6 +160,25 @@ class PolychromaticDataModule(pl.LightningDataModule):
                 self.beam_center_px[0],
                 self.beam_center_px[1],
             )
+        if self.group_by_asu_id and self.group_by_key not in reference:
+            raise KeyError(
+                f"group_by_key={self.group_by_key!r} is not in the reference "
+                f"metadata. Available keys include {sorted(reference)[:20]}... "
+                "Run scripts/prepare_asu_ids.py to add 'asu_id' (and "
+                "scripts/add_friedel_metadata.py for 'nonanom_id')."
+            )
+
+        crystal_path = os.path.join(self.data_dir, "crystal.yaml")
+        if os.path.exists(crystal_path):
+            with open(crystal_path) as f:
+                crystal_meta = yaml.safe_load(f)
+            self.beam_center_px = crystal_meta.get("beam_center_px")
+            if self.beam_center_px is not None:
+                logger.info(
+                    "Beam center (px): %.1f, %.1f",
+                    self.beam_center_px[0],
+                    self.beam_center_px[1],
+                )
 
         all_dead = masks.sum(-1) < self.min_valid_pixels
         n_dead = all_dead.sum().item()
@@ -190,7 +244,7 @@ class PolychromaticDataModule(pl.LightningDataModule):
             standardized_counts,
             masks,
             reference,
-            column_names=POLY_DS_COLS,
+            column_names=self.column_names,
         )
 
         is_test = reference.get("is_test")
@@ -222,6 +276,23 @@ class PolychromaticDataModule(pl.LightningDataModule):
         self.train_dataset = Subset(self.full_dataset, train_idx.tolist())
 
     def train_dataloader(self):
+        if self.group_by_asu_id:
+            sampler = GroupedAsuIdBatchSampler(
+                asu_ids=self.full_dataset.reference[self.group_by_key],
+                indices=torch.tensor(
+                    self.train_dataset.indices, dtype=torch.long
+                ),
+                batch_size=self.batch_size,
+                shuffle=True,
+                drop_last=False,
+                max_obs_per_hkl=self.max_obs_per_hkl,
+            )
+            return DataLoader(
+                self.full_dataset,
+                batch_sampler=sampler,
+                num_workers=self.num_workers,
+                pin_memory=True,
+            )
         return DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
@@ -231,6 +302,24 @@ class PolychromaticDataModule(pl.LightningDataModule):
         )
 
     def val_dataloader(self):
+        if self.group_by_asu_id:
+            # Single-index GroupedAsuIdSampler (not BatchSampler) for val, so
+            # Lightning sees dataloader.sampler / .batch_size; see RotationData-
+            # Module.val_dataloader for why batch_sampler= breaks the val cadence.
+            sampler = GroupedAsuIdSampler(
+                asu_ids=self.full_dataset.reference[self.group_by_key],
+                indices=torch.tensor(
+                    self.val_dataset.indices, dtype=torch.long
+                ),
+                shuffle=False,
+            )
+            return DataLoader(
+                self.full_dataset,
+                sampler=sampler,
+                batch_size=self.batch_size,
+                num_workers=self.num_workers,
+                pin_memory=True,
+            )
         return DataLoader(
             self.val_dataset,
             batch_size=self.batch_size,
@@ -250,7 +339,26 @@ class PolychromaticDataModule(pl.LightningDataModule):
             )
         return None
 
-    def predict_dataloader(self):
+    def predict_dataloader(self, grouped: bool = False):
+        # `grouped=True` packs complete HKL groups per batch (needs
+        # group_by_asu_id), which the merging integrators' finalize_merge
+        # requires. max_obs_per_hkl is forced off so the merge sees every
+        # observation.
+        if grouped and self.group_by_asu_id:
+            sampler = GroupedAsuIdBatchSampler(
+                asu_ids=self.full_dataset.reference[self.group_by_key],
+                indices=torch.arange(len(self.full_dataset), dtype=torch.long),
+                batch_size=self.batch_size,
+                shuffle=False,
+                drop_last=False,
+                max_obs_per_hkl=None,
+            )
+            return DataLoader(
+                self.full_dataset,
+                batch_sampler=sampler,
+                num_workers=self.num_workers,
+                pin_memory=True,
+            )
         return DataLoader(
             self.full_dataset,
             batch_size=self.batch_size,

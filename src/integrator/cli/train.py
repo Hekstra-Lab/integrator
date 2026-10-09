@@ -339,12 +339,14 @@ def main():
         construct_trainer,
         inject_binning_labels,
         load_config,
+        prepare_bg_prior,
         prepare_global_priors,
         prepare_per_bin_priors,
         resolve_config,
         save_run_artifacts,
     )
     from integrator.utils.factory_utils import _collect_resolved_paths
+    from integrator.configs import CheckpointConfig
 
     torch.set_float32_matmul_precision("high")
 
@@ -358,8 +360,10 @@ def main():
 
     logger.info("Starting Training")
 
-    # Auto-generate prior distribution files if needed by the loss
-    # (each prepare_* call logs its file actions itself)
+    # Auto-generate prior files if needed by the loss
+    prior_events: list[dict] = []
+    prepare_profile_basis(cfg, events_out=prior_events)
+    prepare_bg_prior(cfg, events_out=prior_events)
     prepare_per_bin_priors(cfg)
     prepare_global_priors(cfg)
 
@@ -367,10 +371,13 @@ def main():
     data_loader.setup()
     inject_binning_labels(data_loader, cfg)
 
+    # Tags for identification
+    qi_cfg = cfg["surrogates"].get("qi")
+    qi_tag = qi_cfg["name"] if qi_cfg else "hkl_table"
     tags = [
         cfg["integrator"]["name"],
         cfg["integrator"]["args"]["data_dim"],
-        cfg.get("surrogates", {}).get("qi", {}).get("name", "derived"),
+        qi_tag,
     ]
 
     pl_logger = _make_wandb_logger(args, tags)
@@ -505,9 +512,10 @@ def main():
         filename="{epoch:04d}",
         every_n_epochs=every_n_epochs,
         save_top_k=save_top_k,
-        save_last="link",
+        save_last=ckpt_cfg.save_last,
         monitor=ckpt_monitor if save_top_k > 0 else None,
         mode=ckpt_mode if save_top_k > 0 else "min",
+        save_on_train_epoch_end=(ckpt_monitor is None) or None,
     )
     logger.info(
         "Checkpoints: dir=%s save_top_k=%d every_n_epochs=%d monitor=%s",
@@ -515,6 +523,7 @@ def main():
         save_top_k,
         every_n_epochs,
         ckpt_monitor,
+        every_n_epochs,
     )
 
     callbacks = [

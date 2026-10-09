@@ -42,9 +42,14 @@ laue = ['laue-dials']
 "integrator.predict" = "integrator.cli.predict:main"
 "integrator.make_shoeboxes" = "integrator.cli.make_shoeboxes:main"
 "integrator.resolve" = "integrator.cli.resolve:main"
+# the merging branch's prediction CLI, which writes merged structure factors
+# rather than per-observation intensities; both are kept because they do
+# different jobs. `integrator.mksbox` was declared there too but no
+# `cli/mksbox.py` exists on that branch, so it is not carried over.
+"integrator.pred" = "integrator.cli.pred:main"
 
 [project.urls]
-Homepage = "https://github.com/Hekstra-Lab/integrator/tree/integrator_mvn"
+Homepage = "https://github.com/Hekstra-Lab/integrator/"
 Repository = "https://github.com/Hekstra-Lab/integrator"
 
 # Hatchling build config
