@@ -99,6 +99,13 @@ class ProfileSurrogate(nn.Module):
         prior_scale: float = 3.0,
         smoothness_weight: float = 0.0,
         orthogonality_weight: float = 0.0,
+        # Warm-start the decoder from a precomputed basis. Without it the
+        # decoder starts near uniform, and on Laue shoeboxes (~96.6%
+        # background) a uniform profile makes intensity x profile a flat field
+        # the model cannot tell from the background -- the documented
+        # identifiability collapse. `prepare_profile_basis` writes the file.
+        warmstart_basis_path: str | None = None,
+        freeze_bias: bool = False,
     ) -> None:
         super().__init__()
 
@@ -112,9 +119,37 @@ class ProfileSurrogate(nn.Module):
         self.loc_head = nn.Linear(input_dim, self.d)
         self.scale_head = nn.Linear(input_dim, self.d)
         self.decoder = nn.Linear(self.d, output_dim)
+        if warmstart_basis_path is not None:
+            self._apply_warmstart(warmstart_basis_path, output_dim)
+        if freeze_bias:
+            self.decoder.bias.requires_grad_(False)
 
         nn.init.zeros_(self.scale_head.weight)
         nn.init.constant_(self.scale_head.bias, _softplus_inverse(init_std))
+
+
+    def _apply_warmstart(self, path: str, output_dim: int) -> None:
+        """Copy a precomputed (W, b) basis into the decoder.
+
+        Shapes are checked rather than broadcast: a basis built for a different
+        shoebox would otherwise warm-start the model into a quietly wrong
+        profile.
+        """
+        basis = torch.load(path, weights_only=False)
+        W, b = basis["W"].float(), basis["b"].float()
+        if W.shape[0] != output_dim or b.shape[0] != output_dim:
+            raise ValueError(
+                f"warmstart basis from {path!r} has K={W.shape[0]} (bias "
+                f"{b.shape[0]}) but output_dim={output_dim}"
+            )
+        if W.shape[1] != self.d:
+            raise ValueError(
+                f"warmstart basis has d={W.shape[1]} but latent_dim={self.d}; "
+                f"drop latent_dim from the config to infer it from the basis"
+            )
+        with torch.no_grad():
+            self.decoder.weight.data.copy_(W)
+            self.decoder.bias.data.copy_(b)
 
     def forward(
         self,

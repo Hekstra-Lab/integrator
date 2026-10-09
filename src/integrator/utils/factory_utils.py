@@ -243,8 +243,12 @@ def _get_data_dir(cfg: dict) -> str:
 
 
 def _get_n_bins(cfg: dict) -> int | None:
-    # n_bins is optional
-    loss_args = _require(cfg, "loss", "args")
+    """`n_bins` from the loss args, or None.
+
+    Both the key and the whole `loss:` section are optional here: resolve_config
+    is also run on partial configs that have no loss yet.
+    """
+    loss_args = (cfg.get("loss") or {}).get("args") or {}
     return loss_args.get("n_bins")
 
 
@@ -271,9 +275,30 @@ def _get_loss_args(
     )
 
 
-def _get_surrogate_modules(cfg: dict) -> dict[str, nn.Module]:
-    """Construct all surrogate distribution modules from config."""
+def _get_surrogate_modules(
+    cfg: dict, skip_warmstart: bool = False
+) -> dict[str, nn.Module]:
+    """Construct all surrogate distribution modules from config.
+
+    `skip_warmstart` drops `warmstart_basis_path` from the profile surrogate's
+    args, for callers that will load a checkpoint over the top anyway and so
+    should not pay to read the basis file.
+    """
     surrogates = {}
+    data_dir = _get_data_dir(cfg)
+    n_bins = _get_n_bins(cfg)
+
+    # GammaB mean_init stats, written by prepare_per_bin_priors from raw counts.
+    # Absent is normal; the heads then use their own defaults.
+    init_stats_path = Path(data_dir) / "qi_qbg_mean_init.pt"
+    init_stats: dict | None = None
+    if init_stats_path.is_file():
+        try:
+            init_stats = torch.load(
+                init_stats_path, weights_only=False, map_location="cpu"
+            )
+        except Exception:
+            init_stats = None
 
     for key, surrogate_cfg in cfg["surrogates"].items():
         surrogate_cls = REGISTRY["surrogates"][surrogate_cfg["name"]]
@@ -531,6 +556,15 @@ def _validate_registry_names(cfg: dict) -> None:
             )
         _check_name("surrogates", sur["name"])
         accepted = _constructor_arg_names(REGISTRY["surrogates"][sur["name"]])
+        # _get_surrogate_modules strips these before constructing the surrogate:
+        # they configure prepare_profile_basis, which writes the warm-start file.
+        # Validating before the strip would reject legitimate config.
+        accepted = accepted | {
+            "hermite_max_order",
+            "hermite_basis_sigma",
+            "hermite_sigma_z",
+            "hermite_max_order_z",
+        }
         unknown = set(sur.get("args") or {}) - accepted
         if unknown:
             arg_errors.append(
@@ -567,13 +601,16 @@ def construct_integrator(
     surrogates = _get_surrogate_modules(cfg)
     loss = _get_loss_module(cfg)
 
-    integrator = integrator_cls(
-        cfg=integrator_args,
-        encoders=encoders,
-        surrogates=surrogates,
-        loss=loss,
-        optimizer=optimizer_cfg,
+    # the scaling/merging integrators build their own optimizer and do not take
+    # one, while the rest accept it; pass it only where it is a parameter
+    import inspect as _inspect
+
+    kw = dict(
+        cfg=integrator_args, encoders=encoders, surrogates=surrogates, loss=loss
     )
+    if "optimizer" in _inspect.signature(integrator_cls.__init__).parameters:
+        kw["optimizer"] = optimizer_cfg
+    integrator = integrator_cls(**kw)
 
     # Warm-start from a prior checkpoint (skipped under skip_warmstart, where the
     # full checkpoint is restored right after construction anyway).

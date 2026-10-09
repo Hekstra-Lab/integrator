@@ -147,6 +147,265 @@ def prepare_global_priors(
     )
 
 
+# the loader already lives with the data modules; no need for a second copy
+from integrator.data_loaders.data_module import _load_shoebox_array
+
+# --- raw-count helpers ----------------------------------------------------
+# Ported with the scaling merge alongside the Hermite builders: the prior
+# generators read counts/masks directly rather than trusting DIALS.
+
+def _bg_subtract_signal(
+    counts: Tensor,
+    masks: Tensor,
+    D: int,
+    H: int,
+    W: int,
+) -> Tensor:
+    """Background-subtract raw shoebox counts.
+
+    Reuses the same logic as _fit_dirichlet_per_group: quietest-frame
+    for 3D, border-pixel average for 2D.
+
+    Returns:
+        Non-negative bg-subtracted counts, shape (N, D*H*W).
+    """
+    n_pixels_per_frame = H * W
+    N = counts.shape[0]
+
+    counts_clean = counts.float().clamp(min=0)
+    masks_f = masks.float()
+    counts_masked = counts_clean * masks_f
+
+    counts_3d = counts_masked.reshape(N, D, n_pixels_per_frame)
+    masks_3d = masks_f.reshape(N, D, n_pixels_per_frame)
+
+    if D > 1:
+        frame_counts = counts_3d.sum(dim=-1)
+        frame_n_pixels = masks_3d.sum(dim=-1)
+        min_frame_idx = frame_counts.argmin(dim=-1)
+        bg_frame_counts = frame_counts.gather(
+            1, min_frame_idx.unsqueeze(-1)
+        ).squeeze(-1)
+        bg_frame_n_pixels = frame_n_pixels.gather(
+            1, min_frame_idx.unsqueeze(-1)
+        ).squeeze(-1)
+        bg_per_pixel = bg_frame_counts / bg_frame_n_pixels.clamp(min=1)
+    else:
+        frame = counts_3d[:, 0, :]
+        frame_2d = frame.reshape(N, H, W)
+        border_mask = torch.ones(H, W, dtype=torch.bool)
+        border_mask[2:-2, 2:-2] = False
+        border_vals = frame_2d[:, border_mask]
+        bg_per_pixel = border_vals.mean(dim=-1)
+
+    signal = counts_masked - bg_per_pixel.unsqueeze(-1) * masks_f
+    return signal.clamp(min=0)
+
+
+def _load_raw_data(
+    data_dir: Path,
+    cfg: dict,
+) -> tuple[Tensor, Tensor, dict]:
+    """Load counts, masks, metadata from data_dir using config paths.
+
+    Supports both .pt (legacy) and .npy (newer mksbox memmap) for the
+    counts/masks arrays. Metadata stays .pt since it's a small dict."""
+    sfn = cfg["data_loader"]["args"].get("shoebox_file_names", {})
+
+    counts_name = sfn.get("counts", "counts.pt")
+    masks_name = sfn.get("masks", "masks.pt")
+
+    counts = _load_shoebox_array(data_dir / counts_name)
+    masks = _load_shoebox_array(data_dir / masks_name)
+
+    ref_path = _resolve_reference_path(data_dir, cfg)
+    metadata = torch.load(ref_path, weights_only=False)
+
+    return counts, masks, metadata
+
+
+def _try_load_counts_masks(
+    data_dir: Path,
+    cfg: dict,
+) -> tuple[Tensor | None, Tensor | None]:
+    sfn = cfg["data_loader"]["args"].get("shoebox_file_names", {})
+    counts_name = sfn.get("counts", "counts.pt")
+    masks_name = sfn.get("masks", "masks.pt")
+    counts_path = data_dir / counts_name
+    masks_path = data_dir / masks_name
+
+    # Match _load_shoebox_array's resolution: a sibling .npy is acceptable.
+    def _exists(p: Path) -> bool:
+        if p.exists():
+            return True
+        if p.suffix != ".npy" and p.with_suffix(".npy").exists():
+            return True
+        return False
+
+    if not _exists(counts_path) or not _exists(masks_path):
+        logger.info(
+            "Counts/masks not found at %s / %s — skipping count-dependent "
+            "prior computations. ",
+            counts_path,
+            masks_path,
+        )
+        return None, None
+
+    return (
+        _load_shoebox_array(counts_path),
+        _load_shoebox_array(masks_path),
+    )
+
+
+# --- Hermite basis construction -------------------------------------------
+# Ported with the scaling merge: prepare_profile_basis calls these to write
+# the peaked warm-start basis, without which the profile decoder starts near
+# uniform and the intensity absorbs the background on Laue shoeboxes.
+
+def _hermite_polynomial(n_order: int, x: Tensor) -> Tensor:
+    """Probabilist's Hermite polynomial H_n(x) by three-term recurrence."""
+    if n_order == 0:
+        return torch.ones_like(x)
+    if n_order == 1:
+        return x
+    h_prev2 = torch.ones_like(x)
+    h_prev1 = x
+    for k in range(2, n_order + 1):
+        h_curr = x * h_prev1 - (k - 1) * h_prev2
+        h_prev2 = h_prev1
+        h_prev1 = h_curr
+    return h_curr
+
+
+def _build_hermite_basis_2d(
+    H: int = 21,
+    W: int = 21,
+    max_order: int = 4,
+    sigma_ref: float = 3.0,
+) -> tuple[Tensor, Tensor, list[tuple[int, int]]]:
+    """2D Hermite function basis with half-Gaussian envelope.
+
+    Each basis function: phi_{nx,ny}(x,y) = H_nx(x/s) * H_ny(y/s) * exp(-r^2/(4s^2))
+    Orthogonal in unweighted L^2(R^2).  The (0,0) mode is excluded (absorbed by b).
+
+    Returns:
+        Tuple of (W, b, orders) where W is a (H*W, d) basis matrix, b is a
+        (H*W,) bias (log of reference Gaussian profile), and orders is a
+        list of (nx, ny) tuples.
+    """
+    cy, cx = (H - 1) / 2.0, (W - 1) / 2.0
+    yy, xx = torch.meshgrid(
+        torch.arange(H, dtype=torch.float64),
+        torch.arange(W, dtype=torch.float64),
+        indexing="ij",
+    )
+    x_norm = (xx - cx) / sigma_ref
+    y_norm = (yy - cy) / sigma_ref
+
+    # Half-Gaussian envelope
+    half_gaussian = torch.exp(-0.25 * (x_norm**2 + y_norm**2))
+
+    # Reference profile (for bias b)
+    full_gaussian = torch.exp(-0.5 * (x_norm**2 + y_norm**2))
+    ref = full_gaussian / full_gaussian.sum()
+    b = torch.log(ref.reshape(-1).clamp(min=1e-10)).float()
+
+    basis_list = []
+    orders = []
+    for nx in range(max_order + 1):
+        for ny in range(max_order + 1 - nx):
+            if nx == 0 and ny == 0:
+                continue
+            phi = (
+                _hermite_polynomial(nx, x_norm)
+                * _hermite_polynomial(ny, y_norm)
+                * half_gaussian
+            )
+            phi = phi / phi.norm()
+            basis_list.append(phi.reshape(-1))
+            orders.append((nx, ny))
+
+    W_basis = torch.stack(basis_list, dim=1).float()
+    return W_basis, b, orders
+
+
+def _build_hermite_basis_3d(
+    D: int,
+    H: int = 21,
+    W: int = 21,
+    max_order: int = 4,
+    sigma_ref: float = 3.0,
+    sigma_z: float = 1.0,
+    max_order_z: int | None = None,
+) -> tuple[Tensor, Tensor, list[tuple[int, int, int]]]:
+    """3D Hermite function basis (frame x spatial) with half-Gaussian envelope.
+
+    Spatial directions (x, y) use `max_order`. The frame direction (z) uses
+    `max_order_z` if provided; otherwise defaults to `min(1, D-1)` (linear
+    tilt only) which is sufficient when D=3 — the (0,0,0) mode is absorbed
+    by `b`, `nz=0` gives the symmetric rocking peak via the half-Gaussian
+    envelope, and `nz=1` captures asymmetry. For D>3, pass a larger
+    `max_order_z` to resolve higher-order z structure.
+
+    Args:
+        D: Number of frames (z dimension).
+        H: Shoebox height.
+        W: Shoebox width.
+        max_order: Max polynomial order in x, y.
+        sigma_ref: Reference Gaussian width in pixels (x, y).
+        sigma_z: Reference Gaussian width along z/frame axis.
+        max_order_z: Max polynomial order in z. Defaults to `min(1, D-1)`.
+
+    Returns:
+        Tuple of (W, b, orders) where W is a (D*H*W, d) basis matrix, b is a
+        (D*H*W,) bias (log of reference 3D Gaussian profile), and orders is a
+        list of (nx, ny, nz) tuples.
+    """
+    cy, cx = (H - 1) / 2.0, (W - 1) / 2.0
+    cz = (D - 1) / 2.0
+
+    zz, yy, xx = torch.meshgrid(
+        torch.arange(D, dtype=torch.float64),
+        torch.arange(H, dtype=torch.float64),
+        torch.arange(W, dtype=torch.float64),
+        indexing="ij",
+    )
+    x_norm = (xx - cx) / sigma_ref
+    y_norm = (yy - cy) / sigma_ref
+    z_norm = (zz - cz) / sigma_z
+
+    # Half-Gaussian envelope in all 3 dims
+    half_gaussian = torch.exp(-0.25 * (x_norm**2 + y_norm**2 + z_norm**2))
+
+    # Reference 3D Gaussian profile
+    full_gaussian = torch.exp(-0.5 * (x_norm**2 + y_norm**2 + z_norm**2))
+    ref = full_gaussian / full_gaussian.sum()
+    b = torch.log(ref.reshape(-1).clamp(min=1e-10)).float()
+
+    if max_order_z is None:
+        max_order_z = min(1, D - 1)
+
+    basis_list = []
+    orders = []
+    for nz in range(max_order_z + 1):
+        for nx in range(max_order + 1):
+            for ny in range(max_order + 1 - nx):
+                if nx == 0 and ny == 0 and nz == 0:
+                    continue
+                phi = (
+                    _hermite_polynomial(nx, x_norm)
+                    * _hermite_polynomial(ny, y_norm)
+                    * _hermite_polynomial(nz, z_norm)
+                    * half_gaussian
+                )
+                phi = phi / phi.norm()
+                basis_list.append(phi.reshape(-1))
+                orders.append((nx, ny, nz))
+
+    W_basis = torch.stack(basis_list, dim=1).float()
+    return W_basis, b, orders
+
+
 def prepare_profile_basis(
     cfg: dict,
     *,

@@ -1,0 +1,164 @@
+# Pixel-to-merging SVAE on HEWL 1118, polychromatic, 360 frames.
+#
+# The monochromatic version of this model works; the Laue version has previously
+# landed in the noise regime. That is the documented background/profile
+# identifiability collapse: Laue shoeboxes are ~96.6% background, and with a
+# near-uniform profile and a background prior set for ~1 count/pixel the
+# intensity simply eats the flat field. Three things address it here and all
+# three matter:
+#
+#   1. a PEAKED profile warm-start, so the decoder does not start uniform
+#      (prepare_profile_basis writes the basis if it is missing);
+#   2. a background prior FITTED to this data rather than the 1.0/pixel default
+#      (prepare_bg_prior writes bg_prior.pt, which the factory auto-injects);
+#   3. a STRUCTURED spectrum: G(lambda) as a low-order Chebyshev, not a
+#      black-box MLP. A learned MLP cannot recover the incident spectrum
+#      against the merge gauge, which is why earlier scale models stayed flat.
+#
+# Harmonics need no special handling on this dataset: lambda spans 0.97-1.25 A,
+# a ratio of 1.289, and two orders of the same ray both in the bandpass would
+# need >= 2.0. Measured directly, no observation shares a ray with another.
+#
+# Validation holds out whole HKLs (group_by_asu_id), not random observations:
+# with 92.8 observations per reflection, an observation-level split leaks the
+# answer across the split.
+
+integrator:
+  name: hierarchical_svae
+  args:
+    data_dim: 2d
+    d: 1
+    h: 25
+    w: 25
+    encoder_out: 64
+    mc_samples: 100
+    wilson_alpha: 1.0
+    link_nu: 1.0
+    amortize_merge: true
+    sample_I_h: true
+    merge_kl_weight: 1.0
+    obs_level_potential: true
+    learn_nu: true
+    nu_lr: 0.1
+    nu_warmup_epochs: 5
+    nu_init: 50.0
+    nu_per_bin: false
+    nu_n_bins: 20
+    nu_restraint_weight: 0.05
+    nu_restraint_log_sigma: 0.5
+    nu_max: 500.0
+    # 1,283,813 observations over 13,829 unique ASU reflections (92.8 per HKL)
+    n_hkl: 13829
+    scale_mlp: true
+    scale_mlp_hidden: 64
+    scale_mlp_layers: 4
+    scale_frame_min: 0.0
+    scale_frame_max: 360.0
+    scale_beam_center: [1990.31, 1972.80]
+    scale_r_max: 3022
+    scale_mlp_absorption: true
+    scale_sh_lmax: 4
+    scale_mlp_absorption_even_only: true
+    log_intensity_scatter: true
+    log_background_scatter: true
+    predict_keys: [refl_ids, is_test, qi_mean, qi_var, scale, I_h_mean,
+                   qbg_mean, qbg_var, intensity.sum.value, intensity.sum.variance,
+                   d, wavelength, H, K, L, qp_mean, asu_id]
+
+optimizer:
+  lr: 0.001
+  weight_decay: 0.0
+  decoder_weight_decay: 0.0
+
+encoders:
+- name: profile_encoder
+  args:
+    data_dim: 2d
+    input_shape: [25, 25]
+    encoder_out: 64
+    conv1_out_channels: 64
+    conv2_out_channels: 128
+    dropout: 0.2
+- &intensity_encoder
+  name: intensity_encoder
+  args:
+    data_dim: 2d
+    encoder_out: 64
+    conv1_out_channels: 64
+    conv2_out_channels: 128
+    conv3_out_channels: 256
+- *intensity_encoder   # r_i
+- *intensity_encoder   # k_bg
+- *intensity_encoder   # r_bg
+
+surrogates:
+  qp:
+    name: learned_basis_profile
+    args:
+      # fix 1: a peaked basis. Without it the decoder sits near uniform and
+      # scale*I*profile becomes a flat field indistinguishable from background.
+      warmstart_basis_path: hermite_profile_basis_poly.pt
+      # consumed by prepare_profile_basis when it writes the file above
+      hermite_max_order: 4
+      hermite_basis_sigma: 3.0
+      input_dim: 64
+      output_dim: 625
+      init_std: 0.5
+      # no basis penalties and no decoder weight decay: the documented best
+      # configs (9b7c expmean_lp, 821 config_full) both run without them
+      smoothness_weight: 0.0
+      orthogonality_weight: 0.0
+  qbg:
+    name: gammaB
+    args:
+      in_features: 64
+      eps: 1.0e-06
+      k_min: 0.01
+
+loss:
+  name: polychromatic_wilson
+  args:
+    # fix 3: G(lambda) as a low-order Chebyshev over the measured bandpass
+    degree: 40
+    lambda_min: 0.97
+    lambda_max: 1.25
+    init_G: 5000.0
+    beam_center: [1990.31, 1972.80]
+    polarization: false
+    lorentz: false
+    n_bins: 30
+    intensity_kl_weight: 0.0
+    background_kl_weight: 1.0
+    profile_kl_weight: 1.0
+
+data_loader:
+  name: polychromatic_data
+  args:
+    data_dir: &data_dir /n/netscratch/hekstra_lab/Lab/laldama/laue_runs/1118_hewl360/shoeboxes
+    batch_size: 2048
+    validation_split: 0.2
+    num_workers: 8
+    include_test: true
+    subset_size: null
+    transform: anscombe
+    # hold out whole reflections, not observations
+    group_by_asu_id: true
+    group_by_key: asu_id
+
+trainer:
+  max_epochs: 50
+  accelerator: gpu
+  devices: 1
+  logger: true
+  precision: '32'
+  check_val_every_n_epoch: 5
+  log_every_n_steps: 1
+  deterministic: false
+  enable_checkpointing: true
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+
+checkpoint:
+  save_top_k: -1
+  monitor: val elbo
+  mode: min

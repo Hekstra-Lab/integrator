@@ -48,11 +48,22 @@ def main():
     sg = gemmi.SpaceGroup(args.space_group)
 
     ref_path = args.data_dir / args.ref
-    reference = torch.load(ref_path, weights_only=False)
+    # this project writes metadata as .npy (numpy pickle) while the merging
+    # branch wrote .pt; accept either so the script works on both layouts
+    if str(ref_path).endswith(".npy"):
+        import numpy as _np
 
-    H = reference["H"].long().numpy()
-    K = reference["K"].long().numpy()
-    L = reference["L"].long().numpy()
+        reference = _np.load(ref_path, allow_pickle=True).item()
+    else:
+        reference = torch.load(ref_path, weights_only=False)
+
+    # .npy metadata holds numpy arrays, .pt holds tensors
+    def _as_int(a):
+        return a.long().numpy() if hasattr(a, "long") else np.asarray(a).astype(np.int64)
+
+    H = _as_int(reference["H"])
+    K = _as_int(reference["K"])
+    L = _as_int(reference["L"])
     n_obs = len(H)
 
     hkl_obs = np.stack([H, K, L], axis=1).astype(np.int32)
@@ -81,7 +92,12 @@ def main():
     n_hkl = len(canon_to_id)
 
     reference["asu_id"] = torch.from_numpy(asu_ids)
-    torch.save(reference, ref_path)
+    if str(ref_path).endswith(".npy"):
+        import numpy as _np
+
+        _np.save(ref_path, reference, allow_pickle=True)
+    else:
+        torch.save(reference, ref_path)
 
     meta_path = args.data_dir / "hkl_meta.pt"
     torch.save({"n_hkl": n_hkl}, meta_path)

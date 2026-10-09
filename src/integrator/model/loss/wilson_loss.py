@@ -180,6 +180,13 @@ class WilsonLoss(nn.Module):
             pi_cfg.weight if pi_cfg is not None else intensity_kl_weight
         )
 
+        # The merging branch spells these pi_/pbg_/pprf_weight: poly_wilson_loss
+        # multiplies by self.pi_weight, and HierarchicalSVAEIntegrator checks it
+        # to refuse double-counting the intensity KL. One value, two names.
+        self.pi_weight = self.intensity_kl_weight
+        self.pbg_weight = self.background_kl_weight
+        self.pprf_weight = self.profile_kl_weight
+
         self.kl_per_multiplicity = bool(kl_per_multiplicity)
         self._warned_multiplicity = False
 
