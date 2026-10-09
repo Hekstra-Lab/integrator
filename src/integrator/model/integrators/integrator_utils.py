@@ -117,12 +117,22 @@ def rao_blackwellized_intensity(
     # a summation start, then reweight; the weights need an intensity to exist
     i_hat = resid.sum(-1).clamp_min(0.0)
     for _ in range(n_iter):
-        rate = (i_hat.unsqueeze(-1) * pi + bg).clamp_min(eps)
+        # The variance model is floored at the background (Kabsch 2010): a
+        # NEGATIVE i_hat is a legitimate estimate but an impossible rate, and
+        # feeding it through to `rate` lets the peak pixel -- where pi is
+        # largest -- clamp to `eps` and carry weight 1/eps. Flooring the
+        # intensity instead of the rate keeps the weights finite, and for a
+        # genuinely null reflection w = 1/bg is the Fisher-optimal choice.
+        rate = (i_hat.clamp_min(0.0).unsqueeze(-1) * pi + bg).clamp_min(eps)
         w = m / rate
         denom = (w * pi * pi).sum(-1).clamp_min(eps)
         i_hat = (w * pi * resid).sum(-1) / denom
 
-    rate = (i_hat.unsqueeze(-1) * pi + bg).clamp_min(eps)
+    # Same floor for the information: evaluated at a negative i_hat the Fisher
+    # terms OVERSTATE the information for exactly the negative tail, and with
+    # the rate clamped they overstate it by ~1/eps, which would hand careless a
+    # weak observation with sigma ~0.01 against an honest ~3.
+    rate = (i_hat.clamp_min(0.0).unsqueeze(-1) * pi + bg).clamp_min(eps)
     inv = m / rate
     f_ii = (inv * pi * pi).sum(-1)
     f_ib = (inv * pi).sum(-1)
