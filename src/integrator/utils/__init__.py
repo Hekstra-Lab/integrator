@@ -12,6 +12,7 @@ from .prepare_priors import (
     prepare_bg_prior,
     prepare_global_priors,
     prepare_per_bin_priors,
+    prepare_profile_basis,
 )
 
 __all__ = [

@@ -342,6 +342,7 @@ def main():
         prepare_bg_prior,
         prepare_global_priors,
         prepare_per_bin_priors,
+        prepare_profile_basis,
         resolve_config,
         save_run_artifacts,
     )
