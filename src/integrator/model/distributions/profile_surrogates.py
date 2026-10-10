@@ -195,7 +195,12 @@ class ProfileSurrogate(nn.Module):
         **kwargs,
     ) -> ProfileSurrogateOutput:
         loc = self.loc_head(x)  # (B, d)
-        scale = F.softplus(self.scale_head(x))  # (B, d)
+        # +1e-6 because a plain softplus UNDERFLOWS to exactly 0.0 in
+        # float32 once the pre-activation goes far negative, and
+        # Normal rejects scale == 0. Adding the floor rather than
+        # clamping keeps the gradient alive below it. Same fix as
+        # ShapeletProfile below and folded_normal.py.
+        scale = F.softplus(self.scale_head(x)) + 1e-6  # (B, d)
 
         zp, mean_profile = _sample_and_decode(
             loc, scale, self.decoder.weight, self.decoder.bias, mc_samples
@@ -1020,7 +1025,12 @@ class GeometricProfileSurrogate(ProfileSurrogate):
         **kwargs,
     ) -> ProfileSurrogateOutput:
         loc = self.loc_head(x)
-        scale = F.softplus(self.scale_head(x))
+        # +1e-6 because a plain softplus UNDERFLOWS to exactly 0.0 in
+        # float32 once the pre-activation goes far negative, and
+        # Normal rejects scale == 0. Adding the floor rather than
+        # clamping keeps the gradient alive below it. Same fix as
+        # ShapeletProfile below and folded_normal.py.
+        scale = F.softplus(self.scale_head(x)) + 1e-6
 
         needs_geometry = self.local_shift or self.steer
         if needs_geometry and metadata is None:
