@@ -105,9 +105,24 @@ class PolychromaticWilsonLoss(WilsonLoss):
                 "PolychromaticWilsonLoss requires metadata['wavelength']."
             )
         wavelength = metadata["wavelength"].to(device)
-        G = torch.exp(self.spectrum.get_log_G(wavelength))
         B = self.get_B()
-        tau = (1.0 / G) * torch.exp(2.0 * B * s_sq)
+        # Combine the exponents before exponentiating, and bound the result.
+        #
+        # `get_log_G` is an unbounded `phi @ c`, so forming `G = exp(log G)`
+        # separately overflows to inf in float32 once it passes about 88. tau
+        # then goes to 0 -- a Gamma with rate 0 -- and the gradient
+        # `exp(log G) * phi` goes to inf and then NaN, which is what
+        # detect_anomaly caught as MvBackward0 returning NaN in its 1th output
+        # (the gradient with respect to c). It is a late-training failure
+        # because c has to drift there first: the poly SVAE reached epochs 46
+        # and 47 before it fired.
+        #
+        # Working in log space is also the documented fix for the earlier
+        # Wilson G/B collapse. The bound is wide enough to be inert in any
+        # sane regime -- exp(+-30) spans 1e-13 to 1e13 -- so it is a guard
+        # rail, not a tuning knob.
+        log_tau = (2.0 * B * s_sq) - self.spectrum.get_log_G(wavelength)
+        tau = torch.exp(log_tau.clamp(-30.0, 30.0))
 
         if self._apply_polarization or self._apply_lorentz:
             d = metadata["d"].to(device)
