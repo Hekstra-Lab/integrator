@@ -128,40 +128,33 @@ posterior export, where the intensity and background heads absorb the mismatch.
 One fact the figure makes concrete: **45.4% of predicted reflections have `intensity.sum.value` exactly zero**, i.e. DIALS integrated no intensity for nearly half the predictions, while the model assigns a profile and an intensity to all of them.
 The quantiles above are therefore taken over the positive subset.
 
-## 3b. CONFOUND: the ablation arms ran without the required warm-start
+## 3b. CONFOUND: the ablation carried a smoothness penalty its baseline should not have had
 
-**Every one of the 20 arms has `warmstart_basis_path` unset, and 16 of 20 carry `smoothness_weight: 0.001`.**
-Both contradict this project's own documented requirements.
+**16 of the 20 arms carry `smoothness_weight: 0.001`.**
+The class default is `0.0`, and the value comes from the baseline the ablation was built on, `configs/poly/hewl1118_poly_ref.yaml:42`.
 
-From [[poly_merging_collapse]], on the root cause of the poly collapse:
+It is anomalous against every established poly config in the repo:
 
-> `learned_basis_profile` had NO `warmstart_basis_path` -> decoder default is ~uniform and the profile prior N(0, sigma^2) holds it there.
-> A uniform profile [makes] intensity x profile a flat field indistinguishable from the background.
+| config | smoothness_weight |
+|---|---|
+| `hewl_1118.yaml`, `hewl_1118_1440.yaml` | **0.0** |
+| `pdz2_1116*.yaml` (all six) | **0.0** |
+| `dhfr_1117.yaml`, `hewl1118_poly.yaml` | **0.0** |
+| **`hewl1118_poly_ref.yaml`** (the ablation baseline) | **0.001** |
 
-And from `best_configs.md`: profile basis penalties should be `0.0` -- "`smoothness_weight` and `orthogonality_weight` both off in the winning arms", with the warning that "carrying a penalty or a weight decay across from an older template is the easiest way to lose a result".
+`best_configs.md` is explicit that the penalties are off in every winning arm, and warns that "carrying a penalty or a weight decay across from an older template is the easiest way to lose a result, because neither changes anything visible until the anomalous peaks are measured".
+That is what happened: the ablation inherited it from `poly_ref` and all 16 learned- and geometric-basis arms ran with it.
 
-So the round, signal-independent blob the learned basis produces in the figure above **is the documented collapse, not a property of the family.**
+**The mechanism matches the figure.** The term penalises the spatial roughness of each basis mode, so it pushes the decoder toward smoother -- that is, broader and rounder -- modes.
+A round, signal-independent blob over a radially streaked Laue spot is the expected consequence, not a property of the learned-basis family.
 
-**This confounds the family ranking**, because the warm-start is only needed by families that learn a decoder basis:
+**Correction to an earlier version of this section.** It claimed the missing `warmstart_basis_path` was the confound.
+That was wrong, and overgeneralised from [[poly_merging_collapse]], which concerns the amortized *merging* model rather than these integrators.
+Of the 18 committed poly configs, only one uses a warm-start -- `hewl1118_svae_merge.yaml`, written for the SVAE -- so running without it is the established practice here, not a defect.
 
-| family | needs a warm-start? | Kabsch R-free |
-|---|---|---|
-| physical | **no** -- computed from geometry, no basis | **0.1828** (1st) |
-| geometric (`geom_both`) | yes, did not get one | 0.1859 (2nd) |
-| shapelet | **no** -- analytic Gauss-Hermite | 0.2027 (3rd) |
-| fixed basis | **no** -- frozen analytic basis | 0.2082 (4th) |
-| learned basis | yes, did not get one | 0.2102 (5th) |
-| coord-channels | yes, did not get one | 0.3212 (7th) |
-
-The three families that need no warm-start take 1st, 3rd and 4th; the three that need one and lacked it take 2nd, 5th and 7th.
-The ranking may therefore be measuring *which families were handicapped* rather than which are better.
-`geom_both` at 2nd is the informative exception: its `local_shift` supplies detector geometry, which partially substitutes for a peaked initialisation.
-
-**The reach is wider than the profile arms.** Every other arm (q1 transforms, q3 gamma, q4 KL weight) also uses `learned_basis_profile`, so all of them ran on a near-uniform-initialised profile.
-Within-group comparisons stay valid -- the handicap is uniform across them -- but absolute numbers and any cross-family claim are compromised.
-It also puts the ablation's one large effect in a different light: the KL weight may be partly **compensating** for a uniform-pinned profile, since the N(0, sigma^2) prior is precisely what holds the decoder there.
-
-**What to rerun.** The profile families with `warmstart_basis_path` set and `smoothness_weight: 0.0`, scored through the Kabsch export. Until then, section 4's ranking should be read as provisional.
+**What to rerun.** The profile families with `smoothness_weight: 0.0`, scored through the Kabsch export.
+Until then section 4's family ordering is provisional, and so is anything cross-family: every q1, q3 and q4 arm also uses `learned_basis_profile` with the same penalty.
+Within-group comparisons survive, since the penalty is uniform across the arms being compared.
 
 ## 4. The measurement that separates them
 
