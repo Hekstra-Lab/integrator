@@ -140,3 +140,36 @@ Report it as a calibration defect, not a precision defect.
 The one mechanism that does NOT average away with multiplicity is the positivity bias -- 0% negative intensities against laue's real fraction, and the slope 0.081 in the weak stratum.
 A bias survives averaging where a variance error does not.
 That remains unmeasured against ground truth and is what the simulated data is for.
+
+## Retired: the 0.081 "shrinkage slope" and the negatives asymmetry
+
+Both were load-bearing in a long line of reasoning about an export bias.
+Neither survives a check with a neutral stratifier, and the original script that produced 0.081 is in neither the repo nor the cluster, so it cannot be reconstructed.
+
+**The recomputation.** The two MTZs correspond row-for-row (verified 100.00% on hkl + xcal + ycal over all 1,283,813 observations), so the pairing is exact.
+Regressor: the leave-one-out mean of LAUE's intensities over the other observations of the same HKL -- independent of each observation's own noise, and identical for both arms so any attenuation applies equally.
+Control: the same regression on laue itself, which is a classical unbiased profile fit and therefore sets the attenuation floor.
+
+| | ours | laue |
+|---|---|---|
+| slope on the LOO reference, all data | **1.149** | 0.808 |
+| median I | 30.66 | 21.49 |
+
+Slope ratio 1.422, median-intensity ratio 1.427 -- agreeing to three digits.
+**The whole slope gap is the known overall scale difference** (our I is the full-box total, documented at 1.3-1.5x laue's; see [[hewl1118_weak_spot_profile_plateau]]).
+Scaled, both arms respond to signal with slope about 1.
+There is no 12x shrinkage.
+
+**Why the original number was not estimable.** The errors-in-variables correction `Cov(I,ref) / (Var(ref) - sigma_ref^2)` diverges to ~1e12 in the two weakest strata, because inside a narrow weak stratum there is no real signal variance in the regressor.
+The raw weakest-eighth slope is **-1.872**, a negative number that is noise.
+Any slope computed on a stratum selected by the reference's own noisy values is attenuated even for a perfectly unbiased estimator (Fuller 1987), and that attenuation is ALSO flat in multiplicity -- which was the second piece of evidence being read as proof of bias.
+
+**The negatives asymmetry is false on this data.** `laue.integrate` exports **0.00%** negative intensities here, the same as ours.
+The negative fraction cannot be used as a bias signature against this comparator.
+
+**What the data does show, with the opposite sign.** The direct slope ours-on-laue is 1.330 against a median per-observation ratio of 1.680.
+Slope below median ratio means weak reflections carry a larger ours/laue ratio than strong ones, so our weak intensities are relatively **inflated, not shrunk** -- the direction a floor at zero predicts, and the opposite of the retired claim.
+The magnitude is not measurable from this data.
+
+**Consequence.** The weak-end bias is not estimable without ground truth.
+The nanoBragg simulation is not a nice-to-have for this question; it is the only way to answer it.
