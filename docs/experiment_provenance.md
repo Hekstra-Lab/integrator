@@ -77,3 +77,24 @@ Any new arm on this dataset is a different prior and must not be put in that tab
 The poly SVAE (`hewl1118_svae_merge.yaml`) is the first run on the far side of the boundary.
 
 This was listed as "real but secondary" in [[posterior_exported_as_likelihood]] -- 7-14% of reflections -- and the measured 8.7% with a 14.8% low-resolution shell confirms that range.
+
+## The scaling merge did not change the ablation's math (verified 10 Oct 2026)
+
+A fair worry, since the merge added a lot to the files that do the arithmetic -- against the pre-merge parent `372ec0f`, `wilson_loss.py` is 808+/148-, `profile_surrogates.py` 930+/74-, `gamma.py` 117+/53-, `integrator_utils.py` 210+/2-.
+Diffs that size cannot be settled by reading them.
+
+**Test** (job 51880273): re-predict from an untouched `q4_kl_0p1` checkpoint with the current tree and compare column-by-column against the MTZ that run wrote before the merge.
+
+| column | max abs diff | max rel diff | identical |
+|---|---|---|---|
+| I | 0.000e+00 | 0.000e+00 | **yes** |
+| SIGI | 0.000e+00 | 0.000e+00 | **yes** |
+| BG | 0.000e+00 | 0.000e+00 | **yes** |
+| SIGBG | 0.000e+00 | 0.000e+00 | **yes** |
+
+All 1,283,813 rows, bit-for-bit.
+So those diffs are additions and new classes, not altered computation, and the recorded ablation numbers correspond to the committed code.
+
+**Related:** the unfloored `F.softplus(self.scale_head(x))` that killed 7 combination arms was present on BOTH branches at identical line numbers (`add-mkrefl-cli-commands` and `372ec0f`, lines 103 and 210).
+It was latent on both, not a merge regression.
+The combination arms were the first configs to reach it because they drive the intensity KL weight lower than any single-factor arm (`kl_0.05`), letting the profile-latent scale collapse into the region where softplus underflows to exactly zero in float32.
