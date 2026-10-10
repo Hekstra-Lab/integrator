@@ -316,7 +316,16 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         if self.scale_fn is None:
             return torch.ones(b, device=device)
         frame = metadata["xyzcal.px.2"].to(device).float()
-        lp = metadata["lp"].to(device).float().clamp(min=1e-8)
+        # `lp` is absent from polychromatic datasets: laue.integrate emits no
+        # Lorentz-polarization column, because in Laue geometry LP depends on
+        # the per-reflection wavelength and is carried by the G(lambda) term of
+        # the polychromatic Wilson prior rather than by a per-observation
+        # factor. Dividing by a unit lp there is the correct no-op; applying a
+        # monochromatic lp would be wrong even if one were available.
+        if "lp" in metadata:
+            lp = metadata["lp"].to(device).float().clamp(min=1e-8)
+        else:
+            lp = torch.ones(b, device=device)
         if isinstance(self.scale_fn, MLPScale):
             x_det = metadata["xyzcal.px.0"].to(device).float()
             y_det = metadata["xyzcal.px.1"].to(device).float()
@@ -334,10 +343,19 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
             return self.scale_fn(frame, x_det, y_det, lp, d, a)
         return self.scale_fn(frame) / lp
 
-    def _wilson_tau(self, d: Tensor) -> Tensor:
-        """Wilson prior rate tau from resolution d (lp lives in the scale)."""
+    def _wilson_tau(self, d: Tensor, metadata: dict | None = None) -> Tensor:
+        """Wilson prior rate tau from resolution d (lp lives in the scale).
+
+        `metadata` is forwarded because PolychromaticWilsonLoss needs
+        `wavelength` for its G(lambda) spectrum, not just `d`. Passing only
+        `{"d": d}` -- enough for the monochromatic loss -- made every
+        polychromatic run raise from `_get_tau`.
+        """
         s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))
-        return self.loss._get_tau({"d": d}, s_sq, d.device)
+        md: dict = {"d": d}
+        if metadata is not None and "wavelength" in metadata:
+            md["wavelength"] = metadata["wavelength"]
+        return self.loss._get_tau(md, s_sq, d.device)
 
     def _amortized_merge(
         self,
@@ -498,7 +516,7 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         )
 
         # Per-HKL Wilson rate and GIG order/scale.
-        tau_obs = self._wilson_tau(d_obs)
+        tau_obs = self._wilson_tau(d_obs, metadata)
         tau_sum, inverse, unique = _scatter_sum_compact(tau_obs, asu_ids)
         cnt, _, _ = _scatter_sum_compact(torch.ones_like(tau_obs), asu_ids)
         tau_hkl = tau_sum / cnt.clamp(min=1.0)  # (n_unique,)
@@ -807,7 +825,7 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
             x_k_i, x_r_i, counts, mask, profile_mean, scale
         )
 
-        tau_obs = self._wilson_tau(d_obs)
+        tau_obs = self._wilson_tau(d_obs, metadata)
         tau_sum, inverse, unique = _scatter_sum_compact(tau_obs, asu_ids)
         cnt, _, _ = _scatter_sum_compact(torch.ones_like(tau_obs), asu_ids)
         tau_hkl = tau_sum / cnt.clamp(min=1.0)

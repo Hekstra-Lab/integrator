@@ -474,10 +474,30 @@ def prepare_profile_basis(
         int(max_order_z_arg) if max_order_z_arg is not None else None
     )
 
+    # The shoebox shape falls back to the dataset's own geometry, not to a
+    # constant. This runs before resolve_config, so `data_loader.args` is still
+    # raw YAML and usually carries no h/w; the previous default of 21 then
+    # silently built a 441-component basis for a 625-pixel dataset, which the
+    # surrogate's shape check rejects at construction.
     dl_args = cfg.get("data_loader", {}).get("args", {})
-    D_dim = int(dl_args.get("D", dl_args.get("d", 1)))
-    H_dim = int(dl_args.get("H", dl_args.get("h", 21)))
-    W_dim = int(dl_args.get("W", dl_args.get("w", 21)))
+    geom = {}
+    if dl_args.get("data_dir"):
+        from integrator.io import read_dataset_spec
+
+        geom = (
+            read_dataset_spec(dl_args["data_dir"]) or {}
+        ).get("geometry") or {}
+
+    def _dim(*keys, default):
+        for src in (dl_args, geom):
+            for k in keys:
+                if src.get(k) is not None:
+                    return int(src[k])
+        return default
+
+    D_dim = _dim("D", "d", default=1)
+    H_dim = _dim("H", "h", default=21)
+    W_dim = _dim("W", "w", default=21)
 
     if D_dim > 1:
         W_basis, b, orders = _build_hermite_basis_3d(
@@ -779,9 +799,18 @@ def prepare_per_bin_priors(
                 "Saved %s (%d-bin background Gamma MLE)", p.name, n_bins
             )
         else:
-            logger.warning(
-                "No usable background column for MLE; "
-                "using default bg_rate=1.0, bg_concentration=1.0"
+            # Says what actually happens, not what it used to claim. No
+            # per-bin prior is written here, so whatever bg_prior.pt already
+            # holds -- normally the border-pixel measurement from
+            # prepare_bg_prior -- stays in force. The old wording asserted a
+            # fallback to bg_rate=1.0, which is the documented cause of the
+            # poly collapse, so a benign log line read as the failure itself.
+            logger.info(
+                "No background column in the metadata (%s), so no per-bin "
+                "background prior was fitted; the existing bg_prior stands. "
+                "Laue shoeboxes from mksbox carry no background column -- "
+                "prepare_bg_prior measures it from border pixels instead.",
+                "background.mean/background.sum.value",
             )
 
 

@@ -1,5 +1,7 @@
+import logging
 import math
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -13,6 +15,23 @@ from integrator.model.distributions.profile_geometry import (
     detector_polar,
     geometry_features,
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _peek_basis_latent_dim(path: str) -> int | None:
+    """Width of a saved warm-start basis, or None if it cannot be read.
+
+    Read before the decoder is sized, so the basis can set the latent
+    dimension rather than being rejected for disagreeing with it. Returns None
+    on any failure so construction proceeds and `_apply_warmstart` raises the
+    specific error instead.
+    """
+    try:
+        basis = torch.load(path, weights_only=False, map_location="cpu")
+        return int(basis["W"].shape[1])
+    except Exception:
+        return None
 
 
 def _softplus_inverse(x: float) -> float:
@@ -111,6 +130,24 @@ class ProfileSurrogate(nn.Module):
 
         if latent_dim is None:
             latent_dim = 8
+        if warmstart_basis_path is not None:
+            # A warm-start basis fixes its own width, so it wins over the
+            # requested latent_dim. There is no configuration where both can
+            # hold: a (output_dim, d) basis cannot load into a decoder of a
+            # different width. The old behaviour raised and advised dropping
+            # latent_dim from the config, which is impossible when the value
+            # comes from BaseIntegrator.DEFAULT_SURROGATES rather than the
+            # config -- as it does for every learned_basis_profile run.
+            basis_d = _peek_basis_latent_dim(warmstart_basis_path)
+            if basis_d is not None and basis_d != latent_dim:
+                logger.info(
+                    "warmstart basis %s has d=%d; using it instead of "
+                    "latent_dim=%d",
+                    Path(warmstart_basis_path).name,
+                    basis_d,
+                    latent_dim,
+                )
+                latent_dim = basis_d
         self.d: int = latent_dim
         self.prior_scale = prior_scale
         self.smoothness_weight = smoothness_weight

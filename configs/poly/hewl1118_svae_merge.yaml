@@ -56,7 +56,14 @@ integrator:
     scale_frame_max: 360.0
     scale_beam_center: [1990.31, 1972.80]
     scale_r_max: 3022
-    scale_mlp_absorption: true
+    # Absorption spherical harmonics are OFF for the first working run. They
+    # need an `absorption_sh` column that only
+    # scripts/extract_crystal_frame_sh.py produces, and adding an unvalidated
+    # physical term to a model that has never completed an epoch on this data
+    # makes any failure impossible to attribute. Turn back on together with
+    # that script once a baseline exists; even_only was a deliberate
+    # Friedel-hardening choice and is worth revisiting then.
+    scale_mlp_absorption: false
     scale_sh_lmax: 4
     scale_mlp_absorption_even_only: true
     log_intensity_scatter: true
