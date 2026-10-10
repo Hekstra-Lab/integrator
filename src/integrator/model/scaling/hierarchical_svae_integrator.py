@@ -630,11 +630,6 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         intensity_nelbo = -(j_block + i_block) / B
         total_loss = total_loss + self.merge_kl_weight * intensity_nelbo
 
-        penalty, penalty_components = self._profile_basis_penalty()
-        for name, value in penalty_components.items():
-            self.log(f"{step} {name}", value, on_step=False, on_epoch=True)
-        total_loss = total_loss + penalty
-
         # Weak log-Normal restraint pinning nu near nu_init (careless-style
         # regularized error model); keeps nu off the floor/ceiling and limits the
         # nu-vs-scale confound. Skipped during warmup (nu is frozen there anyway).

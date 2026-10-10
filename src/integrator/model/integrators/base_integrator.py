@@ -372,17 +372,6 @@ class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
                         on_epoch=True,
                     )
 
-        # penalties on profile basis
-        penalty, penalty_components = self._profile_basis_penalty()
-        for name, value in penalty_components.items():
-            self.log(
-                f"{step} {name}",
-                value,
-                on_step=False,
-                on_epoch=True,
-            )
-        total_loss = total_loss + penalty
-
         if step == "train":
             self._collect_scatters(outputs, metadata, mask, counts)
 
@@ -503,61 +492,6 @@ class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
                 sorted(missing),
                 sorted(forward_out),
             )
-
-    def _profile_basis_penalty(self) -> tuple[Tensor, dict[str, Tensor]]:
-        """Regularization penalties on the learned qp decoder weight W.
-
-        - Smoothness: mean squared spatial gradient across (D, H, W) per
-          column
-        - Orthogonality: mean squared off-diagonal of the normalized Gram
-          matrix, which pushes the basis modes apart. Without it nothing
-          stops several latent dimensions from learning the same
-          deformation, leaving the effective rank below the latent size.
-        """
-        zero = torch.zeros((), device=self.device)
-        qp = self.surrogates["qp"] if "qp" in self.surrogates else None
-        decoder = getattr(qp, "decoder", None)
-        W = getattr(decoder, "weight", None)
-        # Both penalty weights are owned by the profile surrogate.
-        smooth_w = float(getattr(qp, "smoothness_weight", 0.0))
-        ortho_w = float(getattr(qp, "orthogonality_weight", 0.0))
-        if W is None or W.dim() != 2:
-            return zero, {}
-
-        shape = self.shoebox_shape
-        D, H, W_spatial = shape if len(shape) == 3 else (1, *shape)
-        K, d = W.shape
-        if K != D * H * W_spatial:
-            return zero, {}
-
-        total = zero
-        components: dict[str, Tensor] = {}
-
-        if smooth_w > 0:
-            vol = W.T.reshape(d, D, H, W_spatial)
-            gx = vol[..., 1:] - vol[..., :-1]
-            gy = vol[..., 1:, :] - vol[..., :-1, :]
-            sq_sum = (gx.pow(2)).sum() + (gy.pow(2)).sum()
-            n_terms = gx.numel() + gy.numel()
-            if D > 1:
-                gz = vol[..., 1:, :, :] - vol[..., :-1, :, :]
-                sq_sum = sq_sum + gz.pow(2).sum()
-                n_terms = n_terms + gz.numel()
-            smooth = sq_sum / max(n_terms, 1)
-            components["profile_smoothness"] = smooth.detach()
-            total = total + smooth_w * smooth
-
-        if ortho_w > 0 and d > 1:
-            # normalize first: this penalizes the angles between modes, not
-            # their lengths, which the smoothness term already constrains
-            cols = W / W.norm(dim=0, keepdim=True).clamp_min(1e-8)
-            gram = cols.T @ cols
-            off = gram - torch.eye(d, device=gram.device, dtype=gram.dtype)
-            ortho = off.pow(2).sum() / (d * (d - 1))
-            components["profile_orthogonality"] = ortho.detach()
-            total = total + ortho_w * ortho
-
-        return total, components
 
     def on_after_backward(self) -> None:
         """Log gradient norms for intensity/background surrogate heads."""

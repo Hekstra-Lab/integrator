@@ -451,11 +451,6 @@ class HierarchicalScalingIntegrator(BaseIntegrator):
             },
         )
 
-        penalty, penalty_components = self._profile_basis_penalty()
-        for name, value in penalty_components.items():
-            self.log(f"{step} {name}", value, on_step=False, on_epoch=True)
-        total_loss = total_loss + penalty
-
         # PhysicalScale absorption/decay restraint: the term that opposes the
         # consistency objective pulling the surface to absorb the anomalous
         # signal (and running away, cf. the Beer-Lambert absorption).

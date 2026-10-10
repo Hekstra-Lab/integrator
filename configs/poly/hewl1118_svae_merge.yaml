@@ -113,8 +113,6 @@ surrogates:
       init_std: 0.5
       # no basis penalties and no decoder weight decay: the documented best
       # configs (9b7c expmean_lp, 821 config_full) both run without them
-      smoothness_weight: 0.0
-      orthogonality_weight: 0.0
   qbg:
     name: gammaB
     args:

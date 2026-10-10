@@ -335,12 +335,6 @@ class RefinementIntegrator(BaseIntegrator):
             },
         )
 
-        # Profile basis penalty
-        penalty, penalty_components = self._profile_basis_penalty()
-        for name, value in penalty_components.items():
-            self.log(f"{step} {name}", value, on_step=False, on_epoch=True)
-        total_loss = total_loss + penalty
-
         # Geometry restraints
         restraint = self._geometry_restraint()
         self.log(f"{step} restraint", restraint.detach(), on_step=False, on_epoch=True)

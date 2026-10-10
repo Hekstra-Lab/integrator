@@ -70,7 +70,6 @@ surrogates:
       latent_dim: 12
       init_std: 0.5
       prior_scale: 3.0
-      smoothness_weight: 0.0    # no roughness penalty on the basis
 
 loss:
   name: monochromatic_wilson

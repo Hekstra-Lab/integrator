@@ -6,10 +6,9 @@
 #   latent_dim             16 -> 12     the reference size; the first run's
 #                                       basis figure put effective rank at
 #                                       13.2 of 16, so 16 was not being used
-#   smoothness_weight     0.0 -> 0.001  penalize spatially rough modes
-#   orthogonality_weight  new -> 0.01   penalize modes that duplicate each
-#                                       other; the reference had this and the
-#                                       current code did not
+#   (the basis penalties this arm once varied have been removed from the
+#    codebase: no winning config used one, and carrying them silently cost
+#    more than they ever bought -- see docs/best_configs.md)
 #   decoder_weight_decay none -> 0.001  the reference regularizes the decoder
 #
 # Also changed: init_G 5000 -> 1000. Both earlier runs converged to G ~ 425
@@ -42,8 +41,6 @@ surrogates:
       latent_dim: 12
       init_std: 0.5
       prior_scale: 3.0
-      smoothness_weight: 0.001
-      orthogonality_weight: 0.01
   qbg:
     name: gamma
     args:

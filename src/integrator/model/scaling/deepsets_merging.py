@@ -362,11 +362,6 @@ class DeepSetsMergingIntegrator(BaseIntegrator):
             },
         )
 
-        penalty, penalty_components = self._profile_basis_penalty()
-        for name, value in penalty_components.items():
-            self.log(f"{step} {name}", value, on_step=False, on_epoch=True)
-        total_loss = total_loss + penalty
-
         with torch.no_grad():
             self.log(
                 f"{step} qi_h_mean",

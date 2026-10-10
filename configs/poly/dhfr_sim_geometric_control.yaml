@@ -24,7 +24,6 @@ surrogates:
       latent_dim: 12
       init_std: 0.5
       prior_scale: 3.0
-      smoothness_weight: 0.001
       local_shift: true
       steer: true
   qbg:

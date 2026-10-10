@@ -958,11 +958,6 @@ class AmortizedMergingIntegrator(BaseIntegrator):
             },
         )
 
-        penalty, penalty_components = self._profile_basis_penalty()
-        for name, value in penalty_components.items():
-            self.log(f"{step} {name}", value, on_step=False, on_epoch=True)
-        total_loss = total_loss + penalty
-
         # PhysicalScale absorption/decay restraint: opposes the merge/consistency
         # pulling the surface to absorb the anomalous signal (and run away).
         if (

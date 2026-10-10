@@ -13,9 +13,9 @@
 #   gammaA                   -> gamma, reparameterization: shape_rate
 #   positive_constraint: log -> exp
 #
-# One setting has no current equivalent and is therefore NOT reproduced:
-# qp_orthogonality_weight (0.01). ProfileSurrogate has no orthogonality
-# penalty, only smoothness.
+# The reference's qp_orthogonality_weight (0.01) is not reproduced: profile
+# basis penalties have been removed from the codebase entirely, since no
+# winning config used one.
 mode: polychromatic
 
 integrator:
@@ -39,7 +39,6 @@ surrogates:
       latent_dim: 12
       init_std: 0.5
       prior_scale: 3.0
-      smoothness_weight: 0.001
   qbg:
     name: gamma
     args:

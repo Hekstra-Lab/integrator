@@ -69,7 +69,6 @@ surrogates:
       output_dim: 625           # h*w for 2d (injected from geometry if omitted)
       init_std: 0.5
       prior_scale: 3.0
-      smoothness_weight: 0.0
   qbg:
     name: gamma
     args:

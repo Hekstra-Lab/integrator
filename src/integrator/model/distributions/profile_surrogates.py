@@ -105,8 +105,6 @@ class ProfileSurrogate(nn.Module):
         output_dim: Number of profile pixels (D*H*W). Default 441.
         init_std: Initial posterior std for h.
         prior_scale: Std of the N(0, prior_scale) prior on the latent h.
-        smoothness_weight: Penalty on the spatial roughness of each mode.
-        orthogonality_weight: Penalty on the angles between modes.
     """
 
     def __init__(
@@ -116,8 +114,6 @@ class ProfileSurrogate(nn.Module):
         output_dim: int = 441,
         init_std: float = 0.5,
         prior_scale: float = 3.0,
-        smoothness_weight: float = 0.0,
-        orthogonality_weight: float = 0.0,
         # Warm-start the decoder from a precomputed basis. Without it the
         # decoder starts near uniform, and on Laue shoeboxes (~96.6%
         # background) a uniform profile makes intensity x profile a flat field
@@ -150,8 +146,6 @@ class ProfileSurrogate(nn.Module):
                 latent_dim = basis_d
         self.d: int = latent_dim
         self.prior_scale = prior_scale
-        self.smoothness_weight = smoothness_weight
-        self.orthogonality_weight = orthogonality_weight
 
         self.loc_head = nn.Linear(input_dim, self.d)
         self.scale_head = nn.Linear(input_dim, self.d)
@@ -848,8 +842,6 @@ class GeometricProfileSurrogate(ProfileSurrogate):
         output_dim: int = 441,
         init_std: float = 0.5,
         prior_scale: float = 3.0,
-        smoothness_weight: float = 0.0,
-        orthogonality_weight: float = 0.0,
         beam_center: tuple[float, float] | list[float] | None = None,
         profile_shape: tuple[int, int, int] | list[int] | None = None,
         lambda_min: float | None = None,
@@ -867,8 +859,6 @@ class GeometricProfileSurrogate(ProfileSurrogate):
             output_dim=output_dim,
             init_std=init_std,
             prior_scale=prior_scale,
-            smoothness_weight=smoothness_weight,
-            orthogonality_weight=orthogonality_weight,
         )
 
         self.local_shift = bool(local_shift)

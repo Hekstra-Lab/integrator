@@ -69,7 +69,6 @@ surrogates:
       output_dim: 1323            # d*h*w (injected from geometry if omitted)
       init_std: 0.5               # initial posterior std of the latent h
       prior_scale: 3.0            # std of the N(0, prior_scale) latent prior
-      smoothness_weight: 0.0      # >0 penalizes spatial roughness of the profile basis
   qbg:
     name: gamma
     args:

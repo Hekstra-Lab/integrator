@@ -82,8 +82,7 @@ surrogates:
     # under-flexible family shows up in the downstream error model as b, not a, so
     # watch b. max_order: 3 adds the skew at the cost of admitting sharper features.
     #
-    # latent_dim is set by the basis and must not be given. smoothness_weight is
-    # omitted because it acts on W, which no longer moves.
+    # latent_dim is set by the basis and must not be given.
     name: fixed_basis_profile
     args:
       input_dim: 64
