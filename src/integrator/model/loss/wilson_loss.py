@@ -196,15 +196,16 @@ class WilsonLoss(nn.Module):
         self.intensity_kl_min = float(intensity_kl_min)
         self.intensity_kl_max = float(intensity_kl_max)
         self.intensity_kl_calibrate = bool(intensity_kl_calibrate) and n_bins > 1
-        # Persistent only when calibration is on. With it off every entry is
-        # just the scalar intensity_kl_weight, so checkpointing it adds state
-        # that carries no information and makes checkpoints from before this
-        # feature fail a strict load in both directions. Calibrated runs do
-        # need it in the checkpoint, since the per-bin weights are learned.
+        # Unconditionally persistent. Making this conditional on
+        # `intensity_kl_calibrate` looks tidier -- with calibration off every
+        # entry is just the scalar weight -- but it breaks every checkpoint
+        # already written, which all contain `loss.intensity_kl_bins`: the key
+        # becomes unexpected and a strict load fails. Checkpoint compatibility
+        # outweighs a few bytes of redundant state.
         self.register_buffer(
             "intensity_kl_bins",
             torch.full((n_bins,), float(self.intensity_kl_weight)),
-            persistent=self.intensity_kl_calibrate,
+            persistent=True,
         )
         if self.intensity_kl_calibrate:
             # per-bin sums of the posterior mean intensity over an epoch's
