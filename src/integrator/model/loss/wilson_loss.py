@@ -818,6 +818,13 @@ class WilsonLoss(nn.Module):
         kl_prf = compute_profile_kl(
             qp, prf_prior_scale, self.profile_kl_weight, device
         )
+        # The scaling merge dropped this line, leaving kl_prf computed and used
+        # only for logging, so every model on this branch trained with NO
+        # profile KL in the ELBO. Nothing then held q(profile) to its prior:
+        # the profile-latent scale was free to collapse, which is what drove
+        # the softplus underflow at epoch 37, and an identical config that gave
+        # R-free 0.2024 before the merge gave 0.3930 and 0.4353 after.
+        kl = kl + kl_prf
 
         # Wilson intensity KL
         d = metadata["d"].to(device)
