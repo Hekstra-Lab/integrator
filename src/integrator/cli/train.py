@@ -507,15 +507,24 @@ def main():
     every_n_epochs = (
         ckpt.every_n_epochs if ckpt.every_n_epochs is not None else check_val
     )
+    # Resolve the monitor ONCE. `monitor` is dropped when save_top_k <= 0
+    # (keep-everything needs no ranking metric), but `save_on_train_epoch_end`
+    # used to test the undropped `ckpt_monitor`, so the callback was told it had
+    # no monitor while also being told to defer saving to validation end. With
+    # save_top_k=-1 and check_val_every_n_epoch=5 that combination wrote nothing
+    # at all: a 47-epoch run left an empty checkpoint directory.
+    effective_monitor = ckpt_monitor if save_top_k > 0 else None
     checkpoint_callback = ModelCheckpoint(
         dirpath=ckpt_dir,
         filename="{epoch:04d}",
         every_n_epochs=every_n_epochs,
         save_top_k=save_top_k,
+        # save_last is what makes a run killed by walltime -- or by a NaN at
+        # epoch 47 -- resumable instead of lost.
         save_last=ckpt.save_last,
-        monitor=ckpt_monitor if save_top_k > 0 else None,
+        monitor=effective_monitor,
         mode=ckpt_mode if save_top_k > 0 else "min",
-        save_on_train_epoch_end=(ckpt_monitor is None) or None,
+        save_on_train_epoch_end=(effective_monitor is None) or None,
     )
     logger.info(
         "Checkpoints: dir=%s save_top_k=%d every_n_epochs=%d monitor=%s",

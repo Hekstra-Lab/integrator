@@ -169,3 +169,7 @@ checkpoint:
   save_top_k: -1
   monitor: val elbo
   mode: min
+  # Keep a last.ckpt. Two runs have now died late (epoch 37 and 47) and left
+  # nothing to predict from; with save_top_k -1 the monitor is dropped anyway,
+  # so saving happens at train-epoch end and does not wait for validation.
+  save_last: true
