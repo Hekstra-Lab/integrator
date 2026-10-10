@@ -128,6 +128,41 @@ posterior export, where the intensity and background heads absorb the mismatch.
 One fact the figure makes concrete: **45.4% of predicted reflections have `intensity.sum.value` exactly zero**, i.e. DIALS integrated no intensity for nearly half the predictions, while the model assigns a profile and an intensity to all of them.
 The quantiles above are therefore taken over the positive subset.
 
+## 3b. CONFOUND: the ablation arms ran without the required warm-start
+
+**Every one of the 20 arms has `warmstart_basis_path` unset, and 16 of 20 carry `smoothness_weight: 0.001`.**
+Both contradict this project's own documented requirements.
+
+From [[poly_merging_collapse]], on the root cause of the poly collapse:
+
+> `learned_basis_profile` had NO `warmstart_basis_path` -> decoder default is ~uniform and the profile prior N(0, sigma^2) holds it there.
+> A uniform profile [makes] intensity x profile a flat field indistinguishable from the background.
+
+And from `best_configs.md`: profile basis penalties should be `0.0` -- "`smoothness_weight` and `orthogonality_weight` both off in the winning arms", with the warning that "carrying a penalty or a weight decay across from an older template is the easiest way to lose a result".
+
+So the round, signal-independent blob the learned basis produces in the figure above **is the documented collapse, not a property of the family.**
+
+**This confounds the family ranking**, because the warm-start is only needed by families that learn a decoder basis:
+
+| family | needs a warm-start? | Kabsch R-free |
+|---|---|---|
+| physical | **no** -- computed from geometry, no basis | **0.1828** (1st) |
+| geometric (`geom_both`) | yes, did not get one | 0.1859 (2nd) |
+| shapelet | **no** -- analytic Gauss-Hermite | 0.2027 (3rd) |
+| fixed basis | **no** -- frozen analytic basis | 0.2082 (4th) |
+| learned basis | yes, did not get one | 0.2102 (5th) |
+| coord-channels | yes, did not get one | 0.3212 (7th) |
+
+The three families that need no warm-start take 1st, 3rd and 4th; the three that need one and lacked it take 2nd, 5th and 7th.
+The ranking may therefore be measuring *which families were handicapped* rather than which are better.
+`geom_both` at 2nd is the informative exception: its `local_shift` supplies detector geometry, which partially substitutes for a peaked initialisation.
+
+**The reach is wider than the profile arms.** Every other arm (q1 transforms, q3 gamma, q4 KL weight) also uses `learned_basis_profile`, so all of them ran on a near-uniform-initialised profile.
+Within-group comparisons stay valid -- the handicap is uniform across them -- but absolute numbers and any cross-family claim are compromised.
+It also puts the ablation's one large effect in a different light: the KL weight may be partly **compensating** for a uniform-pinned profile, since the N(0, sigma^2) prior is precisely what holds the decoder there.
+
+**What to rerun.** The profile families with `warmstart_basis_path` set and `smoothness_weight: 0.0`, scored through the Kabsch export. Until then, section 4's ranking should be read as provisional.
+
 ## 4. The measurement that separates them
 
 Profile families were indistinguishable in the original ablation and are strongly separated once scored through an export that depends on the profile directly.
@@ -154,6 +189,8 @@ The posterior's $E_q[I]$ comes from the ELBO, where the intensity and background
 The methodological consequence: **to evaluate a profile model, score it through a profile-fit export, not a posterior export.**
 
 ## 5. What the comparison says
+
+*Read with section 3b: the two basis-learning families were handicapped, so the family ordering is provisional.*
 
 **Geometry conditioning works; coordinate channels do not.** `physical` and `geometric` take the top two R-free slots. Coordinate channels give the single worst arm in the table, with 52.3% negative intensities — meaning its background absorbed the signal, so $c_p - b_p$ is mostly negative. Both approaches inject detector position, and only one succeeds.
 
