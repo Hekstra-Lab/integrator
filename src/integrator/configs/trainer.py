@@ -18,6 +18,10 @@ class TrainerConfig:
         deterministic: Whether to force deterministic algorithms.
         gradient_clip_val: Gradient-clipping threshold, or `None` to disable.
         gradient_clip_algorithm: Clipping mode, `norm` or `value`; `None` to disable.
+        detect_anomaly: Make autograd raise at the operation that first produced a
+            NaN or inf, with the forward traceback. Roughly 3x slower, so it is for
+            debugging a divergence rather than for production runs -- but it reports
+            where a NaN was CREATED instead of where it is first noticed.
     """
 
     max_epochs: int = 100
@@ -31,6 +35,7 @@ class TrainerConfig:
     deterministic: bool = False
     gradient_clip_val: float | None = None
     gradient_clip_algorithm: Literal["norm", "value"] | None = None
+    detect_anomaly: bool = False
 
     def __post_init__(self):
         if self.max_epochs < 0:

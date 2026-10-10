@@ -697,6 +697,7 @@ def construct_trainer(
         enable_checkpointing=tr_cfg.enable_checkpointing,
         callbacks=callbacks,
         enable_progress_bar=True,
+        detect_anomaly=tr_cfg.detect_anomaly,
     )
 
     # Manual-optimization integrators handle clipping themselves;
