@@ -173,3 +173,46 @@ The magnitude is not measurable from this data.
 
 **Consequence.** The weak-end bias is not estimable without ground truth.
 The nanoBragg simulation is not a nice-to-have for this question; it is the only way to answer it.
+
+## The export matters, and it reshuffles the ranking (job 51876783, 10 Oct)
+
+Every arm above was scored on its POSTERIOR export (`E_q[I]`, `sd_q[I]`).
+This runs the MC Kabsch export -- unbiased profile fit, negatives allowed, Schur-complement Fisher sigma -- from the SAME checkpoints through a byte-identical chain: same careless config 4, same seed 2024, same two-pass phenix, same peak script.
+Only the two MTZ columns differ.
+
+### R-free improves substantially
+
+| | |
+|---|---|
+| arms improving | **16 / 20** (13 by more than 1 sigma) |
+| mean delta R-free, excluding the 2 mostly-noise arms | **-0.0185**, paired t = **-3.89** |
+| best Kabsch R-free | **0.1799** (`mean_fano_softplus`) |
+| vs the measured laue-dials baseline 0.2061 | **+3.7 sigma better than the classical pipeline** |
+| arms beating laue-dials on R-free | **7/20 Kabsch, 1/20 posterior** |
+
+### Peaks are mixed, and the best arm changes
+
+Mean IOD 204 delta is -0.78 (-2.5 sigma) over all 20, but that is dominated by the two degenerate arms.
+The best arm by mean peak height over 13 sites:
+
+| | R-free | mean-13 peaks |
+|---|---|---|
+| `shapelet` + Kabsch | 0.2027 | **7.80** |
+| `kl_0.1` + posterior (the old best) | 0.2024 | 7.748 |
+| laue-dials baseline | 0.2061 | 7.327 |
+| `mean_fano_softplus` + Kabsch | **0.1799** | 6.27 |
+
+`shapelet` + Kabsch beats laue-dials on **both** metrics at once (both gaps under 2 sigma, so a tie nominally in our favour on both simultaneously -- stronger than the single-metric tie of 9 Oct).
+
+### Three things this changes
+
+1. **The export choice reshuffles the ranking.** `mean_fano_softplus` goes 11th -> 1st on R-free; `kl_0.1` goes 1st -> 11th. **The profile- and gamma-family conclusions in the table above were drawn under one export and do not transfer.** The "only the KL weight is a large effect" finding is specifically a posterior-export finding.
+2. **R-free and peaks now pick different arms.** No arm is best at both, so "best config" has to name the metric. Physically coherent: R-free rewards unbiased intensities, while the anomalous difference is small and benefits from the posterior's shrinkage damping noise in `delta F`.
+3. **The Kabsch export is only as good as the model's background.** The two catastrophic cases are exactly the two arms with >50% negative intensities -- `anscombe` (+22 sigma worse R-free) and `coordchan` (+13.3 sigma) -- where `c - bg` is mostly negative because the background absorbed the signal. A checkable precondition: measure the negative fraction before trusting the export.
+
+### Independent support from the error model
+
+Fitting `sigma'^2 = a^2(sigma^2 + (bI)^2)` per arm, the first-cycle `a` -- the binned multiplicative correction making normalised deviations have unit variance -- comes out **5.72 for the posterior export, 2.16 for the Kabsch export, 2.28 for `laue.integrate`**.
+So the Kabsch sigma calibrates like the classical pipeline (5% apart) while the posterior sigma is 2.5x worse, which is what the downstream R-free gain then confirms.
+Caveat: the full two-parameter model does NOT converge on this data -- all three runs drive `a` below the `min_a = 0.4` guard and take the fallback, with `b` landing at 0.92-2.29 against a typical 0.02-0.05 -- so only the one-step `a` is reportable, not converged `(a, b)`.
+These shoeboxes are 96.6% background, so variance is ~20x intensity and the `(bI)^2` term has no purchase; the same regime mismatch makes the DIALS default filter keep 0 of 1.28M reflections.
