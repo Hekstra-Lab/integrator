@@ -140,45 +140,41 @@ while the real data module also standardises with stored per-dataset statistics,
 so the encoder saw mis-scaled input. The figures above come from the project's
 own pipeline and supersede it.
 
-## 3b. CONFOUND: the ablation carried a smoothness penalty its baseline should not have had
+## 3b. The smoothness penalty is load-bearing (tested, 10 Oct)
 
-**16 of the 20 arms carry `smoothness_weight: 0.001`.**
-The class default is `0.0`, and the value comes from the baseline the ablation was built on, `configs/poly/hewl1118_poly_ref.yaml:42`.
+`hewl1118_poly_ref.yaml` sets `smoothness_weight: 0.001` where the class default
+and most other poly configs use `0.0`, so all 16 learned- and geometric-basis
+ablation arms carry it.
+That looked like a stale value carried from an older template -- the exact
+failure `best_configs.md` warns about -- and an earlier version of this section
+claimed it had caused a collapsed profile.
 
-It is anomalous against every established poly config in the repo:
+**It is the reverse.** One arm, `q2_profile_learned` with the penalty set to
+`0.0` and everything else byte-identical (job 51898142, 18 minutes):
 
-| config | smoothness_weight |
-|---|---|
-| `hewl_1118.yaml`, `hewl_1118_1440.yaml` | **0.0** |
-| `pdz2_1116*.yaml` (all six) | **0.0** |
-| `dhfr_1117.yaml`, `hewl1118_poly.yaml` | **0.0** |
-| **`hewl1118_poly_ref.yaml`** (the ablation baseline) | **0.001** |
+| arm | export | median I | negatives | min I |
+|---|---|---|---|---|
+| `smoothness_weight: 0.001` | posterior | **23.9** | 0.00% | 13.3 |
+| `smoothness_weight: 0.001` | Kabsch | **51.4** | 1.24% | **-64.0** |
+| `smoothness_weight: 0.0` | posterior | **6305.4** | 0.00% | **5612.1** |
+| `smoothness_weight: 0.0` | Kabsch | **6426.0** | 0.00% | **5559.7** |
 
-`best_configs.md` is explicit that the penalties are off in every winning arm, and warns that "carrying a penalty or a weight decay across from an older template is the easiest way to lose a result, because neither changes anything visible until the anomalous peaks are measured".
-That is what happened: the ablation inherited it from `poly_ref` and all 16 learned- and geometric-basis arms ran with it.
+A Laue shoebox carries a median of ~6700 counts, so at `0.0` the fitted
+intensity **is the box total**: the uniform-profile collapse, where `I x pi`
+becomes a flat field indistinguishable from background.
+It is the same signature as the two catastrophic ablation arms, `log1p`
+(min I +5038) and `shape_rate_softplus` (min I +5146).
 
-**The mechanism matches the figure.** The term penalises the spatial roughness of each basis mode, so it pushes the decoder toward smoother -- that is, broader and rounder -- modes.
-A round, signal-independent blob over a radially streaked Laue spot is the expected consequence, not a property of the learned-basis family.
+So the penalty is doing essential work for the learned basis on 96.6%-background
+Laue data: it penalises the spatial roughness of each basis mode, and without it
+the decoder is free to flatten.
+**No arms need rerunning on this account** -- the configuration was right, and
+the discrepancy against other configs reflects a genuine difference in what the
+Laue regime needs, not a copied mistake.
 
-**Correction to an earlier version of this section.** It claimed the missing `warmstart_basis_path` was the confound.
-That was wrong, and overgeneralised from [[poly_merging_collapse]], which concerns the amortized *merging* model rather than these integrators.
-Of the 18 committed poly configs, only one uses a warm-start -- `hewl1118_svae_merge.yaml`, written for the SVAE -- so running without it is the established practice here, not a defect.
-
-**Is the penalty actually harmful? Unmeasured.** An earlier version of this
-section claimed it produced the round collapsed profile seen in a hand-plotted
-figure. That figure was wrong (see the correction above), so the argument it
-supported is withdrawn: the real profiles are compact and peaked, and there is
-currently **no evidence that `smoothness_weight: 0.001` changed any result**.
-It remains a discrepancy against the documented 0.0 and against every other
-established poly config, which is reason to measure it, not to assume it.
-
-**What to rerun.** One arm first -- `q2_profile_learned` with
-`smoothness_weight: 0.0`, everything else byte-identical (job 51898142). If the
-difference lands inside the noise floors (R-free 0.0070, IOD 204 0.31 sigma),
-the other 15 affected arms need no rerun. Reruns on suspicion rather than on a
-measured effect are how a 20-arm ablation becomes a 40-arm one for nothing.
-Until then section 4's family ordering is provisional, and so is anything cross-family: every q1, q3 and q4 arm also uses `learned_basis_profile` with the same penalty.
-Within-group comparisons survive, since the penalty is uniform across the arms being compared.
+Worth keeping as method: the hypothesis was wrong in the strongest possible
+way -- the predicted effect ran backwards -- and one 18-minute paired arm
+settled it, against 16 reruns had it been assumed either way.
 
 ## 4. The measurement that separates them
 
