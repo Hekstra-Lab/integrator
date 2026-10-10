@@ -54,3 +54,26 @@ uv run pytest tests/            # 408 passed, 1 pre-existing failure
 ```
 
 The pre-existing failure is `test_wilson_stabilize.py::test_legacy_default_unchanged_and_no_new_state`, which predates this session.
+
+## Dataset boundary: the `centric` flag on 1118 (October 2026)
+
+`laue_runs/1118_hewl360/shoeboxes/metadata.npy` gained a `centric` column.
+Everything trained before this point treated every reflection as acentric; everything after gets `Gamma(1/2)` for centrics as Wilson statistics require.
+The pre-flag file is kept as `metadata.npy.pre_centric`.
+
+Space group `P 43 21 2`, so of 1,283,813 observations over 194,861 distinct reflections, **111,847 (8.7%) are centric** -- and the fraction is resolution-dependent:
+
+| d (A) | centric |
+|---|---|
+| 99.0-3.0 | **14.8%** |
+| 3.0-2.2 | 8.8% |
+| 2.2-1.9 | 6.7% |
+| 1.9-0.0 | 5.8% |
+
+The low-resolution shell matters most: that is where the strong reflections carrying the anomalous signal are, and an acentric `Gamma(1)` prior on a centric reflection is too tight near zero, so those reflections were being shrunk away from zero.
+
+**What this means for comparisons.** The 20 ablation arms in `ablation_1118_360.md` and the measured laue-dials baseline all predate the flag, so they remain comparable among themselves.
+Any new arm on this dataset is a different prior and must not be put in that table without saying so.
+The poly SVAE (`hewl1118_svae_merge.yaml`) is the first run on the far side of the boundary.
+
+This was listed as "real but secondary" in [[posterior_exported_as_likelihood]] -- 7-14% of reflections -- and the measured 8.7% with a 14.8% low-resolution shell confirms that range.
