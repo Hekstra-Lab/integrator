@@ -116,7 +116,7 @@ class VariationalRefinementIntegrator(BaseIntegrator):
         self.register_buffer("atom_sigma_prior", sigma_prior)
 
         self.kl_atom_weight = cfg.kl_atom_weight
-        self.atom_lr = cfg.atom_lr if cfg.atom_lr is not None else cfg.lr
+        self.atom_lr = cfg.atom_lr if cfg.atom_lr is not None else self.lr
 
         if cfg.scale_spatial:
             self.scale_fn = SpatialChebyshevScale(

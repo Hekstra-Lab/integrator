@@ -36,6 +36,24 @@ def _load_shoebox_array(path, weights_only=True):
         return torch.load(p)
 
 
+# Metadata columns of a SIMULATED shoebox set. `intensity` and `background` are
+# the generator's ground truth, which is what makes a simulated run able to
+# score an integrator directly instead of through a merge. Recovered from
+# 4a12f51; the name survived the scaling merge but the definition did not, so
+# SimulatedShoeboxLoader raised NameError on every setup().
+SIMULATED_COLS = [
+    "shoebox_median",
+    "shoebox_var",
+    "shoebox_mean",
+    "shoebox_min",
+    "shoebox_max",
+    "intensity",
+    "background",
+    "refl_id",
+    "refl_ids",
+    "is_test",
+]
+
 # Default columns from rs.io.read_dials_stills
 DEFAULT_DS_COLS = [
     "zeta",

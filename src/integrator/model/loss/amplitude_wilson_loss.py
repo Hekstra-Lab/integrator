@@ -10,7 +10,6 @@ where sigma_w^2 = 1/(2*tau) and tau = (1/G) * exp(2*B*s^2) is the Wilson rate.
 """
 
 import torch
-import torch.nn.functional as F
 from torch import Tensor
 from torch.distributions import (
     Distribution,

@@ -85,12 +85,19 @@ def _compute_qi_qbg_mean_init(
     }
 
 
-def prepare_global_priors(
+def _prepare_global_priors_default_loss(
     cfg: dict,
     *,
     force: bool = False,
 ) -> None:
     """Generate global prior .pt files for the default Loss if needed.
+
+    Renamed from `prepare_global_priors` because a second function of that name
+    at the bottom of this module shadowed it, so this body was unreachable. The
+    two serve different losses -- this one gates on `loss.name == "default"`
+    (`loss.py`, which is not in the REGISTRY and so cannot be selected by any
+    config) while the live one gates on `"global_prior"`. Kept rather than
+    deleted pending a decision on `loss.py` itself.
 
 
     Args:
@@ -1075,6 +1082,29 @@ def _compute_tau_per_group(
         else:
             tau[b] = 1.0
     return tau
+
+
+def _compute_bg_rate_per_group(
+    bg_mean: Tensor,
+    group_labels: Tensor,
+    n_bins: int,
+    min_bg: float = 1e-6,
+) -> Tensor:
+    """Gamma rate for the background: `bg_rate_k = 1 / mean(bg_k)`.
+
+    The background prior is built as `Gamma(alpha, alpha * bg_rate)`, whose mean
+    is `1 / bg_rate`, so this returns the RECIPROCAL of the per-bin mean
+    background rather than the mean itself -- the same convention as
+    `_compute_tau_per_group` for the intensity. Writing the mean here instead
+    would invert the prior and, in the Laue regime where shoeboxes are ~97%
+    background, dominate the ELBO.
+    """
+    rate = torch.zeros(n_bins)
+    for b in range(n_bins):
+        sel = bg_mean[group_labels == b]
+        sel = sel[sel > min_bg]
+        rate[b] = 1.0 / sel.mean() if len(sel) > 0 else 1.0
+    return rate
 
 
 def _compute_s_squared_per_group(

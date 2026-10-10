@@ -3,8 +3,6 @@ from torch import Tensor
 from torch.distributions import (
     Distribution,
     Gamma,
-    NegativeBinomial,
-    Poisson,
     kl_divergence,
 )
 
@@ -90,20 +88,14 @@ class RefinementLoss(MonochromaticWilsonLoss):
         kl_bg = kl_divergence(qbg, p_bg) * self.pbg_weight
         kl = kl + kl_bg
 
-        # NLL: Poisson or NegativeBinomial (inherited from WilsonLoss)
-        mu = rate.clamp(min=1e-12)
-        if self.raw_dispersion is not None:
-            import torch.nn.functional as Fn
-
-            r = Fn.softplus(self.raw_dispersion)
-            probs = (mu / (mu + r)).clamp(max=1.0 - 1e-6)
-            ll = NegativeBinomial(
-                total_count=r, probs=probs
-            ).log_prob(counts.unsqueeze(1))
-        else:
-            ll = Poisson(mu).log_prob(counts.unsqueeze(1))
-        ll_mean = torch.mean(ll, dim=1) * mask.squeeze(-1)
-        neg_ll = (-ll_mean).sum(1)
+        # NLL: delegate to the parent's CountLikelihood, which owns the
+        # poisson/negative_binomial choice and its dispersion parameter. The
+        # version that came over reached for `self.raw_dispersion` directly,
+        # which lives on CountLikelihood and not on any Wilson loss, so it
+        # raised AttributeError on every call.
+        neg_ll = self.count_likelihood.neg_ll(
+            rate, counts, mask, group_labels=group_labels
+        )
 
         # R-free: exclude flagged HKLs from the training loss
         rfree = metadata.get("rfree_flag") if metadata is not None else None

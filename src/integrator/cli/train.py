@@ -347,7 +347,6 @@ def main():
         save_run_artifacts,
     )
     from integrator.utils.factory_utils import _collect_resolved_paths
-    from integrator.configs import CheckpointConfig
 
     torch.set_float32_matmul_precision("high")
 
@@ -513,7 +512,7 @@ def main():
         filename="{epoch:04d}",
         every_n_epochs=every_n_epochs,
         save_top_k=save_top_k,
-        save_last=ckpt_cfg.save_last,
+        save_last=ckpt.save_last,
         monitor=ckpt_monitor if save_top_k > 0 else None,
         mode=ckpt_mode if save_top_k > 0 else "min",
         save_on_train_epoch_end=(ckpt_monitor is None) or None,

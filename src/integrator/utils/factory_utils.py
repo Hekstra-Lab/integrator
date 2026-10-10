@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytorch_lightning as pl
+import torch
 import torch.nn as nn
 import yaml
 from pytorch_lightning.callbacks import Callback
@@ -577,8 +578,15 @@ def _validate_registry_names(cfg: dict) -> None:
 
 def construct_integrator(
     cfg: dict,
+    skip_warmstart: bool = False,
 ) -> BaseIntegrator:
-    """Build the integrator + its components from a YAML config."""
+    """Build the integrator + its components from a YAML config.
+
+    `skip_warmstart` suppresses both warm-start paths -- the profile basis in
+    `resolve_config` and the checkpoint below -- for callers that restore a full
+    checkpoint immediately after construction, where warm-starting would be
+    wasted work overwritten a moment later.
+    """
     cfg = resolve_config(cfg)
     _validate_registry_names(cfg)
 
@@ -598,7 +606,7 @@ def construct_integrator(
     integrator_args = configs.IntegratorCfg(**int_raw)
     optimizer_cfg = configs.OptimizerConfig(**cfg.get("optimizer", {}))
     encoders = _get_encoder_modules(cfg)
-    surrogates = _get_surrogate_modules(cfg)
+    surrogates = _get_surrogate_modules(cfg, skip_warmstart=skip_warmstart)
     loss = _get_loss_module(cfg)
 
     # the scaling/merging integrators build their own optimizer and do not take
@@ -971,7 +979,11 @@ def _inject_coord_channels(cfg: dict) -> None:
         spec = (read_dataset_spec(data_dir) or {}) if data_dir else {}
         bc = (spec.get("crystal", {}) or {}).get("beam_center_px")
         if bc is None:
-            raise SystemExit(
+            # ValueError, not SystemExit: this is a library function, and a
+            # SystemExit here takes down any caller's process -- a test, a
+            # notebook, a config sweep -- with no chance to handle it. The CLI
+            # entry points are where SystemExit belongs.
+            raise ValueError(
                 "profile_coord_channels needs a beam centre: set "
                 "integrator.args.beam_center, or give the dataset a "
                 "crystal.beam_center_px in dataset.yaml"

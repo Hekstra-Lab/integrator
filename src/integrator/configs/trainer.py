@@ -72,9 +72,12 @@ class CheckpointConfig:
         mode: `min` or `max`; `None` inherits the early-stop mode (else `min`).
         every_n_epochs: Write a checkpoint every N epochs; `None` inherits the trainer's
             `check_val_every_n_epoch` so a checkpoint is written whenever validation runs.
+        save_last: Also keep a `last.ckpt` pointing at the most recent epoch, which is
+            what lets a run killed by walltime resume from where it stopped.
     """
 
     save_top_k: int | None = None
     monitor: str | None = None
     mode: Literal["min", "max"] | None = None
     every_n_epochs: int | None = None
+    save_last: bool = False

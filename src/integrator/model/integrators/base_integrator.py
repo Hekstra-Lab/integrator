@@ -33,8 +33,6 @@ from integrator.model.integrators.integrator_utils import (
     _samples_first,
     rao_blackwellized_intensity,
 )
-from integrator.configs import IntegratorCfg
-from integrator.model.integrators.integrator_utils import ScatterLoggerMixin
 
 logger = logging.getLogger(__name__)
 logger = _logger  # the merging branch's modules log through this name

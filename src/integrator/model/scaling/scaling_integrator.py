@@ -145,7 +145,7 @@ class ScalingIntegrator(BaseIntegrator):
                 frame_max=cfg.scale_frame_max,
             )
         self.scaling_lr = (
-            cfg.scaling_lr if cfg.scaling_lr is not None else cfg.lr
+            cfg.scaling_lr if cfg.scaling_lr is not None else self.lr
         )
         self._clip_val = getattr(cfg, "gradient_clip_val", 1.0)
         self._clip_algo = getattr(cfg, "gradient_clip_algorithm", "norm")

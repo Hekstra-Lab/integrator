@@ -130,7 +130,7 @@ class MergingIntegrator(BaseIntegrator):
             )
 
         self.scaling_lr = (
-            cfg.scaling_lr if cfg.scaling_lr is not None else cfg.lr
+            cfg.scaling_lr if cfg.scaling_lr is not None else self.lr
         )
         self.merge_weight = getattr(cfg, "merge_weight", 1.0)
         self._clip_val = getattr(cfg, "gradient_clip_val", 1.0)

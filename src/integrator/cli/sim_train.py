@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from .utils.io import _apply_cli_overrides
+from .utils.config_overrides import _apply_cli_overrides
 from .utils.logger import setup_logging
 
 logger = logging.getLogger(__name__)

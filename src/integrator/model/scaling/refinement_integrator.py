@@ -7,7 +7,6 @@ from torch import Tensor
 import gemmi
 import numpy as np
 
-import gemmi
 
 if not hasattr(gemmi.UnitCell, "fractionalization_matrix"):
     gemmi.UnitCell.fractionalization_matrix = property(

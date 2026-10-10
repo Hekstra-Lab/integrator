@@ -9,8 +9,6 @@ from torch import Tensor
 from torch.distributions import (
     Distribution,
     Gamma,
-    NegativeBinomial,
-    Poisson,
     kl_divergence,
 )
 
@@ -198,10 +196,15 @@ class WilsonLoss(nn.Module):
         self.intensity_kl_min = float(intensity_kl_min)
         self.intensity_kl_max = float(intensity_kl_max)
         self.intensity_kl_calibrate = bool(intensity_kl_calibrate) and n_bins > 1
+        # Persistent only when calibration is on. With it off every entry is
+        # just the scalar intensity_kl_weight, so checkpointing it adds state
+        # that carries no information and makes checkpoints from before this
+        # feature fail a strict load in both directions. Calibrated runs do
+        # need it in the checkpoint, since the per-bin weights are learned.
         self.register_buffer(
             "intensity_kl_bins",
             torch.full((n_bins,), float(self.intensity_kl_weight)),
-            persistent=True,
+            persistent=self.intensity_kl_calibrate,
         )
         if self.intensity_kl_calibrate:
             # per-bin sums of the posterior mean intensity over an epoch's

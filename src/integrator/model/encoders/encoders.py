@@ -101,7 +101,17 @@ class ProfileEncoder(nn.Module):
             x = F.relu(self.norm2(self.conv2(x)))
             return x.numel()
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor, position: Tensor | None = None) -> Tensor:
+        """Embed a shoebox.
+
+        `position` is accepted and ignored. The scaling/merging integrators pass
+        detector position as a separate encoder argument; this branch instead
+        conditions on position by concatenating coordinate channels onto `x`
+        upstream (`coordinate_channels` in `integrator_utils`, wired by the
+        factory from `profile_coord_channels`), so the information arrives
+        through the input. Accepting the argument lets one encoder serve both
+        call conventions.
+        """
         x = F.relu(self.norm1(self.conv1(x)))
         x = self.dropout1(x)
         x = self.pool(x)

@@ -115,10 +115,12 @@ class TestScalingFactory:
                     "w": 21,
                     "n_hkl": 50,
                     "mc_samples": 2,
-                    "lr": 1e-3,
                     "scale_frame_max": 1000.0,
                 },
             },
+            # lr lives in the optimizer section on this branch, not in
+            # IntegratorCfg -- test_core asserts IntegratorCfg rejects it
+            "optimizer": {"lr": 1e-3},
             "encoders": [
                 {"name": "profile_encoder", "args": {"data_dim": "2d"}},
                 {"name": "intensity_encoder", "args": {"data_dim": "2d"}},
@@ -136,8 +138,9 @@ class TestScalingFactory:
             },
             "loss": {
                 "name": "monochromatic_wilson",
+                # mc_samples is not a loss arg on this branch; the integrator
+                # owns the sample count and test_core asserts the loss rejects it
                 "args": {
-                    "mc_samples": 2,
                     "eps": 1e-6,
                 },
             },
