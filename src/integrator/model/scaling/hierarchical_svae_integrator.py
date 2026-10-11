@@ -279,6 +279,9 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
                 absorption_even_only=getattr(
                     cfg, "scale_mlp_absorption_even_only", True
                 ),
+                exclude_hkl_constant=getattr(
+                    cfg, "scale_mlp_exclude_hkl_constant", False
+                ),
             )
         else:
             self.scale_fn = ChebyshevScale(
@@ -374,12 +377,21 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
 
         A learned per-observation correction forms the GIG natural parameter
         b = 2 nu sum_i delta_i directly, with delta_i anchored on the prior-free
-        MLE a_i/e_i (which carries no I_h dependence, so the whole pass is a
+        MLE sigma_i/e_i (which carries no I_h dependence, so the whole pass is a
         feed-forward DAG -- no fixed point). q(I_h)=GIG(p_h,a_h,b_h) is still
         exact; only how b is determined is amortized. Recovers the CAVI fixed
         point when the correction learns the prior shrinkage e_i/b_i.
         """
-        mle = a_i / e_i.clamp(min=1e-12)  # prior-free per-obs intensity
+        # a_i = nu_i + sigma_i, so a_i/e_i is NOT prior-free: it carries the
+        # random-effect pseudo-count in the numerator with nothing matching it
+        # in the denominator. At nu_init = 50 that puts the anchor 5-17x high
+        # for weak reflections, and the correction head cannot undo it because
+        # E[1/I_h] is not one of its inputs. sigma_i/e_i is the actual MLE.
+        # The floor keeps b_h = 2 nu sum_i delta_i strictly positive: with
+        # p_h < 0 a GIG at b = 0 is improper and its mean diverges, which the
+        # old anchor could not reach because nu_i made every term positive.
+        sigma_i = (a_i - nu_i).clamp(min=0.0)
+        mle = (sigma_i / e_i.clamp(min=1e-12)).clamp(min=1e-6)
         feat = torch.stack(
             [
                 a_i.clamp(min=1e-6).log(),
@@ -399,6 +411,16 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
             p_h, a_h, b_h, a_i, b_i, e_inv_Ih, nu_h, asu_ids
         )
         return b_i, b_h, e_i_h, i_block
+
+    def _wilson_log_norm(self, tau_hkl: Tensor) -> Tensor:
+        """Log-normalizer of the Gamma(alpha_W, tau_h) prior, per HKL.
+
+        `E_q[log p(I)] = alpha_W log tau - lgamma(alpha_W) + (alpha_W - 1)
+        E[log I] - tau E[I]`; this is the first two terms. Constant in `q`,
+        not constant in `G` and `B`.
+        """
+        log_tau = tau_hkl.clamp(min=1e-30).log()
+        return self.alpha_W * log_tau - math.lgamma(self.alpha_W)
 
     def _i_block_elbo(
         self,
@@ -544,6 +566,20 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
             b_i, b_h, e_i_h, i_block = self._cavi(
                 a_i, e_i, tau_hkl, p_h, a_h, nu_i, nu_h, inverse, asu_ids
             )
+
+        # The Wilson prior's own normalizer, alpha_W log tau_h - lgamma(alpha_W).
+        # It does not depend on q, so it was dropped -- but tau is not a
+        # constant here, it is exp(2 B s^2 - log G) with G and B live
+        # parameters, and the term carries their whole gradient:
+        #
+        #     d/dtau [ log tau - tau E[I] ] = 1/tau - E[I] = 0  =>  tau = 1/E[I]
+        #
+        # which is the Wilson plot fit. Without it the derivative is -E[I],
+        # negative whatever tau is, so tau only ever falls and G only ever
+        # climbs, for the whole run, with no fixed point. Measured at
+        # tau = 1e-3: the dropped form gives -93.8 where the true gradient is
+        # +906.2.
+        i_block = i_block + self._wilson_log_norm(tau_hkl)
 
         qJ = Gamma(a_i.clamp(min=1e-6), b_i.clamp(min=1e-12))
 

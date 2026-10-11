@@ -34,6 +34,11 @@ class PolychromaticWilsonLoss(WilsonLoss):
             init_from=spectrum_init_from,
             init_G=init_G,
         )
+        if not self.learn_G:
+            # G is a curve here rather than a scalar, so freezing the scale
+            # means freezing every Chebyshev coefficient of log G(lambda).
+            for p in self.spectrum.parameters():
+                p.requires_grad_(False)
 
         # Warm-start B and concentration from checkpoint
         if spectrum_init_from is not None:

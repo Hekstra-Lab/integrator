@@ -45,6 +45,13 @@ class MonochromaticWilsonLoss(WilsonLoss):
         if init_G is not None:
             # an explicit scale wins: never overwrite it with the count-based fit
             self.init_scale_from_counts = False
+        if not self.learn_G:
+            # Freezing the prior pins the scale gauge by fiat. That is only
+            # useful once G is at a data value -- `stabilize_scale` with the
+            # count-based fit, or an explicit `init_G` -- because whatever it
+            # is frozen at becomes the absolute scale of the merged
+            # intensities. Kept as a Parameter so checkpoints still load.
+            self.raw_G.requires_grad_(False)
 
     def _raw_from_G(self, G: float) -> Tensor:
         """Invert the active G parameterization: raw_G such that get_G() == G."""

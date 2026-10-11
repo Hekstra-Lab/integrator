@@ -140,8 +140,21 @@ class MLPScale(nn.Module):
         head_init_std: float = 0.0,
         n_abs_sh: int = 0,
         absorption_even_only: bool = True,
+        exclude_hkl_constant: bool = False,
     ):
         super().__init__()
+
+        # d-spacing is a property of the Miller index, so every symmetry mate
+        # of a reflection shares it, and on a flat normal detector the radius
+        # is a function of d. A scale built from them is therefore constant
+        # within each merging group, and `s -> c(d) s`, `I_h -> I_h / c(d)`
+        # leaves the likelihood AND the merging consistency untouched: it is
+        # the one direction merging cannot see. The Wilson prior is then the
+        # only thing fixing it, so the merged intensities come out on the
+        # prior's line and the data's own falloff is absorbed into the scale.
+        # Dropping both inputs leaves the resolution dependence nowhere to go
+        # but into I_h, where it belongs.
+        self.exclude_hkl_constant = bool(exclude_hkl_constant)
 
         frame_mid = (frame_min + frame_max) / 2.0
         frame_half = max((frame_max - frame_min) / 2.0, 1.0)
@@ -181,8 +194,9 @@ class MLPScale(nn.Module):
             )
             n_abs_in = int(keep.sum())
 
-        # Input: [frame_norm, radius_norm, d_norm, lp] + selected SH features.
-        n_input = 4 + n_abs_in
+        # Input: [frame_norm, radius_norm, d_norm, lp] + selected SH features,
+        # or [frame_norm, lp] + SH when the HKL-constant pair is excluded.
+        n_input = (2 if self.exclude_hkl_constant else 4) + n_abs_in
         layers = []
         in_dim = n_input
         for _ in range(n_layers):
@@ -209,11 +223,16 @@ class MLPScale(nn.Module):
         absorption_sh: Tensor | None = None,
     ) -> Tensor:
         frame_norm = (frame - self.frame_mid) / self.frame_half
-        r = torch.sqrt((x - self.beam_cx).pow(2) + (y - self.beam_cy).pow(2))
-        r_norm = r / self.r_max
-        d_norm = (d - self.d_min) / (self.d_max - self.d_min)
 
-        features = torch.stack([frame_norm, r_norm, d_norm, lp], dim=-1)
+        if self.exclude_hkl_constant:
+            features = torch.stack([frame_norm, lp], dim=-1)
+        else:
+            r = torch.sqrt(
+                (x - self.beam_cx).pow(2) + (y - self.beam_cy).pow(2)
+            )
+            r_norm = r / self.r_max
+            d_norm = (d - self.d_min) / (self.d_max - self.d_min)
+            features = torch.stack([frame_norm, r_norm, d_norm, lp], dim=-1)
         if self.n_abs_sh > 0:
             if absorption_sh is None:
                 raise ValueError(

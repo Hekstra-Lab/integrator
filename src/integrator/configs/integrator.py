@@ -285,6 +285,15 @@ class IntegratorCfg:
     # reference to be the absorption_sh-augmented file (metadata_sh.pt).
     scale_mlp_absorption: bool = False
     scale_mlp_absorption_even_only: bool = True
+    # Drop d-spacing and detector radius from the scale MLP's inputs. Both are
+    # the same for every symmetry mate of a reflection, so a scale built from
+    # them is constant within each merging group, and `s -> c(d) s`,
+    # `I_h -> I_h / c(d)` changes neither the likelihood nor the merging
+    # consistency. Merging cannot see that direction, so only the Wilson prior
+    # fixes it, and the merged intensities end up on the prior's line with the
+    # data's real falloff absorbed into the scale. Default False so existing
+    # scaling runs are untouched; set True for the hierarchical SVAE.
+    scale_mlp_exclude_hkl_constant: bool = False
     scale_spatial: bool = False
     scale_degree_radius: int = 5
     scale_beam_center: list[float] | None = None

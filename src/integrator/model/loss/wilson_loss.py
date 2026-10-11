@@ -52,6 +52,9 @@ class WilsonLoss(nn.Module):
         # checkpoint-compatible). See _maybe_init_scale / MonochromaticWilsonLoss.
         stabilize_scale: bool = False,
         learn_B: bool = True,
+        # Freeze the overall scale as well, for the merging models where the
+        # Wilson prior is the only thing fixing a gauge the data is silent on.
+        learn_G: bool = True,
         init_scale_from_counts: bool = True,
         wilson_init_bins: int = 20,
         # Periodic re-estimation of (G, B) from raw counts. 0 disables, which
@@ -136,6 +139,7 @@ class WilsonLoss(nn.Module):
         self.n_bins = n_bins
         self.stabilize_scale = stabilize_scale
         self.learn_B = learn_B
+        self.learn_G = learn_G
         self.refit_every = int(refit_prior_every_n_epochs)
         self.refit_bins = int(refit_bins)
         self.shoebox_dhw = tuple(shoebox_dhw) if shoebox_dhw else None
