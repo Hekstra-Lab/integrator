@@ -302,12 +302,19 @@ def collect_latents_and_checks(
                 rate_parts.append(rate[sel].cpu().numpy())
                 n_pixels += int(sel.sum())
                 model_i.append(out["qi_mean"].cpu().numpy().ravel())
-                for key, sink in (
-                    ("intensity.prf.value", dials_i),
-                    ("intensity.prf.variance", dials_sigma),
+                # prf first, then sum. laue.integrate writes only
+                # `intensity.sum.*`, so looking for prf alone left `dials_i`
+                # empty on every Laue dataset and `plot_model_vs_dials`
+                # rendered nothing at all, silently. `dials_snr` in
+                # figure_data.py already falls back the same way.
+                for val, var in (
+                    ("intensity.prf.value", "intensity.prf.variance"),
+                    ("intensity.sum.value", "intensity.sum.variance"),
                 ):
-                    if key in metadata:
-                        sink.append(metadata[key].cpu().numpy().ravel())
+                    if val in metadata and var in metadata:
+                        dials_i.append(metadata[val].cpu().numpy().ravel())
+                        dials_sigma.append(metadata[var].cpu().numpy().ravel())
+                        break
             done_latent = (
                 not want_latent or recorder.n_points >= args.latent_points
             )
