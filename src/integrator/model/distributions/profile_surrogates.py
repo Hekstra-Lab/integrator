@@ -39,12 +39,53 @@ def _softplus_inverse(x: float) -> float:
     return math.log(math.exp(x) - 1.0)
 
 
+# Filling masked logits with this rather than -inf keeps a fully masked
+# shoebox finite: softmax then returns the uniform profile instead of NaN.
+_MASK_FILL = -1e9
+
+
+def _broadcast_mask(mask: Tensor, like: Tensor) -> Tensor:
+    """Reshape a shoebox mask to `(B, K)`, adding a sample axis if needed."""
+    m = mask.reshape(mask.shape[0], -1)
+    return m.unsqueeze(0) if like.dim() == 3 else m
+
+
+def masked_softmax(logits: Tensor, mask: Tensor | None) -> Tensor:
+    """Softmax over the VALID pixels only.
+
+    The likelihood zeroes masked pixels, so profile mass placed there is never
+    paid for; the intensity then has to grow by `1 / (mass on valid pixels)` to
+    explain the counts that are seen. Normalizing over the valid pixels removes
+    that, and the bias it removes is per-reflection and tied to where the
+    shoebox sits on the detector, so no downstream per-image scale can absorb
+    it.
+    """
+    if mask is None:
+        return F.softmax(logits, dim=-1)
+    m = _broadcast_mask(mask, logits).bool()
+    return F.softmax(logits.masked_fill(~m, _MASK_FILL), dim=-1)
+
+
+def renormalize_masked(p: Tensor, mask: Tensor | None) -> Tensor:
+    """Drop the masked pixels from an already-normalized profile and rescale.
+
+    For the families that build the profile directly rather than through a
+    softmax over logits, and after any warp that moves mass across the box.
+    """
+    if mask is None:
+        return p
+    m = _broadcast_mask(mask, p).to(p.dtype)
+    p = p * m
+    return p / p.sum(dim=-1, keepdim=True).clamp_min(1e-12)
+
+
 def _sample_and_decode(
     loc: Tensor,
     scale: Tensor,
     W: Tensor,
     b: Tensor,
     mc_samples: int,
+    mask: Tensor | None = None,
 ) -> tuple[Tensor, Tensor]:
     """Sample h from q(h|x) and decode to profile vectors.
 
@@ -54,6 +95,8 @@ def _sample_and_decode(
         W: Decoder weight matrix, shape (K, d).
         b: Decoder bias, shape (K,) or (B, K) for per-bin bias.
         mc_samples: Number of Monte Carlo samples.
+        mask: Shoebox mask, shape `(B, K)` or `(B, K, 1)`. When given, the
+            profile is normalized over the valid pixels only.
 
     Returns:
         zp: Profile samples on the simplex, shape (S, B, K).
@@ -62,10 +105,10 @@ def _sample_and_decode(
     q_h = Normal(loc, scale)
     h = q_h.rsample([mc_samples])  # (S, B, d)
     logits = h @ W.T + b  # (S, B, K)
-    zp = F.softmax(logits, dim=-1)
+    zp = masked_softmax(logits, mask)
 
     mean_logits = loc @ W.T + b  # (B, K)
-    mean_profile = F.softmax(mean_logits, dim=-1)
+    mean_profile = masked_softmax(mean_logits, mask)
 
     return zp, mean_profile
 
@@ -197,7 +240,12 @@ class ProfileSurrogate(nn.Module):
         scale = F.softplus(self.scale_head(x)) + 1e-6  # (B, d)
 
         zp, mean_profile = _sample_and_decode(
-            loc, scale, self.decoder.weight, self.decoder.bias, mc_samples
+            loc,
+            scale,
+            self.decoder.weight,
+            self.decoder.bias,
+            mc_samples,
+            mask=kwargs.get("mask"),
         )
         return ProfileSurrogateOutput(
             zp=zp,
@@ -571,8 +619,11 @@ class ShapeletProfileSurrogate(nn.Module):
         eps = loc.unsqueeze(0) + scale.unsqueeze(0) * torch.randn(
             mc_samples, *loc.shape, device=loc.device, dtype=loc.dtype
         )
-        zp = self._profile(eps, phi, frame)
-        mean_profile = self._profile(loc.unsqueeze(0), phi, frame).squeeze(0)
+        mask = kwargs.get("mask")
+        zp = renormalize_masked(self._profile(eps, phi, frame), mask)
+        mean_profile = renormalize_masked(
+            self._profile(loc.unsqueeze(0), phi, frame).squeeze(0), mask
+        )
 
         tau = self.tau.to(loc.dtype)
         kl = (
@@ -1042,8 +1093,14 @@ class GeometricProfileSurrogate(ProfileSurrogate):
         if self.shift_head is not None:
             decode_loc = loc + self.shift_head(features)
 
+        mask = kwargs.get("mask")
         zp, mean_profile = _sample_and_decode(
-            decode_loc, scale, self.decoder.weight, self.decoder.bias, mc_samples
+            decode_loc,
+            scale,
+            self.decoder.weight,
+            self.decoder.bias,
+            mc_samples,
+            mask=mask,
         )
 
         if self.extent_head is not None:
@@ -1056,6 +1113,10 @@ class GeometricProfileSurrogate(ProfileSurrogate):
             mean_profile = self._warp(
                 mean_profile.unsqueeze(0), phi, log_extent
             ).squeeze(0)
+            # the warp moves mass across the box, so it can push some back
+            # onto masked pixels after the softmax already excluded them
+            zp = renormalize_masked(zp, mask)
+            mean_profile = renormalize_masked(mean_profile, mask)
 
         return ProfileSurrogateOutput(
             zp=zp,
