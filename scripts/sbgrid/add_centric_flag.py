@@ -38,6 +38,12 @@ def parse_args():
         "first integrated.expt under the dataset's dials_reference",
     )
     p.add_argument("--space-group", default=None, help="override, e.g. 'P 21 21 21'")
+    p.add_argument(
+        "--metadata",
+        default=None,
+        help="reference filename to patch, when a config names one other "
+        "than the dataset.yaml manifest does",
+    )
     p.add_argument("--dry-run", action="store_true")
     return p.parse_args()
 
@@ -56,8 +62,17 @@ def main():
     # deposited set uses .pt. Prefer whichever the dataset's own dataset.yaml
     # names, so a directory holding both is never ambiguous.
     meta_path = None
+    if args.metadata:
+        # A run's config may name a reference file other than the one
+        # `dataset.yaml` declares, and the flag has to land on the file the
+        # run will actually load -- 9b7c carries both `metadata.pt` and
+        # `metadata_sh_friedel.pt`, and a config naming the first got the
+        # all-acentric fallback while the manifest pointed at the second.
+        meta_path = args.dataset_dir / args.metadata
+        if not meta_path.exists():
+            raise SystemExit(f"no {args.metadata} in {args.dataset_dir}")
     spec_path = args.dataset_dir / "dataset.yaml"
-    if spec_path.is_file():
+    if meta_path is None and spec_path.is_file():
         import yaml
 
         named = (yaml.safe_load(spec_path.read_text()) or {}).get(
