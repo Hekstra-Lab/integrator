@@ -231,8 +231,14 @@ class RotationDataModule(pl.LightningDataModule):
         group_by_key: str = "asu_id",
         max_obs_per_hkl: int | None = None,
         ice_ring_ranges: list | None = None,
+        # Half-open [min, max) on the reference's `image_num`, so the bound
+        # reads like a frame count: max_image_num 360 keeps frames 0..359.
+        min_image_num: int | None = None,
+        max_image_num: int | None = None,
     ):
         super().__init__()
+        self.min_image_num = min_image_num
+        self.max_image_num = max_image_num
         self.data_dir = data_dir
         self.batch_size = batch_size
         self.validation_split = validation_split
@@ -343,6 +349,42 @@ class RotationDataModule(pl.LightningDataModule):
                     n_cut,
                     "-inf" if self.d_min is None else f"{self.d_min:.2f}",
                     "inf" if self.d_max is None else f"{self.d_max:.2f}",
+                )
+            counts = counts[selection]
+            masks = masks[selection]
+            reference = {k: v[selection] for k, v in reference.items()}
+
+        # Image range, so the batch cut is a config knob rather than something
+        # baked into a dataset at shoebox-build time. `mksbox --max-images`
+        # does the same thing permanently; doing it here lets one dataset
+        # covering every frame serve a 360-frame run and a 999-frame run, and
+        # lets a model be scored against a baseline MTZ cut to the same
+        # batches without regenerating shoeboxes.
+        if self.min_image_num is not None or self.max_image_num is not None:
+            if "image_num" not in reference:
+                raise KeyError(
+                    "min_image_num/max_image_num need an 'image_num' column in "
+                    "the reference metadata; this dataset has "
+                    f"{sorted(reference)[:12]}..."
+                )
+            img = reference["image_num"]
+            selection = torch.ones_like(img, dtype=torch.bool)
+            if self.min_image_num is not None:
+                selection &= img >= self.min_image_num
+            if self.max_image_num is not None:
+                selection &= img < self.max_image_num
+            n_cut = (~selection).sum().item()
+            logger.info(
+                "Image range [%s, %s): kept %d reflections, removed %d",
+                "-inf" if self.min_image_num is None else self.min_image_num,
+                "inf" if self.max_image_num is None else self.max_image_num,
+                int(selection.sum().item()),
+                n_cut,
+            )
+            if not bool(selection.any()):
+                raise ValueError(
+                    "the image range selected no reflections; image_num spans "
+                    f"{float(img.min()):.0f}..{float(img.max()):.0f}"
                 )
             counts = counts[selection]
             masks = masks[selection]
