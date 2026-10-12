@@ -77,6 +77,37 @@ def sanitize(cfg: dict) -> tuple[dict, list[str]]:
     return cfg, dropped
 
 
+def match_geometry_heads(cfg: dict, ckpt: Path) -> list[str]:
+    """Rebuild the architecture the checkpoint actually has, not the one the
+    dataset would imply today.
+
+    `beam_center` is injected from `dataset.yaml`, not the config, and the
+    shapelet and fixed-basis families build a geometry `frame_head` only when
+    it is present. A dataset that gained a `crystal.beam_center_px` after a
+    run was trained therefore rebuilds a model with heads the checkpoint has
+    no weights for, and loading fails on missing keys. The injection uses
+    `setdefault`, so an explicit None in the config suppresses it.
+    """
+    import torch
+
+    notes: list[str] = []
+    try:
+        state = torch.load(ckpt.as_posix(), map_location="cpu",
+                           weights_only=False)["state_dict"]
+    except Exception:
+        return notes
+    qp = [k for k in state if "surrogates.qp." in k]
+    if not qp:
+        return notes
+    args = cfg.get("surrogates", {}).get("qp", {}).get("args")
+    if not isinstance(args, dict):
+        return notes
+    if not any("frame_head" in k for k in qp) and args.get("beam_center") is None:
+        args["beam_center"] = None
+        notes.append("beam_center=None (checkpoint has no frame_head)")
+    return notes
+
+
 def run_one(run_dir: Path, out_dir: Path | None, stages: str,
             n_per_regime: int, subdir: bool = False) -> Path | None:
     import yaml
@@ -92,9 +123,13 @@ def run_one(run_dir: Path, out_dir: Path | None, stages: str,
         return None
 
     cfg, dropped = sanitize(yaml.safe_load(cfg_path.read_text()))
+    newest = sorted(ckpt_dir.glob("*.ckpt"))[-1]
+    fixed = match_geometry_heads(cfg, newest)
     patched = run_dir / "config_log.replay.yaml"
     yaml.safe_dump(cfg, patched.open("w"), sort_keys=False)
-    note = f"  (dropped {', '.join(dropped)})" if dropped else ""
+    notes = [f"dropped {', '.join(dropped)}"] if dropped else []
+    notes += fixed
+    note = f"  ({'; '.join(notes)})" if notes else ""
     print(f"  {run_dir.name}: {n_ckpt} checkpoints{note}")
 
     # With several runs sharing one --out-dir, each needs its own subdirectory

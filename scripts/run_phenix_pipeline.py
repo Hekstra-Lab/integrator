@@ -316,7 +316,7 @@ def main():
     phenix_eff = Path(config["output"]["phenix_eff"])
     phenix_env = _get_phenix_env()
 
-    log_dir = _log_dir_from_meta(meta, run_dir)
+    log_dir = _log_dir_from_meta(meta, args.run_dir)
     pred_dir = log_dir.parent / "predictions"
 
     epoch_dirs = _get_epoch_dirs(pred_dir, args.epochs, args.mtz_name)

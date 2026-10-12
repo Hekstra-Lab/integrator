@@ -67,6 +67,13 @@ def parse_args() -> argparse.Namespace:
         help="reflections per regime in the image grids; the radial curves, "
         "n_eff and the CSV always use all of them",
     )
+    p.add_argument(
+        "--detector-metadata",
+        type=Path,
+        default=None,
+        help="dataset metadata (.pt/.npy) holding xyzcal.px.0/1, to mark where "
+        "each tracked reflection sits on the detector",
+    )
     p.add_argument("--dpi", type=int, default=150)
     return p.parse_args()
 
@@ -290,6 +297,71 @@ def figure_profiles(arms: list[dict], out: Path, dpi: int, rows: list[int]) -> N
     print(f"  wrote {resid}")
 
 
+def detector_positions(meta_path: Path, refl_ids: list[int]):
+    """(x, y) of each tracked reflection, and of a background sample.
+
+    The profile a family predicts is not uniform across the detector -- the
+    geometric and physical families build it FROM the position -- so a panel
+    of profiles is hard to read without knowing where each one sits. Returns
+    None when the metadata lacks calculated positions.
+    """
+    import numpy as np
+
+    if meta_path.suffix == ".npy":
+        meta = np.load(meta_path, allow_pickle=True).item()
+    else:
+        import torch
+
+        meta = torch.load(meta_path, map_location="cpu", weights_only=False)
+    keys = ("xyzcal.px.0", "xyzcal.px.1")
+    if not all(k in meta for k in keys):
+        print(f"  {meta_path.name}: no {keys[0]}; skipping the detector map")
+        return None
+    x = np.asarray(meta[keys[0]], dtype=float)
+    y = np.asarray(meta[keys[1]], dtype=float)
+    ids = np.asarray(refl_ids, dtype=int)
+    if ids.max() >= x.size:
+        print("  tracked refl_id exceeds the metadata length; skipping the map")
+        return None
+    rng = np.random.default_rng(0)
+    bg = rng.choice(x.size, size=min(40000, x.size), replace=False)
+    return x[bg], y[bg], x[ids], y[ids]
+
+
+def figure_detector(arms: list[dict], meta_path: Path, out: Path, dpi: int) -> None:
+    """Where the tracked reflections sit, numbered to match the profile rows."""
+    import matplotlib.pyplot as plt
+
+    ref = arms[0]
+    pos = detector_positions(meta_path, ref["refl_id"])
+    if pos is None:
+        return
+    bx, by, tx, ty = pos
+    regimes = ref["regime"] or ["all"] * len(tx)
+    colors = {"weak": "tab:blue", "medium": "tab:orange", "strong": "tab:red"}
+
+    fig, ax = plt.subplots(figsize=(6.0, 6.0))
+    ax.scatter(bx, by, s=0.5, c="0.85", linewidths=0, rasterized=True)
+    for i, (x, y) in enumerate(zip(tx, ty)):
+        ax.scatter(x, y, s=70, facecolors="none",
+                   edgecolors=colors.get(regimes[i], "k"), linewidths=1.6)
+        ax.annotate(str(i), (x, y), fontsize=8, xytext=(5, 4),
+                    textcoords="offset points")
+    for name, c in colors.items():
+        if name in regimes:
+            ax.scatter([], [], facecolors="none", edgecolors=c, label=name)
+    ax.set_aspect("equal")
+    ax.set_xlabel("xcal (px)"); ax.set_ylabel("ycal (px)")
+    ax.legend(fontsize=8, frameon=False, loc="upper right")
+    ax.set_title("where the tracked reflections sit\n"
+                 "(grey = all reflections; number = row in the profile panel)",
+                 fontsize=10)
+    fig.tight_layout()
+    fig.savefig(out, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  wrote {out}")
+
+
 def figure_radial(arms: list[dict], out: Path, dpi: int) -> None:
     """Azimuthal average per regime, every arm on one axis."""
     import matplotlib.pyplot as plt
@@ -445,6 +517,11 @@ def main() -> None:
     figure_profiles(arms, args.out_dir / "fig_family_profiles.png", args.dpi, rows)
     figure_radial(arms, args.out_dir / "fig_family_radial.png", args.dpi)
     figure_neff(arms, args.out_dir / "fig_family_neff.png", args.dpi)
+    if args.detector_metadata is not None:
+        figure_detector(
+            arms, args.detector_metadata,
+            args.out_dir / "fig_family_detector.png", args.dpi,
+        )
     write_stats(arms, args.out_dir / "family_profile_stats.csv")
 
 
