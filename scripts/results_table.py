@@ -21,6 +21,19 @@ Usage:
 
 A `--baseline` source is rendered as its own columns repeated down the table,
 so each row can be read on its own, and as a delta against the first method.
+
+The baseline may be given as a chain log, or as the `peak_heights.csv` that
+`config4_refine` writes, in which case `--baseline-rfree` supplies the R-free
+the log would have carried. The classical pipelines are not run through the
+chain, so their numbers live in that CSV and nowhere else; for hewl_1118 the
+correct one is
+
+    /n/holylabs/.../1118/config4/peak_heights.csv   R-free 0.1804
+
+and NOT `ablate/baseline_laue_dials`, which is our own August run with the
+intensities clamped positive. The clamp flatters the baseline on peaks and
+penalizes it on R-free, so scoring against it reverses the comparison on both
+metrics. That mistake has been made once already.
 """
 
 from __future__ import annotations
@@ -56,6 +69,15 @@ def parse(text: str) -> dict[str, dict]:
     return out
 
 
+def read_peak_csv(path: Path, r_free: float | None) -> dict[str, dict]:
+    """A `peak_heights.csv` from `config4_refine`: a header row and one row of values."""
+    rows = [r for r in path.read_text().splitlines() if r.strip()]
+    if len(rows) < 2:
+        raise SystemExit(f"{path} has no values row")
+    peaks = [float(v) for v in rows[-1].split(",")]
+    return {path.parent.name: {"r_free": r_free, "peaks": peaks}}
+
+
 def read_source(spec: str) -> tuple[str, dict[str, dict]]:
     """`label=path`, or `label=-` to read stdin."""
     if "=" not in spec:
@@ -63,6 +85,25 @@ def read_source(spec: str) -> tuple[str, dict[str, dict]]:
     label, path = spec.split("=", 1)
     text = sys.stdin.read() if path == "-" else Path(path).read_text()
     return label, parse(text)
+
+
+def paired(v: list[float], base: list[float]):
+    """Mean difference, sites won, and the paired t over the sites.
+
+    SciPy is optional here -- the table is still worth printing without it, so
+    the t and p come back as None rather than taking the module down.
+    """
+    d = [x - y for x, y in zip(v, base)]
+    n = len(d)
+    mean = sum(d) / n
+    won = sum(1 for x in d if x > 0)
+    try:
+        from scipy import stats
+
+        t, pv = stats.ttest_rel(v, base)
+        return mean, won, float(t), float(pv)
+    except ImportError:
+        return mean, won, None, None
 
 
 def mean_peak(entry: dict) -> float | None:
@@ -116,6 +157,12 @@ def main() -> None:
         help="label=path for a classical pipeline; its single row is "
         "repeated as columns so every row stands alone",
     )
+    p.add_argument(
+        "--baseline-rfree",
+        type=float,
+        default=None,
+        help="R-free for a baseline given as a peak_heights.csv",
+    )
     p.add_argument("--sort-by", default=None, help="method label to sort on")
     p.add_argument("--markdown", action="store_true")
     p.add_argument(
@@ -124,7 +171,15 @@ def main() -> None:
     a = p.parse_args()
 
     methods = [read_source(s) for s in a.sources]
-    baselines = [read_source(s) for s in a.baseline]
+    baselines = []
+    for spec in a.baseline:
+        label, _, path = spec.partition("=")
+        if path.endswith(".csv"):
+            baselines.append(
+                (label, read_peak_csv(Path(path), a.baseline_rfree))
+            )
+        else:
+            baselines.append(read_source(spec))
 
     arms = sorted({arm for _, d in methods for arm in d})
     if a.sort_by:
@@ -172,6 +227,37 @@ def main() -> None:
                 f"{baselines[0][0]} on R-free by more than 2 floors"
                 + (f" -- {', '.join(beats)}" if beats else "")
             )
+
+        # Peaks are paired over the SITES, so a paired t-test is the right one:
+        # the sites differ enormously from each other (an iodine runs 3x a
+        # cysteine) and that spread is common to every arm. It tests whether
+        # two merges differ on these sites, NOT whether two configurations
+        # differ -- training-run variation is not in it, and every arm here is
+        # n = 1.
+        base_peaks = base_vals[0].get("peaks")
+        if base_peaks:
+            print(
+                f"\nagainst {baselines[0][0]}, paired over "
+                f"{len(base_peaks)} sites:"
+            )
+            print(
+                f"  {'arm':28s} {'method':10s} {'d':>7s} {'won':>6s} "
+                f"{'t':>7s} {'p':>9s}"
+            )
+            scored = []
+            for label, d in methods:
+                for arm in arms:
+                    v = d.get(arm, {}).get("peaks")
+                    if not v or len(v) != len(base_peaks):
+                        continue
+                    scored.append((paired(v, base_peaks), arm, label))
+            for (dm, won, t, pv), arm, label in sorted(scored, reverse=True):
+                star = "*" if pv is not None and pv < 0.05 else " "
+                print(
+                    f"  {arm:28s} {label:10s} {dm:+7.3f} "
+                    f"{won:3d}/{len(base_peaks):<2d} "
+                    f"{fmt(t, 2):>7s} {fmt(pv, 5):>9s}{star}"
+                )
 
 
 if __name__ == "__main__":
