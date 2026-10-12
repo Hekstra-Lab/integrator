@@ -175,3 +175,43 @@ def test_svae_passes_the_mask_to_its_profile_surrogate():
         window = "\n".join(src.splitlines()[idx : idx + 8])
         assert "mask=" in window, f"qp call without mask=: {line.strip()}"
         assert "metadata=" in window, f"qp call without metadata=: {line.strip()}"
+
+
+def test_geometric_with_steering_uses_the_output_grid_mask():
+    """The steered geometric surrogate decodes onto a LARGER canonical grid.
+
+    With `local_shift`/`steer` on, the decoder writes d*ch*cw pixels (37x37
+    against a 25x25 box on hewl_1118) and `_warp` brings it back. Handing the
+    output-grid mask to the decode step therefore raised
+
+        RuntimeError: The size of tensor a (625) must match
+        the size of tensor b (1369) at non-singleton dimension 2
+
+    which is what killed the geomboth arm. The unsteered test above cannot
+    catch it, because without steering the two grids coincide.
+    """
+    torch.manual_seed(0)
+    surrogate = GeometricProfileSurrogate(
+        input_dim=D,
+        latent_dim=4,
+        output_dim=P,
+        profile_shape=SHAPE,
+        local_shift=True,
+        steer=True,
+        beam_center=[50.0, 50.0],
+    )
+    assert surrogate.canonical_shape != surrogate.profile_shape, (
+        "steering did not enlarge the canonical grid; test is not exercising "
+        "the path it exists for"
+    )
+    mask = _mask()
+    out = surrogate(
+        torch.randn(B, D), mc_samples=3, mask=mask, metadata=_metadata()
+    )
+    assert out.zp.shape[-1] == P, "profile must come back on the output grid"
+    for profile in (out.zp, out.mean_profile):
+        p = profile.reshape(-1, B, P) if profile.dim() == 3 else profile[None]
+        assert (p * (1.0 - mask)).sum(-1).max() < 1e-6
+        assert torch.allclose(
+            profile.sum(-1), torch.ones_like(profile.sum(-1)), atol=1e-5
+        )

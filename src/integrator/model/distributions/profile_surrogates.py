@@ -1100,7 +1100,11 @@ class GeometricProfileSurrogate(ProfileSurrogate):
             self.decoder.weight,
             self.decoder.bias,
             mc_samples,
-            mask=mask,
+            # NOT the mask: when steering is on the decoder writes to the
+            # CANONICAL grid, which is larger than the output box (37x37
+            # against 25x25 on hewl_1118), and the mask indexes the output.
+            # The mask is applied below instead, once `_warp` has brought the
+            # profile back onto the output grid.
         )
 
         if self.extent_head is not None:
@@ -1113,10 +1117,11 @@ class GeometricProfileSurrogate(ProfileSurrogate):
             mean_profile = self._warp(
                 mean_profile.unsqueeze(0), phi, log_extent
             ).squeeze(0)
-            # the warp moves mass across the box, so it can push some back
-            # onto masked pixels after the softmax already excluded them
-            zp = renormalize_masked(zp, mask)
-            mean_profile = renormalize_masked(mean_profile, mask)
+
+        # On the output grid either way, so this is the one place the mask
+        # can be applied for both the warped and unwarped paths.
+        zp = renormalize_masked(zp, mask)
+        mean_profile = renormalize_masked(mean_profile, mask)
 
         return ProfileSurrogateOutput(
             zp=zp,
