@@ -173,6 +173,10 @@ class SVAEIntegrator(BaseIntegrator):
             metadata=metadata,
         )
         out = _assemble_outputs(out)
+        # the gate is this integrator's own quantity and nothing downstream can
+        # recompute it: the conjugate variance understates the real one by
+        # sum(c g^2) / sum(c g), which needs g per pixel
+        out["signal_prob"] = i_prob
         _add_group_outputs(out, metadata, self.loss)
 
         return {

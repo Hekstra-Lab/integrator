@@ -66,6 +66,93 @@ def masked_softmax(logits: Tensor, mask: Tensor | None) -> Tensor:
     return F.softmax(logits.masked_fill(~m, _MASK_FILL), dim=-1)
 
 
+class _Entmax15(torch.autograd.Function):
+    """1.5-entmax: the exact closed form from Peters, Niculae & Martins (2019).
+
+    arXiv:1905.05702. The alpha-entmax family runs from softmax (alpha = 1) to
+    sparsemax (alpha = 2); at alpha = 1.5 the solution has a closed form found
+    by sorting, and the result is a point ON the simplex with EXACT zeros.
+
+    That is the property a Bragg profile needs and softmax cannot provide.
+    `softmax` is strictly positive everywhere, so "no mass here" is
+    unreachable, and the gradient d(pi)/d(z) = pi (1 - pi) vanishes as a pixel
+    gets small -- the loss stops pushing long before the mass is gone. Spread
+    over a 625-pixel box, 2e-4 a pixel that nothing can remove is 12.5% of the
+    profile, which is what the softmax families actually show (13.5% beyond
+    5 px, against 0.2% for the shapelet family).
+
+    The backward is the known closed form rather than autograd through the
+    sort: on the support, the Jacobian of entmax-1.5 is
+    diag(s) - s s^T / sum(s) with s = sqrt(y).
+    """
+
+    @staticmethod
+    def forward(ctx, X: Tensor, dim: int = -1) -> Tensor:
+        X = X / 2  # the alpha = 1.5 scaling
+        X = X - X.max(dim=dim, keepdim=True).values  # shift for stability
+        Xsrt, _ = torch.sort(X, dim=dim, descending=True)
+
+        rho = torch.arange(
+            1, X.shape[dim] + 1, device=X.device, dtype=X.dtype
+        )
+        shape = [1] * X.dim()
+        shape[dim] = -1
+        rho = rho.reshape(shape)
+
+        mean = Xsrt.cumsum(dim) / rho
+        mean_sq = (Xsrt**2).cumsum(dim) / rho
+        ss = rho * (mean_sq - mean**2)
+        delta = (1 - ss) / rho
+        tau = mean - torch.sqrt(torch.clamp(delta, min=0))
+
+        support_size = (tau <= Xsrt).sum(dim=dim, keepdim=True)
+        tau_star = tau.gather(dim, support_size - 1)
+
+        Y = torch.clamp(X - tau_star, min=0) ** 2
+        ctx.save_for_backward(Y)
+        ctx.dim = dim
+        return Y
+
+    @staticmethod
+    def backward(ctx, dY: Tensor):
+        (Y,) = ctx.saved_tensors
+        dim = ctx.dim
+        gppr = Y.sqrt()  # zero off the support, so the gradient stays there
+        dX = dY * gppr
+        q = dX.sum(dim=dim, keepdim=True) / gppr.sum(dim=dim, keepdim=True).clamp_min(
+            1e-12
+        )
+        dX = dX - q * gppr
+        return dX, None
+
+
+def entmax15(logits: Tensor, dim: int = -1) -> Tensor:
+    """`softmax`'s sparse counterpart: sums to 1, but may be exactly 0."""
+    return _Entmax15.apply(logits, dim)
+
+
+def masked_entmax15(logits: Tensor, mask: Tensor | None) -> Tensor:
+    """1.5-entmax over the VALID pixels only, as `masked_softmax` but sparse."""
+    if mask is None:
+        return entmax15(logits, dim=-1)
+    m = _broadcast_mask(mask, logits).bool()
+    return entmax15(logits.masked_fill(~m, _MASK_FILL), dim=-1)
+
+
+_NORMALIZERS = {"softmax": masked_softmax, "entmax15": masked_entmax15}
+
+
+def get_normalizer(name: str):
+    """Map a config name to the simplex map the profile is built with."""
+    try:
+        return _NORMALIZERS[name]
+    except KeyError:
+        raise ValueError(
+            f"unknown profile normalization {name!r}; "
+            f"expected one of {sorted(_NORMALIZERS)}"
+        ) from None
+
+
 def renormalize_masked(p: Tensor, mask: Tensor | None) -> Tensor:
     """Drop the masked pixels from an already-normalized profile and rescale.
 
@@ -86,6 +173,7 @@ def _sample_and_decode(
     b: Tensor,
     mc_samples: int,
     mask: Tensor | None = None,
+    normalize=masked_softmax,
 ) -> tuple[Tensor, Tensor]:
     """Sample h from q(h|x) and decode to profile vectors.
 
@@ -105,10 +193,10 @@ def _sample_and_decode(
     q_h = Normal(loc, scale)
     h = q_h.rsample([mc_samples])  # (S, B, d)
     logits = h @ W.T + b  # (S, B, K)
-    zp = masked_softmax(logits, mask)
+    zp = normalize(logits, mask)
 
     mean_logits = loc @ W.T + b  # (B, K)
-    mean_profile = masked_softmax(mean_logits, mask)
+    mean_profile = normalize(mean_logits, mask)
 
     return zp, mean_profile
 
@@ -164,8 +252,15 @@ class ProfileSurrogate(nn.Module):
         # identifiability collapse. `prepare_profile_basis` writes the file.
         warmstart_basis_path: str | None = None,
         freeze_bias: bool = False,
+        # How the decoded logits are mapped onto the simplex. `softmax` is
+        # strictly positive, so it cannot place exactly zero mass on a pixel
+        # and its gradient pi (1 - pi) stops pushing long before a small tail
+        # is gone; `entmax15` can, and does so with exact zeros.
+        normalization: str = "softmax",
     ) -> None:
         super().__init__()
+        self.normalization = normalization
+        self._normalize = get_normalizer(normalization)
 
         if latent_dim is None:
             latent_dim = 8
@@ -246,6 +341,7 @@ class ProfileSurrogate(nn.Module):
             self.decoder.bias,
             mc_samples,
             mask=kwargs.get("mask"),
+            normalize=self._normalize,
         )
         return ProfileSurrogateOutput(
             zp=zp,
@@ -1105,6 +1201,7 @@ class GeometricProfileSurrogate(ProfileSurrogate):
             # against 25x25 on hewl_1118), and the mask indexes the output.
             # The mask is applied below instead, once `_warp` has brought the
             # profile back onto the output grid.
+            normalize=self._normalize,
         )
 
         if self.extent_head is not None:
