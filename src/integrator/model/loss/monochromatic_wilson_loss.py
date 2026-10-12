@@ -1,3 +1,5 @@
+import logging
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -5,6 +7,8 @@ from torch import Tensor
 
 from integrator.model.loss.count_likelihood import _inv_softplus
 from integrator.model.loss.wilson_loss import WilsonLoss
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_INIT_G = 1.0
 
@@ -45,6 +49,22 @@ class MonochromaticWilsonLoss(WilsonLoss):
         if init_G is not None:
             # an explicit scale wins: never overwrite it with the count-based fit
             self.init_scale_from_counts = False
+        if init_G is None and not (
+            self.stabilize_scale and self.init_scale_from_counts
+        ):
+            # G would start at 1.0 with nothing to move it there but gradient
+            # descent, and the data scale is typically 3-4 orders of magnitude
+            # away: 9b7c's fitted value is 3781.8. A run left like this trains
+            # without error and merges on a collapsed gauge -- G reached only
+            # ~9 after 39 epochs once, with the merged intensities a thousand
+            # times too small -- so it is worth saying out loud.
+            logger.warning(
+                "no init_G and no count-based init (stabilize_scale is off): "
+                "G starts at %g. Set init_G to the data scale, or "
+                "stabilize_scale=true to fit it from the counts.",
+                _DEFAULT_INIT_G,
+            )
+
         if not self.learn_G:
             # Freezing the prior pins the scale gauge by fiat. That is only
             # useful once G is at a data value -- `stabilize_scale` with the
