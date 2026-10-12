@@ -248,6 +248,26 @@ def submit_array_job(
     logger.info("Check status: squeue -u $USER")
 
 
+
+def _log_dir_from_meta(meta: dict, run_dir: Path) -> Path:
+    """The directory holding checkpoints, under either run layout.
+
+    `integrator.cli.train --run-dir` writes config_log.yaml beside files/ and
+    no `wandb` key, so reading meta["wandb"]["log_dir"] raised KeyError on any
+    run produced by the current CLI.
+    """
+    log_dir = (meta.get("wandb") or {}).get("log_dir")
+    if log_dir:
+        return Path(log_dir)
+    candidate = Path(run_dir) / "files"
+    if (candidate / "checkpoints").is_dir():
+        return candidate
+    raise KeyError(
+        f"no checkpoint directory for {run_dir}: run_metadata.yaml has no "
+        f"'wandb.log_dir' and {candidate}/checkpoints does not exist"
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run phenix.refine + peak finding on merged MTZ files."
@@ -296,8 +316,7 @@ def main():
     phenix_eff = Path(config["output"]["phenix_eff"])
     phenix_env = _get_phenix_env()
 
-    wandb_info = meta["wandb"]
-    log_dir = Path(wandb_info["log_dir"])
+    log_dir = _log_dir_from_meta(meta, run_dir)
     pred_dir = log_dir.parent / "predictions"
 
     epoch_dirs = _get_epoch_dirs(pred_dir, args.epochs, args.mtz_name)

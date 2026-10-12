@@ -3,6 +3,7 @@ import logging
 import re
 
 from integrator.io.pred_io import write_refl_from_preds
+from integrator.cli.utils.run_layout import resolve_run
 from integrator.cli.utils.logger import setup_logging
 from integrator.io.mtz_io import write_mtz_from_preds
 
@@ -156,13 +157,12 @@ def main():
     # run dir
     run_dir = Path(args.run_dir)
 
-    # Reading in pred.yaml
-    meta = yaml.safe_load((run_dir / "run_metadata.yaml").read_text())
-    config = load_config(meta["config"])
-    wandb_info = meta["wandb"]
+    # Either run layout: run_metadata.yaml, or the config_log.yaml + files/
+    # that `integrator.cli.train --run-dir` writes.
+    config_path, log_dir = resolve_run(run_dir)
+    config = load_config(config_path)
 
     # writing prediction directories
-    log_dir = Path(wandb_info["log_dir"])
     wandb_dir = log_dir.parent
     pred_dir = wandb_dir / "predictions"
     pred_dir.mkdir(exist_ok=True)
