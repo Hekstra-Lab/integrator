@@ -160,9 +160,12 @@ def process_single_epoch(
         phenix_eff, updated_eff, mtz_path, columns=columns, fw_scale=fw_scale
     )
 
+    # `--overwrite`, not `overwrite=true`: phenix 1.20 rejects the latter with
+    # "Unknown command line parameter definition", which left phenix_out
+    # holding only the generated .eff and no refinement at all.
     refine_cmd = (
         f"phenix.refine {updated_eff.resolve()} "
-        f"{mtz_path.resolve()} overwrite=true"
+        f"{mtz_path.resolve()} --overwrite"
     )
     peaks_cmd = (
         "rs.find_peaks *[0-9].mtz *[0-9].pdb "
@@ -185,11 +188,15 @@ def process_single_epoch(
         )
         logger.info("Completed %s", epoch_dir.name)
     except subprocess.CalledProcessError as e:
+        # phenix writes its diagnosis to stdout, not stderr, so reporting only
+        # stderr showed an empty message for every failure.
+        tail = (e.stderr or "")[-2000:] or (e.stdout or "")[-2000:]
         logger.error(
-            "%s failed (exit %d):\n%s",
+            "%s failed (exit %d):\n%s\ncommand: %s",
             epoch_dir.name,
             e.returncode,
-            e.stderr[-2000:],
+            tail.strip() or "<no output captured>",
+            full_cmd,
         )
 
 
