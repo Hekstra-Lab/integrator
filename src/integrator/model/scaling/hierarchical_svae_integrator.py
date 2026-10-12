@@ -526,7 +526,18 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         x_r_bg = self.encoders["r_bg"](shoebox_reshaped)
 
         qbg = self.surrogates["qbg"](x_k_bg, x_r_bg)
-        qp = self.surrogates["qp"](x_profile, mc_samples=self.mc_samples)
+        # `mask` and `metadata` are what the hierarchical integrator passes.
+        # Without the mask the profile normalizes over every pixel in the box,
+        # including ones the likelihood never sees, and the intensity grows by
+        # 1 / (mass on valid pixels) to compensate -- the same defect fixed in
+        # profile_surrogates. `metadata` is required by the geometric and
+        # physical families, which build their profile from the geometry.
+        qp = self.surrogates["qp"](
+            x_profile,
+            mc_samples=self.mc_samples,
+            metadata=metadata,
+            mask=mask,
+        )
         profile_mean = qp.mean_profile  # (B, P)
 
         scale = self._get_scale(metadata, device)  # (B,)
@@ -847,7 +858,11 @@ class HierarchicalSVAEIntegrator(BaseIntegrator):
         x_profile = self.encoders["profile"](sr)
         x_k_i = self.encoders["k_i"](sr)
         x_r_i = self.encoders["r_i"](sr) if self.obs_exposure_free else None
-        profile_mean = self.surrogates["qp"](x_profile, mc_samples=1).mean_profile
+        # same mask/metadata as the forward, or the exported intensities sit
+        # on a different profile normalization than the trained ones
+        profile_mean = self.surrogates["qp"](
+            x_profile, mc_samples=1, metadata=metadata, mask=mask
+        ).mean_profile
         scale = self._get_scale(metadata, device)
         asu_ids = metadata["asu_id"].long().to(device)
         d_obs = metadata["d"].to(device).float()

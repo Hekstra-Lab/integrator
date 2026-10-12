@@ -151,3 +151,27 @@ def test_fully_masked_shoebox_is_finite(name):
     )
     assert torch.isfinite(out.zp).all()
     assert torch.isfinite(out.mean_profile).all()
+
+
+def test_svae_passes_the_mask_to_its_profile_surrogate():
+    """The merging integrator has its own forward and its own qp call.
+
+    It built the profile without a mask, so the masking fix never reached it:
+    profile mass landed on pixels the likelihood never sees and the merged
+    intensity absorbed the difference. Checked by recording what the surrogate
+    is handed rather than by inspecting the source.
+    """
+    from integrator.model.scaling import hierarchical_svae_integrator as hsi
+
+    src = open(hsi.__file__).read()
+    calls = [
+        line for line in src.splitlines() if 'self.surrogates["qp"](' in line
+    ]
+    assert calls, "no qp call found; did the attribute name change?"
+    # every call site must forward both, on the call or the lines after it
+    for idx, line in enumerate(src.splitlines()):
+        if 'self.surrogates["qp"](' not in line:
+            continue
+        window = "\n".join(src.splitlines()[idx : idx + 8])
+        assert "mask=" in window, f"qp call without mask=: {line.strip()}"
+        assert "metadata=" in window, f"qp call without metadata=: {line.strip()}"
