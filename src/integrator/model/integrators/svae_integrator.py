@@ -1,3 +1,4 @@
+import logging
 import math
 from typing import Any
 
@@ -15,6 +16,8 @@ from integrator.model.integrators.integrator_utils import (
     IntegratorBaseOutputs,
     _assemble_outputs,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _sample_profile(qp, mc_samples: int) -> Tensor:
@@ -47,13 +50,23 @@ class SVAEIntegrator(BaseIntegrator):
         )
 
     def _intensity_prior(self, metadata, device):
-        d = metadata["d"].to(device)  # (B,)
-        s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))
-        beta_I = self.loss._get_tau(
-            metadata, s_sq, device
-        )  #  Wilson Beta rate
-        alpha_I = torch.ones_like(beta_I)  #
-        return alpha_I, beta_I
+        """`(concentration, rate)` of the Wilson prior on I, centric-aware.
+
+        This integrator derives q(I) from conjugacy instead of routing the
+        intensity through `WilsonLoss.forward`, so it needs the prior itself.
+        It previously hardcoded `alpha = 1`, the acentric form, for every
+        reflection. A centric `|F|^2` is `Sigma` times a chi-squared with ONE
+        degree of freedom, `Gamma(1/2, tau/2)`: same mean, twice the variance,
+        far more mass near zero. Using the acentric shape on a centric biases
+        weak ones UP by about half a count and over-shrinks strong ones in
+        weak shells by up to 17%.
+
+        Delegating to the loss keeps q's prior and the KL's prior identical --
+        they were otherwise built from different formulas -- and picks up the
+        `refit_residual` correction as well. Datasets with no `centric`
+        column fall back to the acentric form, as before.
+        """
+        return self.loss.intensity_prior_params(metadata, device)
 
     def _background_prior(self, metadata, device):
         conc = self.loss.bg_concentration  # () or (n_bins,)
@@ -108,10 +121,16 @@ class SVAEIntegrator(BaseIntegrator):
 
         # profile representation
         x_profile = self.encoders["profile"](shoebox_reshaped)
+        # `mask` as every other integrator passes it: without it the profile
+        # normalizes over the whole box, so mass landing on pixels the
+        # likelihood never sees is never paid for and the intensity grows by
+        # 1 / (mass on valid pixels) to compensate. It also makes the
+        # conjugate exposure term `sum_valid pi` equal 1 for a full box.
         qp = self.surrogates["qp"](
             x_profile,
             mc_samples=self.mc_samples,
             metadata=metadata,
+            mask=mask,
         )
 
         # get signal probs

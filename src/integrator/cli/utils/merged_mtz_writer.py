@@ -2,7 +2,7 @@
 
 Extracts per-HKL Gamma parameters directly from the checkpoint's
 HKL lookup table, computes mean intensity and sigma, and writes a
-merged MTZ with anomalous columns I(+)/SIGI(+)/I(-)/SIGI(-) suitable
+merged MTZ with anomalous columns I(+)/SigI(+)/I(-)/SigI(-) suitable
 for phenix.refine.
 
 Uses the canonical HKL from `asu_id_to_hkl.pt` (produced by
@@ -178,9 +178,13 @@ def _build_anomalous_dataset(
             "K": rs.DataSeries(hkl[:, 1], dtype="H"),
             "L": rs.DataSeries(hkl[:, 2], dtype="H"),
             "F": rs.DataSeries(F_mean, dtype="F"),
-            "SIGF": rs.DataSeries(sig_F, dtype="Q"),
+            # `SigF`/`SigI`, not `SIGF`/`SIGI`: careless writes the mixed-case
+            # spelling and the refinement .eff asks for
+            # "F(+),SigF(+),F(-),SigF(-),merged" by name, so the uppercase
+            # form made phenix reject a merged MTZ that was otherwise correct.
+            "SigF": rs.DataSeries(sig_F, dtype="Q"),
             "I": rs.DataSeries(I_mean, dtype="J"),
-            "SIGI": rs.DataSeries(sig_I, dtype="Q"),
+            "SigI": rs.DataSeries(sig_I, dtype="Q"),
         },
         cell=cell,
         spacegroup=spacegroup,
@@ -190,11 +194,11 @@ def _build_anomalous_dataset(
 
     ds = ds.unstack_anomalous()
 
-    # Reorder columns so phenix sees F(+)/SIGF(+)/F(-)/SIGF(-) first,
-    # then I(+)/SIGI(+)/I(-)/SIGI(-) -- matching DIALS/careless convention.
+    # Reorder columns so phenix sees F(+)/SigF(+)/F(-)/SigF(-) first,
+    # then I(+)/SigI(+)/I(-)/SigI(-) -- matching DIALS/careless convention.
     anom_keys = [
-        "F(+)", "SIGF(+)", "F(-)", "SIGF(-)",
-        "I(+)", "SIGI(+)", "I(-)", "SIGI(-)",
+        "F(+)", "SigF(+)", "F(-)", "SigF(-)",
+        "I(+)", "SigI(+)", "I(-)", "SigI(-)",
     ]
     reorder = [k for k in anom_keys if k in ds.columns]
     reorder += [k for k in ds.columns if k not in reorder]
@@ -319,7 +323,7 @@ def _finalize_merged_mtz(
     n_filtered = (~mask).sum()
     if n_filtered > 0:
         logger.info(
-            "Filtered %d reflections (SIGF==0 or unseen HKL)", n_filtered
+            "Filtered %d reflections (SigF==0 or unseen HKL)", n_filtered
         )
         hkl = hkl[mask]
         F_mean = F_mean[mask]

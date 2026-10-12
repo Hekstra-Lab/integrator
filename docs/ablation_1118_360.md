@@ -1,3 +1,12 @@
+> **Superseded by `ablation_1118_matched.md` (October 2026).**
+> The arms in this table trained on shoeboxes cut from our own August
+> `laue.integrate` run, whose intensities were clamped positive, while the
+> row called `laue-dials` came from that same clamped run.
+> Scoring the deposited integration on the same frames gives R-free 0.1804
+> against the 0.2061 quoted here, so the comparisons below measure a
+> difference in data provenance as much as anything about the models.
+> The `q4_kl_0p1` headline is separately retired: it does not reproduce.
+
 # Ablation: HEWL 1118, 360 frames, October 2026
 
 Twenty arms, one knob each, on the 360-frame set (1,283,813 observations, 13,829 unique ASU reflections, 25x25 2D shoeboxes).
@@ -223,29 +232,29 @@ Both columns from byte-identical chains off the SAME checkpoint -- same careless
 Only the two MTZ columns differ, so each row is a paired comparison.
 `mean13` is the mean anomalous peak height over all 13 sites; `IOD204` is the strongest iodide.
 
-| arm | R-work post | R-work **kab** | R-free post | R-free **kab** | IOD204 post | IOD204 **kab** | mean13 post | mean13 **kab** |
-|---|---|---|---|---|---|---|---|---|
-| anscombe | 0.1708 | 0.3147 | 0.2196 | 0.3738 | 12.46 | 5.58 | 5.93 | 2.74 |
-| log1p | 0.2973 | 0.3029 | 0.4016 | 0.3922 | 1.06 | 2.30 | 0.30 | 0.80 |
-| standardization | 0.1743 | 0.1678 | 0.2214 | 0.2181 | 12.41 | 13.09 | 6.08 | 6.57 |
-| profile fixed | 0.1830 | 0.1679 | 0.2348 | 0.2082 | 12.48 | 10.71 | 6.29 | 5.02 |
-| profile geomboth | 0.1701 | **0.1420** | 0.2221 | **0.1859** | 13.32 | 14.38 | 6.69 | 7.04 |
-| profile learned | 0.1789 | 0.1612 | 0.2312 | 0.2102 | 13.03 | 12.18 | 6.26 | 5.67 |
-| profile physical | 0.1786 | **0.1421** | 0.2296 | **0.1828** | 12.46 | 12.63 | 6.04 | 5.71 |
-| profile shapelet | 0.1724 | 0.1539 | 0.2188 | 0.2027 | 12.75 | **15.49** | 6.05 | **7.80** |
-| coordchan | 0.1793 | 0.2675 | 0.2280 | 0.3212 | 13.92 | 5.55 | 6.73 | 2.97 |
-| coordchan_geomboth | 0.1763 | 0.1700 | 0.2293 | 0.2148 | 11.78 | 11.65 | 5.89 | 5.63 |
-| mean_fano_exp | 0.1721 | 0.1730 | 0.2183 | 0.2163 | 13.01 | 11.59 | 6.51 | 5.48 |
-| mean_fano_softplus | 0.1813 | **0.1408** | 0.2286 | **0.1799** | 13.04 | 12.73 | 6.64 | 6.27 |
-| nakagami_exp | 0.1685 | 0.1602 | 0.2154 | 0.2001 | 13.85 | 11.88 | 6.67 | 5.68 |
-| nakagami_softplus | 0.1797 | 0.1649 | 0.2261 | 0.2069 | 12.37 | 12.18 | 6.12 | 5.74 |
-| shape_rate_exp | 0.1811 | 0.1583 | 0.2310 | 0.2005 | 12.76 | 11.78 | 6.16 | 5.26 |
-| shape_rate_softplus | 0.3048 | 0.3016 | 0.3997 | 0.3938 | 0.82 | 2.27 | 0.30 | 0.87 |
-| kl 0.1 | 0.1578 | 0.1628 | **0.2024** | 0.2121 | **15.84** | 13.63 | **7.75** | 6.14 |
-| kl 0.25 | 0.1855 | 0.1762 | 0.2388 | 0.2173 | 7.62 | 10.53 | 4.46 | 4.76 |
-| kl 0.5 | 0.1655 | 0.1817 | 0.2163 | 0.2422 | 13.89 | 13.97 | 6.82 | 6.87 |
-| kl 1.0 | 0.1832 | **0.1443** | 0.2362 | **0.1841** | 13.18 | 12.35 | 6.45 | 5.85 |
-| **laue-dials** | **0.1570** | -- | **0.2061** | -- | **15.98** | -- | **7.33** | -- |
+| arm                 | R-work post | R-work **kab** | R-free post | R-free **kab** | IOD204 post | IOD204 **kab** | mean13 post | mean13 **kab** | 
+|---------------------|-------------|----------------|-------------|----------------|-------------|----------------|-------------|----------------|
+| anscombe            | 0.1708      | 0.3147         | 0.2196      | 0.3738         | 12.46       | 5.58           | 5.93        | 2.74           |
+| log1p               | 0.2973      | 0.3029         | 0.4016      | 0.3922         | 1.06        | 2.30           | 0.30        | 0.80           |
+| standardization     | 0.1743      | 0.1678         | 0.2214      | 0.2181         | 12.41       | 13.09          | 6.08        | 6.57           |
+| profile fixed       | 0.1830      | 0.1679         | 0.2348      | 0.2082         | 12.48       | 10.71          | 6.29        | 5.02           |
+| profile geomboth    | 0.1701      | **0.1420**     | 0.2221      | **0.1859**     | 13.32       | 14.38          | 6.69        | 7.04           |
+| profile learned     | 0.1789      | 0.1612         | 0.2312      | 0.2102         | 13.03       | 12.18          | 6.26        | 5.67           |
+| profile physical    | 0.1786      | **0.1421**     | 0.2296      | **0.1828**     | 12.46       | 12.63          | 6.04        | 5.71           |
+| profile shapelet    | 0.1724      | 0.1539         | 0.2188      | 0.2027         | 12.75       | **15.49**      | 6.05        | **7.80**       |
+| coordchan           | 0.1793      | 0.2675         | 0.2280      | 0.3212         | 13.92       | 5.55           | 6.73        | 2.97           |
+| coordchan_geomboth  | 0.1763      | 0.1700         | 0.2293      | 0.2148         | 11.78       | 11.65          | 5.89        | 5.63           |
+| mean_fano_exp       | 0.1721      | 0.1730         | 0.2183      | 0.2163         | 13.01       | 11.59          | 6.51        | 5.48           |
+| mean_fano_softplus  | 0.1813      | **0.1408**     | 0.2286      | **0.1799**     | 13.04       | 12.73          | 6.64        | 6.27           |
+| nakagami_exp        | 0.1685      | 0.1602         | 0.2154      | 0.2001         | 13.85       | 11.88          | 6.67        | 5.68           |
+| nakagami_softplus   | 0.1797      | 0.1649         | 0.2261      | 0.2069         | 12.37       | 12.18          | 6.12        | 5.74           |
+| shape_rate_exp      | 0.1811      | 0.1583         | 0.2310      | 0.2005         | 12.76       | 11.78          | 6.16        | 5.26           |
+| shape_rate_softplus | 0.3048      | 0.3016         | 0.3997      | 0.3938         | 0.82        | 2.27           | 0.30        | 0.87           |
+| kl 0.1              | 0.1578      | 0.1628         | **0.2024**  | 0.2121         | **15.84**   | 13.63          | **7.75**    | 6.14           |
+| kl 0.25             | 0.1855      | 0.1762         | 0.2388      | 0.2173         | 7.62        | 10.53          | 4.46        | 4.76           |
+| kl 0.5              | 0.1655      | 0.1817         | 0.2163      | 0.2422         | 13.89       | 13.97          | 6.82        | 6.87           |
+| kl 1.0              | 0.1832      | **0.1443**     | 0.2362      | **0.1841**     | 13.18       | 12.35          | 6.45        | 5.85           |
+| **laue-dials**      | **0.1570**  | --             | **0.2061**  | --             | **15.98**   | --             | **7.33**    | --             |
 
 ### Winners, and there is no single one
 

@@ -5,11 +5,8 @@ integrator:
     d: &d 3
     h: &h 21
     w: &w 21
-    lr: 0.001
     encoder_out: &encoder_out 64
-    weight_decay: 0.0
-    decoder_weight_decay: 0.0
-    qp_    qp_    mc_samples: &mc_samples 100
+    mc_samples: &mc_samples 100
     predict_keys:
       [refl_ids, is_test, qi_mean, qi_var, qbg_mean, qbg_var,
        intensity.prf.value, intensity.prf.variance, background.mean,
@@ -73,33 +70,30 @@ surrogates:
       in_features: *encoder_out
       eps: 1.0e-06
       k_min: 0.01
-      mu_positive_constraint: softplus
+      positive_constraint: softplus
 
 loss:
   name: monochromatic_wilson
   args:
     lp_correction: false
-    mc_samples: *mc_samples
     eps: 1.0e-06
     n_bins: 30
-    profile_prior_scale: 3.0
     # pi_weight=0: integrator's per-obs intensity KL is skipped; this model
     # applies the closed-form Gamma-Gamma KL on per-HKL q(I_h) directly.
-    pi_weight: 0.0
-    pbg_weight: 1.0
-    pprf_weight: 1.0
+    intensity_kl_weight: 0.0
+    background_kl_weight: 1.0
+    profile_kl_weight: 1.0
 
 data_loader:
   name: rotation_data
   args:
-    data_dir: &data_dir /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data
+    data_dir: &data_dir /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data
     batch_size: 2048
-    val_split: 0.2
-    test_split: 0.0
+    validation_split: 0.2
     num_workers: 8
     include_test: true
     subset_size: null
-    cutoff: null
+    resolution_cutoff: null
     # Required: sufficient statistics need complete HKL groups per batch.
     group_by_asu_id: true
     max_obs_per_hkl: null
@@ -110,10 +104,7 @@ data_loader:
       stats: anscombe_stats.pt
       reference: metadata.pt
       standardized_counts: null
-    D: *d
-    H: *h
-    W: *w
-    anscombe: true
+    transform: anscombe
 
 trainer:
   max_epochs: 100
@@ -134,10 +125,17 @@ logger:
   w: *w
 
 output:
-  refl_file: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data/reflections_.refl
-  dials_merge_html: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/merged_reference.html
-  phenix_refine_log: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/refine_001.log
-  anomalous_peaks: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/reference_peaks.csv
+  refl_file: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data/reflections_.refl
+  dials_merge_html: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/merged_reference.html
+  phenix_refine_log: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/refine_001.log
+  anomalous_peaks: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/reference_data/reference_peaks.csv
   phenix_eff: /n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/reference_data/phenix.eff
   pdb: /n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/reference_data/9b7c.pdb
-  expt_file: /n/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/dials_2026-05-14/integrated.expt
+  expt_file: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/dials_2026-05-14/integrated.expt
+
+# lr / weight_decay are optimizer settings; IntegratorCfg has no such
+# fields and the factory rejects them inside integrator.args.
+optimizer:
+  lr: 0.001
+  weight_decay: 0.0
+  decoder_weight_decay: 0.0

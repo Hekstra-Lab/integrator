@@ -51,9 +51,30 @@ def space_group_from_expt(path: Path) -> str:
 
 def main():
     args = parse_args()
-    meta_path = args.dataset_dir / "metadata.npy"
-    if not meta_path.exists():
-        raise SystemExit(f"no metadata.npy in {args.dataset_dir}")
+    # Datasets carry the reference under either name: the laue shoebox cutter
+    # writes metadata.npy, the mono/merging ones metadata.pt, and the 1118
+    # deposited set uses .pt. Prefer whichever the dataset's own dataset.yaml
+    # names, so a directory holding both is never ambiguous.
+    meta_path = None
+    spec_path = args.dataset_dir / "dataset.yaml"
+    if spec_path.is_file():
+        import yaml
+
+        named = (yaml.safe_load(spec_path.read_text()) or {}).get(
+            "files", {}
+        ).get("reference")
+        if named and (args.dataset_dir / named).exists():
+            meta_path = args.dataset_dir / named
+    if meta_path is None:
+        for cand in ("metadata.npy", "metadata.pt"):
+            if (args.dataset_dir / cand).exists():
+                meta_path = args.dataset_dir / cand
+                break
+    if meta_path is None:
+        raise SystemExit(
+            f"no metadata.npy or metadata.pt in {args.dataset_dir}"
+        )
+    print(f"metadata: {meta_path.name}")
 
     name = args.space_group
     if name is None:

@@ -93,8 +93,10 @@ def load_arm(fig_dir: Path, epoch: int) -> dict | None:
     sel_path = fig_dir / "tracked_selection.json"
     sel = json.loads(sel_path.read_text()) if sel_path.is_file() else {}
 
+    rates = z["rates"] if "rates" in z.files else None
     return {
         "dir": fig_dir,
+        "rate": None if rates is None else rates[epoch],
         "profile": profiles[epoch],
         "counts": z["counts"],
         "masks": z["masks"],
@@ -362,6 +364,89 @@ def figure_detector(arms: list[dict], meta_path: Path, out: Path, dpi: int) -> N
     print(f"  wrote {out}")
 
 
+def figure_reconstruction(arms: list[dict], out: Path, dpi: int,
+                          rows: list[int]) -> None:
+    """Observed counts against each model's predicted rate, and the residual.
+
+    The profile alone does not say whether a model explains the data: the
+    rate is `I * pi + bg`, so an intensity or a background error shows here
+    and nowhere else. Pearson residuals `(c - rate)/sqrt(rate)` are on a
+    common scale across reflections, so one colour range serves the panel.
+    """
+    import matplotlib.pyplot as plt
+
+    usable = [a for a in arms if a.get("rate") is not None]
+    if not usable:
+        print("  no rate arrays in the dumps; skipping the reconstruction panel")
+        return
+    ref = usable[0]
+    shape = ref["shape"]
+    ncol = len(usable) + 1
+    n = len(rows)
+
+    fig, axes = plt.subplots(n, ncol, figsize=(1.5 * ncol, 1.6 * n), squeeze=False)
+    for r, i in enumerate(rows):
+        obs = (ref["counts"][i] * ref["masks"][i]).reshape(shape)
+        vmax = float(np.percentile(obs, 99.5)) or 1.0
+        axes[r][0].imshow(obs, cmap="cividis", origin="lower", vmin=0, vmax=vmax)
+        axes[r][0].set_ylabel(
+            ref["regime"][i] if i < len(ref["regime"]) else "", fontsize=6
+        )
+        if r == 0:
+            axes[r][0].set_title("observed", fontsize=7)
+        for j, arm in enumerate(usable, start=1):
+            axes[r][j].imshow(
+                (arm["rate"][i] * ref["masks"][i]).reshape(shape),
+                cmap="cividis", origin="lower", vmin=0, vmax=vmax,
+            )
+            if r == 0:
+                axes[r][j].set_title(arm["label"], fontsize=6, rotation=30,
+                                     ha="left")
+        for ax in axes[r]:
+            ax.set_xticks([]); ax.set_yticks([])
+    fig.suptitle("predicted rate against the observed shoebox, shared scale per row",
+                 fontsize=9)
+    fig.tight_layout(rect=(0, 0, 1, 0.985))
+    fig.savefig(out, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  wrote {out}")
+
+    # Pearson residual: where each model fails, not merely how it differs
+    fig, axes = plt.subplots(
+        n, len(usable), figsize=(1.5 * len(usable), 1.6 * n), squeeze=False
+    )
+    for r, i in enumerate(rows):
+        c = ref["counts"][i] * ref["masks"][i]
+        for j, arm in enumerate(usable):
+            rate = np.clip(arm["rate"][i], 1e-3, None)
+            z = ((c - rate) / np.sqrt(rate)) * ref["masks"][i]
+            axes[r][j].imshow(z.reshape(shape), cmap="RdBu_r", origin="lower",
+                              vmin=-5, vmax=5)
+            axes[r][j].set_xticks([]); axes[r][j].set_yticks([])
+            if r == 0:
+                axes[r][j].set_title(arm["label"], fontsize=6, rotation=30,
+                                     ha="left")
+        axes[r][0].set_ylabel(
+            ref["regime"][i] if i < len(ref["regime"]) else "", fontsize=6
+        )
+    fig.suptitle("Pearson residual $(c-\lambda)/\sqrt{\lambda}$, "
+                 "same scale $\pm 5$ everywhere", fontsize=9)
+    fig.tight_layout(rect=(0, 0, 1, 0.985))
+    resid = out.with_name(out.name.replace("rate", "rate_residual"))
+    fig.savefig(resid, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  wrote {resid}")
+
+    # and the scalar version, so the panel can be quoted
+    print(f"\n  {'arm':14s} {'median |z|':>11s} {'frac |z|>3':>11s}")
+    for arm in usable:
+        rate = np.clip(arm["rate"], 1e-3, None)
+        z = (ref["counts"] - rate) / np.sqrt(rate)
+        m = ref["masks"] > 0
+        zz = np.abs(z[m])
+        print(f"  {arm['label']:14s} {np.median(zz):11.3f} {(zz > 3).mean():11.3f}")
+
+
 def figure_radial(arms: list[dict], out: Path, dpi: int) -> None:
     """Azimuthal average per regime, every arm on one axis."""
     import matplotlib.pyplot as plt
@@ -515,6 +600,8 @@ def main() -> None:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     rows = grid_rows(arms, args.grid_per_regime)
     figure_profiles(arms, args.out_dir / "fig_family_profiles.png", args.dpi, rows)
+    figure_reconstruction(arms, args.out_dir / "fig_family_rate.png",
+                          args.dpi, rows)
     figure_radial(arms, args.out_dir / "fig_family_radial.png", args.dpi)
     figure_neff(arms, args.out_dir / "fig_family_neff.png", args.dpi)
     if args.detector_metadata is not None:
