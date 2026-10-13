@@ -783,14 +783,14 @@ class ConjugateMergingIntegrator(BaseIntegrator):
         )
         out = _assemble_outputs(out)
         out["asu_id"] = asu_ids
-        # The per-observation scale and the merged intensity, so a prediction
-        # can be turned back into unmerged scaled intensities. A model that
-        # merges internally never writes the unmerged scaled MTZ that CC(1/2),
-        # R-merge, R-meas, R-pim, completeness and multiplicity are normally
-        # computed from, so without these the standard merging table cannot be
-        # produced by the standard tools at all. The likelihood multiplies the
-        # two (`rate = scale * I * profile + background`), so the scaled
-        # intensity is `scale * qi_mean`.
+        # The learned intensity IS the merged value: `qi_per_obs` is the
+        # per-HKL posterior indexed back onto observations. The scale is a
+        # nuisance parameter explaining why observation i of reflection h
+        # differs from I_h -- it fits the model to the data and is NOT a
+        # factor to multiply back out, so there is no unmerged scaled
+        # intensity to recover here. Both are exported for diagnostics: the
+        # scale is otherwise unobservable downstream, and comparing I_h
+        # against the per-observation posterior shows what the merge did.
         out["scale"] = scale
         out["I_h_mean"] = q_I_h.mean[inverse]
         if "group_label" in metadata:
