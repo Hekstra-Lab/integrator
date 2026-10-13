@@ -999,6 +999,7 @@ class GeometricProfileSurrogate(ProfileSurrogate):
         max_log_extent: float = 1.0,
         gate_extent: bool = False,
         extent_half_signal: float = 100.0,
+        normalization: str = "softmax",
     ) -> None:
         super().__init__(
             input_dim=input_dim,
@@ -1006,6 +1007,7 @@ class GeometricProfileSurrogate(ProfileSurrogate):
             output_dim=output_dim,
             init_std=init_std,
             prior_scale=prior_scale,
+            normalization=normalization,
         )
 
         self.local_shift = bool(local_shift)
