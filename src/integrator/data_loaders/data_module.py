@@ -235,10 +235,22 @@ class RotationDataModule(pl.LightningDataModule):
         # reads like a frame count: max_image_num 360 keeps frames 0..359.
         min_image_num: int | None = None,
         max_image_num: int | None = None,
+        # Half-dataset splits for a merging model. Its output IS the merged
+        # value, so there are no independent per-observation estimates to
+        # correlate -- the only honest CC(1/2) merges two independent halves
+        # of the DATA and compares the results, as careless does with its
+        # xval files. Alternating images keeps both halves spanning the whole
+        # rotation, which contiguous halves do not.
+        image_parity: int | None = None,
     ):
         super().__init__()
         self.min_image_num = min_image_num
         self.max_image_num = max_image_num
+        if image_parity not in (None, 0, 1):
+            raise ValueError(
+                f"image_parity must be 0, 1 or None; got {image_parity!r}"
+            )
+        self.image_parity = image_parity
         self.data_dir = data_dir
         self.batch_size = batch_size
         self.validation_split = validation_split
@@ -360,10 +372,15 @@ class RotationDataModule(pl.LightningDataModule):
         # covering every frame serve a 360-frame run and a 999-frame run, and
         # lets a model be scored against a baseline MTZ cut to the same
         # batches without regenerating shoeboxes.
-        if self.min_image_num is not None or self.max_image_num is not None:
+        if (
+            self.min_image_num is not None
+            or self.max_image_num is not None
+            or self.image_parity is not None
+        ):
             if "image_num" not in reference:
                 raise KeyError(
-                    "min_image_num/max_image_num need an 'image_num' column in "
+                    "min_image_num/max_image_num/image_parity need an "
+                    "'image_num' column in "
                     "the reference metadata; this dataset has "
                     f"{sorted(reference)[:12]}..."
                 )
@@ -373,6 +390,8 @@ class RotationDataModule(pl.LightningDataModule):
                 selection &= img >= self.min_image_num
             if self.max_image_num is not None:
                 selection &= img < self.max_image_num
+            if self.image_parity is not None:
+                selection &= (img.long() % 2) == self.image_parity
             n_cut = (~selection).sum().item()
             logger.info(
                 "Image range [%s, %s): kept %d reflections, removed %d",

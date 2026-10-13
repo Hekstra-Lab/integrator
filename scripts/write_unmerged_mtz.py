@@ -1,5 +1,24 @@
 #!/usr/bin/env python
-"""Write the unmerged scaled intensities a merging model never emits.
+"""Write what a merging model produces, for the statistics that apply to it.
+
+The model's learned intensity IS the merged value: `qi_per_obs` is the
+per-HKL posterior `Gamma(alpha_h, beta_h)` indexed back onto observations.
+The per-observation scale is a nuisance parameter that explains why
+observation i of reflection h differs from I_h -- it fits the model to the
+data and is NOT a factor to multiply back out. There is no unmerged scaled
+intensity to recover, because the model never estimates one.
+
+That rules out the classical merging table. CC(1/2), R-merge, R-meas and
+R-pim all measure agreement between INDEPENDENT measurements of one
+reflection, and this model has none to offer: every observation of a
+reflection in a batch carries that batch's merged estimate. Splitting those
+in half and correlating them measures batch-to-batch reproducibility of an
+already-averaged quantity, which is why it returned CC(1/2) = 0.996 for a
+model whose intensities were 800x mis-scaled.
+
+The statistic that does apply is the one careless computes with its xval
+files: merge two INDEPENDENT halves of the data and correlate the results.
+`--half-by` does that split here.
 
 An integrate-then-scale pipeline hands DIALS or careless a file of unmerged
 observations, and the merging table everyone reports -- CC(1/2), R-merge,
