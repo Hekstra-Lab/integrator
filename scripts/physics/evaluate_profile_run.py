@@ -159,14 +159,30 @@ def main():
     val_ids = set(np.loadtxt(args.run_dir / "files" / "val_labels.csv", skiprows=1, dtype=np.int64).tolist())
     is_val = np.array([int(i) in val_ids for i in r["refl_ids"]])
     snr = r["intensity.sum.value"] / np.sqrt(np.clip(r["intensity.sum.variance"], 1e-12, None))
-    clean = (r["cos_bright_ready"] > 0) & (r["n_harmonics"] <= 1)
+    # `n_harmonics` is absent from datasets the current extractor writes --
+    # assign() already keeps one harmonic per ray, so there is nothing to
+    # exceed and `collect` fills the column with NaN. Comparing NaN <= 1 is
+    # False, which emptied the candidate set and made the quantile below raise
+    # an opaque IndexError on every arm.
+    nh = r["n_harmonics"]
+    clean = (r["cos_bright_ready"] > 0) & (np.isnan(nh) | (nh <= 1))
     cand = is_val & clean
+    if not cand.any():
+        raise SystemExit(
+            f"no candidate reflections: of {len(is_val)} collected, "
+            f"{int(is_val.sum())} are validation and "
+            f"{int(clean.sum())} are clean (unmasked, <=1 harmonic). "
+            "Check that val_labels.csv matches this run."
+        )
     thresh = np.quantile(r["intensity.sum.value"][cand], 1 - args.bright_frac)
     bright = cand & (r["intensity.sum.value"] >= thresh)
 
     deciles = np.quantile(snr[is_val], np.linspace(0, 1, 11))
     dec = np.clip(np.digitize(snr[is_val], deciles[1:-1]), 0, 9)
-    n_eff_by_decile = [float(np.median(r["n_eff"][is_val][dec == k])) for k in range(10)]
+    n_eff_by_decile = [
+        float(np.median(r["n_eff"][is_val][dec == k])) if (dec == k).any() else float("nan")
+        for k in range(10)
+    ]
 
     i_norm, res_bin = normalize_by_cell(r["qi_mean"], r["wavelength"], r["d"])
     hkl = np.stack([r["H"], r["K"], r["L"]], -1)
