@@ -311,32 +311,6 @@ def _finalize_merged_mtz(
     model actually observed -- required for the EMA-buffer merging models,
     whose unseen rows decode to meaningless values.
     """
-    # Load canonical HKL from asu_id_to_hkl.pt (preferred) or fall back
-    # to metadata.  The asu_id_to_hkl.pt file stores the true canonical
-    # forms from prepare_asu_ids.py that preserve Friedel distinction.
-    if asu_id_to_hkl_path is None:
-        asu_id_to_hkl_path = metadata_path.parent / "asu_id_to_hkl.pt"
-
-    if asu_id_to_hkl_path.exists():
-        hkl = _load_asu_hkl(asu_id_to_hkl_path)
-        n_hkl = len(hkl)
-        logger.info(
-            "Loaded %d canonical HKL from %s", n_hkl, asu_id_to_hkl_path
-        )
-    else:
-        logger.warning(
-            "%s not found; falling back to first-observed HKL from "
-            "metadata (anomalous signal may be lost).",
-            asu_id_to_hkl_path,
-        )
-        hkl, n_hkl = _build_asu_hkl_table_fallback(metadata_path)
-
-    if len(I_mean) != n_hkl:
-        raise ValueError(
-            f"Table has {len(I_mean)} entries but HKL map has {n_hkl} "
-            "unique asu_ids."
-        )
-
     crystal = yaml.safe_load(crystal_yaml_path.read_text())
     cell = gemmi.UnitCell(*crystal["cell"])
     sg_str = crystal.get(
@@ -345,9 +319,40 @@ def _finalize_merged_mtz(
     sg_str = sg_str.split("(")[0].strip()
     spacegroup = gemmi.SpaceGroup(sg_str)
 
+    # Load canonical HKL from asu_id_to_hkl.pt (preferred) or resolve it
+    # from the metadata.  The asu_id_to_hkl.pt file stores the true canonical
+    # forms from prepare_asu_ids.py that preserve Friedel distinction.
+    if asu_id_to_hkl_path is None:
+        asu_id_to_hkl_path = metadata_path.parent / "asu_id_to_hkl.pt"
+
+    observed = None
+    if asu_id_to_hkl_path.exists():
+        hkl = _load_asu_hkl(asu_id_to_hkl_path)
+        n_hkl = len(hkl)
+        logger.info(
+            "Loaded %d canonical HKL from %s", n_hkl, asu_id_to_hkl_path
+        )
+    else:
+        logger.warning(
+            "%s not found; resolving asu_id -> HKL from the metadata in %s.",
+            asu_id_to_hkl_path,
+            metadata_path,
+        )
+        hkl, n_hkl, observed = _build_asu_hkl_table_fallback(
+            metadata_path, spacegroup, n_hkl=len(I_mean)
+        )
+
+    if len(I_mean) != n_hkl:
+        raise ValueError(
+            f"Table has {len(I_mean)} entries but HKL map has {n_hkl} "
+            "unique asu_ids."
+        )
+
     mask = sig_F > 0
     if seen is not None:
         mask = mask & seen
+    if observed is not None:
+        mask = mask & observed
     n_filtered = (~mask).sum()
     if n_filtered > 0:
         logger.info(
@@ -429,29 +434,52 @@ def write_merged_mtz_from_integrator(
 
 def _build_asu_hkl_table_fallback(
     metadata_path: Path,
-) -> tuple[np.ndarray, int]:
-    """Fallback: get the first observed (H, K, L) per asu_id from metadata.
+    spacegroup: gemmi.SpaceGroup,
+    n_hkl: int | None = None,
+) -> tuple[np.ndarray, int, np.ndarray]:
+    """Resolve the Miller index of each `asu_id` from per-observation metadata.
 
-    This may not preserve the Friedel distinction if the first observed
-    HKL for both members of a Friedel pair happen to be in the same
-    symmetry-equivalent form.  Prefer using `asu_id_to_hkl.pt` instead.
+    Used when `asu_id_to_hkl.pt` is absent.  The ids are kept exactly as the
+    trained model saw them and only their indices are resolved, by the
+    symmetry canonicalization in `integrator.utils.asu`, which reads the
+    Friedel grouping off the data and refuses indices the ids cannot have
+    come from.
+
+    Returns `(hkl, n_hkl, observed)`, where `observed` is False for ids that
+    appear nowhere in the metadata and whose index is therefore unknown.
     """
-    from integrator.utils.torch_to_refl import load_metadata
+    from integrator.io.metadata import load_metadata
+    from integrator.utils.asu import resolve_asu_id_table
 
     meta = load_metadata(metadata_path)
-    asu_id = meta["asu_id"].long().numpy()
-    H = meta["H"].numpy()
-    K = meta["K"].numpy()
-    L = meta["L"].numpy()
+    missing = [k for k in ("asu_id", "H", "K", "L") if k not in meta]
+    if missing:
+        raise KeyError(
+            f"{metadata_path} has no {', '.join(missing)}, so asu_id cannot "
+            "be mapped to a Miller index.  Build asu_id_to_hkl.pt beside the "
+            "metadata instead (see docs/exporting.md)."
+        )
 
-    n_hkl = int(asu_id.max()) + 1
-    canon = np.zeros((n_hkl, 3), dtype=np.int32)
-    seen = np.zeros(n_hkl, dtype=bool)
+    def _col(name: str) -> np.ndarray:
+        v = meta[name]
+        return v.numpy() if torch.is_tensor(v) else np.asarray(v)
 
-    for i in range(len(asu_id)):
-        aid = asu_id[i]
-        if not seen[aid]:
-            canon[aid] = [int(H[i]), int(K[i]), int(L[i])]
-            seen[aid] = True
+    asu_id = _col("asu_id").astype(np.int64)
+    hkl_obs = np.rint(
+        np.stack([_col("H"), _col("K"), _col("L")], axis=1)
+    ).astype(np.int32)
 
-    return canon, n_hkl
+    table, info = resolve_asu_id_table(
+        asu_id, hkl_obs, spacegroup, n_hkl=n_hkl
+    )
+    logger.info(
+        "Resolved %d asu_id -> HKL from %s (%s grouping, %d ids unobserved)",
+        info["n_hkl"],
+        metadata_path,
+        info["grouping"],
+        info["n_unobserved_ids"],
+    )
+
+    observed = np.zeros(info["n_hkl"], dtype=bool)
+    observed[np.unique(asu_id)] = True
+    return table, info["n_hkl"], observed
