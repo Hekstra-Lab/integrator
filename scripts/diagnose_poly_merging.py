@@ -57,6 +57,8 @@ import reciprocalspaceship as rs
 import torch
 import yaml
 
+from integrator.utils import phenix as phenix_mod
+
 # gemmi 0.7.x compat (some rs internals expect these)
 if not hasattr(gemmi.UnitCell, "fractionalization_matrix"):
     gemmi.UnitCell.fractionalization_matrix = property(
@@ -504,7 +506,9 @@ def write_merged_mtz(
 
 # Defaults. The two-stage effs are phenix 2.0 (data_manager) templates with
 # $MTZFILE/$MODELFILE/$RFREE placeholders -- the poly copies of the mono eff.
-PHENIX_ENV = "/n/lab_storage/hekstra_lab/garden_2/phenix-2.0-5729/phenix_env.sh"
+# the install prefix, not its phenix_env.sh: sourcing 2.0's env script leaves
+# `phenix.refine: command not found` (see integrator/utils/phenix.py)
+PHENIX_ENV = phenix_mod.DEFAULT_PREFIX
 _REF = "/n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/reference_data"
 REFINE_PDB = f"{_REF}/shaken_9b7c.pdb"          # starting model (stage 1 input)
 SITES_PDB = f"{_REF}/9b7c.pdb"                   # true model: anomalous map sites
@@ -526,9 +530,14 @@ def _render_eff(template: Path, out: Path, mtz: Path, model: Path, rfree: Path):
 
 
 def _run_phenix(eff: Path, work_dir: Path, phenix_env: Path) -> bool:
-    """Run phenix.refine on a rendered eff inside work_dir. Logs to phenix.log."""
+    """Run phenix.refine on a rendered eff inside work_dir. Logs to phenix.log.
+
+    `phenix_env` may be an install prefix or a `phenix_env.sh`; 2.0 has to be
+    the former, since its own env script points at the pre-migration prefix.
+    """
+    prelude = phenix_mod.shell_prelude(env_script=phenix_env, install=phenix_env)
     cmd = (
-        f'source "{phenix_env}" && cd "{work_dir}" && '
+        f'{prelude} && cd "{work_dir}" && '
         f'phenix.refine "{eff}" overwrite=true'
     )
     proc = subprocess.run(

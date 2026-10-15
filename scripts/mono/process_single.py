@@ -3,7 +3,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from integrator.utils import load_config
+from integrator.utils import load_config, phenix
 
 
 @dataclass
@@ -54,11 +54,18 @@ def run_phenix(
     # refined_mtz_out = phenix_dir + "/refine_001.mtz"
     refined_mtz_out = mtz_file
 
-    # Construct the find_peaks command
-    peaks_command = "rs.find_peaks *[0-9].mtz *[0-9].pdb -f ANOM -p PANOM -z 5.0 -o peaks.csv"
+    # the phase label this eff asks for: the version default moved from PHANOM
+    # (1.20) to PANOM (2.0), and naming the absent one raises a KeyError
+    peaks_command = (
+        "rs.find_peaks *[0-9].mtz *[0-9].pdb "
+        f"-f ANOM -p {phenix.requested_phase_label(phenix_eff)} "
+        "-z 5.0 -o peaks.csv"
+    )
 
-    # full_command = f"source {phenix_env} && cd {phenix_dir} && {refine_command} && {peaks_command} && cd {paired_ref_dir} && {paired_ref_command} && cd {paired_model_dir} && {paired_model_command} "
-    full_command = f"source {phenix_env} && cd {phenix_dir} && {refine_command} && {peaks_command}"
+    # `phenix_env` may be an install prefix or a phenix_env.sh; phenix 2.0 has
+    # to be the former (see integrator/utils/phenix.py)
+    prelude = phenix.shell_prelude(env_script=phenix_env, install=phenix_env)
+    full_command = f"{prelude} && cd {phenix_dir} && {refine_command} && {peaks_command}"
 
     try:
         # Use subprocess.run instead of Popen for better error handling

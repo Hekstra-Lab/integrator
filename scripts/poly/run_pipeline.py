@@ -22,6 +22,8 @@ from pathlib import Path
 
 import yaml
 
+from integrator.utils import phenix
+
 ALL_STEPS = ("predict", "careless", "phenix", "peaks")
 DEFAULT_CFG = Path(__file__).with_name("poly_pipeline_cfg.yaml")
 # micromamba hook; override with MAMBA_SH for a different install
@@ -87,11 +89,19 @@ def via_python(cmd: str) -> str:
 
 
 def in_env(cmd: str, env: str | None) -> str:
-    """Wrap a command in its environment: a phenix_env.sh, or a mamba env."""
+    """Wrap a command in its environment.
+
+    Three forms: a phenix install directory, a `phenix_env.sh` to source, or a
+    mamba env to activate. A phenix 2.0 install has to be the first form --
+    its own env script points at the pre-migration prefix and leaves nothing
+    on PATH (see `integrator.utils.phenix`).
+    """
     if not env:
         return cmd
     if str(env).endswith(".sh"):
         return f"source {env} && {cmd}"
+    if (Path(env) / "bin" / "phenix.refine").exists() or "phenix" in Path(env).name:
+        return f"{phenix.shell_prelude(install=env)} && {cmd}"
     return f"source {MAMBA_SH} && micromamba activate {env} && {cmd}"
 
 
@@ -232,23 +242,44 @@ def step_phenix(cfg, merged: Path, work_dir: Path, dry) -> Path:
         refine1.mkdir(parents=True, exist_ok=True)
         refine2.mkdir(parents=True, exist_ok=True)
 
-    pass1 = (
-        f'phenix.refine "{Path(pcfg["eff1"]).resolve()}" '
-        f'refinement.input.xray_data.file_name="{merged.resolve()}" '
-        f'refinement.input.pdb.file_name="{Path(pcfg["pdb"]).resolve()}" '
-        f"refinement.output.prefix={prefix} --overwrite"
-    )
+    # phenix 2.0 effs carry their own files, because the labels that select a
+    # column live in the same data_manager block as the file they select from
+    # and a command-line file= opens a fresh block instead. A 1.20 eff names
+    # no files, so those still take the override form.
+    if not dry and phenix.eff_takes_substitution(pcfg["eff1"]):
+        eff1 = phenix.render_eff(
+            pcfg["eff1"],
+            refine1 / "refine.eff",
+            MTZFILE=merged,
+            MODELFILE=pcfg["pdb"],
+        )
+        pass1 = f'phenix.refine "{eff1}"'
+    else:
+        pass1 = (
+            f'phenix.refine "{Path(pcfg["eff1"]).resolve()}" '
+            f'refinement.input.xray_data.file_name="{merged.resolve()}" '
+            f'refinement.input.pdb.file_name="{Path(pcfg["pdb"]).resolve()}" '
+            f"refinement.output.prefix={prefix} --overwrite"
+        )
     run(in_env(pass1, pcfg["env"]), cwd=refine1, dry=dry)
 
+    # pass 1's MTZ carries both the data and the R-free set it generated, so
+    # pass 2 holds out the same reflections
     data = refine1 / f"{prefix}_data.mtz"
     model = refine1 / f"{prefix}_1.pdb"
-    pass2 = (
-        f'phenix.refine "{Path(pcfg["eff2"]).resolve()}" '
-        f'refinement.input.xray_data.file_name="{data}" '
-        f'refinement.input.pdb.file_name="{model}" '
-        f'refinement.input.xray_data.r_free_flags.file_name="{data}" '
-        f"refinement.output.prefix={prefix} --overwrite"
-    )
+    if not dry and phenix.eff_takes_substitution(pcfg["eff2"]):
+        eff2 = phenix.render_eff(
+            pcfg["eff2"], refine2 / "refine.eff", MTZFILE=data, MODELFILE=model
+        )
+        pass2 = f'phenix.refine "{eff2}"'
+    else:
+        pass2 = (
+            f'phenix.refine "{Path(pcfg["eff2"]).resolve()}" '
+            f'refinement.input.xray_data.file_name="{data}" '
+            f'refinement.input.pdb.file_name="{model}" '
+            f'refinement.input.xray_data.r_free_flags.file_name="{data}" '
+            f"refinement.output.prefix={prefix} --overwrite"
+        )
     run(in_env(pass2, pcfg["env"]), cwd=refine2, dry=dry)
     return refine2
 
@@ -293,9 +324,16 @@ def step_peaks(cfg, refine2: Path, merged: Path, dry) -> None:
     out_dir = refine2.parent
 
     if method in ("find_peaks", "both"):
+        # phenix 2.0 writes the anomalous phase as PANOM where 1.20 wrote
+        # PHANOM, and naming the wrong one makes rs.find_peaks raise
+        # `KeyError: None of [Index(['PHANOM'])]`. Read it off the MTZ.
+        phi = pcfg.get("phi")
+        if not phi:
+            cols = phenix.anomalous_columns(mtz)
+            phi = cols[1] if cols else phenix.PHASE_LABELS[0]
         cmd = (
             f"rs.find_peaks {mtz} {pdb} "
-            f"-f {pcfg.get('f', 'ANOM')} -p {pcfg.get('phi', 'PHANOM')} "
+            f"-f {pcfg.get('f', 'ANOM')} -p {phi} "
             f"-z {pcfg.get('z', 5.0)} -o {out_dir / 'peaks.csv'}"
         )
         run(in_env(cmd, pcfg.get("env")), cwd=refine2, dry=dry)

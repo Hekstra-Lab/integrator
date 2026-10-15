@@ -28,17 +28,20 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)-8s | %(message)s",
     datefmt="%H:%M:%S",
 )
+from integrator.utils import phenix
+
 logger = logging.getLogger(__name__)
 
 
 def _get_phenix_env() -> str:
-    env = os.environ.get("PHENIX_ENV")
-    if env is None:
-        raise RuntimeError(
-            "PHENIX_ENV environment variable not set. "
-            "Export it before running this script."
-        )
-    return env
+    """The shell fragment that puts phenix on PATH.
+
+    `$PHENIX_ENV` still wins when it is set, for a 1.20 install whose env
+    script works. Without it this is phenix 2.0's prefix, exported rather than
+    sourced because 2.0's own env script points at the pre-migration tree
+    (`integrator.utils.phenix`).
+    """
+    return phenix.shell_prelude(env_script=os.environ.get("PHENIX_ENV"))
 
 
 # (columns -> (miller labels, array_type "*" token)). The model's merged MTZ
@@ -167,12 +170,15 @@ def process_single_epoch(
         f"phenix.refine {updated_eff.resolve()} "
         f"{mtz_path.resolve()} --overwrite"
     )
+    # the phase label this eff asks for, since the version default moved from
+    # PHANOM (1.20) to PANOM (2.0) and the wrong one is a KeyError
     peaks_cmd = (
         "rs.find_peaks *[0-9].mtz *[0-9].pdb "
-        "-f ANOM -p PANOM -z 5.0 -o peaks.csv"
+        f"-f ANOM -p {phenix.requested_phase_label(updated_eff)} "
+        "-z 5.0 -o peaks.csv"
     )
     full_cmd = (
-        f"source {phenix_env} && cd {phenix_out} && "
+        f"{phenix_env} && cd {phenix_out} && "
         f"{refine_cmd} && {peaks_cmd}"
     )
 

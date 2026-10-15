@@ -23,9 +23,11 @@ import time
 import urllib.request
 from pathlib import Path
 
-PHENIX_ENV = (
-    "/n/hekstra_lab_tier0/Lab/garden/phenix_1_20/phenix-1.20.1-4487/phenix_env.sh"
-)
+from integrator.utils import phenix
+
+# phenix 2.0 at the post-migration prefix; `integrator.utils.phenix` says why
+# this is a prefix export rather than a `source phenix_env.sh`
+PHENIX_PRELUDE = phenix.shell_prelude()
 MODEL_URL = "https://files.rcsb.org/download/{pdb}.pdb"
 # elements whose anomalous peaks are worth measuring, when present in the model
 ANOMALOUS_ELEMENTS = ("MN", "FE", "ZN", "CU", "NI", "CO", "SE", "S", "P", "I", "BR")
@@ -84,11 +86,9 @@ def parse_args():
     return p.parse_args()
 
 
-def run(script: str, cwd: Path, env_setup: str | None, dry: bool, log: Path):
-    """Run a command under an environment that has to be sourced first."""
-    command = (
-        f"source {env_setup} >/dev/null 2>&1 && {script}" if env_setup else script
-    )
+def run(script: str, cwd: Path, prelude: str | None, dry: bool, log: Path):
+    """Run a command behind a shell prelude that puts its tools on PATH."""
+    command = f"{prelude} && {script}" if prelude else script
     print(f"\n$ {script[:160]}", flush=True)
     if dry:
         return
@@ -240,7 +240,7 @@ def ligand_restraints(
     run(
         f"phenix.ready_set {local.name}",
         out_dir,
-        PHENIX_ENV,
+        PHENIX_PRELUDE,
         False,
         out_dir / "ready_set.log",
     )
@@ -259,7 +259,8 @@ def anomalous_map_columns(mtz: Path) -> tuple[str, str] | None:
     """Find the anomalous difference map's amplitude and phase columns.
 
     By MTZ column *type*, not by name. Names vary with how the map was
-    requested -- phenix writes ANOM/PHANOM by default and
+    requested -- phenix 2.0 writes ANOM/PANOM by default, 1.20 wrote
+    ANOM/PHANOM, and both write
     `anomalous`/`PHanomalous` when the map type is named explicitly -- but
     the types do not: a map coefficient pair is an amplitude (type F) and a
     phase (type P) sharing an MTZ dataset. The model's own F-model columns
@@ -344,7 +345,7 @@ def main():
         refine += (
             " refinement.electron_density_maps.map_coefficients.map_type=anomalous"
         )
-    run(refine, out_dir, PHENIX_ENV, args.dry_run, out_dir / "phenix_refine.log")
+    run(refine, out_dir, PHENIX_PRELUDE, args.dry_run, out_dir / "phenix_refine.log")
 
     if not anomalous:
         print("\nno anomalous peak search requested")
@@ -356,7 +357,7 @@ def main():
     if columns is None:
         print(
             f"\nno anomalous map in {refined_mtz.name}: skipping the peak "
-            "search. Refinement produced no ANOM/PHANOM pair, which usually "
+            "search. Refinement produced no anomalous map pair, which usually "
             "means it ran against merged means rather than Bijvoet pairs."
         )
         return 0

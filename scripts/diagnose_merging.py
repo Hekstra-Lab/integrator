@@ -43,6 +43,8 @@ import reciprocalspaceship as rs
 import torch
 import yaml
 
+from integrator.utils import phenix
+
 # gemmi 0.7.x compat (SFcalculator and some rs internals expect these)
 if not hasattr(gemmi.UnitCell, "fractionalization_matrix"):
     gemmi.UnitCell.fractionalization_matrix = property(
@@ -612,19 +614,19 @@ def render_eff(
 # ====================================================================
 
 
-def _phenix_env() -> str | None:
-    return os.environ.get("PHENIX_ENV")
+def _phenix_prelude() -> str:
+    """The shell fragment that puts phenix on PATH.
+
+    `$PHENIX_ENV` still wins when it is set, for a 1.20 install whose env
+    script works; otherwise this is phenix 2.0's prefix, which has to be
+    exported rather than sourced (`integrator.utils.phenix`).
+    """
+    return phenix.shell_prelude(env_script=os.environ.get("PHENIX_ENV"))
 
 
 def run_phenix_refine(eff_path: Path, work_dir: Path, mtz_path: Path) -> bool:
-    env = _phenix_env()
-    if env is None:
-        logger.warning(
-            "PHENIX_ENV not set; skipping phenix.refine for %s", work_dir.name
-        )
-        return False
     cmd = (
-        f"source {env} && cd {work_dir} && "
+        f"{_phenix_prelude()} && cd {work_dir} && "
         f"phenix.refine {eff_path.resolve()} {mtz_path.resolve()} overwrite=true"
     )
     logger.info("Running phenix.refine for %s", work_dir.name)
@@ -654,13 +656,17 @@ def run_phenix_refine(eff_path: Path, work_dir: Path, mtz_path: Path) -> bool:
 
 
 def run_find_peaks(work_dir: Path) -> Path | None:
-    env = _phenix_env()
-    if env is None:
+    # the phase label moved between versions: 2.0 writes PANOM, 1.20 wrote
+    # PHANOM, and naming the absent one makes rs.find_peaks raise a KeyError
+    found = phenix.find_anomalous_map(work_dir)
+    if found is None:
+        logger.warning("no anomalous map in %s; skipping peak search", work_dir.name)
         return None
+    phase = found[1]
     cmd = (
-        f"source {env} && cd {work_dir} && "
+        f"{_phenix_prelude()} && cd {work_dir} && "
         "rs.find_peaks *[0-9].mtz *[0-9].pdb "
-        "-f ANOM -p PANOM -z 5.0 -o peaks.csv"
+        f"-f ANOM -p {phase} -z 5.0 -o peaks.csv"
     )
     try:
         proc = subprocess.run(

@@ -1,0 +1,88 @@
+# Laue two-pass refine, STAGE 1 (rigid body), phenix 2.0 data_manager form.
+#
+# The 2.0 form of laue_analysis/custom_refinement_param_1_.eff, which 2.0
+# rejects outright: it moved xray_data.labels and r_free_flags into
+# data_manager and output.serial out of the refinement scope. Everything that
+# sets the result -- cell, strategy, macro-cycle count, generated R-free set,
+# map labels -- is unchanged, so this differs from the 1.20 chain only by the
+# version itself. serial_format keeps the 1.20 output names (refined_1.pdb,
+# not refined_001.pdb) that the pipeline's pass 2 looks for.
+#
+# $MTZFILE and $MODELFILE are substituted at run time.
+data_manager {
+  miller_array {
+    file = "$MTZFILE"
+    labels {
+      name = "F(+),SigF(+),F(-),SigF(-)"
+      array_type = unknown *amplitude bool complex hendrickson_lattman \
+                   integer intensity nonsense
+    }
+    user_selected_labels = "F(+),SigF(+),F(-),SigF(-)"
+  }
+  fmodel {
+    xray_data {
+      r_free_flags {
+        generate = True
+        test_flag_value = 1
+      }
+    }
+  }
+  model {
+    file = "$MODELFILE"
+  }
+  default_model = "$MODELFILE"
+}
+refinement {
+  crystal_symmetry {
+    unit_cell = 78.3121 78.3121 37.2343 90 90 90
+    space_group = "P 43 21 2"
+  }
+  input {
+    symmetry_safety_check = error *warning
+  }
+  electron_density_maps {
+    map_coefficients {
+      map_type = "2mFo-DFc"
+      mtz_label_amplitudes = "2FOFCWT"
+      mtz_label_phases = "PH2FOFCWT"
+      fill_missing_f_obs = True
+    }
+    map_coefficients {
+      map_type = "2mFo-DFc"
+      mtz_label_amplitudes = "2FOFCWT_no_fill"
+      mtz_label_phases = "PH2FOFCWT_no_fill"
+    }
+    map_coefficients {
+      map_type = "mFo-DFc"
+      mtz_label_amplitudes = "FOFCWT"
+      mtz_label_phases = "PHFOFCWT"
+    }
+    map_coefficients {
+      map_type = "anomalous"
+      mtz_label_amplitudes = "ANOM"
+      mtz_label_phases = "PHANOM"
+    }
+  }
+  refine {
+    strategy = individual_sites individual_sites_real_space *rigid_body \
+               individual_adp group_adp tls occupancies group_anomalous
+    sites {
+      rigid_body = (chain 'A' and resid 1 through 129)
+    }
+  }
+  main {
+    number_of_macro_cycles = 1
+  }
+  hydrogens {
+    refine = individual *riding Auto
+  }
+  pdb_interpretation {
+    c_beta_restraints = False
+  }
+}
+output {
+  prefix = "refined"
+  serial = 1
+  serial_format = "%d"
+  overwrite = true
+}

@@ -8,7 +8,7 @@ from pathlib import Path
 import yaml
 
 from integrator.cli.utils.logger import setup_logging
-from integrator.utils import load_config
+from integrator.utils import load_config, phenix
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +109,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def _resolve(cli_val, cfg_val, env_var, label):
+def _resolve(cli_val, cfg_val, env_var, label, default=None):
     if cli_val is not None:
         return cli_val
     if cfg_val is not None:
@@ -117,6 +117,8 @@ def _resolve(cli_val, cfg_val, env_var, label):
     env = os.environ.get(env_var) if env_var else None
     if env is not None:
         return env
+    if default is not None:
+        return default
     raise ValueError(
         f"Missing '{label}'. Set it in the training config output section, "
         f"pass --{label.replace('_', '-')}, "
@@ -277,11 +279,15 @@ def main():
             None,
             "expt_file",
         ),
+        # last resort is the phenix 2.0 install itself, so the pipeline runs
+        # without $PHENIX_ENV set; process_single.py takes a prefix or an env
+        # script (integrator/utils/phenix.py)
         phenix_env=_resolve(
             args.phenix_env,
             output_cfg.get("phenix_env"),
             "PHENIX_ENV",
             "phenix_env",
+            default=phenix.DEFAULT_PREFIX,
         ),
         phenix_eff=phenix_eff,
         pdb=_resolve(
