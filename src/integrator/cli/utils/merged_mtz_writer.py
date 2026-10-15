@@ -21,6 +21,7 @@ import torch.nn.functional as F
 import yaml
 
 import reciprocalspaceship as rs
+from scipy.special import gammaln
 
 logger = logging.getLogger(__name__)
 
@@ -106,8 +107,11 @@ def _extract_amplitude_params(
 
     raw_mu = state_dict["hkl_table.raw_mu.weight"].cpu().squeeze(-1)
     raw_sigma = state_dict["hkl_table.raw_sigma.weight"].cpu().squeeze(-1)
-    sigma = (F.softplus(raw_sigma) + 1e-6).numpy()
-    mu = torch.exp(raw_mu).numpy()
+    # float64: `Var[F] = E[F^2] - E[F]^2` below is the same cancellation as in
+    # `_gamma_amplitude`, milder here because it loses only `sigma^2 / mu^2`
+    # of the precision, but there is no reason to pay it
+    sigma = (F.softplus(raw_sigma) + 1e-6).numpy().astype(np.float64)
+    mu = torch.exp(raw_mu).numpy().astype(np.float64)
 
     # FoldedNormal mean: E[|X|] = sigma*sqrt(2/pi)*exp(-mu^2/(2*sigma^2)) + mu*(1 - 2*Phi(-mu/sigma))
     t = mu / np.maximum(sigma, 1e-12)
@@ -130,6 +134,42 @@ def _extract_amplitude_params(
     sig_I = np.sqrt(np.maximum(EX4 - I_mean ** 2, 0.0))
 
     return F_mean.astype(np.float64), sig_F.astype(np.float64), I_mean.astype(np.float64), sig_I.astype(np.float64)
+
+
+def _gamma_amplitude(
+    k: np.ndarray, rate: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """`E[sqrt(I)]` and `sd[sqrt(I)]` for `I ~ Gamma(k, rate)`, stably.
+
+    With `r = Gamma(k+1/2)/Gamma(k)`, `E[sqrt(I)] = r / sqrt(rate)` and
+    `Var[sqrt(I)] = (k - r^2) / rate`. Both steps cancel. `log r` is a
+    difference of two log-gammas that are themselves enormous -- 8.2e4 apiece
+    at `k = 1e4`, where the float32 spacing is 0.008 -- so a float32 `lgamma`
+    leaves `log r` wrong in the third digit, and squaring multiplies that error
+    by `k`. The gap then tends to 1/4 while `k` grows without bound, so what is
+    left of it is lost to the subtraction. In float32 the recovered sd came out
+    17x too large at `k = 1e4` and 1830x at `1e6`, and where the error went the
+    other way the gap turned negative and was clamped to zero, after which the
+    writer dropped the row as `SigF == 0`. Bright, low-resolution,
+    high-multiplicity reflections carry the largest `k`, so the best-measured
+    data was the worst affected.
+
+    Everything is done in float64, and above the crossover the asymptotic
+    expansion `k - r^2 -> 1/4 - 1/(32k)` replaces the subtraction. The two
+    agree to 1.5e-7 at `k = 1e4`, which is where this switches, and past `1e5`
+    the series is the more accurate of the two.
+    """
+    k64 = np.asarray(k, dtype=np.float64)
+    rate64 = np.maximum(np.asarray(rate, dtype=np.float64), 1e-12)
+    log_r = gammaln(k64 + 0.5) - gammaln(k64)
+    F_mean = np.exp(log_r) / np.sqrt(rate64)
+    gap = np.where(
+        k64 > 1e4,
+        0.25 - 1.0 / (32.0 * np.maximum(k64, 1.0)),
+        k64 - np.exp(2.0 * log_r),
+    )
+    sig_F = np.sqrt(np.maximum(gap, 0.0) / rate64)
+    return F_mean, sig_F
 
 
 def _load_asu_hkl(
@@ -235,23 +275,11 @@ def write_merged_mtz_from_checkpoint(
     elif table_type == "encoder_fano":
         F_mean, sig_F, I_mean, sig_I = _extract_encoder_fano_params(state_dict)
     elif table_type == "gammaA":
-        from scipy.special import gammaln
-
         I_mean, sig_I, k, rate = _extract_gammaA_params(state_dict)
-        F_mean = np.exp(
-            gammaln(k + 0.5) - gammaln(k)
-        ) / np.sqrt(np.maximum(rate, 1e-12))
-        F_var = np.maximum(I_mean - F_mean ** 2, 0.0)
-        sig_F = np.sqrt(F_var)
+        F_mean, sig_F = _gamma_amplitude(k, rate)
     else:
-        from scipy.special import gammaln
-
         I_mean, sig_I, k, rate = _extract_gamma_params(state_dict)
-        F_mean = np.exp(
-            gammaln(k + 0.5) - gammaln(k)
-        ) / np.sqrt(np.maximum(rate, 1e-12))
-        F_var = np.maximum(I_mean - F_mean ** 2, 0.0)
-        sig_F = np.sqrt(F_var)
+        F_mean, sig_F = _gamma_amplitude(k, rate)
 
     return _finalize_merged_mtz(
         F_mean,
@@ -363,8 +391,6 @@ def write_merged_mtz_from_integrator(
     `integrator.get_merged_qi()` (decoded from the EMA buffers). Unseen HKLs
     are dropped via the integrator's `feat_seen` / `buffer_seen` buffer.
     """
-    from scipy.special import gammaln
-
     if not hasattr(integrator, "get_merged_qi"):
         raise AttributeError(
             f"{type(integrator).__name__} has no get_merged_qi(); use "
@@ -377,15 +403,9 @@ def write_merged_mtz_from_integrator(
         k = qi.concentration.detach().cpu()
         rate = qi.rate.detach().cpu().clamp(min=1e-12)
 
-    k_np = k.numpy()
-    rate_np = rate.numpy()
-    I_mean = (k / rate).numpy()
-    sig_I = np.sqrt((k / rate.pow(2)).numpy())
-    # E[sqrt(I)] for I~Gamma(k, rate): Gamma(k+1/2)/Gamma(k) / sqrt(rate)
-    F_mean = np.exp(gammaln(k_np + 0.5) - gammaln(k_np)) / np.sqrt(
-        np.maximum(rate_np, 1e-12)
-    )
-    sig_F = np.sqrt(np.maximum(I_mean - F_mean**2, 0.0))
+    I_mean = (k / rate).numpy().astype(np.float64)
+    sig_I = np.sqrt((k / rate.pow(2)).numpy().astype(np.float64))
+    F_mean, sig_F = _gamma_amplitude(k.numpy(), rate.numpy())
 
     seen = None
     for name in ("feat_seen", "buffer_seen"):
