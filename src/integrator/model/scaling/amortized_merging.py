@@ -385,7 +385,10 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                     f"scale_from_metadata='{key}' is not in metadata; point "
                     "the loader's reference at a file carrying that column."
                 )
-            return metadata[key].to(device).float().reshape(-1, 1).clamp(min=1e-8)
+            # the scale models return (B,), and the merge multiplies it by a
+            # per-observation profile sum; a (B, 1) here would broadcast into
+            # (B, B) and then fail in the scatter with a shape error
+            return metadata[key].to(device).float().reshape(-1).clamp(min=1e-8)
         if isinstance(self.scale_fn, LaueSpectralScale):
             # Structured spectral scale: G(lambda) (Chebyshev) x optional physical
             # Lorentz/polarization x optional geometry residual. Owns the whole

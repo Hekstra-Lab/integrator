@@ -253,7 +253,10 @@ def main():
                 logger=None,
             )
 
-            ckpt_ = torch.load(ckpt.as_posix())
+            ckpt_ = torch.load(
+                ckpt.as_posix(),
+                map_location="cuda" if torch.cuda.is_available() else "cpu",
+            )
             # The learned_basis_profile surrogate is sized by the warmstart
             # basis at train time, but skip_warmstart drops that file here, so
             # its dim would silently fall back to the default. Pin it from the
@@ -328,7 +331,12 @@ def main():
                         write_merged_mtz_from_integrator,
                     )
 
-                    ckpt_ = torch.load(ckpt.as_posix())
+                    ckpt_ = torch.load(
+                        ckpt.as_posix(),
+                        map_location=(
+                            "cuda" if torch.cuda.is_available() else "cpu"
+                        ),
+                    )
                     _match_profile_basis_dim(config, ckpt_["state_dict"])
                     integrator = construct_integrator(
                         config, skip_warmstart=True

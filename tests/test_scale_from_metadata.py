@@ -89,8 +89,22 @@ def test_the_key_defaults_off_so_existing_runs_are_unchanged():
 def test_the_override_returns_the_column_itself():
     model = _build(scale_from_metadata=COL)
     md = _metadata()
-    got = model._get_scale(md, torch.device("cpu")).reshape(-1)
-    assert torch.allclose(got, md[COL].float(), rtol=0, atol=0)
+    got = model._get_scale(md, torch.device("cpu"))
+    assert torch.allclose(got.reshape(-1), md[COL].float(), rtol=0, atol=0)
+
+
+def test_the_override_has_the_same_shape_as_the_scale_model():
+    """The merge multiplies the scale by a per-observation profile sum.
+
+    A (B, 1) override broadcasts that product to (B, B) and dies downstream in
+    the scatter, so the shape is part of the contract, not a detail.
+    """
+    md = _metadata()
+    learned = _build()._get_scale(md, torch.device("cpu"))
+    pinned = _build(scale_from_metadata=COL)._get_scale(md, torch.device("cpu"))
+    assert pinned.shape == learned.shape
+    profile_sum = torch.rand(len(md["d"]))
+    assert (pinned * profile_sum).shape == profile_sum.shape
 
 
 def test_without_the_override_the_scale_model_is_what_runs():
