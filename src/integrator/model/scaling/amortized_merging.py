@@ -125,6 +125,9 @@ class AmortizedMergingIntegrator(BaseIntegrator):
             getattr(cfg, "centric_anchor_weight", 0.0)
         )
 
+        # a metadata column to use as the scale, instead of the scale model
+        self.scale_from_metadata = getattr(cfg, "scale_from_metadata", None)
+
         self.double_wilson_weight = float(
             getattr(cfg, "double_wilson_weight", 0.0)
         )
@@ -370,6 +373,19 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         return torch.stack(cols, dim=-1)
 
     def _get_scale(self, metadata: dict, device: torch.device) -> Tensor:
+        if self.scale_from_metadata is not None:
+            # An externally supplied scale, for separating a scale defect from
+            # a merge defect: the merge is closed-form given the scale, so this
+            # needs no retraining. Non-positive entries would make the merge's
+            # beta non-positive, so they are floored rather than allowed
+            # through silently.
+            key = self.scale_from_metadata
+            if key not in metadata:
+                raise KeyError(
+                    f"scale_from_metadata='{key}' is not in metadata; point "
+                    "the loader's reference at a file carrying that column."
+                )
+            return metadata[key].to(device).float().reshape(-1, 1).clamp(min=1e-8)
         if isinstance(self.scale_fn, LaueSpectralScale):
             # Structured spectral scale: G(lambda) (Chebyshev) x optional physical
             # Lorentz/polarization x optional geometry residual. Owns the whole

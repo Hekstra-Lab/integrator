@@ -332,6 +332,14 @@ class IntegratorCfg:
     # that distinguishes h from -h within an image, and that is the direction
     # the anomalous difference sits in.
     scale_extra_features: list[str] | None = None
+
+    # Read the per-observation scale straight from a metadata column instead of
+    # evaluating the scale model. For diagnosis: pinning the scale to an
+    # external reference (careless's own `Scale`, or the identified G(lambda))
+    # separates "our scale is wrong" from "our merge is wrong" without
+    # retraining, since the merge is closed-form given the scale. None keeps
+    # the learned scale, so no existing run changes.
+    scale_from_metadata: str | None = None
     scale_extra_loc: list[float] | None = None
     scale_extra_scale: list[float] | None = None
     scale_spatial: bool = False
