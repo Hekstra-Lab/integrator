@@ -312,10 +312,15 @@ def main():
                 # hkl_table; their merged intensities come from get_merged_qi()
                 # (decoded from EMA buffers). The scaling model reads its
                 # lookup table straight from the checkpoint state_dict.
+                # Any integrator that merges internally belongs here; the
+                # check is by name rather than by capability, so a new merging
+                # model that is not listed fails late, at export, with
+                # "Cannot detect HKL table type from checkpoint keys."
                 merging_models = {
                     "conjugate_merging",
                     "deepsets_merging",
                     "amortized_merging",
+                    "svae_merging",
                     "hierarchical_svae",
                 }
                 if config["integrator"]["name"] in merging_models:

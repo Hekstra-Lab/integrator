@@ -15,6 +15,7 @@ from .merging_integrator import MergingIntegrator
 from .refinement_integrator import RefinementIntegrator
 from .scaling_integrator import ScalingIntegrator
 from .svae_integrator import SVAEIntegrator
+from .svae_merging import SVAEMergingIntegrator
 from .variational_refinement_integrator import VariationalRefinementIntegrator
 
 __all__ = [
@@ -31,6 +32,7 @@ __all__ = [
     "PhysicalScale",
     "RefinementIntegrator",
     "SVAEIntegrator",
+    "SVAEMergingIntegrator",
     "ScalingIntegrator",
     "SpatialChebyshevScale",
     "VariationalRefinementIntegrator",

@@ -141,6 +141,9 @@ class MLPScale(nn.Module):
         n_abs_sh: int = 0,
         absorption_even_only: bool = True,
         exclude_hkl_constant: bool = False,
+        n_extra: int = 0,
+        extra_loc: list[float] | None = None,
+        extra_scale: list[float] | None = None,
     ):
         super().__init__()
 
@@ -194,9 +197,30 @@ class MLPScale(nn.Module):
             )
             n_abs_in = int(keep.sum())
 
+        # Arbitrary per-observation metadata columns as further inputs,
+        # standardized as feat = (raw - loc) / scale. The scattering vector
+        # `s1` goes here: frame is per-image, lp nearly so, and radius and d
+        # are HKL-constant, so without a directional input the scale has no
+        # freedom that separates h from -h within one image -- which is where
+        # the anomalous difference lives.
+        self.n_extra = int(n_extra)
+        if self.n_extra > 0:
+            loc = extra_loc if extra_loc is not None else [0.0] * self.n_extra
+            scl = extra_scale if extra_scale is not None else [1.0] * self.n_extra
+            if len(loc) != self.n_extra or len(scl) != self.n_extra:
+                raise ValueError(
+                    "extra_loc/extra_scale must have length "
+                    f"n_extra={self.n_extra}"
+                )
+            self.register_buffer("extra_loc", torch.tensor(loc).float())
+            self.register_buffer(
+                "extra_scale", torch.tensor(scl).float().clamp(min=1e-8)
+            )
+
         # Input: [frame_norm, radius_norm, d_norm, lp] + selected SH features,
-        # or [frame_norm, lp] + SH when the HKL-constant pair is excluded.
-        n_input = (2 if self.exclude_hkl_constant else 4) + n_abs_in
+        # or [frame_norm, lp] + SH when the HKL-constant pair is excluded,
+        # plus any extra metadata columns.
+        n_input = (2 if self.exclude_hkl_constant else 4) + n_abs_in + self.n_extra
         layers = []
         in_dim = n_input
         for _ in range(n_layers):
@@ -221,6 +245,7 @@ class MLPScale(nn.Module):
         lp: Tensor,
         d: Tensor,
         absorption_sh: Tensor | None = None,
+        extra: Tensor | None = None,
     ) -> Tensor:
         frame_norm = (frame - self.frame_mid) / self.frame_half
 
@@ -248,7 +273,173 @@ class MLPScale(nn.Module):
             features = torch.cat(
                 [features, absorption_sh[:, self.abs_cols]], dim=-1
             )
+        if self.n_extra > 0:
+            if extra is None:
+                raise ValueError(
+                    "MLPScale was built with extra metadata features but "
+                    "`extra` was not provided; check scale_extra_features."
+                )
+            if extra.shape[-1] != self.n_extra:
+                raise ValueError(
+                    f"extra has {extra.shape[-1]} features, expected "
+                    f"{self.n_extra} (scale_extra_features mismatch)."
+                )
+            features = torch.cat(
+                [features, (extra - self.extra_loc) / self.extra_scale], dim=-1
+            )
         return F.softplus(self.net(features).squeeze(-1))
+
+
+class _ResBlock(nn.Module):
+    """Pre-activation residual MLP block: `x + W2 act(W1 act(x))`."""
+
+    def __init__(self, dim: int):
+        super().__init__()
+        self.lin1 = nn.Linear(dim, dim)
+        self.lin2 = nn.Linear(dim, dim)
+        self.act = nn.SiLU()
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.act(x + self.lin2(self.act(self.lin1(x))))
+
+
+class ResNetScale(nn.Module):
+    """Deep residual-MLP scale over an explicit metadata feature set.
+
+    Differs from `MLPScale` in two ways that matter for anomalous data.
+
+    Detector `x` and `y` go in directly rather than as the radius
+    `sqrt((x-cx)^2 + (y-cy)^2)`. A Friedel mate sits at the same radius but a
+    different azimuth, so the radius is exactly the reduction that erases the
+    one coordinate separating `h` from `-h` within an image; the other MLP
+    inputs (frame, and the HKL-constant `d`) cannot separate them either. Raw
+    x, y keep that structure, which is why this needs no `scale_extra_features`
+    to see the Bijvoet direction.
+
+    `lp` is an input FEATURE, not a multiplicative `/lp` applied afterwards:
+    the network learns the whole scale, any lp dependence included.
+
+    Ported from `amortized-integrator-la` (`7f448da`, Jun 2026). The SH
+    absorption columns are selected here as `MLPScale` does on this branch, so
+    `scale_sh_lmax` and `scale_mlp_absorption_even_only` mean the same thing in
+    both.
+    """
+
+    def __init__(
+        self,
+        hidden_dim: int = 128,
+        n_blocks: int = 4,
+        frame_min: float = 0.0,
+        frame_max: float = 1000.0,
+        beam_center: list[float] | None = None,
+        r_max: float = 1500.0,
+        d_min: float = 1.0,
+        d_max: float = 60.0,
+        n_abs_sh: int = 0,
+        absorption_even_only: bool = True,
+        use_xy: bool = True,
+        # Laue datasets carry no `lp` column -- the Lorentz-polarization term
+        # is not separable there and is absorbed elsewhere -- so the feature
+        # has to be droppable rather than assumed.
+        use_lp: bool = True,
+        lp_loc: float = 1.5,
+        lp_scale: float = 1.5,
+        head_init_std: float = 0.0,
+    ):
+        super().__init__()
+        self.use_xy = bool(use_xy)
+        self.use_lp = bool(use_lp)
+
+        frame_mid = (frame_min + frame_max) / 2.0
+        frame_half = max((frame_max - frame_min) / 2.0, 1.0)
+        self.register_buffer("frame_mid", torch.tensor(frame_mid))
+        self.register_buffer("frame_half", torch.tensor(frame_half))
+        cx, cy = beam_center or [0.0, 0.0]
+        self.register_buffer("beam_cx", torch.tensor(cx))
+        self.register_buffer("beam_cy", torch.tensor(cy))
+        self.register_buffer("r_max", torch.tensor(max(r_max, 1.0)))
+        self.register_buffer("d_min", torch.tensor(d_min))
+        self.register_buffer("d_max", torch.tensor(max(d_max, d_min + 1.0)))
+        self.register_buffer("lp_loc", torch.tensor(lp_loc))
+        self.register_buffer("lp_scale", torch.tensor(max(lp_scale, 1e-6)))
+
+        self.n_abs_sh = int(n_abs_sh)
+        n_abs_in = 0
+        if self.n_abs_sh > 0:
+            lmax = int(round(math.sqrt(self.n_abs_sh + 1))) - 1
+            if (lmax + 1) ** 2 - 1 != self.n_abs_sh:
+                raise ValueError(
+                    f"n_abs_sh={self.n_abs_sh} is not (lmax+1)^2-1 for integer "
+                    "lmax; pass (scale_sh_lmax+1)^2-1."
+                )
+            l_of_col = torch.tensor(
+                [l for l in range(1, lmax + 1) for _ in range(2 * l + 1)]
+            )
+            keep = (
+                (l_of_col % 2 == 0)
+                if absorption_even_only
+                else torch.ones_like(l_of_col, dtype=torch.bool)
+            )
+            self.register_buffer(
+                "abs_cols",
+                keep.nonzero(as_tuple=False).squeeze(-1),
+                persistent=False,
+            )
+            n_abs_in = int(keep.sum())
+
+        # frame, d [, lp] [, x, y] [, SH]
+        n_input = 2 + (1 if self.use_lp else 0) + (2 if self.use_xy else 0) + n_abs_in
+        layers: list[nn.Module] = [nn.Linear(n_input, hidden_dim), nn.SiLU()]
+        for _ in range(n_blocks):
+            layers.append(_ResBlock(hidden_dim))
+        head = nn.Linear(hidden_dim, 1)
+        nn.init.zeros_(head.bias)
+        if head_init_std > 0.0:
+            nn.init.normal_(head.weight, std=head_init_std)
+        else:
+            # a zero head starts every scale at softplus(0) = 0.693, so the
+            # field is flat until the data moves it
+            nn.init.zeros_(head.weight)
+        layers.append(head)
+        self.net = nn.Sequential(*layers)
+
+    def forward(
+        self,
+        frame: Tensor,
+        x: Tensor,
+        y: Tensor,
+        lp: Tensor | None,
+        d: Tensor,
+        absorption_sh: Tensor | None = None,
+    ) -> Tensor:
+        feats = [
+            ((frame - self.frame_mid) / self.frame_half).unsqueeze(-1),
+            ((d - self.d_min) / (self.d_max - self.d_min)).unsqueeze(-1),
+        ]
+        if self.use_lp:
+            if lp is None:
+                raise ValueError(
+                    "ResNetScale was built with use_lp but no `lp` was given; "
+                    "set scale_resnet_use_lp: false for data without it."
+                )
+            feats.append(((lp - self.lp_loc) / self.lp_scale).unsqueeze(-1))
+        if self.use_xy:
+            feats.append(((x - self.beam_cx) / self.r_max).unsqueeze(-1))
+            feats.append(((y - self.beam_cy) / self.r_max).unsqueeze(-1))
+        if self.n_abs_sh > 0:
+            if absorption_sh is None:
+                raise ValueError(
+                    "ResNetScale was built with absorption features but "
+                    "`absorption_sh` was not provided; check "
+                    "scale_mlp_absorption."
+                )
+            if absorption_sh.shape[-1] != self.n_abs_sh:
+                raise ValueError(
+                    f"absorption_sh has {absorption_sh.shape[-1]} harmonics, "
+                    f"expected {self.n_abs_sh} (scale_sh_lmax mismatch)."
+                )
+            feats.append(absorption_sh[:, self.abs_cols])
+        return F.softplus(self.net(torch.cat(feats, dim=-1)).squeeze(-1))
 
 
 class LaueMLPScale(nn.Module):
@@ -291,8 +482,20 @@ class LaueMLPScale(nn.Module):
         absorption_even_only: bool = True,
         normalize_scale: bool = False,
         norm_momentum: float = 0.02,
+        use_wavelength: bool = True,
     ):
         super().__init__()
+
+        # Wavelength is the one feature that is also a Wilson-prior parameter
+        # under `polychromatic_wilson`, whose G(lambda) is the same spectral
+        # correction. With both free they share a gauge, and on hewl_1118 they
+        # settled on a prior anti-correlated with the beam (CC -0.72 against
+        # the observed intensity-versus-wavelength curve) and a scale that
+        # over-corrected, for a product 4.6x too steep. Dropping lambda here
+        # leaves the prior as the only spectral component; the dual -- a scalar
+        # prior with lambda in the scale -- is what careless does, since its
+        # priors carry no wavelength at all.
+        self.use_wavelength = bool(use_wavelength)
 
         # Optional gauge pin: center the scale to geometric mean 1 so I_h carries
         # the absolute photon scale. OFF by default -- it fights the Wilson prior
@@ -346,9 +549,10 @@ class LaueMLPScale(nn.Module):
             )
             n_abs_in = int(keep.sum())
 
-        # Input: [lambda_norm, x_norm, y_norm, d_norm] + selected SH features.
+        # Input: [lambda_norm, x_norm, y_norm, d_norm] + selected SH features,
+        # less lambda_norm when `use_wavelength` is off.
         layers = []
-        in_dim = 4 + n_abs_in
+        in_dim = (4 if self.use_wavelength else 3) + n_abs_in
         for _ in range(n_layers):
             layers.append(nn.Linear(in_dim, hidden_dim))
             layers.append(nn.SiLU())
@@ -399,7 +603,10 @@ class LaueMLPScale(nn.Module):
         x_norm = (x - self.beam_cx) / self.r_max
         y_norm = (y - self.beam_cy) / self.r_max
         d_norm = (d - self.d_min) / (self.d_max - self.d_min)
-        features = torch.stack([lam_norm, x_norm, y_norm, d_norm], dim=-1)
+        cols = [lam_norm, x_norm, y_norm, d_norm]
+        if not self.use_wavelength:
+            cols = cols[1:]
+        features = torch.stack(cols, dim=-1)
         if self.n_abs_sh > 0:
             if absorption_sh is None:
                 raise ValueError(

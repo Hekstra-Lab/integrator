@@ -44,6 +44,7 @@ from integrator.model.scaling import (
     MergingIntegrator,
     RefinementIntegrator,
     SVAEIntegrator as ScalingSVAEIntegrator,
+    SVAEMergingIntegrator,
     ScalingIntegrator,
     VariationalRefinementIntegrator,
 )
@@ -82,6 +83,7 @@ REGISTRY = {
         "deepsets_merging": DeepSetsMergingIntegrator,
         "amortized_merging": AmortizedMergingIntegrator,
         "conjugate_merging": ConjugateMergingIntegrator,
+        "svae_merging": SVAEMergingIntegrator,
         "hierarchical_scaling": HierarchicalScalingIntegrator,
         "conjugate": ConjugateIntegrator,
         # the merging branch's variant, a different model that also

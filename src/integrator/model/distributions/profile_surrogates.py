@@ -174,7 +174,7 @@ def _sample_and_decode(
     mc_samples: int,
     mask: Tensor | None = None,
     normalize=masked_softmax,
-) -> tuple[Tensor, Tensor]:
+) -> tuple[Tensor, Tensor, Tensor]:
     """Sample h from q(h|x) and decode to profile vectors.
 
     Args:
@@ -189,6 +189,10 @@ def _sample_and_decode(
     Returns:
         zp: Profile samples on the simplex, shape (S, B, K).
         mean_profile: Profile at posterior mean h, shape (B, K).
+        mean_logits: Pre-normalization logits at posterior mean h, shape
+            (B, K). `SVAEMergingIntegrator` forms its per-pixel responsibility
+            from these; a per-row shift is immaterial there because its gate
+            carries one.
     """
     q_h = Normal(loc, scale)
     h = q_h.rsample([mc_samples])  # (S, B, d)
@@ -198,7 +202,7 @@ def _sample_and_decode(
     mean_logits = loc @ W.T + b  # (B, K)
     mean_profile = normalize(mean_logits, mask)
 
-    return zp, mean_profile
+    return zp, mean_profile, mean_logits
 
 
 @dataclass
@@ -214,6 +218,8 @@ class ProfileSurrogateOutput:
         kl: Per-reflection KL, shape (B,), for surrogates whose prior is not a
             single scalar scale; `None` leaves the caller to form it from
             `prior_scale`.
+        mean_logits: Pre-normalization logits at the posterior mean, shape
+            (B, K). `None` for surrogates that do not decode through logits.
     """
 
     zp: Tensor
@@ -222,6 +228,7 @@ class ProfileSurrogateOutput:
     scale: Tensor
     prior_scale: float = 3.0
     kl: Tensor | None = None
+    mean_logits: Tensor | None = None
 
 
 class ProfileSurrogate(nn.Module):
@@ -257,9 +264,15 @@ class ProfileSurrogate(nn.Module):
         # and its gradient pi (1 - pi) stops pushing long before a small tail
         # is gone; `entmax15` can, and does so with exact zeros.
         normalization: str = "softmax",
+        # Mean-squared finite difference penalty on the decoder basis W,
+        # applied by the integrator (the surrogate only carries the weight).
+        # June's merging runs used 0.02; this branch dropped the term, and it
+        # is the one config key from those runs with nowhere to go.
+        smoothness_weight: float = 0.0,
     ) -> None:
         super().__init__()
         self.normalization = normalization
+        self.smoothness_weight = float(smoothness_weight)
         self._normalize = get_normalizer(normalization)
 
         if latent_dim is None:
@@ -334,7 +347,7 @@ class ProfileSurrogate(nn.Module):
         # ShapeletProfile below and folded_normal.py.
         scale = F.softplus(self.scale_head(x)) + 1e-6  # (B, d)
 
-        zp, mean_profile = _sample_and_decode(
+        zp, mean_profile, mean_logits = _sample_and_decode(
             loc,
             scale,
             self.decoder.weight,
@@ -349,6 +362,7 @@ class ProfileSurrogate(nn.Module):
             loc=loc,
             scale=scale,
             prior_scale=self.prior_scale,
+            mean_logits=mean_logits,
         )
 
 
@@ -1192,7 +1206,7 @@ class GeometricProfileSurrogate(ProfileSurrogate):
             decode_loc = loc + self.shift_head(features)
 
         mask = kwargs.get("mask")
-        zp, mean_profile = _sample_and_decode(
+        zp, mean_profile, mean_logits = _sample_and_decode(
             decode_loc,
             scale,
             self.decoder.weight,

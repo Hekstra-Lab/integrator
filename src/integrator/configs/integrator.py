@@ -158,6 +158,15 @@ class IntegratorCfg:
     merge_attention: bool = False
     merge_overdispersion: bool = False
     wilson_alpha: float = 1.0
+    # SVAEMergingIntegrator: bias of the per-observation responsibility gate,
+    # r_p = sigmoid(profile_logit_p + gate_i). Negative so r starts low (-2.0
+    # gives r ~ 0.12) and signal emerges as the profile sharpens.
+    responsibility_gate_init: float = -2.0
+    # SVAEMergingIntegrator: give the signal encoder one output per pixel
+    # instead of one per observation. With a scalar the responsibility's shape
+    # is the profile's shape and only its level is learned, so the signal
+    # encoder cannot say a pixel is background where the profile puts mass.
+    responsibility_per_pixel: bool = False
     sample_I_h: bool = True
     # HierarchicalSVAEIntegrator (Option 3 + 3a, GIG-exact): the Gamma random
     # effect J_i | I_h ~ Gamma(nu, nu/I_h) linking per-obs intensities to the
@@ -270,6 +279,28 @@ class IntegratorCfg:
     scale_mlp: bool = False
     scale_mlp_hidden: int = 64
     scale_mlp_layers: int = 2
+    # ResNetScale: a deep residual scale that takes detector x, y DIRECTLY
+    # rather than as a radius, so the azimuthal structure separating a Friedel
+    # pair survives, and takes lp as an input feature rather than dividing by
+    # it. Takes precedence over scale_mlp / scale_spatial; reuses
+    # scale_mlp_hidden, scale_beam_center, scale_r_max, scale_frame_min/max and
+    # the scale_sh_lmax absorption columns. Needs no scale_extra_features.
+    scale_resnet: bool = False
+    scale_resnet_blocks: int = 4
+    scale_resnet_use_xy: bool = True
+    # off for Laue data, which carries no lp column
+    scale_resnet_use_lp: bool = True
+    # LaueMLPScale only. Off drops wavelength from the scale's features, so a
+    # polychromatic Wilson prior's G(lambda) is the only spectral component.
+    # The two are one gauge: left both free on hewl_1118 they settled on a
+    # prior anti-correlated with the beam and a scale 3x too steep.
+    scale_laue_use_wavelength: bool = True
+    # `svae_merging` only. On, the Wilson rate is evaluated at EACH
+    # observation's own wavelength and resolution and the resulting rates are
+    # averaged over the reflection, instead of evaluating the rate once at the
+    # group-mean wavelength. The prior is then a statement about measurements,
+    # which is what Wilson's is, while the latent stays a crystal quantity.
+    wilson_prior_per_obs: bool = False
     # MLPScale output-layer weight init std. 0.0 (default) keeps the legacy
     # zero-init (flat constant scale, zero gradient to hidden layers at step 0);
     # a small value (e.g. 0.05) lets the scale's spatial structure develop from
@@ -294,6 +325,15 @@ class IntegratorCfg:
     # data's real falloff absorbed into the scale. Default False so existing
     # scaling runs are untouched; set True for the hierarchical SVAE.
     scale_mlp_exclude_hkl_constant: bool = False
+    # Extra per-observation metadata columns fed to the scale MLP, each
+    # standardized by the matching entry of scale_extra_loc / scale_extra_scale.
+    # The June svae_merging runs passed the scattering vector as
+    # [s1.0, s1.1, s1.2]; frame, lp, radius and d give the scale no direction
+    # that distinguishes h from -h within an image, and that is the direction
+    # the anomalous difference sits in.
+    scale_extra_features: list[str] | None = None
+    scale_extra_loc: list[float] | None = None
+    scale_extra_scale: list[float] | None = None
     scale_spatial: bool = False
     scale_degree_radius: int = 5
     scale_beam_center: list[float] | None = None

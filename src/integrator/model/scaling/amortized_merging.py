@@ -58,6 +58,7 @@ from integrator.model.scaling.chebyshev_scale import (
     LaueMLPScale,
     LaueSpectralScale,
     MLPScale,
+    ResNetScale,
     PhysicalScale,
     SpatialChebyshevScale,
 )
@@ -178,6 +179,9 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         )
 
         # Scale function
+        self.scale_extra_features = list(
+            getattr(cfg, "scale_extra_features", None) or []
+        )
         self.scale_restraint_weight = float(
             getattr(cfg, "scale_absorption_restraint", 0.0)
         )
@@ -221,6 +225,7 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                 absorption_even_only=getattr(
                     cfg, "scale_mlp_absorption_even_only", True
                 ),
+                use_wavelength=getattr(cfg, "scale_laue_use_wavelength", True),
             )
         elif getattr(cfg, "scale_physical", False):
             self.scale_fn = PhysicalScale(
@@ -237,6 +242,33 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                     "absorption surface is bounded only by its low dimension. "
                     "Set scale_absorption_restraint (~1e-2) to oppose run-away "
                     "and protect the anomalous (odd-l) band."
+                )
+        elif getattr(cfg, "scale_resnet", False):
+            n_abs_sh = 0
+            if getattr(cfg, "scale_mlp_absorption", False):
+                n_abs_sh = (int(cfg.scale_sh_lmax) + 1) ** 2 - 1
+            self.scale_fn = ResNetScale(
+                hidden_dim=cfg.scale_mlp_hidden,
+                n_blocks=int(getattr(cfg, "scale_resnet_blocks", 4)),
+                frame_min=cfg.scale_frame_min,
+                frame_max=cfg.scale_frame_max,
+                beam_center=cfg.scale_beam_center,
+                r_max=cfg.scale_r_max,
+                d_min=getattr(cfg, "dmin", 1.0),
+                d_max=60.0,
+                n_abs_sh=n_abs_sh,
+                absorption_even_only=getattr(
+                    cfg, "scale_mlp_absorption_even_only", True
+                ),
+                use_xy=bool(getattr(cfg, "scale_resnet_use_xy", True)),
+                use_lp=bool(getattr(cfg, "scale_resnet_use_lp", True)),
+                head_init_std=getattr(cfg, "scale_head_init_std", 0.0),
+            )
+            if self.scale_extra_features:
+                logger.warning(
+                    "scale_resnet ignores scale_extra_features: it already "
+                    "takes detector x, y directly, which is what those columns "
+                    "were added to recover."
                 )
         elif cfg.scale_mlp:
             n_abs_sh = 0
@@ -256,6 +288,9 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                 absorption_even_only=getattr(
                     cfg, "scale_mlp_absorption_even_only", True
                 ),
+                n_extra=len(self.scale_extra_features),
+                extra_loc=getattr(cfg, "scale_extra_loc", None),
+                extra_scale=getattr(cfg, "scale_extra_scale", None),
             )
         elif cfg.scale_spatial:
             self.scale_fn = SpatialChebyshevScale(
@@ -320,6 +355,20 @@ class AmortizedMergingIntegrator(BaseIntegrator):
 
     # ------------------------------------------------------------------
 
+    def _scale_extra(self, metadata: dict, device) -> Tensor | None:
+        """Stack the `scale_extra_features` metadata columns, or None if unset."""
+        if not self.scale_extra_features:
+            return None
+        cols = []
+        for key in self.scale_extra_features:
+            if key not in metadata:
+                raise KeyError(
+                    f"scale_extra_features needs '{key}' in metadata; the data "
+                    "loader's reference file does not carry that column."
+                )
+            cols.append(metadata[key].to(device).float())
+        return torch.stack(cols, dim=-1)
+
     def _get_scale(self, metadata: dict, device: torch.device) -> Tensor:
         if isinstance(self.scale_fn, LaueSpectralScale):
             # Structured spectral scale: G(lambda) (Chebyshev) x optional physical
@@ -363,6 +412,29 @@ class AmortizedMergingIntegrator(BaseIntegrator):
             d = metadata["d"].to(device).float()
             a = metadata["absorption_sh"].to(device).float()
             return self.scale_fn(frame, d, a) / lp
+        if isinstance(self.scale_fn, ResNetScale):
+            # lp is an input feature here, not a divisor: the net owns the
+            # whole scale, so there is no /lp on the way out.
+            x_det = metadata["xyzcal.px.0"].to(device).float()
+            y_det = metadata["xyzcal.px.1"].to(device).float()
+            d = metadata["d"].to(device).float()
+            a = None
+            if self.scale_fn.n_abs_sh > 0:
+                if "absorption_sh" not in metadata:
+                    raise KeyError(
+                        "ResNetScale with scale_mlp_absorption needs "
+                        "'absorption_sh' in metadata; run "
+                        "scripts/extract_crystal_frame_sh.py and point the "
+                        "data loader's reference at metadata_sh.pt."
+                    )
+                a = metadata["absorption_sh"].to(device).float()
+            return self.scale_fn(frame, x_det, y_det, lp, d, a)
+        if lp is None:
+            raise KeyError(
+                f"{type(self.scale_fn).__name__} needs metadata['lp']; this "
+                "dataset has no lp column. Laue data carries none -- use a "
+                "Laue scale, or scale_resnet with scale_resnet_use_lp: false."
+            )
         if isinstance(self.scale_fn, MLPScale):
             x_det = metadata["xyzcal.px.0"].to(device).float()
             y_det = metadata["xyzcal.px.1"].to(device).float()
@@ -376,7 +448,9 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                         "point the data loader's reference at metadata_sh.pt."
                     )
                 a = metadata["absorption_sh"].to(device).float()
-            return self.scale_fn(frame, x_det, y_det, lp, d, a)
+            return self.scale_fn(
+                frame, x_det, y_det, lp, d, a, self._scale_extra(metadata, device)
+            )
         elif isinstance(self.scale_fn, SpatialChebyshevScale):
             x_det = metadata["xyzcal.px.0"].to(device).float()
             y_det = metadata["xyzcal.px.1"].to(device).float()
@@ -395,10 +469,20 @@ class AmortizedMergingIntegrator(BaseIntegrator):
             return metadata["wavelength"].to(device).float()
         return metadata["lp"].to(device).float()
 
-    def _wilson_tau(self, d: Tensor) -> Tensor:
-        """Wilson prior rate tau from resolution d (lp lives in the scale)."""
+    def _wilson_tau(self, d: Tensor, extra: dict | None = None) -> Tensor:
+        """Wilson prior rate tau from resolution d (lp lives in the scale).
+
+        `extra` carries any further PER-HKL columns the loss's `_get_tau`
+        needs. `PolychromaticWilsonLoss` wants a wavelength, but tau is one
+        number per reflection while wavelength is a property of each
+        observation, so what is passed is the group mean -- the same
+        aggregation `d` already gets.
+        """
         s_sq = 1.0 / (4.0 * d.clamp(min=1e-6).pow(2))
-        return self.loss._get_tau({"d": d}, s_sq, d.device)
+        meta = {"d": d}
+        if extra:
+            meta.update(extra)
+        return self.loss._get_tau(meta, s_sq, d.device)
 
     def _attend(self, feat: Tensor, asu_ids: Tensor) -> tuple[Tensor, Tensor]:
         """Self-attention over each HKL's observations -> (context, trust gate).
@@ -843,6 +927,39 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         )[valid]
         return diff.pow(2).sum(), int(valid.sum())
 
+    def _profile_basis_penalty(self) -> Tensor:
+        """Mean-squared spatial gradient of the learned qp decoder basis.
+
+        Ported from the June merging branch (`9ad2554`), whose svae_merging
+        runs set `smoothness_weight: 0.02`. The penalty is on W itself, not on
+        any one observation's profile: each latent direction is reshaped onto
+        the shoebox grid and its finite differences are averaged, so a basis
+        that turns neighbouring pixels on and off independently is penalized
+        while a smooth spot-like basis is not. Returns 0 when the weight is 0,
+        when there is no linear decoder, or when W does not match the shoebox.
+        """
+        zero = torch.zeros((), device=self.device)
+        qp = self.surrogates["qp"] if "qp" in self.surrogates else None
+        W = getattr(getattr(qp, "decoder", None), "weight", None)
+        smooth_w = float(getattr(qp, "smoothness_weight", 0.0))
+        if smooth_w <= 0.0 or W is None or W.dim() != 2:
+            return zero
+        shape = self.shoebox_shape
+        D, H, W_spatial = shape if len(shape) == 3 else (1, *shape)
+        K, d = W.shape
+        if K != D * H * W_spatial:
+            return zero
+        vol = W.T.reshape(d, D, H, W_spatial)
+        gx = vol[..., 1:] - vol[..., :-1]
+        gy = vol[..., 1:, :] - vol[..., :-1, :]
+        sq_sum = gx.pow(2).sum() + gy.pow(2).sum()
+        n_terms = gx.numel() + gy.numel()
+        if D > 1:
+            gz = vol[..., 1:, :, :] - vol[..., :-1, :, :]
+            sq_sum = sq_sum + gz.pow(2).sum()
+            n_terms = n_terms + gz.numel()
+        return smooth_w * (sq_sum / max(n_terms, 1))
+
     def _step(self, batch, step: Literal["train", "val"]):
         counts, shoebox, mask, metadata = batch
         outputs = self(counts, shoebox, mask, metadata)
@@ -880,6 +997,16 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         )
         kl_i = kl_i_per_hkl.sum() / counts.shape[0] * self.merge_kl_weight
         total_loss = total_loss + kl_i
+
+        smooth = self._profile_basis_penalty()
+        if smooth.requires_grad or float(smooth) != 0.0:
+            total_loss = total_loss + smooth
+            self.log(
+                f"{step} profile_smoothness",
+                smooth.detach(),
+                on_step=False,
+                on_epoch=True,
+            )
 
         # Scaling-consistency loss: a direct, data-only gradient for the per-obs
         # scale. Grouped by the anomalous asu_id (`inverse`) by default, or by
