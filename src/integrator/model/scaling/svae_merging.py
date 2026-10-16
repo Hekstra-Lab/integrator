@@ -234,6 +234,7 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
             getattr(cfg, "merge_error_model_shells", 10)
         )
         self.merge_dump_terms = getattr(cfg, "merge_dump_terms", None)
+        self.gate_em_iters = int(getattr(cfg, "gate_em_iters", 0))
 
     def _responsibility_merge(
         self,
@@ -301,6 +302,29 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
             (bg_a0 + bg_counts).clamp(min=1e-6),
             (bg_b0 + n_pix).clamp(min=1e-12),
         )
+
+        for _ in range(self.gate_em_iters):
+            # The exact E-step. A Poisson count whose rate is a sum splits
+            # Binomially, with r = s I p / (s I p + b) -- and
+            # `sigmoid(log p + g)` equals that precisely when
+            # g = log(s I / b), which the amortized gate has no way to know.
+            # I_h and b are detached, so this is a fixed-point refinement
+            # rather than a differentiable path the KL could exploit; p and the
+            # scale keep their gradients, since they are model parameters.
+            i_hat = (alpha_h / beta_h.clamp(min=1e-12)).detach()[inverse]
+            bg_rate = (qbg.mean / n_pix.clamp(min=1.0)).detach()
+            sig_rate = scale.reshape(-1, 1) * i_hat.reshape(-1, 1) * profile_mean * m
+            r = (sig_rate / (sig_rate + bg_rate.reshape(-1, 1)).clamp(min=1e-12)) * m
+            sig_counts = (r * c).sum(dim=-1)
+            bg_counts = total_counts - sig_counts
+            alpha_sig, _, _ = _scatter_sum_compact(sig_counts, asu_ids)
+            alpha_h = self.alpha_W + alpha_sig
+            beta_h = tau_h + beta_sum
+            qi_h = Gamma(alpha_h.clamp(min=1e-6), beta_h.clamp(min=1e-12))
+            qbg = Gamma(
+                (bg_a0 + bg_counts).clamp(min=1e-6),
+                (bg_b0 + n_pix).clamp(min=1e-12),
+            )
         if extras is not None:
             # The terms an error model needs, all per HKL and all from this
             # batch, which holds complete groups. Prior contributions are kept
@@ -547,9 +571,7 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
         terms = {
             key: torch.zeros(self.n_hkl, device=device) for key in _ERROR_TERMS
         }
-        dump: dict[str, list] = (
-            {"sig_counts": [], "exposure": []} if self.merge_dump_terms else {}
-        )
+        dump: dict[str, list] = {} if not self.merge_dump_terms else {}
 
         for batch in dataloader:
             counts, shoebox, mask, metadata = batch
@@ -595,13 +617,16 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
                 for key in _ERROR_TERMS:
                     terms[key][unique] = extras[key]
                 if self.merge_dump_terms:
-                    dump["sig_counts"].append(extras["per_obs"]["sig_counts"].cpu())
-                    dump["exposure"].append(extras["per_obs"]["exposure"].cpu())
+                    for name, value in extras["per_obs"].items():
+                        dump.setdefault(name, []).append(value.cpu())
                     # detector position and the diffracted beam direction:
                     # polarisation needs the azimuth, and the crystal-frame
                     # absorption basis needs s1 rotated by -phi(image)
-                    for key in ("asu_id", "nonanom_id", "wavelength", "d",
-                                "centric", "H", "K", "L", "image_num",
+                    # refl_ids is the reflection table's own row id, so a
+                    # consumer can align the dump to the metadata exactly
+                    # instead of matching on rounded coordinates
+                    for key in ("refl_ids", "asu_id", "nonanom_id", "wavelength",
+                                "d", "centric", "H", "K", "L", "image_num",
                                 "xyzcal.px.0", "xyzcal.px.1",
                                 "s1.0", "s1.1", "s1.2"):
                         if key in metadata:

@@ -352,6 +352,15 @@ class IntegratorCfg:
     # Save the per-observation merge terms (signal counts and exposure) that a
     # conditional Bijvoet estimator needs. A path, or None for no dump.
     merge_dump_terms: str | None = None
+
+    # Refine the responsibility gate toward the exact Poisson E-step,
+    # r = s I p / (s I p + b), using the model's own detached estimates. The
+    # amortized gate is a function of the shoebox alone, so it cannot know s_i,
+    # I_h or b_i and is the correct E-step only by coincidence: measured on
+    # hewl_1118 it keeps 45% of the signal below I/sigma 0.5 and 149% near
+    # I/sigma 2. 0 keeps the amortized gate alone, so existing runs are
+    # unchanged.
+    gate_em_iters: int = 0
     scale_extra_loc: list[float] | None = None
     scale_extra_scale: list[float] | None = None
     scale_spatial: bool = False
