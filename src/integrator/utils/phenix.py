@@ -9,6 +9,14 @@ so sourcing it leaves `phenix.refine: command not found` while reporting
 success.  The real wrappers are in `bin/`, so the prefix is set here instead
 of being sourced.
 
+The R-free set is part of the chain, not an implementation detail.  The mono
+effs read `rfree.mtz`, a complete flag set, while the Laue effs set
+`r_free_flags.generate = True` and so held out a different subset of every MTZ
+they were handed -- and `refinement.main.random_seed` moved that subset too, so
+a seed spread measured that way is partly a flag draw.  `rfree_overrides` and
+the `*_fixedfree.eff` templates read one file instead; `DEFAULT_RFREE` is that
+file.
+
 Phenix 2.0 also renamed the anomalous-difference phase column: it writes
 `PANOM` where 1.20 wrote `PHANOM`, and `rs.find_peaks -p PHANOM` on a 2.0 MTZ
 raises `KeyError: None of [Index(['PHANOM'])]`.  Ask `anomalous_columns` for
@@ -23,6 +31,20 @@ DEFAULT_VERSION = "2.0-5729"
 
 # in the order phenix has used them; the first one present in an MTZ wins
 PHASE_LABELS = ("PANOM", "PHANOM")
+
+# the flag column every eff in this project asks for, and the value it holds
+# out; `test_flag_value = 1` is phenix's own convention, not CCP4's 0
+FLAG_LABEL = "R-free-flags"
+TEST_FLAG_VALUE = 1
+
+# the set the mono chain has always used: complete to 1.096 A, 10.2% free.
+# Its cell is 9b7c's (79.42, 37.79) rather than the Laue 78.31/37.23, which
+# costs nothing -- a flag is attached to a Miller index, and only the
+# resolution cut reads a cell, which phenix takes from the data.
+DEFAULT_RFREE = (
+    "/n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator"
+    "/reference_data/rfree.mtz"
+)
 
 
 def prefix(explicit: str | os.PathLike | None = None) -> str:
@@ -143,3 +165,32 @@ def requested_phase_label(eff: str | os.PathLike) -> str:
             if "mtz_label_phases" in line:
                 return line.split("=", 1)[1].strip().strip('"').strip("'")
     return PHASE_LABELS[0]
+
+
+def rfree_overrides(
+    flags: str | os.PathLike | None = None,
+    label: str = FLAG_LABEL,
+    test_flag_value: int = TEST_FLAG_VALUE,
+) -> str:
+    """Command-line phil that makes phenix read one R-free set from a file.
+
+    For the 1.20 form, where files are named by `refinement.input.*` overrides.
+    A 2.0 eff names its own files, so there the flag file goes into the
+    `data_manager` block instead -- see `laue_refine_pass1_fixedfree.eff`.
+
+    `generate = False` is explicit because the generating effs set it True and
+    a later override is what turns it off.
+
+    Args:
+        flags: The flag MTZ.  Defaults to `DEFAULT_RFREE`.
+
+    Returns:
+        A fragment to append to a `phenix.refine` command line.
+    """
+    path = Path(flags or DEFAULT_RFREE).resolve()
+    return (
+        f'refinement.input.xray_data.r_free_flags.file_name="{path}" '
+        f'refinement.input.xray_data.r_free_flags.label="{label}" '
+        f"refinement.input.xray_data.r_free_flags.test_flag_value={test_flag_value} "
+        f"refinement.input.xray_data.r_free_flags.generate=False"
+    )

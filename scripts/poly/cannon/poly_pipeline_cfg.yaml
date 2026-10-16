@@ -38,7 +38,20 @@ phenix:
                                 #   macro-cycles, generated R-free set and map
                                 #   labels, so only the version differs.
   pdb: /n/holylabs/hekstra_lab/Users/laldama/integrato_refac/integrator/reference_data/shaken_9b7c.pdb
+  rfree: null                   # one R-free set for every MTZ. Unset, the
+                                #   effs above generate a fresh 10% per MTZ,
+                                #   and refinement.main.random_seed moves that
+                                #   draw too, so two runs differ by which
+                                #   reflections were held out as well as by
+                                #   the data -- about 0.008 in R-free on weak
+                                #   Laue data. Set it to the mono chain's
+                                #   reference_data/rfree.mtz and point eff1 /
+                                #   eff2 at laue_refine_pass{1,2}_fixedfree.eff,
+                                #   which read $FREEFILE.
   prefix: refined               # refine1 -> refined_data.mtz, refined_1.pdb
+                                #   (phenix writes that _data.mtz only to
+                                #   export flags it generated; with rfree set
+                                #   there is none and pass 2 re-reads merged)
 
 peaks:
   env: integrator-cuda-dev      # holds rs.find_peaks and gemmi

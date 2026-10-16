@@ -1,0 +1,96 @@
+# Laue two-pass refine, STAGE 2 (sites + rigid body + ADP), phenix 2.0, FIXED R-free set.
+#
+# `laue_refine_pass2.eff` reading the ORIGINAL merged MTZ and the same flag
+# file pass 1 read, instead of pass 1's `refined_data.mtz`. Phenix writes that
+# `_data.mtz` only when it has to export flags it generated itself, so with the
+# flags supplied there is no such file -- and both passes seeing the same data
+# and the same test set is what the fixed set is for. Only the model is handed
+# forward, as in `diagnose_poly_merging.run_two_stage_refine`.
+#
+# $MTZFILE, $FREEFILE and $MODELFILE are substituted at run time.
+data_manager {
+  miller_array {
+    file = "$MTZFILE"
+    labels {
+      name = "F(+),SigF(+),F(-),SigF(-)"
+      array_type = unknown *amplitude bool complex hendrickson_lattman \
+                   integer intensity nonsense
+    }
+    user_selected_labels = "F(+),SigF(+),F(-),SigF(-)"
+  }
+  miller_array {
+    file = "$FREEFILE"
+    labels {
+      name = "R-free-flags"
+      array_type = unknown amplitude bool complex hendrickson_lattman \
+                   *integer intensity nonsense
+    }
+    user_selected_labels = "R-free-flags"
+  }
+  fmodel {
+    xray_data {
+      r_free_flags {
+        generate = False
+        test_flag_value = 1
+      }
+    }
+  }
+  model {
+    file = "$MODELFILE"
+  }
+  default_model = "$MODELFILE"
+}
+refinement {
+  crystal_symmetry {
+    unit_cell = 78.3121 78.3121 37.2343 90 90 90
+    space_group = "P 43 21 2"
+  }
+  input {
+    symmetry_safety_check = error *warning
+  }
+  electron_density_maps {
+    map_coefficients {
+      map_type = "2mFo-DFc"
+      mtz_label_amplitudes = "2FOFCWT"
+      mtz_label_phases = "PH2FOFCWT"
+      fill_missing_f_obs = True
+    }
+    map_coefficients {
+      map_type = "2mFo-DFc"
+      mtz_label_amplitudes = "2FOFCWT_no_fill"
+      mtz_label_phases = "PH2FOFCWT_no_fill"
+    }
+    map_coefficients {
+      map_type = "mFo-DFc"
+      mtz_label_amplitudes = "FOFCWT"
+      mtz_label_phases = "PHFOFCWT"
+    }
+    map_coefficients {
+      map_type = "anomalous"
+      mtz_label_amplitudes = "ANOM"
+      mtz_label_phases = "PHANOM"
+    }
+  }
+  refine {
+    strategy = *individual_sites individual_sites_real_space *rigid_body \
+               *individual_adp group_adp tls occupancies group_anomalous
+    sites {
+      rigid_body = (chain 'A' and resid 1 through 129)
+    }
+  }
+  main {
+    number_of_macro_cycles = 5
+  }
+  hydrogens {
+    refine = individual *riding Auto
+  }
+  pdb_interpretation {
+    c_beta_restraints = False
+  }
+}
+output {
+  prefix = "refined"
+  serial = 2
+  serial_format = "%d"
+  overwrite = true
+}

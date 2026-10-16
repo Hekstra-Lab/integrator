@@ -230,11 +230,17 @@ def step_phenix(cfg, merged: Path, work_dir: Path, dry) -> Path:
 
     Pass 1 refines the reference model against the merged data; pass 2 picks
     up pass 1's data and model and reuses its R-free flags.
+
+    With `phenix.rfree` set, both passes instead read that one flag set, which
+    is what makes two runs comparable: the generating form holds out a
+    different subset of every MTZ, worth about 0.008 in $R_\\mathrm{free}$ on
+    weak Laue data.
     """
     pcfg = cfg.get("phenix", {})
     for key in ("env", "eff1", "eff2", "pdb"):
         if not pcfg.get(key):
             raise SystemExit(f"phenix.{key} is not set in the pipeline config")
+    rfree = pcfg.get("rfree")
     prefix = pcfg.get("prefix", "refined")
     refine1 = work_dir / "refine1"
     refine2 = work_dir / "refine2"
@@ -246,39 +252,46 @@ def step_phenix(cfg, merged: Path, work_dir: Path, dry) -> Path:
     # column live in the same data_manager block as the file they select from
     # and a command-line file= opens a fresh block instead. A 1.20 eff names
     # no files, so those still take the override form.
+    subs1 = {"MTZFILE": merged, "MODELFILE": pcfg["pdb"]}
+    if rfree:
+        subs1["FREEFILE"] = rfree
     if not dry and phenix.eff_takes_substitution(pcfg["eff1"]):
-        eff1 = phenix.render_eff(
-            pcfg["eff1"],
-            refine1 / "refine.eff",
-            MTZFILE=merged,
-            MODELFILE=pcfg["pdb"],
-        )
+        eff1 = phenix.render_eff(pcfg["eff1"], refine1 / "refine.eff", **subs1)
         pass1 = f'phenix.refine "{eff1}"'
     else:
         pass1 = (
             f'phenix.refine "{Path(pcfg["eff1"]).resolve()}" '
             f'refinement.input.xray_data.file_name="{merged.resolve()}" '
             f'refinement.input.pdb.file_name="{Path(pcfg["pdb"]).resolve()}" '
-            f"refinement.output.prefix={prefix} --overwrite"
+            + (f"{phenix.rfree_overrides(rfree)} " if rfree else "")
+            + f"refinement.output.prefix={prefix} --overwrite"
         )
     run(in_env(pass1, pcfg["env"]), cwd=refine1, dry=dry)
 
     # pass 1's MTZ carries both the data and the R-free set it generated, so
-    # pass 2 holds out the same reflections
-    data = refine1 / f"{prefix}_data.mtz"
+    # pass 2 holds out the same reflections. phenix writes that `_data.mtz`
+    # only to export flags it generated itself, so with a fixed set there is
+    # none and pass 2 re-reads the merged data -- the same data and the same
+    # test set in both passes, as the mono chain does.
+    data = merged if rfree else refine1 / f"{prefix}_data.mtz"
     model = refine1 / f"{prefix}_1.pdb"
+    subs2 = {"MTZFILE": data, "MODELFILE": model}
+    if rfree:
+        subs2["FREEFILE"] = rfree
     if not dry and phenix.eff_takes_substitution(pcfg["eff2"]):
-        eff2 = phenix.render_eff(
-            pcfg["eff2"], refine2 / "refine.eff", MTZFILE=data, MODELFILE=model
-        )
+        eff2 = phenix.render_eff(pcfg["eff2"], refine2 / "refine.eff", **subs2)
         pass2 = f'phenix.refine "{eff2}"'
     else:
         pass2 = (
             f'phenix.refine "{Path(pcfg["eff2"]).resolve()}" '
             f'refinement.input.xray_data.file_name="{data}" '
             f'refinement.input.pdb.file_name="{model}" '
-            f'refinement.input.xray_data.r_free_flags.file_name="{data}" '
-            f"refinement.output.prefix={prefix} --overwrite"
+            + (
+                f"{phenix.rfree_overrides(rfree)} "
+                if rfree
+                else f'refinement.input.xray_data.r_free_flags.file_name="{data}" '
+            )
+            + f"refinement.output.prefix={prefix} --overwrite"
         )
     run(in_env(pass2, pcfg["env"]), cwd=refine2, dry=dry)
     return refine2
