@@ -325,6 +325,9 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
             extras["per_obs"] = {
                 "sig_counts": sig_counts.detach(),
                 "exposure": delta_beta.detach(),
+                # the scale this pass used, so a refit can recover the base
+                # exposure e_i = E_i / s_i and solve for a new scale offline
+                "scale": scale.detach().reshape(-1),
             }
         return qi_h, alpha_h, beta_h, inverse, unique, tau_h, qbg, r
 
@@ -594,8 +597,13 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
                 if self.merge_dump_terms:
                     dump["sig_counts"].append(extras["per_obs"]["sig_counts"].cpu())
                     dump["exposure"].append(extras["per_obs"]["exposure"].cpu())
+                    # detector position and the diffracted beam direction:
+                    # polarisation needs the azimuth, and the crystal-frame
+                    # absorption basis needs s1 rotated by -phi(image)
                     for key in ("asu_id", "nonanom_id", "wavelength", "d",
-                                "centric", "H", "K", "L", "image_num"):
+                                "centric", "H", "K", "L", "image_num",
+                                "xyzcal.px.0", "xyzcal.px.1",
+                                "s1.0", "s1.1", "s1.2"):
                         if key in metadata:
                             v = metadata[key]
                             v = v if torch.is_tensor(v) else torch.as_tensor(v)
