@@ -340,6 +340,18 @@ class IntegratorCfg:
     # retraining, since the merge is closed-form given the scale. None keeps
     # the learned scale, so no existing run changes.
     scale_from_metadata: str | None = None
+
+    # Inflate the exported sigma by the between-observation dispersion the
+    # Poisson merge cannot see. sigma^2/I^2 = 1/alpha + eps^2/n_eff + bg, where
+    # eps is the per-observation multiplicative scatter estimated from the
+    # data's own symmetry-equivalent residuals, as AIMLESS's SDadd and
+    # cctbx.xfel's ev11 do. Off by default, so existing exports are unchanged.
+    merge_error_model: bool = False
+    merge_error_model_shells: int = 10
+
+    # Save the per-observation merge terms (signal counts and exposure) that a
+    # conditional Bijvoet estimator needs. A path, or None for no dump.
+    merge_dump_terms: str | None = None
     scale_extra_loc: list[float] | None = None
     scale_extra_scale: list[float] | None = None
     scale_spatial: bool = False

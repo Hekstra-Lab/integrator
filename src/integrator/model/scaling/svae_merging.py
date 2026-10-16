@@ -42,7 +42,9 @@ and the train/finalize plumbing; it overrides only the forward and the merge,
 and needs just the profile + k_i encoders and the qp surrogate.
 """
 
+import logging
 import math
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -65,6 +67,14 @@ from integrator.model.scaling.amortized_merging import (
 from integrator.model.scaling.conjugate_merging import _scatter_sum_compact
 
 
+logger = logging.getLogger(__name__)
+
+# the per-HKL sums an error model needs, all data-only (no prior terms)
+_ERROR_TERMS = (
+    "alpha_sig", "beta_sum", "ss", "se", "ee", "v_bg", "n_obs", "d_mean",
+)
+
+
 class SVAEMergingIntegrator(AmortizedMergingIntegrator):
     """Per-HKL merging via a shared-logit per-pixel responsibility.
 
@@ -85,6 +95,7 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
         # surrogate the config has no reason to carry.
         cfg.merge_aggregation = "sum"
         super().__init__(cfg, loss, encoders, surrogates)
+        self._error_model_setup(cfg)
 
         # The parent's potential head is replaced by the responsibility gate;
         # drop it so it does not sit unused in the optimizer.
@@ -216,6 +227,14 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
         )
         return (tau_sum / cnt.clamp(min=1.0)).clamp(min=1e-12)
 
+    def _error_model_setup(self, cfg) -> None:
+        """Read the error-model keys. Called from `__init__`."""
+        self.merge_error_model = bool(getattr(cfg, "merge_error_model", False))
+        self.merge_error_model_shells = int(
+            getattr(cfg, "merge_error_model_shells", 10)
+        )
+        self.merge_dump_terms = getattr(cfg, "merge_dump_terms", None)
+
     def _responsibility_merge(
         self,
         logits: Tensor,
@@ -228,6 +247,7 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
         d_per_obs: Tensor,
         group_labels: Tensor | None,
         wl_per_obs: Tensor | None = None,
+        extras: dict | None = None,
     ) -> tuple[Gamma, Tensor, Tensor, Tensor, Tensor, Tensor, Gamma, Tensor]:
         """Conjugate merge via a per-pixel signal responsibility.
 
@@ -281,6 +301,31 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
             (bg_a0 + bg_counts).clamp(min=1e-6),
             (bg_b0 + n_pix).clamp(min=1e-12),
         )
+        if extras is not None:
+            # The terms an error model needs, all per HKL and all from this
+            # batch, which holds complete groups. Prior contributions are kept
+            # out: the dispersion is a property of the data, not of tau or
+            # alpha_W. `sig_counts` is S_i, `delta_beta` is the exposure E_i,
+            # so mu_i = E_i * I_h and the Pearson sum follows from the three
+            # cross-sums without needing a second pass.
+            r_sq = (r * r).sum(dim=-1)
+            bg_var = qbg.concentration / qbg.rate.pow(2)
+            v_bg = r_sq * bg_var
+            for key, value in (
+                ("alpha_sig", alpha_sig),
+                ("beta_sum", beta_sum),
+                ("ss", _scatter_sum_compact(sig_counts.pow(2), asu_ids)[0]),
+                ("se", _scatter_sum_compact(sig_counts * delta_beta, asu_ids)[0]),
+                ("ee", _scatter_sum_compact(delta_beta.pow(2), asu_ids)[0]),
+                ("v_bg", _scatter_sum_compact(v_bg, asu_ids)[0]),
+                ("n_obs", cnt),
+                ("d_mean", d_sum / cnt.clamp(min=1.0)),
+            ):
+                extras[key] = value
+            extras["per_obs"] = {
+                "sig_counts": sig_counts.detach(),
+                "exposure": delta_beta.detach(),
+            }
         return qi_h, alpha_h, beta_h, inverse, unique, tau_h, qbg, r
 
     def _forward_impl(
@@ -385,6 +430,104 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
         }
 
     @torch.no_grad()
+    def _apply_error_model(self, terms: dict, seen: Tensor) -> None:
+        """Inflate the exported posterior by the dispersion the merge cannot see.
+
+        The merge is Poisson-conjugate, so `alpha/beta^2` is the variance of a
+        pure counting process.  What the data actually show is
+        `Var(S_i) = mu_i + eps^2 mu_i^2`: a per-observation multiplicative
+        scatter, which is the scale's own error plus anything else that
+        multiplies an observation.  Pooling the symmetry equivalents of a
+        resolution shell gives it by the method of moments, which is what
+        AIMLESS's `SDadd` and `cctbx.xfel`'s `ev11` estimate and what careless
+        gets for free from a stochastic scale.
+
+        With `mu_i = E_i * I_h`, the Pearson sum follows from the three
+        cross-sums already accumulated, so no second pass over the data is
+        needed:
+
+            sum_i (S_i - mu_i)^2 = ss - 2 I_h se + I_h^2 ee.
+
+        The inflation is applied as `alpha/(1+phi)`, `beta/(1+phi)`, which
+        holds the posterior mean exactly and multiplies its variance by
+        `1 + phi` -- the same device as the parent's overdispersion branch,
+        which this model's merge never reaches.
+        """
+        idx = seen.nonzero(as_tuple=True)[0]
+        if idx.numel() == 0:
+            return
+        alpha_sig = terms["alpha_sig"][idx]
+        beta_sum = terms["beta_sum"][idx].clamp(min=1e-12)
+        i_hat = (alpha_sig / beta_sum).clamp(min=0.0)
+        pearson = (
+            terms["ss"][idx]
+            - 2.0 * i_hat * terms["se"][idx]
+            + i_hat.pow(2) * terms["ee"][idx]
+        )
+        mu_sum = i_hat * beta_sum
+        mu_sq_sum = i_hat.pow(2) * terms["ee"][idx].clamp(min=0.0)
+        # Poisson and background-subtraction variance removed; what is left is
+        # the multiplicative part, and only reflections with enough signal to
+        # see it carry information about it
+        excess = pearson - mu_sum - terms["v_bg"][idx]
+        n_obs = terms["n_obs"][idx].clamp(min=2.0)
+        # (n-1)/n for the plug-in I_h; negligible at ~100 observations, exact here
+        excess = excess * (n_obs / (n_obs - 1.0))
+
+        d_mean = terms["d_mean"][idx].clamp(min=1e-6)
+        shells = max(int(self.merge_error_model_shells), 1)
+        order = torch.argsort(d_mean, descending=True)
+        shell_of = torch.zeros_like(idx)
+        bounds = torch.linspace(
+            0, idx.numel(), shells + 1, device=idx.device
+        ).long()
+        for s in range(shells):
+            shell_of[order[bounds[s] : bounds[s + 1]]] = s
+
+        eps_sq = torch.zeros(shells, device=idx.device)
+        for s in range(shells):
+            sel = shell_of == s
+            denom = mu_sq_sum[sel].sum()
+            if float(denom) <= 0:
+                continue
+            eps_sq[s] = (excess[sel].sum() / denom).clamp(min=0.0)
+
+        n_eff = (beta_sum.pow(2) / terms["ee"][idx].clamp(min=1e-30)).clamp(min=1.0)
+        rel_var = eps_sq[shell_of] / n_eff + terms["v_bg"][idx] / mu_sum.clamp(
+            min=1e-12
+        ).pow(2)
+        phi = (self.alpha_buffer[idx] * rel_var).clamp(min=0.0)
+        self.alpha_buffer[idx] = self.alpha_buffer[idx] / (1.0 + phi)
+        self.beta_buffer[idx] = self.beta_buffer[idx] / (1.0 + phi)
+        self._error_model_eps_sq = eps_sq.detach().cpu()
+        logger.info(
+            "error model: eps per shell (low to high resolution) %s; "
+            "median sigma inflation %.3fx",
+            " ".join(f"{float(e)**0.5:.3f}" for e in eps_sq),
+            float((1.0 + phi).sqrt().median()),
+        )
+
+    def _write_merge_dump(self, dump: dict) -> None:
+        """Save the per-observation merge terms a conditional estimator needs.
+
+        `scripts/stratified_bijvoet.py` reads this: the signal counts `S_i` and
+        the exposure `E_i` are what a Poisson model of one observation needs,
+        and the keys beside them say which reflection, which Friedel mate and
+        which wavelength it belongs to.
+        """
+        out = {}
+        for key, chunks in dump.items():
+            if chunks:
+                out[key] = torch.cat(chunks)
+        path = Path(self.merge_dump_terms)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(out, path)
+        logger.info(
+            "merge terms for %d observations -> %s",
+            len(out.get("sig_counts", [])),
+            path,
+        )
+
     def finalize_merge(self, dataloader) -> None:
         """Recompute the per-HKL posterior over the full dataset.
 
@@ -398,6 +541,12 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
         seen = torch.zeros(self.n_hkl, dtype=torch.bool, device=device)
         self.alpha_buffer.fill_(self.alpha_W)
         self.beta_buffer.fill_(1.0)
+        terms = {
+            key: torch.zeros(self.n_hkl, device=device) for key in _ERROR_TERMS
+        }
+        dump: dict[str, list] = (
+            {"sig_counts": [], "exposure": []} if self.merge_dump_terms else {}
+        )
 
         for batch in dataloader:
             counts, shoebox, mask, metadata = batch
@@ -418,6 +567,8 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
                 else None
             )
             gate = self._gate(self.encoders["k_i"](sr))
+            want_extras = self.merge_error_model or self.merge_dump_terms
+            extras: dict | None = {} if want_extras else None
             _, alpha_h, beta_h, _, unique, _, _, _ = (
                 self._responsibility_merge(
                     self._profile_logits(qp),
@@ -432,8 +583,23 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
                     metadata["wavelength"].to(device).float()
                     if "wavelength" in metadata
                     else None,
+                    extras=extras,
                 )
             )
+            if extras is not None:
+                # each HKL is complete in one batch, so a flat per-HKL buffer
+                # is enough -- no accumulation across batches is needed
+                for key in _ERROR_TERMS:
+                    terms[key][unique] = extras[key]
+                if self.merge_dump_terms:
+                    dump["sig_counts"].append(extras["per_obs"]["sig_counts"].cpu())
+                    dump["exposure"].append(extras["per_obs"]["exposure"].cpu())
+                    for key in ("asu_id", "nonanom_id", "wavelength", "d",
+                                "centric", "H", "K", "L", "image_num"):
+                        if key in metadata:
+                            v = metadata[key]
+                            v = v if torch.is_tensor(v) else torch.as_tensor(v)
+                            dump.setdefault(key, []).append(v.reshape(-1).cpu())
             if bool(seen[unique].any()):
                 raise RuntimeError(
                     "finalize_merge requires a grouped (group_by_asu_id) loader "
@@ -444,3 +610,7 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
             self.beta_buffer[unique] = beta_h
             seen[unique] = True
         self.buffer_seen.copy_(seen)
+        if self.merge_dump_terms:
+            self._write_merge_dump(dump)
+        if self.merge_error_model:
+            self._apply_error_model(terms, seen)
