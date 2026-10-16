@@ -429,7 +429,6 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
             "responsibility": responsibility,
         }
 
-    @torch.no_grad()
     def _apply_error_model(self, terms: dict, seen: Tensor) -> None:
         """Inflate the exported posterior by the dispersion the merge cannot see.
 
@@ -528,6 +527,7 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
             path,
         )
 
+    @torch.no_grad()
     def finalize_merge(self, dataloader) -> None:
         """Recompute the per-HKL posterior over the full dataset.
 

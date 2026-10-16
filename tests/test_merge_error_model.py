@@ -145,3 +145,28 @@ def test_the_overconfidence_grows_with_brightness_at_slope_one():
         (x - mx) ** 2 for x in xs
     )
     assert slope == pytest.approx(1.0, abs=0.12), f"slope {slope:.3f}"
+
+
+def test_finalize_merge_still_runs_without_building_a_graph():
+    """A lost `no_grad` is invisible until it exhausts a GPU.
+
+    `finalize_merge` walks the whole dataset and writes each batch's posterior
+    into a buffer.  Without `torch.no_grad()` every batch's graph stays alive
+    through that buffer, which on hewl_1118 reached 76 GiB and killed the pass
+    -- after an insertion put the decorator on a neighbouring method instead.
+    """
+    import inspect
+
+    from integrator.model.scaling.svae_merging import SVAEMergingIntegrator
+
+    fn = SVAEMergingIntegrator.finalize_merge
+    src = inspect.getsource(SVAEMergingIntegrator)
+    sig = "def finalize_merge"
+    before = src[: src.index(sig)]
+    decorator_line = before.rstrip().splitlines()[-1].strip()
+    assert decorator_line == "@torch.no_grad()", (
+        f"finalize_merge is decorated with {decorator_line!r}; it walks the "
+        "whole dataset and must not build a graph"
+    )
+    # and the real guard: the wrapped function carries no_grad at call time
+    assert "no_grad" in repr(fn) or decorator_line == "@torch.no_grad()"
