@@ -434,6 +434,11 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
                     scale.reshape(-1) * (r * profile_mean * m).sum(dim=-1)
                 ).detach(),
                 "bg_pedestal": (bg_mean * r_sum).detach(),
+                # the per-pixel background itself: the one nuisance that
+                # competes with the scale, and the quantity a real-data test of
+                # that competition needs, since the merged export has no
+                # per-observation column
+                "bg_mean": bg_mean,
             }
         return qi_h, alpha_h, beta_h, inverse, unique, tau_h, qbg, r
 
