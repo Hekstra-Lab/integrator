@@ -281,15 +281,19 @@ def main() -> None:
         },
         cell=gemmi.UnitCell(*args.cell),
         spacegroup=gemmi.SpaceGroup(args.space_group),
+        # `unstack_anomalous` refuses an unmerged DataSet, and one row per
+        # asu_id is merged data however it was built
+        merged=True,
     ).infer_mtz_dtypes()
     ds.set_index(["H", "K", "L"], inplace=True)
     keep = np.isfinite(ds["I"].to_numpy()) & (ds["SIGI"].to_numpy() > 0)
     ds = ds[keep]
     out = ds.unstack_anomalous()
-    out = out[["I(+)", "SIGI(+)", "I(-)", "SIGI(-)"]]
-    out.rename(
-        columns={"SIGI(+)": "SigI(+)", "SIGI(-)": "SigI(-)"}, inplace=True
-    )
+    # phenix asks for the "SigI" spelling by name, so an uppercase SIGI makes
+    # it reject an otherwise correct merged MTZ (see merged_mtz_writer)
+    rename = {c: c.replace("SIGI", "SigI") for c in out.columns if "SIGI" in c}
+    out.rename(columns=rename, inplace=True)
+    out = out[["I(+)", "SigI(+)", "I(-)", "SigI(-)"]]
     before = len(out)
     out = out[np.isfinite(out["I(+)"].to_numpy()) | np.isfinite(out["I(-)"].to_numpy())]
     args.out.parent.mkdir(parents=True, exist_ok=True)

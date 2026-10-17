@@ -50,6 +50,12 @@ import torch
 # stills, so the crystal frame is recoverable from the image index alone.
 DEFAULT_AXIS = (0.0, 1.0, 0.0)
 DEFAULT_DEG_PER_IMAGE = 1.0
+# hewl_1118's beam centre, from the poly merging configs. The azimuth for
+# polarisation must be measured about the BEAM CENTRE: using the mean spot
+# position instead shifts the origin by a position-dependent amount, which
+# smears the cos(2 phi) pattern rather than rotating it, and then the fit needs
+# an inflated tau to recover the same amplitude.
+DEFAULT_BEAM_CENTRE = (1990.3078185435238, 1972.797095353857)
 
 
 def _arr(dump, key, dtype=np.float64):
@@ -183,19 +189,21 @@ def build_design(dump, degree, lmax, image_degree, include_odd, axis,
     return X, np.array(labels), np.array(groups), pen
 
 
-def polarisation_offset(two_t, phi_det, tau):
+def polarisation_offset(two_t, phi_det, tau, phi0=0.0):
     """`log P` for the scattered intensity, as known physics.
 
-    `P = [1 + cos^2(2t) - tau cos(2phi) sin^2(2t)] / 2` (Kahn et al. 1982;
+    `P = [1 + cos^2(2t) - tau cos(2(phi - phi0)) sin^2(2t)] / 2` (Kahn et al. 1982;
     Ren & Moffat 1995 eq. 11).  The rate is multiplied by P; the quantity
     usually tabulated is the *correction* `1/P`, and applying that as if it
     were the scale is a sign error -- which is what `chebyshev_scale.py:762`
-    currently does.  At 1.5 A and tau = 0.9 this term swings 2.1x with
-    azimuth, against the ~4% a Bijvoet signal tolerates, and Friedel mates sit
-    at different azimuths, so it does not cancel.
+    currently does.  `phi0` is the polarisation plane's azimuth, which need not
+    be the detector's `+x`, so it is scanned rather than assumed.  At 1.5 A and
+    tau = 0.9 this term swings 2.1x with azimuth, against the ~4% a Bijvoet
+    signal tolerates, and Friedel mates sit at different azimuths, so it does
+    not cancel.
     """
     P = 0.5 * (1.0 + np.cos(two_t) ** 2
-               - tau * np.cos(2.0 * phi_det) * np.sin(two_t) ** 2)
+               - tau * np.cos(2.0 * (phi_det - phi0)) * np.sin(two_t) ** 2)
     return np.log(np.maximum(P, 1e-8))
 
 
@@ -265,6 +273,8 @@ def main() -> None:
     ap.add_argument("--no-odd-sh", action="store_true")
     ap.add_argument("--penalty", type=float, default=1.0)
     ap.add_argument("--deg-per-image", type=float, default=DEFAULT_DEG_PER_IMAGE)
+    ap.add_argument("--beam-centre", type=float, nargs=2,
+                    default=list(DEFAULT_BEAM_CENTRE))
     args = ap.parse_args()
 
     dump = torch.load(args.dump, map_location="cpu", weights_only=False)
@@ -289,22 +299,26 @@ def main() -> None:
     d = _arr(dump, "d")
     xx, yy = _arr(dump, "xyzcal.px.0"), _arr(dump, "xyzcal.px.1")
     two_t = 2.0 * np.arcsin(np.clip(lam / (2.0 * np.maximum(d, 1e-6)), -1, 1))
-    phi_det = np.arctan2(yy - yy.mean(), xx - xx.mean())
+    phi_det = np.arctan2(yy - args.beam_centre[1], xx - args.beam_centre[0])
 
     best = None
-    for tau in (0.0, 0.5, 0.8, 0.9, 0.95, 0.99):
-        off = polarisation_offset(two_t, phi_det, tau)
-        c_t, it_t, ll_t = fit_conditional(
-            X[ok], S[ok], e[ok], grp_idx, pen, offset=off[ok],
-            weight=args.penalty,
-        )
-        print(f"  tau {tau:4.2f}: penalised conditional loglik {ll_t:.1f} "
-              f"({it_t} Newton steps)")
-        if best is None or ll_t > best[2]:
-            best = (c_t, tau, ll_t, it_t)
-    c, tau, _, iters = best
-    print(f"polarisation fraction tau = {tau:.2f} chosen by the likelihood")
-    offset = polarisation_offset(two_t, phi_det, tau)
+    for tau in (0.0, 0.5, 0.8, 0.9, 0.95, 0.99, 1.0):
+        for phi0 in (0.0, np.pi / 8, np.pi / 4, 3 * np.pi / 8):
+            if tau == 0.0 and phi0 != 0.0:
+                continue                      # phi0 is unidentified at tau = 0
+            off = polarisation_offset(two_t, phi_det, tau, phi0)
+            c_t, it_t, ll_t = fit_conditional(
+                X[ok], S[ok], e[ok], grp_idx, pen, offset=off[ok],
+                weight=args.penalty,
+            )
+            if best is None or ll_t > best[2]:
+                best = (c_t, (tau, phi0), ll_t, it_t)
+            print(f"  tau {tau:4.2f} phi0 {np.rad2deg(phi0):5.1f} deg: "
+                  f"penalised conditional loglik {ll_t:.1f}")
+    c, (tau, phi0), _, iters = best
+    print(f"polarisation: tau = {tau:.2f}, plane at "
+          f"{np.rad2deg(phi0):.1f} deg from detector +x, by likelihood")
+    offset = polarisation_offset(two_t, phi_det, tau, phi0)
     log_s = X @ c + offset
     log_s -= np.median(log_s[ok])          # the overall level is a gauge
     print(f"converged in {iters} Newton steps")
@@ -316,10 +330,29 @@ def main() -> None:
         contrib = X[:, m] @ c[m]
         print(f"  {name:13s} contributes sd {contrib[ok].std():.4f} in log, "
               f"span {np.exp(np.quantile(contrib[ok],0.99) - np.quantile(contrib[ok],0.01)):.2f}x")
+    # the spectrum this fit found, against the curve the non-merging
+    # integrator identifies: shape matters more than span, since the span
+    # depends on where in the band the quantiles fall
+    try:
+        import sys as _sys
+        _sys.path.insert(0, "/n/netscratch/hekstra_lab/Lab/laldama/integrator_cur/src")
+        from integrator.model.loss.learned_spectrum import ChebyshevSpectrum
+        ident = ChebyshevSpectrum(degree=5, lambda_min=0.96, lambda_max=1.26)
+        with torch.no_grad():
+            ident.c.copy_(torch.tensor([6.871, 0.254, -1.923, 1.012, -0.333, -0.225]))
+            g_ident = ident.get_log_G(torch.from_numpy(lam).float()).numpy()
+        m = groups == "spectrum"
+        g_fit = X[:, m] @ c[m]
+        cc = np.corrcoef(g_fit[ok], g_ident[ok])[0, 1]
+        print(f"  fitted spectrum vs the identified curve: CC(log) {cc:+.4f}")
+    except Exception as exc:
+        print(f"  could not compare with the identified spectrum: {exc}")
+
     torch.save(
         {"log_scale": torch.from_numpy(log_s).float(),
          "coefficients": torch.from_numpy(c).float(),
-         "labels": list(labels), "groups": list(groups), "tau": tau},
+         "labels": list(labels), "groups": list(groups),
+         "tau": tau, "phi0": phi0},
         args.out,
     )
     print(f"wrote {args.out}")
