@@ -293,10 +293,14 @@ def main():
                 ckpt_dir=ckpt_dir, filetype=args.save_preds_as
             )
             data_dir = Path(config["data_loader"]["args"]["data_dir"])
+            # `data_dir`, not `crystal_yaml_path`: the dataset.yaml refactor
+            # replaced that argument and this call was never updated, so
+            # `--write-mtz` had been raising TypeError. `--write-merged-mtz`
+            # below was unaffected, which is why it went unnoticed.
             write_mtz_from_preds(
                 pred_data=pred_data,
                 metadata_path=data_dir / "metadata.pt",
-                crystal_yaml_path=data_dir / "crystal.yaml",
+                data_dir=data_dir,
                 out_path=ckpt_dir / args.write_mtz,
             )
 
