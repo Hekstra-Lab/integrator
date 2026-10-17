@@ -292,3 +292,32 @@ def test_the_key_defaults_off():
     from integrator.configs.integrator import IntegratorCfg
 
     assert IntegratorCfg.__dataclass_fields__["gate_em_iters"].default == 0
+
+
+@pytest.mark.parametrize("iters,gate_is_a_gradient_source", [(0, True), (ITERS, False)])
+def test_the_solve_makes_the_amortized_gate_vestigial(iters, gate_is_a_gradient_source):
+    """A consequence worth seeing rather than discovering later.
+
+    The solve is start-independent by construction, so it detaches whatever the
+    gate believed -- and the gate is the only consumer of the `k_i` encoder,
+    15.7% of `polymerge`'s parameters. With `gate_em_iters` on that encoder
+    gets no gradient and its forward is wasted work: either drop it from the
+    config or train it to predict `log(s I_h / b)`, which would also warm the
+    start and cut the iteration count.
+    """
+    kw = _background_dominated(gate_bias=0.5, seed=9)
+    kw["gate"] = kw["gate"].requires_grad_(True)
+    _, alpha_h, beta_h, *_ = _Merge(iters)._responsibility_merge(**kw)
+    assert (alpha_h / beta_h).requires_grad is gate_is_a_gradient_source
+
+
+def test_the_scale_and_the_profile_keep_their_gradients_through_the_solve():
+    """The other half of that contract: what must still train, still does."""
+    kw = _background_dominated(gate_bias=0.5, seed=9)
+    for key in ("scale", "profile_mean"):
+        kwargs = dict(kw)
+        kwargs[key] = kw[key].clone().requires_grad_(True)
+        _, alpha_h, beta_h, *_ = _Merge(ITERS)._responsibility_merge(**kwargs)
+        (alpha_h / beta_h).sum().backward()
+        grad = kwargs[key].grad
+        assert grad is not None and bool((grad != 0).any()), key
