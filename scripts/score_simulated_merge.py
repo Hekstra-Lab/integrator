@@ -129,9 +129,39 @@ def main() -> None:
     eps = gauge_free_rms(log_hat, log_true)
     print("\n-- the scale --")
     print(f"eps = rms(log s_hat - log s_true), gauge removed   {eps:.4f} "
-          f"({100 * eps:.1f}%; a 2-4% Bijvoet signal needs <~4%)")
+          f"({100 * eps:.1f}%)")
     print(f"CC(log s_hat, log s_true)                          "
           f"{np.corrcoef(log_hat, log_true)[0, 1]:+.4f}")
+
+    # eps on its own is the wrong headline for the anomalous signal, and the
+    # five-arm run showed why: Bijvoet CC was flat (0.984-0.995) across arms
+    # whose eps spanned 2.4% to 11.3%. A scale error that is common to a
+    # reflection's two Friedel mates cancels from I(+) - I(-) and damages only
+    # R-free; only the ANTISYMMETRIC part reaches the anomalous difference.
+    # Per pooled reflection, with d_i the per-observation log-scale error,
+    #   even = (mean_+ d + mean_- d)/2   -> biases log I_0, i.e. R-free
+    #   odd  = (mean_+ d - mean_- d)/2   -> biases log I(+) - log I(-)
+    delta = log_hat - log_true
+    pool = arr("nonanom_id").astype(np.int64)[pos]
+    asu_al = arr("asu_id").astype(np.int64)[pos]
+    plus_of = np.zeros(pool.max() + 1, dtype=np.int64)
+    plus_of[pool] = asu_al
+    is_minus = asu_al != plus_of[pool]
+    n_pool = pool.max() + 1
+    sums = np.zeros((2, n_pool))
+    cnts = np.zeros((2, n_pool))
+    for s, m in ((0, ~is_minus), (1, is_minus)):
+        np.add.at(sums[s], pool[m], delta[m])
+        np.add.at(cnts[s], pool[m], 1.0)
+    both = (cnts[0] > 0) & (cnts[1] > 0)
+    mp = sums[0][both] / cnts[0][both]
+    mm = sums[1][both] / cnts[1][both]
+    even, odd = (mp + mm) / 2.0, (mp - mm) / 2.0
+    print(f"  on {both.sum()} reflections with both mates observed:")
+    print(f"    eps_even (mate-common, hits R-free)      {even.std():.4f} "
+          f"({100*even.std():.1f}%)")
+    print(f"    eps_odd  (antisymmetric, hits anomalous) {odd.std():.4f} "
+          f"({100*odd.std():.1f}%)  <- the one the Bijvoet signal feels")
 
     # Per-term recovery needs the MODEL's own decomposition. Correlating each
     # true term against the TOTAL fitted log scale measures the total -- which
@@ -203,6 +233,11 @@ def main() -> None:
         print(f"\n-- the Bijvoet difference --")
         print(f"{len(pairs)} acentric pairs   attenuation (slope) {slope:+.4f}   "
               f"CC {cc:+.4f}")
+        true_frac = float(
+            np.median(np.abs(dt) / np.array([np.mean(t) for _, t in pairs]))
+        )
+        print(f"  eps_odd {odd.std():.4f} against a true |dI|/I of "
+              f"{true_frac:.4f}  -> spurious/real {odd.std()/max(true_frac,1e-9):.2f}")
         print(f"  true |dI|/I median {np.median(np.abs(dt) / np.array([np.mean(t) for _, t in pairs])):.4f}")
     else:
         print("\nno acentric Friedel pair had both mates merged")
