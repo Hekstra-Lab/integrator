@@ -406,12 +406,34 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
                 ("d_mean", d_sum / cnt.clamp(min=1.0)),
             ):
                 extras[key] = value
+            # `S_i` is not a clean signal measurement: it attributes a share of
+            # EVERY pixel's count, so background enters with weight r_p and
+            # leaves a pedestal `b_i sum_p r_p` that is nearly common inside a
+            # reflection. Measured at the solve's own fixed point that pedestal
+            # is 93% of S_i at 95% background and 98.5% at 99%, and an additive
+            # pedestal dilutes exactly the multiplicative pattern a scale fit
+            # reads -- a known per-observation tilt of 0.5 comes back as 0.011.
+            # So also dump the background-subtracted estimate and its matching
+            # exposure, for which `E[S] = I_h e` holds exactly:
+            #
+            #   S~_i = sum_p r_p (c_p - b_i),   e~_i = s_i sum_p r_p p_p.
+            #
+            # That keeps the conditional likelihood's exact profiling-out of
+            # I_h, which taking the pedestal as an additive offset would
+            # destroy, since the rate would stop being multiplicative in I_h.
+            r_sum = r.sum(dim=-1)
+            bg_mean = qbg.mean.detach()
             extras["per_obs"] = {
                 "sig_counts": sig_counts.detach(),
                 "exposure": delta_beta.detach(),
                 # the scale this pass used, so a refit can recover the base
                 # exposure e_i = E_i / s_i and solve for a new scale offline
                 "scale": scale.detach().reshape(-1),
+                "sig_counts_bgsub": (sig_counts - bg_mean * r_sum).detach(),
+                "exposure_eff": (
+                    scale.reshape(-1) * (r * profile_mean * m).sum(dim=-1)
+                ).detach(),
+                "bg_pedestal": (bg_mean * r_sum).detach(),
             }
         return qi_h, alpha_h, beta_h, inverse, unique, tau_h, qbg, r
 

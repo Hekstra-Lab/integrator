@@ -321,3 +321,130 @@ def test_the_scale_and_the_profile_keep_their_gradients_through_the_solve():
         (alpha_h / beta_h).sum().backward()
         grad = kwargs[key].grad
         assert grad is not None and bool((grad != 0).any()), key
+
+
+def _tilted(tilt, bg, n_hkl=200, per_hkl=16, n_pix=100, i_true=300.0, seed=5):
+    """Truth carries a per-observation tilt `exp(tilt * x)`; the model's scale
+    is flat, so the tilt is exactly what a scale fit would have to find."""
+    g = torch.Generator().manual_seed(seed)
+    n_obs = n_hkl * per_hkl
+    centre = torch.linspace(-2.5, 2.5, n_pix)
+    prf = torch.exp(-0.5 * centre.pow(2))
+    prf = (prf / prf.sum()).repeat(n_obs, 1)
+    x = torch.rand(n_obs, generator=g) * 2.0 - 1.0
+    counts = torch.poisson(
+        torch.exp(tilt * x)[:, None] * i_true * prf + bg, generator=g
+    )
+    kw = dict(
+        logits=torch.log(prf),
+        gate=torch.zeros(n_obs),
+        counts=counts,
+        scale=torch.ones(n_obs),
+        profile_mean=prf,
+        mask=torch.ones(n_obs, n_pix),
+        asu_ids=torch.arange(n_hkl).repeat_interleave(per_hkl),
+        d_per_obs=torch.full((n_obs,), 2.0),
+        group_labels=None,
+    )
+    return kw, x, per_hkl
+
+
+def _tilt_within_reflections(ratio, x, asu_ids, per_hkl):
+    """The within-reflection regression a conditional scale fit performs."""
+    from integrator.model.scaling.svae_merging import _scatter_sum_compact
+
+    y = torch.log(ratio.clamp(min=1e-3))
+    ybar = _scatter_sum_compact(y, asu_ids)[0] / per_hkl
+    xbar = _scatter_sum_compact(x, asu_ids)[0] / per_hkl
+    yc, xc = y - ybar[asu_ids], x - xbar[asu_ids]
+    return float((xc * yc).sum() / (xc * xc).sum())
+
+
+def test_the_dump_carries_a_pedestal_free_signal_estimate():
+    """`S_i` is not a clean measurement, and on Laue data it is mostly pedestal.
+
+    Attributing a share of every pixel's count puts background into `S_i` with
+    weight `r_p`, leaving `b_i sum_p r_p` -- nearly common inside a reflection.
+    An additive, nearly common term dilutes the multiplicative pattern a scale
+    fit reads, so the damage is to variation *within* a reflection, which is
+    the only variation a conditional fit uses.
+
+    `sig_counts_bgsub / exposure_eff` is built so `E[S~] = I_h e~` holds
+    exactly, which both removes the pedestal and keeps the conditional
+    likelihood's profiling-out of `I_h` valid.
+    """
+    tilt, bg = 0.5, 60.0
+    kw, x, per_hkl = _tilted(tilt, bg)
+    extras: dict = {}
+    _Merge(ITERS)._responsibility_merge(**kw, extras=extras)
+    per_obs = extras["per_obs"]
+
+    pedestal = float((per_obs["bg_pedestal"] / per_obs["sig_counts"]).median())
+    assert pedestal > 0.85, f"the pedestal should dominate here, got {pedestal:.3f}"
+
+    raw = _tilt_within_reflections(
+        per_obs["sig_counts"] / per_obs["exposure"], x, kw["asu_ids"], per_hkl
+    )
+    clean = _tilt_within_reflections(
+        per_obs["sig_counts_bgsub"] / per_obs["exposure_eff"],
+        x,
+        kw["asu_ids"],
+        per_hkl,
+    )
+    # the raw pair keeps ~2% of a known tilt, the pedestal-free pair ~32%
+    assert raw < 0.1 * tilt, f"raw recovered {raw:.3f} of {tilt}"
+    assert clean > 4.0 * raw, f"raw {raw:.3f} vs pedestal-free {clean:.3f}"
+
+
+def test_the_free_per_observation_background_is_where_the_scale_goes():
+    """The limit the split cannot reach, and the one that matters most.
+
+    Even pedestal-free, the recoverable within-reflection scale variation is a
+    third of the truth -- because `b_i` is a free parameter per observation,
+    fitted from the same pixels as the signal, and a per-observation
+    multiplicative error has somewhere to hide.  Hold the background at its
+    true value and the same estimator recovers the tilt in full.
+
+    This does not improve with bigger shoeboxes (32% recovered at 100 pixels
+    and at 1323) and barely moves with the background's share, so it is
+    structural.  careless does not face it: DIALS fits the background from the
+    shoebox's background region before scaling, so by the time a scale is
+    fitted there is no background freedom left to absorb anything.
+    """
+    tilt, bg = 0.5, 60.0
+    kw, x, per_hkl = _tilted(tilt, bg)
+    extras: dict = {}
+    _, alpha_h, beta_h, inverse, *_ = _Merge(ITERS)._responsibility_merge(
+        **kw, extras=extras
+    )
+    per_obs = extras["per_obs"]
+    free = _tilt_within_reflections(
+        per_obs["sig_counts_bgsub"] / per_obs["exposure_eff"],
+        x,
+        kw["asu_ids"],
+        per_hkl,
+    )
+
+    # the same split, with the background held at the truth instead of fitted
+    from integrator.model.scaling.svae_merging import _split
+
+    i_hat = (alpha_h / beta_h)[inverse]
+    n_obs = len(i_hat)
+    r = _split(
+        i_hat,
+        kw["scale"],
+        kw["profile_mean"],
+        kw["mask"],
+        torch.full((n_obs, 1), bg),
+    )
+    sig = (r * kw["counts"]).sum(-1) - bg * r.sum(-1)
+    exposure = kw["scale"] * (r * kw["profile_mean"] * kw["mask"]).sum(-1)
+    pinned = _tilt_within_reflections(sig / exposure, x, kw["asu_ids"], per_hkl)
+
+    assert pinned == pytest.approx(tilt, rel=0.25), (
+        f"with the background pinned the tilt should be recoverable, got {pinned:.3f}"
+    )
+    assert free < 0.5 * pinned, (
+        f"b_i free recovered {free:.3f} against {pinned:.3f} pinned; if these "
+        "have converged, the free background is no longer the sink"
+    )
