@@ -913,3 +913,228 @@ class PhysicalScale(nn.Module):
         log_abs = absorption_sh @ self.absorption_c
         total = (log_scale + log_decay + log_abs).clamp(-15.0, 15.0)
         return torch.exp(total)
+
+
+# The real tesseral harmonics, unnormalised, l = 1..4 and l = 0 omitted -- the
+# constant is the overall scale, which the merge cannot see. Written out rather
+# than recursed so this matches `scripts/fit_physical_scale.real_sph_harm`
+# column for column: the offline fit and the trained scale have to share one
+# basis definition or their results are not comparable.
+def _real_sph_harm(xyz: Tensor, lmax: int) -> tuple[Tensor, list[int]]:
+    x, y, z = xyz[..., 0], xyz[..., 1], xyz[..., 2]
+    z2 = z * z
+    blocks: list[list[Tensor]] = [
+        [z, x, y],
+        [3 * z2 - 1, x * z, y * z, x * x - y * y, x * y],
+        [z * (5 * z2 - 3), x * (5 * z2 - 1), y * (5 * z2 - 1),
+         z * (x * x - y * y), x * y * z,
+         x * (x * x - 3 * y * y), y * (3 * x * x - y * y)],
+        [35 * z2 * z2 - 30 * z2 + 3, x * z * (7 * z2 - 3), y * z * (7 * z2 - 3),
+         (x * x - y * y) * (7 * z2 - 1), x * y * (7 * z2 - 1),
+         x * z * (x * x - 3 * y * y), y * z * (3 * x * x - y * y),
+         x * x * (x * x - 3 * y * y) - y * y * (3 * x * x - y * y),
+         x * y * (x * x - y * y)],
+    ]
+    if not 1 <= lmax <= len(blocks):
+        raise ValueError(f"lmax must be 1..{len(blocks)}, got {lmax}")
+    cols, l_of_col = [], []
+    for ell in range(1, lmax + 1):
+        cols.extend(blocks[ell - 1])
+        l_of_col.extend([ell] * len(blocks[ell - 1]))
+    return torch.stack(cols, dim=-1), l_of_col
+
+
+def _rotate_about_axis(v: Tensor, axis: Tensor, angles: Tensor) -> Tensor:
+    """Rodrigues rotation of rows of `v` by per-row `angles` about `axis`."""
+    k = axis / axis.norm().clamp(min=1e-12)
+    c, s = angles.cos().unsqueeze(-1), angles.sin().unsqueeze(-1)
+    kv = torch.cross(k.expand_as(v), v, dim=-1)
+    kkv = (v * k).sum(-1, keepdim=True) * k
+    return v * c + kv * s + kkv * (1.0 - c)
+
+
+class LauePhysicalScale(nn.Module):
+    r"""The Laue scale as physics, fitted in an order that keeps terms apart.
+
+        log s = G(lambda) + log P(2theta, phi; tau, phi0) + K(image)
+                - 2 B(image) s^2 + sum_lm c_lm [Y_lm(s0_c) + Y_lm(s1_c)]
+
+    Every arm before this one scaled Laue data either with a generic MLP on
+    lab-frame coordinates or with `LaueSpectralScale`, whose residual MLP on
+    `[x, y, d]` destroys the spectrum's identifiability -- on a still
+    `lambda = 2 d sin(theta(r))`, so a free function of position and resolution
+    absorbs 73% of a realistic `G(lambda)`. Nothing here is free in position or
+    resolution.
+
+    **Polarisation is supplied, not fitted.** Its azimuthal signature
+    `cos(2(phi - phi0))` lies inside the real spherical harmonics at
+    `l = 2, m = +-2`, which ARE `cos 2phi` and `sin 2phi`, so an absorption
+    surface spans it and only the `sin^2(2theta)` modulation separates them.
+    Measured on simulated Laue data where the truth is known: fitting the plane
+    lands 22.5 deg away and stays there under refinement, giving the term back
+    with CC -0.33 -- the right physics with the sign inverted -- while supplying
+    it gives CC +1.00. It is known physics at a synchrotron, so `tau` and
+    `phi0` are buffers, not parameters.
+
+    `P = [1 + cos^2(2t) - tau cos(2(phi - phi0)) sin^2(2t)] / 2` (Kahn 1982;
+    Ren & Moffat 1995 eq. 11) multiplies the rate. The quantity usually
+    tabulated is the correction `1/P`, and applying that as the scale is a sign
+    error, which is what `LaueSpectralScale` does at `:762`.
+
+    Absorption is evaluated in the CRYSTAL frame, which no lab-frame scale can
+    reach: the stills come from a rotation series, so undoing `phi(image)`
+    recovers the coordinate DIALS uses, and a complete real-SH basis is closed
+    under rotation so the unknown constant setting does not matter. Both legs
+    are summed as DIALS does, and the `lambda^3` dependence of the absorption
+    coefficient is applied as known physics rather than learned.
+
+    The `l(l+1)` restraint is `restraint_penalty()`, the Laplace-Beltrami
+    energy on the sphere: the consistency objective has nothing opposing an
+    ever-larger surface, and odd `l` can eat the real Bijvoet signal because
+    Friedel mates sit at inverted crystal-frame directions
+    (`Y_lm(-r) = (-1)^l Y_lm(r)`).
+
+    At init every coefficient is zero, so `s = 1` and the merge starts as an
+    inverse-variance mean. The basis matches `fit_physical_scale.build_design`
+    column for column, so an offline fit and this module are comparable.
+    """
+
+    def __init__(
+        self,
+        lmax: int = 4,
+        degree_spectrum: int = 6,
+        degree_image: int = 8,
+        lambda_min: float = 0.97,
+        lambda_max: float = 1.25,
+        n_images: int = 1000,
+        tau: float = 0.95,
+        phi0_deg: float = 0.0,
+        beam_center: tuple[float, float] = (0.0, 0.0),
+        rotation_axis: tuple[float, float, float] = (0.0, 1.0, 0.0),
+        deg_per_image: float = 1.0,
+        beam_direction: tuple[float, float, float] = (0.0, 0.0, 1.0),
+        lambda_ref: float | None = None,
+    ):
+        super().__init__()
+        self.lmax = int(lmax)
+        self.degree_spectrum = int(degree_spectrum)
+        self.degree_image = int(degree_image)
+        self.degree_decay = max(self.degree_image // 2, 1)
+        self.deg_per_image = float(deg_per_image)
+
+        # Chebyshev blocks all skip their constant: an overall level is a gauge
+        # the merge absorbs into I_h, and fitting it invites the two to drift.
+        self.spectrum_c = nn.Parameter(torch.zeros(self.degree_spectrum))
+        self.image_c = nn.Parameter(torch.zeros(self.degree_image))
+        self.decay_c = nn.Parameter(torch.zeros(self.degree_decay))
+
+        _, l_of_col = _real_sph_harm(torch.zeros(1, 3), self.lmax)
+        self.absorption_c = nn.Parameter(torch.zeros(len(l_of_col)))
+        self.register_buffer(
+            "sh_l", torch.tensor(l_of_col, dtype=torch.float32), persistent=False
+        )
+        # roughness weights, matching the offline fit's `pen`
+        self.register_buffer(
+            "spectrum_pen",
+            torch.arange(1, self.degree_spectrum + 1, dtype=torch.float32) ** 4,
+            persistent=False,
+        )
+
+        for name, value in (
+            ("tau", tau), ("phi0", math.radians(phi0_deg)),
+            ("lam_mid", (lambda_min + lambda_max) / 2.0),
+            ("lam_half", max((lambda_max - lambda_min) / 2.0, 1e-6)),
+            ("img_mid", (n_images - 1) / 2.0),
+            ("img_half", max((n_images - 1) / 2.0, 1.0)),
+            ("beam_cx", beam_center[0]), ("beam_cy", beam_center[1]),
+            ("lam_ref", lambda_ref if lambda_ref else (lambda_min + lambda_max) / 2.0),
+        ):
+            self.register_buffer(name, torch.tensor(float(value)))
+        self.register_buffer("axis", torch.tensor(rotation_axis, dtype=torch.float32))
+        self.register_buffer("s0_hat", torch.tensor(beam_direction, dtype=torch.float32))
+
+    def restraint_penalty(self) -> Tensor:
+        """`sum l(l+1) c_lm^2 + sum k^4 G_k^2 + sum B_k^2`, zero at init.
+
+        The same weights the offline fit uses, so a restraint weight tuned
+        there means the same thing here.
+        """
+        w = self.sh_l * (self.sh_l + 1.0)
+        return (
+            (w * self.absorption_c.pow(2)).sum()
+            + (self.spectrum_pen * self.spectrum_c.pow(2)).sum()
+            + self.decay_c.pow(2).sum()
+        )
+
+    @staticmethod
+    def _cheb(t: Tensor, degree: int) -> Tensor:
+        """Chebyshev columns 1..degree on `t` in [-1, 1]; the constant is dropped."""
+        cols = ChebyshevSpectrum._chebyshev(t.clamp(-1.0, 1.0), degree)
+        return torch.stack(cols[1:], dim=-1)
+
+    def log_terms(
+        self,
+        wavelength: Tensor,
+        d: Tensor,
+        x: Tensor,
+        y: Tensor,
+        s1: Tensor,
+        image: Tensor,
+    ) -> dict[str, Tensor]:
+        """Each term separately, which is how this gets scored against truth."""
+        lam = wavelength.clamp(min=1e-6)
+        d_safe = d.clamp(min=1e-3)
+        sin_t = (lam / (2.0 * d_safe)).clamp(-1.0, 1.0)
+        two_t = 2.0 * torch.asin(sin_t)
+        s_sq = 1.0 / (4.0 * d_safe.pow(2))
+
+        spectrum = self._cheb(
+            (lam - self.lam_mid) / self.lam_half, self.degree_spectrum
+        ) @ self.spectrum_c
+
+        phi_det = torch.atan2(y - self.beam_cy, x - self.beam_cx)
+        p = 0.5 * (
+            1.0
+            + two_t.cos().pow(2)
+            - self.tau * torch.cos(2.0 * (phi_det - self.phi0)) * two_t.sin().pow(2)
+        )
+        polarisation = p.clamp(min=1e-8).log()
+
+        img_norm = (image.float() - self.img_mid) / self.img_half
+        image_gray = self._cheb(img_norm, self.degree_image) @ self.image_c
+        b_factor = self._cheb(img_norm, self.degree_decay) @ self.decay_c
+        decay = -2.0 * b_factor * s_sq
+
+        # undo the goniometer rotation to reach the crystal frame
+        phi_img = torch.deg2rad(image.float() * self.deg_per_image)
+        s1_hat = s1 / s1.norm(dim=-1, keepdim=True).clamp(min=1e-12)
+        s1_c = _rotate_about_axis(s1_hat, self.axis, -phi_img)
+        s0_c = _rotate_about_axis(
+            self.s0_hat.expand_as(s1_hat).contiguous(), self.axis, -phi_img
+        )
+        y1, _ = _real_sph_harm(s1_c, self.lmax)
+        y0, _ = _real_sph_harm(s0_c, self.lmax)
+        # mu ~ lambda^3, so the wavelength dependence is known, not learned
+        basis = (y0 + y1) * (lam / self.lam_ref).pow(3).unsqueeze(-1)
+        absorption = basis @ self.absorption_c
+
+        return {
+            "spectrum": spectrum,
+            "polarisation": polarisation,
+            "image_gray": image_gray,
+            "decay": decay,
+            "absorption": absorption,
+        }
+
+    def forward(
+        self,
+        wavelength: Tensor,
+        d: Tensor,
+        x: Tensor,
+        y: Tensor,
+        s1: Tensor,
+        image: Tensor,
+    ) -> Tensor:
+        terms = self.log_terms(wavelength, d, x, y, s1, image)
+        total = sum(terms.values()).clamp(-15.0, 15.0)
+        return torch.exp(total)

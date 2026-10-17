@@ -1,0 +1,143 @@
+integrator:
+  name: svae_merging
+  args:
+    data_dim: 2d
+    d: 1
+    h: 25
+    w: 25
+    encoder_out: 64
+    mc_samples: 10
+    n_hkl: 1962
+    wilson_alpha: 1.0
+    merge_kl_weight: 1.0
+    scaling_lr: 0.001
+    responsibility_gate_init: -2.0
+    wilson_centric_prior: true
+    dmin: 4.0
+    predict_keys:
+    - refl_ids
+    - is_test
+    - qi_mean
+    - qi_var
+    - qbg_mean
+    - qbg_var
+    - intensity.prf.value
+    - intensity.prf.variance
+    - background.mean
+    - d
+    - wavelength
+    - group_label
+    - qp_mean
+    - asu_id
+    scale_laue_mlp: false
+    scale_mlp_hidden: 64
+    scale_mlp_layers: 4
+    scale_head_init_std: 0.05
+    scale_mlp_absorption: false
+    scale_n_images: 250
+    scale_lambda_min: 0.97
+    scale_lambda_max: 1.25
+    scale_beam_center:
+    - 2000.0
+    - 2000.0
+    scale_r_max: 811.0
+    gate_em_iters: 0
+    scale_laue_physical: true
+    scale_sh_lmax: 4
+    scale_laue_spectrum_degree: 6
+    scale_image_degree: 8
+    scale_polarisation_tau: 0.95
+    scale_polarisation_phi0_deg: 0.0
+    scale_deg_per_image: 1.0
+    scale_absorption_restraint: 0.01
+optimizer:
+  lr: 0.001
+  weight_decay: 0.0
+  lr_schedule: cosine_warmup
+  warmup_epochs: 5
+  lr_min: 1.0e-05
+encoders:
+- name: profile_encoder
+  args:
+    data_dim: 2d
+    input_shape:
+    - 25
+    - 25
+    encoder_out: 64
+    conv1_out_channels: 32
+    conv2_out_channels: 64
+    dropout: 0.0
+- name: intensity_encoder
+  args:
+    data_dim: 2d
+    encoder_out: 64
+    conv1_out_channels: 32
+    conv2_out_channels: 64
+    conv3_out_channels: 128
+surrogates:
+  qp:
+    name: learned_basis_profile
+    args:
+      latent_dim: 12
+      init_std: 0.5
+      prior_scale: 3.0
+      smoothness_weight: 0.02
+      input_dim: 64
+      output_dim: 625
+loss:
+  name: monochromatic_wilson
+  args:
+    lp_correction: false
+    init_G: 400.0
+    init_B: 2.0
+    b_min: 1.0
+    intensity_kl_weight: 0.0
+    background_kl_weight: 1.0
+    profile_kl_weight: 1.0
+    bg_rate: 1.0
+    bg_concentration: 1.0
+    n_bins: 30
+data_loader:
+  name: polychromatic_data
+  args:
+    data_dir: tests/data/sim_laue
+    batch_size: 512
+    validation_split: 0.2
+    num_workers: 0
+    include_test: true
+    min_valid_pixels: 10
+    transform: standardization
+    group_by_asu_id: true
+    group_by_key: nonanom_id
+    max_obs_per_hkl: null
+    shoebox_file_names:
+      data_dir: tests/data/sim_laue
+      counts: counts.npy
+      masks: masks.npy
+      reference: metadata.pt
+    extra_columns:
+    - true_scale
+    - true_bg
+    - true_intensity
+    - true_spectrum
+    - true_polarisation
+    - true_absorption
+    - true_decay
+    - true_image_gray
+trainer:
+  max_epochs: 1
+  accelerator: cpu
+  devices: 1
+  logger: true
+  precision: '32'
+  check_val_every_n_epoch: 1
+  log_every_n_steps: 10
+  deterministic: false
+  enable_checkpointing: true
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+checkpoint:
+  save_top_k: -1
+  every_n_epochs: 1
+output:
+  out_dir: tests/data/sim_laue_run

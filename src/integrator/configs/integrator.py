@@ -356,6 +356,27 @@ class IntegratorCfg:
     # the conjugate readout, so no existing run changes.
     bg_from_metadata: str | None = None
 
+    # The Laue scale as physics, in an order that keeps its terms apart:
+    # G(lambda) + log P(2theta, phi) + K(image) - 2 B(image) s^2 + crystal-frame
+    # absorption harmonics, with NOTHING free in detector position or
+    # resolution -- on a still lambda = 2 d sin(theta(r)), so a free function of
+    # (r, d) absorbs 73% of a realistic spectrum and G stops being identified.
+    # Polarisation is supplied, not fitted: its azimuthal signature
+    # cos(2(phi - phi0)) lies inside the l=2, m=+-2 harmonics, which ARE
+    # cos 2phi and sin 2phi, so fitting both lands the plane 22.5 deg off a
+    # known truth and returns the term with CC -0.33 -- the right physics with
+    # the sign inverted -- where supplying it gives CC +1.00.
+    # Off by default, so no existing run changes.
+    scale_laue_physical: bool = False
+    # a key of its own, because `scale_spectrum_degree` already exists for
+    # `LaueSpectralScale` and defaults to 40 there; reusing it would silently
+    # change that class for every config that does not name it
+    scale_laue_spectrum_degree: int = 6
+    scale_image_degree: int = 8
+    scale_polarisation_tau: float = 0.95
+    scale_polarisation_phi0_deg: float = 0.0
+    scale_deg_per_image: float = 1.0
+
     # Inflate the exported sigma by the between-observation dispersion the
     # Poisson merge cannot see. sigma^2/I^2 = 1/alpha + eps^2/n_eff + bg, where
     # eps is the per-observation multiplicative scatter estimated from the

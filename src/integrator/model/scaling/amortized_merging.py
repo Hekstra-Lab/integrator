@@ -56,6 +56,7 @@ from integrator.model.integrators.integrator_utils import (
 from integrator.model.scaling.chebyshev_scale import (
     ChebyshevScale,
     LaueMLPScale,
+    LauePhysicalScale,
     LaueSpectralScale,
     MLPScale,
     ResNetScale,
@@ -208,6 +209,21 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                 residual_layers=cfg.scale_mlp_layers,
                 r_max=cfg.scale_r_max,
                 d_min=getattr(cfg, "dmin", 1.0),
+            )
+        elif getattr(cfg, "scale_laue_physical", False):
+            # Nothing free in position or resolution, and the polarisation is
+            # supplied rather than fitted; see `LauePhysicalScale`.
+            self.scale_fn = LauePhysicalScale(
+                lmax=int(getattr(cfg, "scale_sh_lmax", 4)),
+                degree_spectrum=int(getattr(cfg, "scale_laue_spectrum_degree", 6)),
+                degree_image=int(getattr(cfg, "scale_image_degree", 8)),
+                lambda_min=cfg.scale_lambda_min,
+                lambda_max=cfg.scale_lambda_max,
+                n_images=int(getattr(cfg, "scale_n_images", None) or 1000),
+                tau=float(getattr(cfg, "scale_polarisation_tau", 0.95)),
+                phi0_deg=float(getattr(cfg, "scale_polarisation_phi0_deg", 0.0)),
+                beam_center=cfg.scale_beam_center,
+                deg_per_image=float(getattr(cfg, "scale_deg_per_image", 1.0)),
             )
         elif getattr(cfg, "scale_laue_mlp", False):
             n_abs_sh = 0
@@ -398,6 +414,19 @@ class AmortizedMergingIntegrator(BaseIntegrator):
             y_det = metadata["xyzcal.px.1"].to(device).float()
             d = metadata["d"].to(device).float()
             return self.scale_fn(wavelength, x_det, y_det, d)
+        if isinstance(self.scale_fn, LauePhysicalScale):
+            s1 = torch.stack(
+                [metadata[f"s1.{k}"].to(device).float() for k in range(3)],
+                dim=-1,
+            )
+            return self.scale_fn(
+                metadata["wavelength"].to(device).float(),
+                metadata["d"].to(device).float(),
+                metadata["xyzcal.px.0"].to(device).float(),
+                metadata["xyzcal.px.1"].to(device).float(),
+                s1,
+                metadata["image_num"].to(device).float(),
+            )
         if isinstance(self.scale_fn, LaueMLPScale):
             # Polychromatic stills: the MLP owns the whole scale (incl. spectrum
             # and LP/Lorentz), so no /lp here -- there is no lp column.
@@ -1107,7 +1136,7 @@ class AmortizedMergingIntegrator(BaseIntegrator):
         # PhysicalScale absorption/decay restraint: opposes the merge/consistency
         # pulling the surface to absorb the anomalous signal (and run away).
         if (
-            isinstance(self.scale_fn, PhysicalScale)
+            isinstance(self.scale_fn, (PhysicalScale, LauePhysicalScale))
             and self.scale_restraint_weight > 0.0
         ):
             restraint = (
@@ -1119,7 +1148,7 @@ class AmortizedMergingIntegrator(BaseIntegrator):
             )
 
         with torch.no_grad():
-            if isinstance(self.scale_fn, PhysicalScale):
+            if isinstance(self.scale_fn, (PhysicalScale, LauePhysicalScale)):
                 self.log(
                     f"{step} abs_c_rms",
                     self.scale_fn.absorption_c.detach().pow(2).mean().sqrt(),
