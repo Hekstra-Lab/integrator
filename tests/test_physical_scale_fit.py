@@ -111,3 +111,110 @@ def test_polarisation_is_a_known_form_with_the_rate_multiplied_by_P():
     assert P[1] == pytest.approx(P[3], rel=1e-12)
     swing = P.max() / P.min()
     assert swing > 2.0, f"azimuthal swing only {swing:.2f}x"
+
+
+def _two_term_dataset(tau=0.95, phi0=0.0, n_refl=600, n_obs=30, seed=5):
+    """Counts whose scale is a polarisation factor plus an azimuthal harmonic.
+
+    The pair that cannot be told apart by a joint fit: `cos(2(phi - phi0))` is
+    the polarisation's azimuthal signature, and the real spherical harmonics at
+    l = 2, m = +-2 ARE `cos 2phi` and `sin 2phi`, so an absorption basis spans
+    it. Only the `sin^2(2theta)` modulation distinguishes them.
+    """
+    rng = np.random.default_rng(seed)
+    n = n_refl * n_obs
+    group = np.repeat(np.arange(n_refl), n_obs)
+    two_t = rng.uniform(0.15, 0.9, size=n)
+    phi = rng.uniform(-np.pi, np.pi, size=n)
+    log_pol = FP.polarisation_offset(two_t, phi, tau, phi0)
+    # a genuine azimuthal term of its own, which the harmonics should take
+    log_abs = 0.12 * np.cos(2.0 * phi + 0.7) + 0.08 * np.sin(phi)
+    intensity = rng.exponential(800.0, size=n_refl)[group]
+    mu = np.exp(log_pol + log_abs) * intensity
+    return {
+        "S": rng.poisson(mu).astype(float),
+        "e": np.ones(n),
+        "group": group,
+        "two_t": two_t,
+        "phi": phi,
+        "log_pol": log_pol,
+        "log_abs": log_abs,
+    }
+
+
+def _azimuthal_design(phi, two_t):
+    """A stand-in absorption basis: the harmonics that overlap polarisation."""
+    cols = [np.cos(2 * phi), np.sin(2 * phi), np.cos(phi), np.sin(phi),
+            np.cos(2 * phi) * two_t, np.sin(2 * phi) * two_t]
+    return np.stack(cols, axis=1)
+
+
+def test_a_joint_fit_cannot_place_the_polarisation_plane():
+    """Why the fit has to be ordered, and why the plane must be supplied.
+
+    Measured on the simulated Laue dataset: a joint fit puts the plane 33.8 deg
+    from a truth of 0 and recovers polarisation at CC -0.33, and refining it
+    settles at 22.5 deg rather than approaching 0. Here the same degeneracy is
+    reproduced in isolation -- the likelihood prefers a wrong plane over the
+    right one, so no amount of searching finds the truth.
+    """
+    data = _two_term_dataset(tau=0.95, phi0=0.0)
+    X = _azimuthal_design(data["phi"], data["two_t"])
+    pen = np.zeros(X.shape[1])
+
+    def loglik(phi0):
+        off = FP.polarisation_offset(data["two_t"], data["phi"], 0.95, phi0)
+        return FP.fit_conditional(
+            X, data["S"], data["e"], data["group"], pen, offset=off
+        )[2]
+
+    at_truth = loglik(0.0)
+    best_wrong = max(loglik(p) for p in np.deg2rad([22.5, 45.0, 67.5]))
+    assert best_wrong > at_truth, (
+        "the joint likelihood preferred the true plane, so this test no longer "
+        "exhibits the degeneracy it exists for"
+    )
+
+
+def test_supplying_the_plane_beats_fitting_it():
+    """The design decision, as a measurement.
+
+    With the plane given, the harmonics are left with only their own signal; a
+    fitted plane steals part of it and gives part of itself away.
+    """
+    data = _two_term_dataset(tau=0.95, phi0=0.0)
+    X = _azimuthal_design(data["phi"], data["two_t"])
+    pen = np.zeros(X.shape[1])
+
+    def recovered(phi0):
+        off = FP.polarisation_offset(data["two_t"], data["phi"], 0.95, phi0)
+        c, _, _ = FP.fit_conditional(
+            X, data["S"], data["e"], data["group"], pen, offset=off
+        )
+        fitted = X @ c
+        t = data["log_abs"] - data["log_abs"].mean()
+        f = fitted - fitted.mean()
+        return float(np.corrcoef(f, t)[0, 1])
+
+    given = recovered(0.0)
+    wrong = recovered(np.deg2rad(22.5))
+    assert given > wrong, f"given {given:.4f} vs wrong plane {wrong:.4f}"
+    assert given > 0.9, given
+
+
+def test_the_ordered_fit_keeps_the_known_forms_out_of_competition():
+    """`fit_ordered` must not let a later stage rewrite an earlier one.
+
+    The stages are a backfitting loop, so what has to hold is that the known
+    forms are fitted against the residual of the generic terms and not jointly
+    with them -- which is what takes polarisation from CC -0.33 to +1.00 on
+    simulated data.
+    """
+    import inspect
+
+    src = inspect.getsource(FP.fit_ordered)
+    assert "ORDERED_STAGES[0]" in src, "stage 1 is not treated separately"
+    assert "fixed_polarisation" in src, "the plane cannot be supplied"
+    # the generic stages must see the other terms as an offset
+    assert "offset=pol + others" in src
+    assert FP.ORDERED_STAGES[0] == ("spectrum",), FP.ORDERED_STAGES

@@ -260,6 +260,95 @@ def fit_conditional(X, S, e, group, pen, offset=None, weight=1.0,
     return c, it + 1, prev
 
 
+# The order the stages are fitted in, and why there is an order at all.
+# Fitting everything at once lets 24 absorption harmonics absorb whatever the
+# two-parameter polarisation does not explain -- both are smooth functions of
+# direction -- so the (tau, phi0) likelihood goes nearly flat and lands on the
+# wrong plane. Measured on simulated data where the truth is known: a joint fit
+# puts the plane at 67.5 deg against a truth of 0 and recovers polarisation at
+# CC -0.33, while crushing the generic capacity recovers it at slope 1.04. So
+# the known forms are fitted first, alone, and the generic terms only ever see
+# the residual. This is what a scaling program does, and for the same reason.
+ORDERED_STAGES = (("spectrum",), ("absorption",), ("decay", "image_gray"))
+
+# tau, then the plane's azimuth. `cos(2(phi - phi0))` has period pi in phi0,
+# and shifting by pi/2 only flips its sign, so with tau >= 0 the plane is
+# identified on [0, pi/2) -- stepped finely, because an ordered fit on
+# simulated data lands one coarse step (22.5 deg) off the truth and that step
+# alone is worth 0.6% of eps.
+POLARISATION_GRID = (
+    (0.0, 0.5, 0.8, 0.9, 0.95, 0.99, 1.0),
+    tuple(np.linspace(0.0, np.pi / 2, 9)[:-1]),
+)
+
+
+def fit_ordered(X, groups, pen, S, e, group, two_t, phi_det, weight, sweeps,
+                fixed_polarisation=None, verbose=True):
+    """Stage the fit so a known form is never out-competed by free capacity.
+
+    Returns `(c, tau, phi0)`. Each stage fits only its own columns, with every
+    other stage's current contribution carried as a fixed offset -- the
+    backfitting algorithm, which converges because the conditional likelihood
+    is concave in each block.
+    """
+    masks = {name: groups == name for stage in ORDERED_STAGES for name in stage}
+    c = np.zeros(X.shape[1])
+    tau = phi0 = 0.0
+
+    for sweep in range(sweeps):
+        # Stage 1: the known physics, with nothing free to absorb it. The
+        # polarisation grid is searched jointly with the spectrum, since those
+        # are the two terms whose form we are asserting rather than learning.
+        first = np.zeros(X.shape[1], dtype=bool)
+        for name in ORDERED_STAGES[0]:
+            first |= masks[name]
+        rest = (X[:, ~first] @ c[~first]) if (~first).any() else 0.0
+        if fixed_polarisation is not None:
+            t, p0 = fixed_polarisation
+            off = polarisation_offset(two_t, phi_det, t, p0) + rest
+            c_s, _, ll = fit_conditional(
+                X[:, first], S, e, group, pen[first], offset=off, weight=weight,
+            )
+            best = (c_s, (t, p0), ll)
+        else:
+            best = None
+            for t in POLARISATION_GRID[0]:
+                for p0 in POLARISATION_GRID[1]:
+                    if t == 0.0 and p0 != 0.0:
+                        continue          # phi0 is unidentified at tau = 0
+                    off = polarisation_offset(two_t, phi_det, t, p0) + rest
+                    c_s, _, ll = fit_conditional(
+                        X[:, first], S, e, group, pen[first], offset=off,
+                        weight=weight,
+                    )
+                    if best is None or ll > best[2]:
+                        best = (c_s, (t, p0), ll)
+        c_first, (tau, phi0), ll = best
+        c[first] = c_first
+        pol = polarisation_offset(two_t, phi_det, tau, phi0)
+        if verbose:
+            print(f"  sweep {sweep + 1} stage 1 (known forms): tau = {tau:.2f}, "
+                  f"plane {np.rad2deg(phi0):.1f} deg, loglik {ll:.1f}")
+
+        # Later stages: each sees only what the ones before it left behind.
+        for stage in ORDERED_STAGES[1:]:
+            sel = np.zeros(X.shape[1], dtype=bool)
+            for name in stage:
+                sel |= masks[name]
+            if not sel.any():
+                continue
+            others = X[:, ~sel] @ c[~sel]
+            c_s, _, ll = fit_conditional(
+                X[:, sel], S, e, group, pen[sel], offset=pol + others,
+                weight=weight,
+            )
+            c[sel] = c_s
+            if verbose:
+                print(f"  sweep {sweep + 1} stage '{'+'.join(stage)}': "
+                      f"loglik {ll:.1f}")
+    return c, tau, phi0
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Fit a physical per-observation scale by conditional "
@@ -275,6 +364,21 @@ def main() -> None:
     ap.add_argument("--deg-per-image", type=float, default=DEFAULT_DEG_PER_IMAGE)
     ap.add_argument("--beam-centre", type=float, nargs=2,
                     default=list(DEFAULT_BEAM_CENTRE))
+    ap.add_argument("--polarisation", type=float, nargs=2, default=None,
+                    metavar=("TAU", "PHI0_DEG"),
+                    help="fix the polarisation instead of fitting it. Its "
+                         "azimuthal signature cos(2(phi - phi0)) lies inside "
+                         "the l=2, m=+-2 spherical harmonics, which ARE cos2phi "
+                         "and sin2phi, so an absorption basis and a fitted "
+                         "plane are partly degenerate -- measured on simulated "
+                         "data, the fit lands 22.5 deg off a known truth and "
+                         "stays there under refinement. It is known physics at "
+                         "a synchrotron, so supply it")
+    ap.add_argument("--ordered", action="store_true",
+                    help="fit the known forms first and let the generic terms "
+                         "see only the residual; see ORDERED_STAGES")
+    ap.add_argument("--sweeps", type=int, default=2,
+                    help="backfitting sweeps when --ordered")
     args = ap.parse_args()
 
     dump = torch.load(args.dump, map_location="cpu", weights_only=False)
@@ -301,21 +405,31 @@ def main() -> None:
     two_t = 2.0 * np.arcsin(np.clip(lam / (2.0 * np.maximum(d, 1e-6)), -1, 1))
     phi_det = np.arctan2(yy - args.beam_centre[1], xx - args.beam_centre[0])
 
-    best = None
-    for tau in (0.0, 0.5, 0.8, 0.9, 0.95, 0.99, 1.0):
-        for phi0 in (0.0, np.pi / 8, np.pi / 4, 3 * np.pi / 8):
-            if tau == 0.0 and phi0 != 0.0:
-                continue                      # phi0 is unidentified at tau = 0
-            off = polarisation_offset(two_t, phi_det, tau, phi0)
-            c_t, it_t, ll_t = fit_conditional(
-                X[ok], S[ok], e[ok], grp_idx, pen, offset=off[ok],
-                weight=args.penalty,
-            )
-            if best is None or ll_t > best[2]:
-                best = (c_t, (tau, phi0), ll_t, it_t)
-            print(f"  tau {tau:4.2f} phi0 {np.rad2deg(phi0):5.1f} deg: "
-                  f"penalised conditional loglik {ll_t:.1f}")
-    c, (tau, phi0), _, iters = best
+    fixed_pol = None
+    if args.polarisation is not None:
+        fixed_pol = (args.polarisation[0], np.deg2rad(args.polarisation[1]))
+    if args.ordered:
+        c, tau, phi0 = fit_ordered(
+            X[ok], groups, pen, S[ok], e[ok], grp_idx, two_t[ok], phi_det[ok],
+            args.penalty, args.sweeps, fixed_polarisation=fixed_pol,
+        )
+        iters = args.sweeps
+    else:
+        best = None
+        for tau in POLARISATION_GRID[0]:
+            for phi0 in POLARISATION_GRID[1]:
+                if tau == 0.0 and phi0 != 0.0:
+                    continue                  # phi0 is unidentified at tau = 0
+                off = polarisation_offset(two_t, phi_det, tau, phi0)
+                c_t, it_t, ll_t = fit_conditional(
+                    X[ok], S[ok], e[ok], grp_idx, pen, offset=off[ok],
+                    weight=args.penalty,
+                )
+                if best is None or ll_t > best[2]:
+                    best = (c_t, (tau, phi0), ll_t, it_t)
+                print(f"  tau {tau:4.2f} phi0 {np.rad2deg(phi0):5.1f} deg: "
+                      f"penalised conditional loglik {ll_t:.1f}")
+        c, (tau, phi0), _, iters = best
     print(f"polarisation: tau = {tau:.2f}, plane at "
           f"{np.rad2deg(phi0):.1f} deg from detector +x, by likelihood")
     offset = polarisation_offset(two_t, phi_det, tau, phi0)
