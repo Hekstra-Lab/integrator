@@ -224,6 +224,8 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                 phi0_deg=float(getattr(cfg, "scale_polarisation_phi0_deg", 0.0)),
                 beam_center=cfg.scale_beam_center,
                 deg_per_image=float(getattr(cfg, "scale_deg_per_image", 1.0)),
+                spectrum_coeffs=getattr(cfg, "scale_spectrum_coeffs", None),
+                spectrum_frozen=bool(getattr(cfg, "scale_spectrum_frozen", False)),
             )
         elif getattr(cfg, "scale_laue_mlp", False):
             n_abs_sh = 0

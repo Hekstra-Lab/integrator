@@ -144,16 +144,20 @@ def _lexmax(orbit: np.ndarray, lim: int) -> tuple[np.ndarray, np.ndarray]:
 
 
 def chebyshev_curve(t, lo, hi, coeffs):
-    """A Chebyshev series on t mapped to [-1, 1], for the true spectrum."""
+    """A Chebyshev series on t mapped to [-1, 1], for the true spectrum.
+
+    The recurrence is `T_k = 2 u T_{k-1} - T_{k-2}`, built by carrying the two
+    previous orders. An earlier version advanced them as `tk_2, tk_1 = tk_1, tk`
+    inside the k=1 branch, which left both equal to `u` and made T_2 come out as
+    `2u^2 - u`: still a smooth curve of the right span, so no measurement made
+    against the generated column was wrong, but not the basis the name claims,
+    and coefficients could not be transferred to a correct basis.
+    """
     u = np.clip(2.0 * (t - lo) / (hi - lo) - 1.0, -1.0, 1.0)
-    out = np.zeros_like(u)
-    tk_2, tk_1 = np.ones_like(u), u
-    for k, c in enumerate(coeffs):
-        tk = tk_2 if k == 0 else (tk_1 if k == 1 else 2.0 * u * tk_1 - tk_2)
-        out = out + c * tk
-        if k >= 1:
-            tk_2, tk_1 = tk_1, tk
-    return out
+    cols = [np.ones_like(u), u]
+    for k in range(2, len(coeffs)):
+        cols.append(2.0 * u * cols[-1] - cols[-2])
+    return sum(c * col for c, col in zip(coeffs, cols))
 
 
 def excited_reflections(hkl, b_matrix, u_matrix, phi, lam_lo, lam_hi):
@@ -301,7 +305,8 @@ def main() -> None:
     )
 
     rows: dict[str, list] = {k: [] for k in (
-        "asu_id", "nonanom_id", "centric", "H", "K", "L", "d", "wavelength",
+        "asu_id", "nonanom_id", "centric", "friedel_plus",
+        "H", "K", "L", "d", "wavelength",
         "image_num", "xyzcal.px.0", "xyzcal.px.1", "xyzcal.px.2",
         "s1.0", "s1.1", "s1.2", "true_scale", "true_bg", "true_intensity",
         "true_spectrum", "true_polarisation", "true_absorption",
@@ -377,6 +382,14 @@ def main() -> None:
         for name, value in (
             ("asu_id", asu_id[idx]), ("nonanom_id", nonanom_id[idx]),
             ("centric", centric[idx]),
+            # which member of the Friedel pair this is. The anomalous-preserving
+            # terms (`centric_anchor_weight`, `double_wilson_weight`) need it to
+            # split a pooled class into its two mates, and the centric anchor is
+            # the one today's identifiability analysis singles out: centrics have
+            # I(+) = I(-) by symmetry, so they measure the scale's
+            # Friedel-ANTISYMMETRIC error against a known zero -- which is the
+            # subspace `tr(J^-1 G)` says the anomalous signal is exposed in.
+            ("friedel_plus", is_plus[idx].astype(float)),
             ("H", hkl[idx, 0]), ("K", hkl[idx, 1]), ("L", hkl[idx, 2]),
             ("d", d_i), ("wavelength", lam_i),
             ("image_num", np.full(len(idx), j)),

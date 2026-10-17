@@ -1014,6 +1014,8 @@ class LauePhysicalScale(nn.Module):
         deg_per_image: float = 1.0,
         beam_direction: tuple[float, float, float] = (0.0, 0.0, 1.0),
         lambda_ref: float | None = None,
+        spectrum_coeffs: list[float] | None = None,
+        spectrum_frozen: bool = False,
     ):
         super().__init__()
         self.lmax = int(lmax)
@@ -1053,6 +1055,25 @@ class LauePhysicalScale(nn.Module):
         self.register_buffer("axis", torch.tensor(rotation_axis, dtype=torch.float32))
         self.register_buffer("s0_hat", torch.tensor(beam_direction, dtype=torch.float32))
 
+        if spectrum_coeffs is not None:
+            c = torch.as_tensor(list(spectrum_coeffs), dtype=torch.float32)
+            if len(c) > self.degree_spectrum:
+                raise ValueError(
+                    f"spectrum_coeffs has {len(c)} orders but degree_spectrum "
+                    f"is {self.degree_spectrum}; raise the degree or trim the "
+                    "curve rather than silently dropping its high orders"
+                )
+            with torch.no_grad():
+                self.spectrum_c[: len(c)] = c
+        elif spectrum_frozen:
+            raise ValueError(
+                "spectrum_frozen with no spectrum_coeffs would freeze G at "
+                "zero, i.e. assert a flat 1x spectrum across an 18x band"
+            )
+        self.spectrum_frozen = bool(spectrum_frozen)
+        if self.spectrum_frozen:
+            self.spectrum_c.requires_grad_(False)
+
     def restraint_penalty(self) -> Tensor:
         """`sum l(l+1) c_lm^2 + sum k^4 G_k^2 + sum B_k^2`, zero at init.
 
@@ -1060,11 +1081,12 @@ class LauePhysicalScale(nn.Module):
         there means the same thing here.
         """
         w = self.sh_l * (self.sh_l + 1.0)
-        return (
-            (w * self.absorption_c.pow(2)).sum()
-            + (self.spectrum_pen * self.spectrum_c.pow(2)).sum()
-            + self.decay_c.pow(2).sum()
-        )
+        total = (w * self.absorption_c.pow(2)).sum() + self.decay_c.pow(2).sum()
+        if not self.spectrum_frozen:
+            # a frozen curve has no gradient, so penalising it would only add a
+            # constant to the reported loss
+            total = total + (self.spectrum_pen * self.spectrum_c.pow(2)).sum()
+        return total
 
     @staticmethod
     def _cheb(t: Tensor, degree: int) -> Tensor:

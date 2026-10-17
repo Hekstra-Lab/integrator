@@ -376,6 +376,21 @@ class IntegratorCfg:
     scale_polarisation_tau: float = 0.95
     scale_polarisation_phi0_deg: float = 0.0
     scale_deg_per_image: float = 1.0
+    # Freeze G(lambda) at a curve identified elsewhere instead of fitting it.
+    # The merging likelihood cannot identify the spectrum: on a still
+    # lambda = 2 d sin(theta(r)), so a free function of (r, d) absorbs 73% of a
+    # realistic G. The non-merging integrator has no scale field and no merge,
+    # so its identified curve carries information this model cannot produce --
+    # the same reason the polarisation is supplied rather than fitted.
+    # The trade is real and measured: ~70% of a residual spectrum error
+    # survives into the Bijvoet difference (the half-turn partner is only
+    # 0.007 A away in wavelength, so the involution suppresses a 0.05 A-scale
+    # error by just 1.4x), so a WRONG frozen curve cannot be corrected.
+    # Coefficients are Chebyshev orders 1..n in this model's own
+    # (scale_lambda_min, scale_lambda_max) normalisation, constant excluded --
+    # the level is a gauge the merge absorbs into I_h.
+    scale_spectrum_coeffs: list[float] | None = None
+    scale_spectrum_frozen: bool = False
 
     # Inflate the exported sigma by the between-observation dispersion the
     # Poisson merge cannot see. sigma^2/I^2 = 1/alpha + eps^2/n_eff + bg, where
