@@ -188,6 +188,12 @@ def main() -> None:
     ap.add_argument("--anomalous", type=float, default=0.04,
                     help="fractional Bijvoet difference, |I+ - I-| / I")
     ap.add_argument("--lmax", type=int, default=4, help="absorption harmonics")
+    ap.add_argument("--image-drift", type=float, default=0.05,
+                    help="amplitude of the smooth per-image scale drift")
+    ap.add_argument("--image-jitter", type=float, default=0.01,
+                    help="per-image scale jitter a smooth basis cannot reach; "
+                         "careless can represent this and a Chebyshev image "
+                         "term cannot, so it is a real experimental knob")
     ap.add_argument("--spectrum-swing", type=float, default=18.3,
                     help="G(lambda) max/min across the band; 18.3 is the "
                          "value identified on hewl_1118")
@@ -268,7 +274,20 @@ def main() -> None:
     )
     abs_coeffs = rng.normal(0.0, 1.0, size=(args.lmax + 1) ** 2 - 1)
     abs_coeffs *= 0.18 / max(np.abs(abs_coeffs).max(), 1e-9)   # ~1.8x swing
-    image_gray = rng.normal(0.0, 0.05, size=args.images)
+    # Per-image gray: a smooth drift plus a jitter.  The split matters, and
+    # getting it wrong cost a wrong conclusion once: an i.i.d. term across 1000
+    # images is white noise that no smooth basis can represent, so it dominated
+    # the floor of every scale fit and looked like a ceiling on the physical
+    # basis.  Real beam and crystal variation is mostly smooth in the
+    # goniometer angle, with a small jump component -- and careless can
+    # represent the jumps, because it encodes BATCH with positional encoding,
+    # where a Chebyshev image term cannot.  `--image-jitter` is therefore an
+    # experimental knob, not scenery: it sets how much of the per-image scale
+    # is unreachable by a smooth parameterisation.
+    drift = np.cos(
+        np.linspace(0.0, 3.0 * np.pi, args.images)
+    ) * args.image_drift
+    image_gray = drift + rng.normal(0.0, args.image_jitter, size=args.images)
     decay_b = 2.0                                               # A^2
     tau_pol, phi0_pol = 0.95, 0.0
 
@@ -437,6 +456,8 @@ def main() -> None:
             "spectrum_coefficients": [float(c) for c in spec_coeffs],
             "absorption_coefficients": [float(c) for c in abs_coeffs],
             "decay_b": decay_b,
+        "image_drift": args.image_drift,
+        "image_jitter": args.image_jitter,
             "polarisation": {"tau": tau_pol, "phi0": phi0_pol},
         },
     }
