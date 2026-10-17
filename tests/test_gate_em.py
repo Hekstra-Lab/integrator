@@ -125,6 +125,169 @@ def test_the_split_variance_is_available_and_nonzero():
     assert 0.01 < ratio < 1.0, ratio
 
 
+class _Merge:
+    """`_responsibility_merge` on stubs, so the real E-step code runs.
+
+    Only the priors are stubbed: everything the E-step reads -- above all the
+    background posterior's parameterisation -- is the shipped code.
+    """
+
+    from integrator.model.scaling.svae_merging import (  # noqa: E402
+        SVAEMergingIntegrator as _S,
+    )
+
+    _responsibility_merge = _S._responsibility_merge
+
+    def __init__(self, gate_em_iters):
+        self.gate_em_iters = gate_em_iters
+        self.wilson_prior_per_obs = False
+        self.alpha_W = 1.0
+
+    def _bg_prior(self, group_labels, n, device):
+        weak = torch.full((n,), 1e-3, dtype=torch.float32)
+        return weak, weak
+
+    def _wilson_tau(self, d, extra=None):
+        return torch.full_like(d, 1e-6)
+
+
+def _background_dominated(
+    n_hkl=24,
+    per_hkl=12,
+    n_pix=100,
+    i_true=300.0,
+    bg=60.0,
+    gate_bias=None,
+    seed=0,
+):
+    """Laue-like shoeboxes: 95% of the counts are background.
+
+    `gate_bias` sets what the amortized gate is told, as an error in log-odds
+    against the value that makes `sigmoid(log p + g)` exact: `None` gives a
+    gate of zeros, i.e. one that knows nothing.
+    """
+    g = torch.Generator().manual_seed(seed)
+    n_obs = n_hkl * per_hkl
+    centre = torch.linspace(-2.5, 2.5, n_pix)
+    prf = torch.exp(-0.5 * centre.pow(2))
+    prf = (prf / prf.sum()).repeat(n_obs, 1)
+    scale = torch.rand(n_obs, generator=g) * 0.8 + 0.6
+    rate = scale[:, None] * i_true * prf + bg
+    gate = (
+        torch.zeros(n_obs)
+        if gate_bias is None
+        else torch.log(scale * i_true / bg) + gate_bias
+    )
+    return {
+        "logits": torch.log(prf),
+        "gate": gate,
+        "counts": torch.poisson(rate, generator=g),
+        "scale": scale,
+        "profile_mean": prf,
+        "mask": torch.ones(n_obs, n_pix),
+        "asu_ids": torch.arange(n_hkl).repeat_interleave(per_hkl),
+        "d_per_obs": torch.full((n_obs,), 2.0),
+        "group_labels": None,
+    }
+
+
+def _merged_intensity(iters, **kwargs):
+    _, alpha_h, beta_h, *_ = _Merge(iters)._responsibility_merge(
+        **_background_dominated(**kwargs)
+    )
+    return float((alpha_h / beta_h).median())
+
+
+ITERS = 20
+"""Enough for the joint `(I_h, b_i)` fixed point from a gate off by e^2.
+
+Measured at the real batch shape (2048 x 1323) it costs 52 ms a batch on CPU,
+about 40 minutes over a 50-epoch run and far less on a GPU.
+"""
+
+
+def test_the_e_step_keeps_the_background_out_of_the_signal():
+    """The regression the synthetic tests above could not see.
+
+    `qbg`'s rate is `bg_b0 + n_pix`, so its mean is counts per pixel -- the
+    quantity the ELBO adds to `zI_scaled * zp`.  Dividing it by `n_pix` a
+    second time drove `r` to 1 and merged the whole shoebox as signal: at 95%
+    background that is a ~20x intensity inflation, and it took the arm's
+    R-free from 0.20 to 0.39.
+    """
+    i_true, bg, n_pix = 300.0, 60.0, 100
+    kwargs = dict(i_true=i_true, bg=bg, n_pix=n_pix)
+    kw = _background_dominated(**kwargs)
+    *_, r = _Merge(ITERS)._responsibility_merge(**kw)
+
+    counts = kw["counts"]
+    got = float((r * counts).sum() / counts.sum())
+    want = i_true / (i_true + bg * n_pix)
+    assert got == pytest.approx(want, rel=0.25), (
+        f"the split called {got:.3f} of the counts signal, against a true "
+        f"signal fraction of {want:.3f}"
+    )
+    assert _merged_intensity(ITERS, **kwargs) == pytest.approx(i_true, rel=0.15)
+
+
+@pytest.mark.parametrize("gate_bias", [-2.0, -1.0, 0.0, 1.0, 2.0, None])
+def test_the_solve_does_not_depend_on_what_the_gate_believed(gate_bias):
+    """The property that makes this a fixed point rather than a nudge.
+
+    Two ways of getting this wrong both leave a solve that inherits the gate's
+    bias, and both looked fine against a hand-written formula: accelerating by
+    the linear-space derivative `V_h / (I_h beta_h)`, which is not bounded by
+    1 below the root, and holding `b_i` at the gate's own value while solving
+    for `I_h`, when the two are one joint fixed point.
+    """
+    i_true = 300.0
+    got = _merged_intensity(ITERS, i_true=i_true, gate_bias=gate_bias, seed=2)
+    assert got == pytest.approx(i_true, rel=0.15), (
+        f"a gate biased by {gate_bias} in log-odds converged to {got:.1f}, "
+        f"not {i_true:.1f}"
+    )
+
+
+@pytest.mark.parametrize("gate_bias", [-6.0, 6.0])
+def test_even_an_absurd_start_reaches_the_same_fixed_point(gate_bias):
+    """A start off by 400x takes more steps, and lands in the same place.
+
+    This is what says the solve has one fixed point rather than a basin per
+    start, and it fixes the number: 20 steps cover the range a trained gate
+    produces, 50 cover anything.
+    """
+    got = _merged_intensity(50, i_true=300.0, gate_bias=gate_bias, seed=2)
+    settled = _merged_intensity(50, i_true=300.0, gate_bias=0.0, seed=2)
+    assert got == pytest.approx(settled, rel=5e-3)
+    assert got == pytest.approx(300.0, rel=0.15), got
+
+
+def test_the_e_step_improves_on_a_biased_gate():
+    """What the key is for: the gate's error is what it has to remove."""
+    i_true = 300.0
+    for bias in (-1.0, 1.0):
+        kwargs = dict(i_true=i_true, gate_bias=bias, seed=2)
+        off = _merged_intensity(0, **kwargs)
+        on = _merged_intensity(ITERS, **kwargs)
+        assert abs(on / i_true - 1.0) < 0.5 * abs(off / i_true - 1.0), (
+            f"at bias {bias:+.1f} the E-step went {off:.1f} -> {on:.1f} "
+            f"against a true {i_true:.1f}"
+        )
+
+
+def test_a_few_iterations_are_not_enough_and_the_count_is_the_knob():
+    """Why `gate_em_iters` is 20 and not 2.
+
+    The EM map's derivative in log `I_h` is `V_h / alpha_h`, which at 95%
+    background sits just under 1; even with the `1/(1-K)` correction the joint
+    `(I_h, b_i)` solve needs iterations, and a value of 2 is close to a no-op.
+    """
+    kwargs = dict(i_true=300.0, gate_bias=1.0, seed=2)
+    err = [abs(_merged_intensity(k, **kwargs) / 300.0 - 1.0) for k in (0, 2, ITERS)]
+    assert err[2] < err[1] < err[0], err
+    assert err[1] > 0.5, f"2 iterations already fixed it, so this test is stale: {err}"
+
+
 def test_the_key_defaults_off():
     from integrator.configs.integrator import IntegratorCfg
 

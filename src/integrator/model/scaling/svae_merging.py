@@ -30,6 +30,15 @@ was designed around: a scalar `Gamma(1, 1)` measured worse (R-free 0.2147 vs
 `k_i` features, initialized negative so r starts low and signal emerges as the
 profile sharpens.
 
+That gate is amortized, and it is the model's weakest joint. The split it
+parameterises is exact only when `gate_i = log(s_i I_h / b_i)`, and a head on
+the shoebox cannot see the scale, the merged intensity or the background it
+would need. Measured on hewl_1118 it keeps 45% of the signal below `I/sigma`
+0.5 and 149% near 2, and since brightness within a reflection tracks the
+spectrum, that error is wavelength-shaped and corrupts any scale fitted from
+these counts. `gate_em_iters` solves the `(I_h, b_i)` fixed point instead; see
+`_responsibility_merge`.
+
 Two names changed in the port. The June code merged on
 `miller_idx_unfriedelized` and grouped batches by `miller_idx_friedelized`;
 here those are `asu_id` (Friedel-separate, what the parent merges on) and
@@ -73,6 +82,22 @@ logger = logging.getLogger(__name__)
 _ERROR_TERMS = (
     "alpha_sig", "beta_sum", "ss", "se", "ee", "v_bg", "n_obs", "d_mean",
 )
+
+
+def _split(
+    i_per_obs: Tensor,
+    scale: Tensor,
+    profile_mean: Tensor,
+    mask: Tensor,
+    bg_rate: Tensor,
+) -> Tensor:
+    """The Binomial share of each pixel's count that belongs to the signal.
+
+    `bg_rate` is counts per pixel, the same units as the background the ELBO
+    adds to `s I p`.
+    """
+    sig_rate = scale.reshape(-1, 1) * i_per_obs.reshape(-1, 1) * profile_mean * mask
+    return (sig_rate / (sig_rate + bg_rate).clamp(min=1e-12)) * mask
 
 
 class SVAEMergingIntegrator(AmortizedMergingIntegrator):
@@ -303,23 +328,58 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
             (bg_b0 + n_pix).clamp(min=1e-12),
         )
 
-        for _ in range(self.gate_em_iters):
+        if self.gate_em_iters:
             # The exact E-step. A Poisson count whose rate is a sum splits
             # Binomially, with r = s I p / (s I p + b) -- and
             # `sigmoid(log p + g)` equals that precisely when
             # g = log(s I / b), which the amortized gate has no way to know.
-            # I_h and b are detached, so this is a fixed-point refinement
-            # rather than a differentiable path the KL could exploit; p and the
-            # scale keep their gradients, since they are model parameters.
-            i_hat = (alpha_h / beta_h.clamp(min=1e-12)).detach()[inverse]
-            bg_rate = (qbg.mean / n_pix.clamp(min=1.0)).detach()
-            sig_rate = scale.reshape(-1, 1) * i_hat.reshape(-1, 1) * profile_mean * m
-            r = (sig_rate / (sig_rate + bg_rate.reshape(-1, 1)).clamp(min=1e-12)) * m
+            #
+            # Iterating the split is an EM map, and in log I_h its derivative
+            # is K = V_h / alpha_h with V_h = sum_p c r (1-r): strictly inside
+            # (0, 1), since r(1-r) < r makes V_h < S_h <= alpha_h. At 95%
+            # background it sits just under 1 and a plain iteration moves I_h
+            # by about 1.5% a step, so a few of them are a no-op; the
+            # implicit-function correction (1 - K)^-1 -- the same 1/(1-K)
+            # `ConjugateMergingIntegrator._conjugate_em_merged` applies -- gets
+            # there in two or three. The step has to be taken in log I_h: the
+            # linear-space derivative V_h / (I_h beta_h) is not bounded by 1
+            # below the root, and accelerating by it walks away from the
+            # solution it is supposed to find.
+            #
+            # The split depends on the background as much as on I_h, so both
+            # sides are re-estimated: holding `b` at the amortized gate's value
+            # hands the solve the gate's own bias back.  `qbg`'s rate is
+            # `bg_b0 + n_pix`, so its mean is already counts per pixel -- the
+            # quantity the ELBO adds to `zI_scaled * zp`.
+            bg_rate = qbg.mean.detach().reshape(-1, 1)
+            i_hat = (alpha_h / beta_h.clamp(min=1e-12)).detach()
+            beta_c = beta_h.detach().clamp(min=1e-12)
+            bg_exposure = (bg_b0 + n_pix).clamp(min=1e-12)
+            with torch.no_grad():
+                for _ in range(self.gate_em_iters):
+                    r = _split(i_hat[inverse], scale, profile_mean, m, bg_rate)
+                    sig = (r * c).sum(dim=-1)
+                    bg_rate = (
+                        (bg_a0 + (total_counts - sig)).clamp(min=0.0) / bg_exposure
+                    ).reshape(-1, 1)
+                    s_h, _, _ = _scatter_sum_compact(sig, asu_ids)
+                    v_h, _, _ = _scatter_sum_compact(
+                        (c * r * (1.0 - r)).sum(dim=-1), asu_ids
+                    )
+                    a_h = self.alpha_W + s_h
+                    step = (a_h / beta_c).clamp(min=1e-30).log() - i_hat.clamp(
+                        min=1e-30
+                    ).log()
+                    k = (v_h / a_h.clamp(min=1e-12)).clamp(max=1.0 - 1e-3)
+                    i_hat = (i_hat.clamp(min=1e-30).log() + step / (1.0 - k)).exp()
+            # One differentiable pass at the converged intensity: the scale and
+            # the profile keep their gradients, I_h and b do not, so this
+            # refines the split rather than opening a path the KL can exploit.
+            r = _split(i_hat[inverse], scale, profile_mean, m, bg_rate)
             sig_counts = (r * c).sum(dim=-1)
             bg_counts = total_counts - sig_counts
             alpha_sig, _, _ = _scatter_sum_compact(sig_counts, asu_ids)
             alpha_h = self.alpha_W + alpha_sig
-            beta_h = tau_h + beta_sum
             qi_h = Gamma(alpha_h.clamp(min=1e-6), beta_h.clamp(min=1e-12))
             qbg = Gamma(
                 (bg_a0 + bg_counts).clamp(min=1e-6),
