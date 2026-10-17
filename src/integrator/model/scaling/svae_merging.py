@@ -189,6 +189,23 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
             return logits
         return qp.mean_profile.clamp_min(1e-12).log()
 
+    def _get_bg_pin(self, metadata: dict, device: torch.device) -> Tensor | None:
+        """An externally supplied per-pixel background, or None.
+
+        The counterpart of `_get_scale`: `b_i` and the scale are competing
+        per-observation nuisances, so pinning one is how to find out which is
+        absorbing the other.
+        """
+        key = self.bg_from_metadata
+        if key is None:
+            return None
+        if key not in metadata:
+            raise KeyError(
+                f"bg_from_metadata='{key}' is not in metadata; point the "
+                "loader's reference at a file carrying that column."
+            )
+        return metadata[key].to(device).float().reshape(-1).clamp(min=1e-8)
+
     def _bg_prior(
         self, group_labels: Tensor | None, n: int, device: torch.device
     ) -> tuple[Tensor, Tensor]:
@@ -260,6 +277,7 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
         )
         self.merge_dump_terms = getattr(cfg, "merge_dump_terms", None)
         self.gate_em_iters = int(getattr(cfg, "gate_em_iters", 0))
+        self.bg_from_metadata = getattr(cfg, "bg_from_metadata", None)
 
     def _responsibility_merge(
         self,
@@ -274,6 +292,7 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
         group_labels: Tensor | None,
         wl_per_obs: Tensor | None = None,
         extras: dict | None = None,
+        bg_pin: Tensor | None = None,
     ) -> tuple[Gamma, Tensor, Tensor, Tensor, Tensor, Tensor, Gamma, Tensor]:
         """Conjugate merge via a per-pixel signal responsibility.
 
@@ -321,12 +340,19 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
         beta_h = tau_h + beta_sum
         qi_h = Gamma(alpha_h.clamp(min=1e-6), beta_h.clamp(min=1e-12))
 
-        # Per-observation background posterior from the (1-r) counts.
+        # Per-observation background posterior from the (1-r) counts, unless a
+        # background was supplied: then it is held there, with the uncertainty
+        # of a value measured over `n_pix` pixels rather than a delta, and the
+        # (1-r) counts no longer feed it -- which is the point, since a free
+        # `b_i` is what a per-observation scale error hides in.
         bg_a0, bg_b0 = self._bg_prior(group_labels, b, device)
-        qbg = Gamma(
-            (bg_a0 + bg_counts).clamp(min=1e-6),
-            (bg_b0 + n_pix).clamp(min=1e-12),
-        )
+        if bg_pin is None:
+            qbg = Gamma(
+                (bg_a0 + bg_counts).clamp(min=1e-6),
+                (bg_b0 + n_pix).clamp(min=1e-12),
+            )
+        else:
+            qbg = Gamma((bg_pin * n_pix).clamp(min=1e-6), n_pix.clamp(min=1e-12))
 
         if self.gate_em_iters:
             # The exact E-step. A Poisson count whose rate is a sum splits
@@ -359,9 +385,11 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
                 for _ in range(self.gate_em_iters):
                     r = _split(i_hat[inverse], scale, profile_mean, m, bg_rate)
                     sig = (r * c).sum(dim=-1)
-                    bg_rate = (
-                        (bg_a0 + (total_counts - sig)).clamp(min=0.0) / bg_exposure
-                    ).reshape(-1, 1)
+                    if bg_pin is None:
+                        bg_rate = (
+                            (bg_a0 + (total_counts - sig)).clamp(min=0.0)
+                            / bg_exposure
+                        ).reshape(-1, 1)
                     s_h, _, _ = _scatter_sum_compact(sig, asu_ids)
                     v_h, _, _ = _scatter_sum_compact(
                         (c * r * (1.0 - r)).sum(dim=-1), asu_ids
@@ -381,10 +409,11 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
             alpha_sig, _, _ = _scatter_sum_compact(sig_counts, asu_ids)
             alpha_h = self.alpha_W + alpha_sig
             qi_h = Gamma(alpha_h.clamp(min=1e-6), beta_h.clamp(min=1e-12))
-            qbg = Gamma(
-                (bg_a0 + bg_counts).clamp(min=1e-6),
-                (bg_b0 + n_pix).clamp(min=1e-12),
-            )
+            if bg_pin is None:
+                qbg = Gamma(
+                    (bg_a0 + bg_counts).clamp(min=1e-6),
+                    (bg_b0 + n_pix).clamp(min=1e-12),
+                )
         if extras is not None:
             # The terms an error model needs, all per HKL and all from this
             # batch, which holds complete groups. Prior contributions are kept
@@ -493,6 +522,7 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
             metadata["wavelength"].to(device).float()
             if "wavelength" in metadata
             else None,
+            bg_pin=self._get_bg_pin(metadata, device),
         )
 
         # Sample I_h once per HKL, broadcast to its observations.
@@ -696,6 +726,7 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
                     if "wavelength" in metadata
                     else None,
                     extras=extras,
+                    bg_pin=self._get_bg_pin(metadata, device),
                 )
             )
             if extras is not None:

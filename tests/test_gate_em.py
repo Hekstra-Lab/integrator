@@ -448,3 +448,49 @@ def test_the_free_per_observation_background_is_where_the_scale_goes():
         f"b_i free recovered {free:.3f} against {pinned:.3f} pinned; if these "
         "have converged, the free background is no longer the sink"
     )
+
+
+def test_pinning_the_background_recovers_the_scale_information():
+    """The control for the claim that `b_i` is where the scale goes.
+
+    `bg_from_metadata` holds the background at a supplied value and stops the
+    `(1-r)` counts feeding it, so the split and the merge are unchanged in form
+    and the only difference is that a per-observation multiplicative error has
+    nowhere to hide. If the account is right, the same conditional estimator
+    that recovers a third of a known tilt with `b_i` free recovers it in full.
+    """
+    tilt, bg = 0.5, 60.0
+    kw, x, per_hkl = _tilted(tilt, bg)
+
+    free = _Merge(ITERS)
+    pinned = _Merge(ITERS)
+    pinned.bg_from_metadata = "bg"
+    results = {}
+    for name, model, pin in (("free", free, None),
+                             ("pinned", pinned, torch.full((len(x),), bg))):
+        extras: dict = {}
+        model._responsibility_merge(**kw, extras=extras, bg_pin=pin)
+        per_obs = extras["per_obs"]
+        results[name] = _tilt_within_reflections(
+            per_obs["sig_counts_bgsub"] / per_obs["exposure_eff"],
+            x,
+            kw["asu_ids"],
+            per_hkl,
+        )
+    assert results["pinned"] == pytest.approx(tilt, rel=0.25), results
+    assert results["free"] < 0.5 * results["pinned"], results
+
+
+def test_the_pinned_background_is_held_and_the_key_defaults_off():
+    from integrator.configs.integrator import IntegratorCfg
+
+    assert IntegratorCfg.__dataclass_fields__["bg_from_metadata"].default is None
+
+    tilt, bg = 0.5, 60.0
+    kw, x, _ = _tilted(tilt, bg)
+    pin = torch.full((len(x),), bg)
+    *_, qbg, _ = _Merge(ITERS)._responsibility_merge(**kw, bg_pin=pin)
+    assert torch.allclose(qbg.mean, pin, rtol=1e-5)
+    # and it is not a delta: the uncertainty is that of a mean over n_pix
+    n_pix = kw["mask"].sum(-1)
+    assert torch.allclose(qbg.variance, pin / n_pix, rtol=1e-5)

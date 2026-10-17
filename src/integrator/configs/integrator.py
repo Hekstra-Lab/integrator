@@ -341,6 +341,21 @@ class IntegratorCfg:
     # the learned scale, so no existing run changes.
     scale_from_metadata: str | None = None
 
+    # Read the per-observation background from a metadata column instead of
+    # inferring it from the (1-r) counts. The scale and the background are
+    # competing per-observation nuisances: `b_i` is one free parameter per
+    # observation, fitted from the same pixels as the signal under a prior
+    # worth one pixel in 561, so a per-observation multiplicative error has
+    # somewhere to hide. Measured on synthetic shoeboxes, a conditional fit
+    # recovers 0.162 of a known per-observation tilt of 0.5 with `b_i` free
+    # and 0.544 with the background held at its true value -- and that does not
+    # improve with bigger shoeboxes (0.31 at 100 pixels, 0.32 at 1323).
+    # careless never faces this because DIALS fits the background from the
+    # shoebox's background region before any scaling. Pinning laue-dials' own
+    # per-observation background tests that account on real data. None keeps
+    # the conjugate readout, so no existing run changes.
+    bg_from_metadata: str | None = None
+
     # Inflate the exported sigma by the between-observation dispersion the
     # Poisson merge cannot see. sigma^2/I^2 = 1/alpha + eps^2/n_eff + bg, where
     # eps is the per-observation multiplicative scatter estimated from the
