@@ -356,6 +356,23 @@ class IntegratorCfg:
     # the conjugate readout, so no existing run changes.
     bg_from_metadata: str | None = None
 
+    # Pin the per-pixel profile at a fixed shape instead of encoding one.
+    # A DIAGNOSTIC first: on simulated data with a known Gaussian profile the
+    # learned one collapses to 98% uniform -- n_eff 613 of 625 pixels against a
+    # true 45.4, with 50% of its mass spread over 290 pixels where the truth
+    # puts it in 17. CC against the truth is +0.943, which hides it completely,
+    # because a nearly flat surface with a faint central rise still correlates
+    # with a Gaussian while carrying none of its concentration.
+    # That matters upstream of the scale: the profile sets the exposure
+    # `E_i = s_i sum_p r_p p_p`, and a flat one makes the signal/background
+    # split shape-blind, so the two are separated by magnitude alone.
+    # Takes a path to a (P,) tensor, shared by every observation -- exact for
+    # the simulator, and only a diagnostic on real data where profiles vary
+    # with position and resolution. With it set, the profile encoder and the
+    # `qp` surrogate are unused, and the loss's profile KL regularises a head
+    # nothing reads.
+    profile_pin_path: str | None = None
+
     # The Laue scale as physics, in an order that keeps its terms apart:
     # G(lambda) + log P(2theta, phi) + K(image) - 2 B(image) s^2 + crystal-frame
     # absorption harmonics, with NOTHING free in detector position or

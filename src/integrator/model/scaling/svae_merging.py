@@ -169,6 +169,46 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
         g = self.responsibility_head(x_k_i)
         return g if self.responsibility_per_pixel else g.squeeze(-1)
 
+    def _load_profile_pin(self, path: str | None) -> None:
+        """Register a fixed per-pixel profile, or none.
+
+        Non-persistent: the config decides whether a run is pinned, so a
+        checkpoint trained pinned does not silently stay pinned when reloaded
+        without the key.
+        """
+        if path is None:
+            self.profile_pin = None
+            return
+        prof = torch.load(path, map_location="cpu", weights_only=False)
+        prof = torch.as_tensor(prof, dtype=torch.float32).reshape(-1)
+        n_pix = int(math.prod(self.shoebox_shape))
+        if prof.numel() != n_pix:
+            raise ValueError(
+                f"profile_pin_path has {prof.numel()} pixels, but the shoebox "
+                f"is {self.shoebox_shape} = {n_pix}"
+            )
+        if prof.min() < 0:
+            raise ValueError("a pinned profile must be non-negative")
+        self.register_buffer(
+            "profile_pin", (prof / prof.sum().clamp(min=1e-12)), persistent=False
+        )
+        logger.info(
+            "profile pinned from %s: n_eff = %.1f of %d pixels",
+            path, float(1.0 / prof.div(prof.sum()).pow(2).sum()), n_pix,
+        )
+
+    def _profile_terms(self, qp, b: int, device: torch.device):
+        """`(profile_mean, logits, zp)`, from the encoder or from the pin."""
+        if self.profile_pin is None:
+            return (
+                qp.mean_profile,
+                self._profile_logits(qp),
+                _sample_profile(qp, self.mc_samples),
+            )
+        prof = self.profile_pin.to(device).expand(b, -1)
+        zp = prof.unsqueeze(1).expand(b, self.mc_samples, prof.shape[-1])
+        return prof, prof.clamp_min(1e-12).log(), zp
+
     @staticmethod
     def _profile_logits(qp) -> Tensor:
         """Pre-normalization profile logits at the posterior mean.
@@ -278,6 +318,7 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
         self.merge_dump_terms = getattr(cfg, "merge_dump_terms", None)
         self.gate_em_iters = int(getattr(cfg, "gate_em_iters", 0))
         self.bg_from_metadata = getattr(cfg, "bg_from_metadata", None)
+        self._load_profile_pin(getattr(cfg, "profile_pin_path", None))
 
     def _responsibility_merge(
         self,
@@ -486,7 +527,7 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
         x_profile = self.encoders["profile"](shoebox_reshaped)
         x_k_i = self.encoders["k_i"](shoebox_reshaped)
         qp = self.surrogates["qp"](x_profile, mc_samples=self.mc_samples)
-        profile_mean = qp.mean_profile
+        profile_mean, profile_logits, _ = self._profile_terms(qp, b, device)
 
         scale = self._get_scale(metadata, device)
         asu_ids = metadata["asu_id"].long().to(device)
@@ -510,7 +551,7 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
             qbg,
             responsibility,
         ) = self._responsibility_merge(
-            self._profile_logits(qp),
+            profile_logits,
             gate,
             counts,
             scale,
@@ -530,7 +571,7 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
         zI = zI_h[:, inverse]
         zI_scaled = (scale.unsqueeze(0) * zI).unsqueeze(-1).permute(1, 0, 2)
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
-        zp = _sample_profile(qp, self.mc_samples)
+        _, _, zp = self._profile_terms(qp, b, device)
         rate = zI_scaled * zp + zbg
 
         if "is_coset" in metadata:
@@ -709,15 +750,16 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
                 else None
             )
             gate = self._gate(self.encoders["k_i"](sr))
+            fm_profile, fm_logits, _ = self._profile_terms(qp, b, device)
             want_extras = self.merge_error_model or self.merge_dump_terms
             extras: dict | None = {} if want_extras else None
             _, alpha_h, beta_h, _, unique, _, _, _ = (
                 self._responsibility_merge(
-                    self._profile_logits(qp),
+                    fm_logits,
                     gate,
                     counts,
                     scale,
-                    qp.mean_profile,
+                    fm_profile,
                     mask,
                     asu_ids,
                     d_obs,
