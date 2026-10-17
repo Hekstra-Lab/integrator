@@ -92,6 +92,7 @@ def main() -> None:
 
     log_hat = np.zeros(len(truth["asu_id"]))
     refl = np.zeros(len(truth["asu_id"]), dtype=np.int64)
+    collected: dict[str, list] = {}
     filled = 0
     with torch.no_grad():
         for batch in loader.predict_dataloader():
@@ -101,7 +102,24 @@ def main() -> None:
             log_hat[filled:filled + len(s)] = np.log(np.maximum(s, 1e-30))
             refl[filled:filled + len(s)] = ids
             filled += len(s)
+            for key in ("wavelength", "d", "xyzcal.px.0", "xyzcal.px.1",
+                        "image_num", "s1.0", "s1.1", "s1.2"):
+                if key in metadata:
+                    collected.setdefault(key, []).append(
+                        metadata[key].float().cpu()
+                    )
     log_hat, refl = log_hat[:filled], refl[:filled]
+    term_inputs = {}
+    if {"wavelength", "d", "s1.0", "image_num"} <= set(collected):
+        cat = {k: torch.cat(v) for k, v in collected.items()}
+        term_inputs = dict(
+            wavelength=cat["wavelength"],
+            d=cat["d"],
+            x=cat["xyzcal.px.0"],
+            y=cat["xyzcal.px.1"],
+            s1=torch.stack([cat[f"s1.{k}"] for k in range(3)], dim=-1),
+            image=cat["image_num"],
+        )
     # the loader filters and reorders rows, so align through refl_ids rather
     # than assuming the dump and the metadata share an order
     pos = np.searchsorted(arr("refl_ids"), refl)
@@ -115,16 +133,34 @@ def main() -> None:
     print(f"CC(log s_hat, log s_true)                          "
           f"{np.corrcoef(log_hat, log_true)[0, 1]:+.4f}")
 
+    # Per-term recovery needs the MODEL's own decomposition. Correlating each
+    # true term against the TOTAL fitted log scale measures the total -- which
+    # the spectrum dominates -- so a polarisation pinned exactly at the truth
+    # came back reading CC -0.16 instead of +1.00. `log_terms` exists for this.
     print("\n-- how much of each true term the scale recovered --")
+    decomposed = getattr(model.scale_fn, "log_terms", None)
+    fitted_terms: dict[str, np.ndarray] = {}
+    if decomposed is not None and term_inputs:
+        with torch.no_grad():
+            parts = decomposed(**term_inputs)
+        fitted_terms = {k: v.numpy().astype(np.float64) for k, v in parts.items()}
+        print("  (against the scale's own term decomposition)")
+    else:
+        print("  (this scale has no term decomposition, so each row is the "
+              "true term against the TOTAL fitted scale -- a weak diagnostic)")
     for term in ("true_spectrum", "true_polarisation", "true_absorption",
                  "true_decay", "true_image_gray"):
         if term not in truth:
             continue
         t = arr(term)[pos]
-        slope, cc = regress(t - t.mean(), log_hat - log_hat.mean())
+        name = term[5:]
+        got = fitted_terms.get(name)
+        f = got if got is not None else log_hat
+        slope, cc = regress(t - t.mean(), f - f.mean())
         swing = float(np.exp(np.ptp(np.quantile(t, [0.01, 0.99]))))
-        print(f"  {term[5:]:14s} true swing {swing:6.2f}x   "
-              f"CC {cc:+.4f}   slope {slope:+.3f}")
+        extra = "" if got is not None else "  [vs total]"
+        print(f"  {name:14s} true swing {swing:6.2f}x   "
+              f"CC {cc:+.4f}   slope {slope:+.3f}{extra}")
 
     # ---- the merged intensities ----------------------------------------
     print("\n-- the merged intensities --")
