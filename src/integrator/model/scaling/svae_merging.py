@@ -526,7 +526,17 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
 
         x_profile = self.encoders["profile"](shoebox_reshaped)
         x_k_i = self.encoders["k_i"](shoebox_reshaped)
-        qp = self.surrogates["qp"](x_profile, mc_samples=self.mc_samples)
+        # metadata reaches the surrogate because a geometry-aware profile needs
+        # it: `GeometricProfileSurrogate` raises without it when `local_shift`
+        # or `steer` is on, which is why `geom_both` -- the profile model the
+        # integration ablation prefers -- was unreachable from this model. The
+        # base `ProfileSurrogate.forward` takes **kwargs, so it is unaffected.
+        qp = self.surrogates["qp"](
+            x_profile,
+            mc_samples=self.mc_samples,
+            metadata=metadata,
+            mask=mask,
+        )
         profile_mean, profile_logits, _ = self._profile_terms(qp, b, device)
 
         scale = self._get_scale(metadata, device)
@@ -742,7 +752,10 @@ class SVAEMergingIntegrator(AmortizedMergingIntegrator):
             asu_ids = metadata["asu_id"].long().to(device)
             d_obs = metadata["d"].to(device).float()
             qp = self.surrogates["qp"](
-                self.encoders["profile"](sr), mc_samples=1
+                self.encoders["profile"](sr),
+                mc_samples=1,
+                metadata=metadata,
+                mask=mask,
             )
             group_labels = (
                 metadata["group_label"].long().to(device)
