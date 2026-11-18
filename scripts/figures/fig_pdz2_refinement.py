@@ -134,12 +134,13 @@ def draw_panel(ax, stats: pl.DataFrame, metric: str, label: str,
         ax.axvspan(centre - NOISE_R_FREE, centre + NOISE_R_FREE,
                    color=figstyle().roles().get("grid", "0.85"),
                    alpha=0.45, lw=0, zorder=0)
-        # the reference line takes the reference ARM's own colour, so the
-        # line and the row it comes from agree; `reference_style`'s fixed
-        # colour collides with whichever arm happens to be given it
-        ref_style = figstyle().reference_style()
-        ref_style["color"] = palette.get(REFERENCE, ref_style["color"])
-        ax.axvline(centre, **ref_style)
+        # the reference keeps figTeX's own reference colour -- vermilion
+        # against the theme's blues -- rather than the arm colour it is
+        # drawn in. Under the witch scheme the arm colours were varied
+        # enough that matching them read better; under ink every arm is a
+        # shade of blue, so an arm-coloured reference line is invisible as
+        # a reference and the contrast is the whole point.
+        ax.axvline(centre, **figstyle().reference_style())
 
     for i, row in enumerate(stats.iter_rows(named=True)):
         colour = palette.get(row["method"])
@@ -194,7 +195,16 @@ def main() -> None:
 
         fig, axes = plt.subplots(
             1, len(PANELS), sharey=True,
-            figsize=figstyle().figsize("full", aspect=0.34),
+            # tall enough for two panels, four arm labels and an x label.
+            # figTeX typesets through LuaLaTeX at a fixed box, so text that
+            # does not fit is clipped rather than expanding the figure: at
+            # 0.34 both x labels and the longest arm name were cut off.
+            figsize=figstyle().figsize("full", aspect=0.46),
+            # constrained, as fig_profile_basis does: figTeX typesets
+            # through LuaLaTeX at a fixed box, so an axis label or a long
+            # arm name that does not fit is clipped rather than growing the
+            # figure. Both x labels and `k7m mlclamp` were being cut.
+            layout="constrained",
         )
         flat = np.atleast_1d(axes)
         # once, not per panel: the axes share y, so inverting in the loop

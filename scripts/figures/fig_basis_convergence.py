@@ -140,7 +140,11 @@ def main() -> None:
 
     fig, axes = plt.subplots(
         len(PANELS), len(present), sharex=False, squeeze=False,
-        figsize=figstyle().figsize("full", aspect=0.30 * len(PANELS)),
+        figsize=figstyle().figsize("full", aspect=0.34 * len(PANELS)),
+        # figTeX typesets through LuaLaTeX at a fixed box, so a tick label
+        # that does not fit is clipped rather than growing the figure: the
+        # 1118 effective-rank axis was showing `2.5` for `12.5`.
+        layout="constrained",
     )
 
     for col, dataset in enumerate(present):
@@ -175,8 +179,10 @@ def main() -> None:
 
     handles = [plt.Line2D([], [], color=colours[f], lw=1.4)
                for f in FAMILY_SLOT]
-    axes[0][0].legend(handles, list(FAMILY_SLOT), frameon=False,
-                      loc="lower right", handlelength=1.3)
+    # on the figure rather than in a panel: inside the first axes it sat on
+    # the 9b7c curves, and every panel shares the same two series
+    fig.legend(handles, list(FAMILY_SLOT), frameon=False, ncol=2,
+               loc="outside upper center", handlelength=1.4)
 
     path = args.out_dir / args.prefix
     figstyle().save(fig, path)

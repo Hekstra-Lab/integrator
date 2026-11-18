@@ -94,6 +94,19 @@ def save(fig, path):
     return style.save(fig, path)
 
 
+def _ensure() -> None:
+    """Make sure the theme is loaded before its colours are read.
+
+    `figtex.sizing.THEME` is empty until `style.use` has run -- it holds
+    only its own name -- so every accessor here has to tolerate being the
+    first call. `parts.ramp` reads `THEME["ramp"]` and raised
+    `KeyError: 'ramp'` from `categorical`, which killed the `shape` and
+    `arms` figures: both ask for colours before calling `use`.
+    """
+    if "ramp" not in sizing.THEME or "text_hex" not in sizing.THEME:
+        use()
+
+
 def roles() -> dict[str, str]:
     """The theme's colours, under the names the scripts already ask for.
 
@@ -103,8 +116,7 @@ def roles() -> dict[str, str]:
     were written against the scheme's names and there is no reason to edit
     forty of them to rename a key.
     """
-    if "text_hex" not in sizing.THEME:
-        use()
+    _ensure()
     t = sizing.THEME
     return {
         "ink": t["text_hex"],
@@ -126,6 +138,7 @@ def epoch_ramp(n: int):
     The ink ramp, so the order survives greyscale and colour blindness.
     `figtex.parts.epoch_bar` draws the colour bar that names the epochs.
     """
+    _ensure()
     n = max(int(n), 1)
     return sizing.ramp_cmap(), parts.ramp(n)
 
@@ -137,6 +150,7 @@ def cmap(name: str | None = None):
     rather than `viridis` or `magma`, so that changing the theme in one
     place changes them too.
     """
+    _ensure()
     return color.cmap(name) if name else sizing.ramp_cmap()
 
 
@@ -155,8 +169,15 @@ def reference_style() -> dict:
     Vermilion, solid and heavier, so it cannot be mistaken for a checkpoint
     of the epoch ramp or for one of the textured arms.
     """
+    _ensure()
     st = dict(parts.ref_style())
     st.setdefault("zorder", 5)
+    # `ls` is dropped: several callers pass their own `linestyle` beside
+    # this dict, and matplotlib refuses both spellings of one property --
+    #   TypeError: Got both 'linestyle' and 'ls', which are aliases
+    # It carried '-', which is matplotlib's default, so nothing that does
+    # not set a style looks any different without it.
+    st.pop("ls", None)
     return st
 
 
@@ -170,6 +191,7 @@ def arm_series(names) -> dict:
     Raises nothing for more than `MAX_SERIES` names: the series cycle, and
     `arm_colors` is where the ordered fallback lives.
     """
+    _ensure()
     names = list(names)
     base = texture.system(THEME, min(max(len(names), 1), MAX_SERIES),
                           reference=True)
@@ -182,6 +204,7 @@ def categorical(n: int = 6):
     `arm_colors` is the one to use where the names are training arms, so an
     arm keeps its colour across figures. This is for everything else.
     """
+    _ensure()
     n = max(int(n), 1)
     if n <= MAX_SERIES:
         return [s.color for s in texture.system(THEME, n, reference=True)]
@@ -203,6 +226,7 @@ def arm_colors(names) -> dict[str, str]:
     20-arm 1118 ablation, and they are worth revisiting rather than
     accepting as drawn.
     """
+    _ensure()
     names = list(names)
     if len(names) <= MAX_SERIES:
         pal = [s.color for s in texture.system(THEME, max(len(names), 1),
