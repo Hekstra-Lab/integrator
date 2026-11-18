@@ -5,7 +5,7 @@ had been the only copy.
 These produced every PDZ2 number the project reports, so the results were not
 reproducible from a checkout until now.
 
-The chain runs in this order. `scripts/poly/arm_pdz2.sbatch <arm>` drives
+The chain runs in this order. `scripts/poly/pdz2/arm_pdz2.sbatch <arm>` drives
 steps 4 to 8 for one trained arm, and is the entry point to use.
 
 | # | stage | script | tool it drives |
@@ -14,8 +14,8 @@ steps 4 to 8 for one trained arm, and is the entry point to use.
 | 2 | shoeboxes | `refltorch.mksbox-laue` | refltorch |
 | 3 | pool the 16 sweeps into one training set | `pool_pdz2.py` | -- |
 | 4 | train | `../train.slurm` with `CONFIG=` | integrator |
-| 5 | predict, last checkpoint | `../arm_pdz2.sbatch` | integrator |
-| 6 | split predictions into 16 per-sweep MTZs | `../split_pdz2.py` | -- |
+| 5 | predict, last checkpoint | `arm_pdz2.sbatch` | integrator |
+| 6 | split predictions into 16 per-sweep MTZs | `split_pdz2.py` | -- |
 | 7 | frame cuts and concatenation | `expt_concat.py` **(deposited)** | laue-dials |
 | 8 | scale and merge, 8 files jointly | `careless-cdef-ohp-mlpw.sh` **(deposited)** | careless |
 | 9 | CCsym and CCpred | `custom_ccsym.py`, `stats_for_production.sh` **(deposited)** | careless, rs |

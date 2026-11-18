@@ -156,7 +156,7 @@ exist; none of them needed replacing:
 | train, either arm | `scripts/{mono,poly}/cannon/run_all.sh`, or `scripts/poly/train.slurm` with `CONFIG=` |
 | post-training scoring, poly | `scripts/poly/run_pipeline.py`, or `scripts/poly/pipeline.slurm` |
 | post-training scoring, mono | `scripts/mono/cannon/03_pipeline.sh` |
-| score one PDZ2 arm end to end | `scripts/poly/arm_pdz2.sbatch <arm>` |
+| score one PDZ2 arm end to end | `scripts/poly/pdz2/arm_pdz2.sbatch <arm>` |
 | cluster output to a plot-ready table | `scripts/figures/tidy_*.py` |
 | cluster to laptop | `scripts/figures/pull_figdata.sh` |
 | draw the whole figure set | `scripts/figures/render_all.sh` |
