@@ -195,6 +195,24 @@ if has pdz2; then
   done
 fi
 
+if has models; then
+  # Parameter counts and training throughput per arm, from
+  # `compare_models.py`: the svae-against-hierarchical family comparison.
+  # `cmp_timing` is the matched-allocation measurement, kept separate from
+  # the per-dataset tables because those were read off checkpoint
+  # timestamps on whatever node the run happened to get, and only the
+  # matched one supports a claim about speed.
+  PJ=${PDZ2_JOB:-$S/jobs/pdz2figs_1118}
+  echo "models <- $PJ"
+  for f in cmp_mono cmp_1118 cmp_pdz2 cmp_timing; do
+    if ssh cannon "[ -s $PJ/$f.csv ]"; then
+      scp -q "cannon:$PJ/$f.csv" "$DEST/"
+    else
+      echo "  $f.csv: not built (run compare_models.py on the cluster)"
+    fi
+  done
+fi
+
 if has poly; then
   # the polychromatic arms, in the same columns the monochromatic tables
   # use, so one figure draws either. 1118 scales and refines; the nanoBragg

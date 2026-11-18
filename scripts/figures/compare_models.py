@@ -42,6 +42,10 @@ import subprocess
 import sys
 
 EPOCH_RE = re.compile(r"epoch=?_?(\d+)")
+# No default, and empty is refused in main(). `method` and `dataset` are the
+# key columns every file here carries, and a blank one does not merely look
+# untidy: concatenating these tables for a figure then joins rows from
+# different datasets under one empty key.
 DATASET = os.environ.get("DATASET", "")
 # the top-level module names worth reporting separately; anything else is
 # summed into "other" rather than dropped
@@ -140,10 +144,16 @@ def logs_of(run_dir: str) -> list[str]:
     # A log is not always named after its run directory: `runs/pdz2_w21_k7m`
     # was submitted as `train_w21_k7m_<jobid>.out`, the dataset tag being in
     # the path rather than the job name. Both spellings are tried.
+    parent = os.path.dirname(run_dir.rstrip("/"))
     cands = [arm] + ([arm.split("_", 1)[1]] if "_" in arm else [])
     found = sorted(glob.glob(f"{run_dir}/*.out"))
+    # the immediate parent as well as one above it: PDZ2 puts runs in
+    # `<base>/runs/<arm>` and logs in `<base>/logs`, while a job submitted
+    # from the directory holding the runs leaves its log right beside them
     for cand in cands:
         for pattern in (f"{run_dir}/logs/*{cand}*.out",
+                        f"{parent}/logs/*{cand}*.out",
+                        f"{parent}/*{cand}*.out",
                         f"{up}/logs/*{cand}*.out",
                         f"{up}/*{cand}*.out"):
             found += sorted(glob.glob(pattern))
@@ -254,6 +264,13 @@ def rows_for(run_dir: str) -> list[dict]:
 
 
 def main() -> None:
+    if not DATASET:
+        raise SystemExit(
+            "set DATASET to the dataset these runs trained on, e.g.\n"
+            "    DATASET=pdz2_1116 python compare_models.py out.csv <run-dir>...\n"
+            "It is a key column in the table written here and cannot be "
+            "guessed from the run directory."
+        )
     if len(sys.argv) < 3:
         raise SystemExit(__doc__)
     out_csv, runs = sys.argv[1], sys.argv[2:]

@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-279 scripts.
+280 scripts.
 
 ## Start here
 
@@ -160,6 +160,7 @@ per job, and it lives in the repo".
 | `figures/fig_careless_stats.py` | What careless reports and DIALS cannot be asked for, by resolution shell. |
 | `figures/fig_ccsym.py` | CCsym by resolution shell, one panel per pump delay, arms on one axis. |
 | `figures/fig_detector_patch.py` | One patch of one diffraction image, and the profiles drawn inside it. |
+| `figures/fig_model_cost.py` | What the svae and hierarchical families cost: parameters, and time per epoch. |
 | `figures/fig_pdz2_refinement.py` | R-work and R-free per PDZ2 arm, against `laue.integrate`. |
 | `figures/fig_profile_basis.py` | Every component of the learned profile basis, and how it settled. |
 | `figures/fig_profile_shape.py` | Does a profile model follow the spot shape of the reflections beside it? |
