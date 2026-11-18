@@ -29,6 +29,9 @@ mkdir -p "$DEST"
 #                            careless.stats tables
 # poly                       tidy_poly.py over the 1118 ablation arms and the
 #                            nanoBragg DHFR simulation arms
+# hparams                    tidy_hparams.py over each run's config_log.yaml:
+#                            what every model was configured with, with a
+#                            `varies` flag across the arms compared
 # basis                      dump_basis.py over the checkpoints: the learned
 #                            profile basis per epoch, as npz plus a
 #                            per-component table
@@ -218,6 +221,42 @@ if has poly; then
       tail -n +2 "$tmp/$f.csv" >> "$DEST/$f.csv"
     fi
   done
+fi
+
+if has hparams; then
+  # What each model was configured with, from each run's own config_log.yaml.
+  # `varies` is a property of the SET, so every arm belonging in one table is
+  # passed in one invocation and the four datasets are run separately.
+  PJ=${PDZ2_JOB:-$S/jobs/pdz2figs_1118}
+  echo "hparams <- $PJ"
+  ssh cannon "[ -s $PJ/tidy_hparams.py ]" || scp -q "$HERE/scripts/figures/tidy_hparams.py" "cannon:$PJ/"
+  ssh cannon "export PYTHONPATH=$PJ
+    DATASET=hewl_9b7c $P $PJ/tidy_hparams.py $PJ/hp_mono \
+      $S/mono9b7c/hewl9b7c_mono_expmean_lp $S/mono9b7c/hewl9b7c_svae \
+      $S/sim_runs/m9_gate_learned $S/sim_runs/m9_geomshift $S/sim_runs/m9_geom \
+      $S/sim_runs/m9_geomresp $S/sim_runs/m9_geomrespsteer
+    DATASET=hewl_1118 $P $PJ/tidy_hparams.py $PJ/hp_1118 \
+      $S/full1000/learned $S/hier1000/softmax_std \
+      \$(ls -1d $S/ablate2/q* | tr '\n' ' ')
+    DATASET=pdz2_1116 $P $PJ/tidy_hparams.py $PJ/hp_pdz2 \
+      \$(ls -1d $S/laue_runs/pdz2_model/runs/pdz2_* | tr '\n' ' ')
+    DATASET=dhfr_sim $P $PJ/tidy_hparams.py $PJ/hp_sim \
+      ${SIM_HP_ARMS:-$S/sim_runs/sim_qc $S/sim_runs/sim_qc_resp \
+      $S/sim_runs/sim_qc_sigma $S/sim_runs/sim_shapelet \
+      $S/sim_runs/sim_geom_full}" || exit 1
+  tmp=$(mktemp -d)
+  for set in mono 1118 pdz2 sim; do
+    scp -q "cannon:$PJ/hp_$set/hparams.csv" "$tmp/h_$set.csv" 2>/dev/null
+    scp -q "cannon:$PJ/hp_$set/hparam_labels.csv" "$tmp/l_$set.csv" 2>/dev/null
+  done
+  if [ -s "$tmp/h_mono.csv" ]; then
+    head -1 "$tmp/h_mono.csv" > "$DEST/hparams.csv"
+    for set in mono 1118 pdz2 sim; do
+      [ -s "$tmp/h_$set.csv" ] && tail -n +2 "$tmp/h_$set.csv" >> "$DEST/hparams.csv"
+    done
+    head -1 "$tmp/l_mono.csv" > "$DEST/hparam_labels.csv"
+    cat "$tmp"/l_*.csv | grep -v "^parameter," | sort -u >> "$DEST/hparam_labels.csv"
+  fi
 fi
 
 if has basis; then

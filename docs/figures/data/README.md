@@ -143,6 +143,46 @@ Colour comes from the witch scheme, one colour per arm, assigned in
   The rows are from file index 0 of the eight-file merge, which is the
   field-off C2 merge -- the file the refinement endpoint uses.
 
+`hparams.csv` and `hparam_labels.csv`
+: One row per (`method`, `dataset`, `group`, `parameter`), with `value`,
+  `unit` and `varies`.
+  What every model was configured with, read from each run's **own**
+  `config_log.yaml` rather than from the repository config -- they are not
+  the same file, and `configs/poly/pdz2_1116.yaml` today says
+  `hierarchical_3enc` while every PDZ2 run on disk trained `hierarchical`.
+  Nothing new is logged during training to produce this; the settings were
+  always recorded and only the reading was missing.
+  `varies` is 1 where a parameter differs across the arms in the table, and
+  that is a property of the **set**: a table is built by passing every arm
+  that belongs in it to one invocation, and concatenating two halves gives
+  a `varies` column that is wrong in both. A parameter absent from one arm
+  counts as varying, because an arm without a setting differs from one that
+  has it.
+  Repeated encoders collapse: the hierarchical integrator takes four
+  identical intensity encoders through a YAML anchor, and they are reported
+  once with `encoder.intensity_encoder.n`, since four identical rows in a
+  paper table are noise.
+  Output directories, checkpoint paths and logger settings are dropped --
+  they record where output went, not what was configured.
+  The reading is in `integrator.utils.hparams` and pinned by
+  `tests/test_hparams.py`; `scripts/figures/tidy_hparams.py` only locates
+  the runs.
+
+`cmp_mono.csv`, `cmp_1118.csv`
+: One row per (`method`, `dataset`, `integrator`, `qp`, `quantity`), with
+  `value` and `unit`.
+  `quantity` is `n_params_<module>` and `n_params_total`, summed from the
+  checkpoint's state dict; `n_epochs`; `seconds_per_epoch`; and
+  `timing_intervals`.
+  Seconds per epoch is the **median** over the gaps between consecutive
+  checkpoints divided by the checkpoint stride -- median because a requeued
+  job leaves one enormous interval that a mean would report as a slow
+  model. `timing_intervals` is how many gaps that median was taken over, so
+  a run with too few to mean anything is visible.
+  It compares only runs on the same hardware and the same dataset.
+  Inference time is **not** here and is recorded nowhere: it needs a timed
+  predict pass on fixed hardware.
+
 `arm_metrics.csv`
 : One row per (`method`, `dataset`, `estimator`, `metric`).
   `estimator` is `rb` (the Rao-Blackwellized profile fit computed at export,
