@@ -10,9 +10,13 @@
 predict:
   env: integrator               # micromamba env with integrator + torch
   write_mtz: true               # -> <predictions>/epoch_XXXX/preds_epoch_XXXX.mtz
-  epoch: last                   # last | all | <int>. `all` walks every
-                                #   checkpoint: 20 passes over 2.66M
-                                #   reflections for the one MTZ used.
+  epoch: last                   # last | all | every:<n> | <int>.
+                                #   POLYCHROMATIC DEFAULTS TO `last`: one
+                                #   careless scale is tens of GPU-minutes, so
+                                #   a 20-checkpoint run is a day of it. Set
+                                #   every:<n> only once the data to test is
+                                #   settled. (Monochromatic is CPU DIALS and
+                                #   phenix and can afford every:<n> freely.)
 
 careless:
   env: crls
@@ -23,6 +27,31 @@ careless:
                                 #   table the monochromatic arm also writes
   seed: null                    # null -> careless default; set for reproducibility
   extra_args: []                # appended verbatim, after the config's flags
+
+stats:                          # careless.stats -> one CSV per tool, plus a
+                                #   long-format careless_stats.csv the figures
+                                #   read. Runs after careless, before phenix.
+  env: crls
+  out_dir: stats                # created next to the careless output
+  bins: 10                      # overrides every tool's own default
+  method: null                  # null | pearson | spearman | weighted;
+                                #   applies to cchalf, ccanom and ccpred only
+  intensity_key: "I(+)"         # isigi reads the MERGED mtz and has no
+  uncertainty_key: "SigI(+)"    #   default key: an anomalous merge carries
+                                #   I(+)/I(-), never a plain I, and leaving
+                                #   these unset raises `KeyError: None`.
+  tools:                        # drop any that a given run cannot answer
+    - cchalf                    #   <base>_xval_0.mtz  (needs repeat/half)
+    - ccanom                    #   <base>_xval_0.mtz
+    - rsplit                    #   <base>_xval_0.mtz
+    - ccpred                    #   <base>_predictions_0.mtz (Iobs/Ipred)
+    - isigi                     #   <base>_0.mtz  (merged)
+    - completeness              #   <base>_0.mtz
+  extra_args: []                # appended verbatim to every tool
+
+keys:                           # the key columns written into the tidy CSVs
+  method: integrator
+  dataset: hewl_1118
 
 phenix:
   env: /n/lab_storage/hekstra_lab/garden_2/phenix-2.0-5729

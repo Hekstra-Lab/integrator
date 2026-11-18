@@ -29,7 +29,7 @@ there.
 | --- | --- | --- |
 | 1 | Pre-flight | `python scripts/preflight.py --config configs/poly/hewl1118_poly.yaml --pipeline-cfg scripts/poly/poly_pipeline_cfg.yaml` |
 | 2 | Train | `sbatch scripts/poly/train.slurm` |
-| 3 | Predict → careless → refine → peaks | `RUN_DIR=<run-dir> sbatch scripts/poly/pipeline.slurm` |
+| 3 | Predict → careless → stats → refine → peaks | `RUN_DIR=<run-dir> sbatch scripts/poly/pipeline.slurm` |
 | 4 | Figures | `python scripts/make_training_figures.py --run-dir <run-dir>` |
 
 Print every command in step 3 without running it:
@@ -38,6 +38,52 @@ Print every command in step 3 without running it:
 python scripts/poly/run_pipeline.py --run-dir <run-dir> --dry-run
 python scripts/poly/run_pipeline.py --run-dir <run-dir> --config 1   # a different careless recipe
 ```
+
+## How many checkpoints to score
+
+`predict.epoch` in the pipeline config takes `last`, `all`, `every:<n>` or an
+epoch number, resolved by `integrator.utils.checkpoints`, which the
+monochromatic arm uses too.
+
+**Polychromatic defaults to `last`.** One careless scale is tens of GPU-minutes,
+so a 20-checkpoint run is a day of them for a figure that reads one point.
+Set `every:<n>` only once the data to test is settled.
+Monochromatic defaults to `every:5` instead, because its chain is DIALS and
+phenix on CPU.
+
+`every:<n>` is a stride in epochs, not a divisibility test, and always keeps
+the final checkpoint: a run saving every 5 epochs from epoch 4 has them at
+4, 9, ..., 49, none of which is a multiple of 5.
+
+## The careless.stats step
+
+Step `stats` runs every `careless.stats` tool against the right one of
+careless's three outputs and writes a CSV per tool, plus a long-format
+`careless_stats.csv` carrying the `method`, `dataset` and `epoch` key columns
+the figures group on.
+
+| tool | reads | gives |
+| --- | --- | --- |
+| `cchalf` | `<base>_xval_0.mtz` | CChalf per shell, per crossvalidation repeat |
+| `ccanom` | `<base>_xval_0.mtz` | CCanom per shell |
+| `rsplit` | `<base>_xval_0.mtz` | Rsplit per shell |
+| `ccpred` | `<base>_predictions_0.mtz` | CCpred per shell, Train against Test |
+| `isigi` | `<base>_0.mtz` | I/sigma per shell |
+| `completeness` | `<base>_0.mtz` | completeness, all / anomalous / non-anomalous |
+
+The three outputs are not interchangeable: the crossvalidation file carries
+`repeat` and `half`, the predictions file carries `test`, `Iobs` and `Ipred`,
+and the merged file carries `I(+)`/`SigI(+)`. Handing a tool the wrong one
+raises a `KeyError` on the column it wanted.
+
+`isigi` has no default intensity key and raises `KeyError: None` against an
+anomalous merge, which has `I(+)`/`I(-)` and no plain `I`; `stats.intensity_key`
+and `stats.uncertainty_key` name them, defaulting to `I(+)`/`SigI(+)`.
+
+The `crls` environment predates the storage migration, so its console scripts
+still begin `#!/n/hekstra_lab/...` and fail with "bad interpreter". Every
+careless call here goes through `via_python`, which resolves the script and
+hands it to the active interpreter instead.
 
 ## The careless configs
 

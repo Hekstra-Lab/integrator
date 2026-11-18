@@ -8,6 +8,16 @@ it. Windows are placed exactly as `integrator.make_shoeboxes --laue` places them
 (centred on `floor(xyzcal.px)`, slid inward at the panel edges), and the output is
 the format `PolychromaticDataModule` reads.
 
+By default the reflection set is predicted from that truth. `--from-refl` takes
+it from a DIALS reflection table instead -- normally `laue.integrate`'s own
+`integrated.refl` -- so that our arm integrates exactly the reflections
+laue.integrate reported, at exactly its centroids and window placement. That is
+what the per-reflection error comparison against the truth-mask sum needs: with
+the footprints shared, the only thing left varying between the arms is the
+estimator. The crystal metadata still
+comes from the h5, because `physics.yaml` and `crystal_models.npz` describe the
+simulation rather than the reflection set.
+
 Two stages, because the environments that can read these CBFs and the one that
 runs the integrator are different (see the dhfr_nanobragg_simulation notes):
 
@@ -49,6 +59,57 @@ def _load_predictor():
     raise FileNotFoundError(f"laue_predict.py not found in {candidates}")
 
 
+class _ReflSet:
+    """The subset of a `predict_laue` result that `cut` consumes, from a refl table."""
+
+    __slots__ = ("hkl", "xy", "d", "wavelength", "n_harmonics", "s1")
+
+    def __init__(self, hkl, xy, d, wavelength, n_harmonics, s1):
+        self.hkl = hkl
+        self.xy = xy
+        self.d = d
+        self.wavelength = wavelength
+        self.n_harmonics = n_harmonics
+        self.s1 = s1
+
+
+def _refl_sets_by_image(refl_path: str, cell: np.ndarray) -> dict:
+    """Group a DIALS reflection table into one `_ReflSet` per image.
+
+    `id` is the experiment index and the shots are named 1-based, so
+    image_num = id + 1; `truth.expt` was built in sorted shot order and that
+    mapping is checked there.
+
+    The resolution is recomputed from the orthorhombic cell rather than read
+    from the table, so it cannot disagree with the truth-mask binning.
+    """
+    from dials.array_family import flex
+
+    refls = flex.reflection_table.from_file(refl_path)
+    ids = refls["id"].as_numpy_array()
+    hkl = np.asarray(refls["miller_index"], dtype=np.int64).reshape(-1, 3)
+    xy = refls["xyzcal.px"].as_numpy_array()[:, :2]
+    lam = (refls["wavelength"].as_numpy_array() if "wavelength" in refls
+           else np.full(len(refls), np.nan))
+    s1 = (refls["s1"].as_numpy_array() if "s1" in refls
+          else np.zeros((len(refls), 3)))
+    nh = (refls["harmonics"].as_numpy_array().astype(np.int64) + 1
+          if "harmonics" in refls else np.ones(len(refls), dtype=np.int64))
+    d = 1.0 / np.sqrt(
+        (hkl[:, 0] / cell[0]) ** 2
+        + (hkl[:, 1] / cell[1]) ** 2
+        + (hkl[:, 2] / cell[2]) ** 2
+    )
+    out = {}
+    for i in np.unique(ids):
+        m = ids == i
+        out[int(i) + 1] = _ReflSet(
+            hkl[m], xy[m], d[m], lam[m], nh[m], s1[m]
+        )
+    print(f"{len(refls):,} reflections over {len(out)} images from {refl_path}")
+    return out
+
+
 def _window(x: int, y: int, n: int, n_fast: int, n_slow: int) -> tuple[int, int, int, int]:
     """Same placement as `make_shoeboxes._shift_bbox_xy` for a window that fits the panel."""
     half = n // 2
@@ -63,7 +124,7 @@ def cut(args):
     import h5py
     from numpy.lib.format import open_memmap
 
-    predict_laue = _load_predictor().predict_laue
+    predict_laue = None if args.from_refl else _load_predictor().predict_laue
     data = Path(args.data_dir)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -71,6 +132,16 @@ def cut(args):
     if args.max_images:
         shots = shots[: args.max_images]
     n = args.size
+
+    refl_sets = None
+    if args.from_refl:
+        # the cell is only used to recompute d, and is orthorhombic here
+        import h5py as _h5
+
+        with _h5.File(shots[0].with_suffix(".h5"), "r") as f:
+            B0 = f["Bmat"][()].reshape(3, 3)
+        cell0 = np.array([1.0 / B0[0, 0], 1.0 / B0[1, 1], 1.0 / B0[2, 2]])
+        refl_sets = _refl_sets_by_image(args.from_refl, cell0)
 
     per_image = []
     for cbf in shots:
@@ -86,10 +157,16 @@ def cut(args):
         pix0 = np.asarray(panel.get_origin())
         fdet, sdet = np.asarray(panel.get_fast_axis()), np.asarray(panel.get_slow_axis())
         n_fast, n_slow = panel.get_image_size()
-        ref = predict_laue(
-            U @ B, s0_hat, args.lambda_min, args.lambda_max, args.dmin,
-            pix0, fdet, sdet, panel.get_pixel_size()[0], n_fast, n_slow,
-        )
+        if refl_sets is not None:
+            ref = refl_sets.get(image_num)
+            if ref is None:
+                print(f"{cbf.name}: no reflections in the table, skipped")
+                continue
+        else:
+            ref = predict_laue(
+                U @ B, s0_hat, args.lambda_min, args.lambda_max, args.dmin,
+                pix0, fdet, sdet, panel.get_pixel_size()[0], n_fast, n_slow,
+            )
         per_image.append(dict(cbf=cbf, image_num=image_num, U=U, B=B, mos=mos, ref=ref))
         print(f"{cbf.name}: {len(ref.hkl)} reflections")
 
@@ -253,6 +330,13 @@ def main():
     c.add_argument("--lambda-max", type=float, default=1.18)
     c.add_argument("--size", type=int, default=21)
     c.add_argument("--test-fraction", type=float, default=0.1)
+    c.add_argument(
+        "--from-refl",
+        default=None,
+        help="take the reflection set, centroids and wavelengths from this "
+        "DIALS reflection table instead of predicting them from the truth; "
+        "use laue.integrate's integrated.refl to share footprints with it",
+    )
     f = sub.add_parser("finalize")
     f.add_argument("--out", required=True)
     f.add_argument("--size", type=int, default=21)

@@ -20,6 +20,10 @@
 #   --to STAGE        stop after here
 #   --only STAGE      exactly one stage
 #   --epochs N        training epochs (default 40)
+#   --score-epochs S  which checkpoints the downstream chain scores:
+#                     last | every:<n> | all | <int>. Default every:5 --
+#                     mono scales with DIALS and refines with phenix on
+#                     CPU, so a trajectory is affordable here.
 #   --config FILE     training config (default configs/mono/hewl9b7c_mono.yaml)
 #   --process-cfg F   downstream DIALS/phenix config (default from env.sh)
 #   --no-preflight    skip the pre-submission validation
@@ -33,6 +37,7 @@ STAGES=(train pipeline figures plots)
 FROM=train
 TO=plots
 EPOCHS="${EPOCHS:-40}"
+SCORE_EPOCHS="${SCORE_EPOCHS:-every:5}"
 DRY=0
 PREFLIGHT=1
 RUN_NAME="${RUN_NAME:-mono_hewl9b7c_$(date +%Y%m%d)}"
@@ -44,6 +49,7 @@ while [[ $# -gt 0 ]]; do
         --to)            TO="$2"; shift 2;;
         --only)          FROM="$2"; TO="$2"; shift 2;;
         --epochs)        EPOCHS="$2"; shift 2;;
+        --score-epochs)  SCORE_EPOCHS="$2"; shift 2;;
         --config)        CONFIG="$2"; shift 2;;
         --process-cfg)   PROCESS_CFG="$2"; shift 2;;
         --no-preflight)  PREFLIGHT=0; shift;;
@@ -115,7 +121,7 @@ fi
 if [[ "$from_i" -le 1 && "$to_i" -ge 1 ]]; then
     jobs[pipeline]=$(submit pipeline "$dep" "${GPU_ARGS[@]}" \
         -J pipeline -o "pipeline_%j.out" -e "pipeline_%j.err" \
-        --wrap "cd $KIT_DIR && RUN_DIR=$run_dir PROCESS_CFG=$PROCESS_CFG ./03_pipeline.sh")
+        --wrap "cd $KIT_DIR && RUN_DIR=$run_dir PROCESS_CFG=$PROCESS_CFG SCORE_EPOCHS=$SCORE_EPOCHS ./03_pipeline.sh")
     dep="${jobs[pipeline]}"
 fi
 

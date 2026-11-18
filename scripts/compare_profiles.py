@@ -33,17 +33,37 @@ def parse_args():
         "--n-samples", type=int, default=16,
         help="Number of random reflections to plot",
     )
+    parser.add_argument(
+        "--pred-dir", type=Path, default=None,
+        help="Prediction dir holding epoch_* subdirs; overrides run_paths.yaml "
+             "(the rb export writes <run>/rb, not <run>/predictions)",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--out", type=str, default=None)
     return parser.parse_args()
+
+
+def _log_dir(meta: dict) -> Path:
+    """Checkpoint root from `run_paths.yaml`, under either layout.
+
+    The runner writes `log_dir` at the top level; W&B runs nested it under
+    `wandb`, and reading only the nested key raises `KeyError` on every run
+    written since.
+    """
+    nested = (meta.get("wandb") or {}).get("log_dir")
+    top = meta.get("log_dir")
+    if not (nested or top):
+        raise KeyError(f"no log_dir in run_paths.yaml: keys {sorted(meta)}")
+    return Path(nested or top)
 
 
 def load_run_info(run_dir: Path) -> tuple[dict, Path]:
     """Load config and find prediction directory from run_paths.yaml."""
     meta = yaml.safe_load((run_dir / "run_paths.yaml").read_text())
     cfg = yaml.safe_load((run_dir / "config_log.yaml").read_text())
-    log_dir = Path(meta["wandb"]["log_dir"])
-    pred_dir = log_dir.parent / "predictions"
+    log_dir = _log_dir(meta)
+    declared = meta.get("predictions_dir")
+    pred_dir = Path(declared) if declared else log_dir.parent / "predictions"
     return cfg, pred_dir
 
 
@@ -139,7 +159,7 @@ def compute_tau_from_checkpoint(run_dir, d_vals, wavelength_vals):
     import torch.nn.functional as F
 
     meta = yaml.safe_load((run_dir / "run_paths.yaml").read_text())
-    log_dir = Path(meta["wandb"]["log_dir"])
+    log_dir = _log_dir(meta)
     ckpt_dir = log_dir / "checkpoints"
 
     last_ckpt = ckpt_dir / "last.ckpt"
@@ -195,6 +215,8 @@ def main():
     run_dir = args.run_dir.resolve()
 
     cfg, pred_dir = load_run_info(run_dir)
+    if args.pred_dir is not None:
+        pred_dir = args.pred_dir
     epoch_dir = find_epoch_dir(pred_dir, args.epoch)
     epoch_num = epoch_dir.name.replace("epoch_", "")
 

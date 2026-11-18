@@ -82,6 +82,29 @@ def parse_args():
         action="store_true",
         help="skip the anomalous peak search even when the data is anomalous",
     )
+    p.add_argument(
+        "--expect-anomalous",
+        action="store_true",
+        help=(
+            "treat the data as anomalous without a dataset card saying so. "
+            "`expect_anomalous` comes from dataset_card.json, which only the "
+            "SBGrid ingestion writes, so datasets predating it -- hewl_9b7c "
+            "among them -- silently refine against IMEAN and skip the peak "
+            "search. --no-peaks still overrides this"
+        ),
+    )
+    p.add_argument(
+        "--labels",
+        default=None,
+        help=(
+            "phenix `xray_data.labels` to refine against, overriding the "
+            "automatic choice. Needed when an MTZ carries both amplitudes and "
+            "intensities, since phenix refuses to guess between them, and when "
+            "the sigma columns are not spelled SIGI/SIGF -- careless writes "
+            "`SigI(+)`, which the automatic label string does not match. "
+            'Example: --labels "I(+),SigI(+),I(-),SigI(-)"'
+        ),
+    )
     p.add_argument("--dry-run", action="store_true")
     return p.parse_args()
 
@@ -244,8 +267,15 @@ def ligand_restraints(
         False,
         out_dir / "ready_set.log",
     )
+    # `*.updated.cif` is ready_set's own model written as mmCIF, not a
+    # restraint dictionary. Passing it as a monomer file makes phenix read a
+    # second model and refuse. When every ligand is already in the monomer
+    # library -- 7LVC's FOL and NAP are -- ready_set writes no restraints at
+    # all, and the right answer is an empty list.
     cifs = sorted(out_dir.glob("*.ligands.cif")) or sorted(
-        c for c in out_dir.glob("*.cif") if "ready_set" not in c.name
+        c
+        for c in out_dir.glob("*.cif")
+        if "ready_set" not in c.name and not c.name.endswith(".updated.cif")
     )
     if cifs:
         print(f"  restraints: {[p.name for p in cifs]}")
@@ -310,7 +340,9 @@ def main():
         model = fetch_model(pdb_id, args.data_dir or out_dir)
 
     sites = anomalous_sites(model)
-    anomalous = bool(card.get("expect_anomalous")) and not args.no_peaks
+    anomalous = (
+        bool(card.get("expect_anomalous")) or args.expect_anomalous
+    ) and not args.no_peaks
     print(f"mtz       {args.mtz}")
     print(f"model     {model}")
     print(f"anomalous {anomalous}"
@@ -321,7 +353,7 @@ def main():
         mtz = ensure_free_flags(
             mtz, out_dir, args.rfree_fraction, args.rfree_seed, args.rfree_from
         )
-    labels = None if args.dry_run else xray_labels(mtz, anomalous)
+    labels = args.labels or (None if args.dry_run else xray_labels(mtz, anomalous))
     if labels:
         print(f"  refining against {labels}")
     cifs, model = ligand_restraints(Path(model), out_dir, args.dry_run)
@@ -333,7 +365,10 @@ def main():
         f"refinement.main.number_of_macro_cycles={args.macro_cycles} "
         + (f'refinement.input.xray_data.labels="{labels}" ' if labels else "")
         + restraints
-        + "refinement.output.prefix=refined --overwrite"
+        # `output` is a top-level scope in phenix 2.0, not a child of
+        # `refinement`: the qualified spelling is rejected outright, and the
+        # run dies before refining anything
+        + "output.prefix=refined --overwrite"
     )
     if args.anisotropic:
         # hydrogens stay isotropic: they ride on their parent atom and carry no

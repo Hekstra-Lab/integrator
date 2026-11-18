@@ -32,6 +32,13 @@ def parse_args():
         type=Path,
         help="Directory of epoch*.ckpt files for progression plot",
     )
+    source.add_argument(
+        "--data",
+        type=Path,
+        help="Draw the reported G(λ) figure from a spectrum.csv written by "
+        "--ckpt-dir. Needs figTeX and no checkpoint, so it runs where the "
+        "document fonts are.",
+    )
     parser.add_argument(
         "--out", type=str, default=None, help="Output image path"
     )
@@ -40,6 +47,14 @@ def parse_args():
         type=Path,
         default=None,
         help="Path to metadata.pt for Wilson prior τ(λ,d) plot",
+    )
+    parser.add_argument(
+        "--method", default=None,
+        help="`method` key column in spectrum.csv (default: the run name)",
+    )
+    parser.add_argument(
+        "--dataset", default="hewl_1118",
+        help="`dataset` key column in spectrum.csv",
     )
     return parser.parse_args()
 
@@ -273,6 +288,77 @@ def _save_spectrum_csv(csv_path, lam_np, epochs, G_curves):
     print(f"wrote {csv_path}")
 
 
+def _save_spectrum_long(csv_path, lam_np, epochs, G_curves, method, dataset):
+    """The same curves in the long format the reported figures read.
+
+    `spectrum_progression.csv` beside it is one column per epoch, which is
+    convenient to read by eye and wrong for anything that groups; this is the
+    one with `method` and `dataset` key columns.
+    """
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["method", "dataset", "epoch", "wavelength", "G"])
+        for ep, G in zip(epochs, G_curves, strict=True):
+            for lam, g in zip(lam_np, G, strict=True):
+                writer.writerow(
+                    [method, dataset, int(ep), f"{lam:.6f}", f"{g:.6f}"]
+                )
+    print(f"wrote {csv_path}")
+
+
+def draw_spectrum_from_csv(csv_path, out_path):
+    """The reported G(λ) figure: one line per checkpoint on the epoch ramp.
+
+    figTeX is imported here rather than at module scope because everything
+    above this runs on the cluster, where it is deliberately absent.
+    """
+    import sys as _sys
+
+    here = Path(__file__).resolve().parent / "figures"
+    if str(here) not in _sys.path:
+        _sys.path.insert(0, str(here))
+    import figstyle
+
+    rows = {}
+    lam = []
+    with open(csv_path, newline="") as f:
+        for r in csv.DictReader(f):
+            ep = int(r["epoch"])
+            rows.setdefault(ep, []).append(float(r["G"]))
+            if ep == min(rows):
+                lam.append(float(r["wavelength"]))
+    if not rows:
+        raise SystemExit(f"no rows in {csv_path}")
+    epochs = sorted(rows)
+    lam = np.asarray(lam[: len(rows[epochs[0]])])
+
+    figstyle.use()
+    cmap, colors = figstyle.epoch_ramp(len(epochs))
+    fig, axes = plt.subplots(
+        2, 1, figsize=figstyle.figsize("full", aspect=0.85),
+        sharex=True, layout="constrained",
+    )
+    roles = figstyle.roles()
+    for i, ep in enumerate(epochs):
+        G = np.asarray(rows[ep])
+        axes[0].plot(lam, G, color=colors[i], lw=1.0)
+        axes[1].plot(lam, np.log(np.maximum(G, 1e-30)), color=colors[i], lw=1.0)
+    axes[0].set_ylabel(r"$G(\lambda)$")
+    axes[1].set_ylabel(r"$\log G(\lambda)$")
+    axes[1].set_xlabel(r"wavelength (\AA)")
+    for ax in axes:
+        ax.grid(True, color=roles["grid"], lw=0.4, alpha=0.6)
+        ax.set_axisbelow(True)
+    sm = ScalarMappable(
+        norm=Normalize(vmin=min(epochs), vmax=max(epochs)), cmap=cmap
+    )
+    fig.colorbar(sm, ax=axes, label="epoch", pad=0.02)
+    paths = figstyle.save(fig, Path(out_path))
+    plt.close(fig)
+    for p in paths:
+        print(p)
+
+
 def _save_bfactor_csv(csv_path, epochs, B_values):
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
@@ -299,7 +385,9 @@ def _extract_bg_prior_curves(sd):
     return r.numpy(), bg_rate, bg_conc
 
 
-def plot_epoch_progression(ckpt_dir, out_dir, metadata_path=None):
+def plot_epoch_progression(
+    ckpt_dir, out_dir, metadata_path=None, method=None, dataset="hewl_1118"
+):
     """Plot G(λ) curves and B-factor across all epoch checkpoints."""
     ckpt_paths = sorted(ckpt_dir.glob("epoch*.ckpt"))
     if not ckpt_paths:
@@ -433,6 +521,10 @@ def plot_epoch_progression(ckpt_dir, out_dir, metadata_path=None):
 
     _save_spectrum_csv(
         out_dir / "spectrum_progression.csv", lam_np, epochs, G_curves
+    )
+    _save_spectrum_long(
+        out_dir / "spectrum.csv", lam_np, epochs, G_curves,
+        method or run_name, dataset,
     )
 
     # --- Wilson prior E[I] progression ---
@@ -962,13 +1054,18 @@ def plot_single_checkpoint(args):
 def main():
     args = parse_args()
 
-    if args.ckpt_dir is not None:
+    if args.data is not None:
+        draw_spectrum_from_csv(args.data, args.out or "spectrum")
+    elif args.ckpt_dir is not None:
         if args.out is not None:
             out_dir = Path(args.out)
         else:
             out_dir = _default_plot_dir(args.ckpt_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
-        plot_epoch_progression(args.ckpt_dir, out_dir, metadata_path=args.metadata)
+        plot_epoch_progression(
+            args.ckpt_dir, out_dir, metadata_path=args.metadata,
+            method=args.method, dataset=args.dataset,
+        )
     else:
         plot_single_checkpoint(args)
 

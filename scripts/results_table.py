@@ -39,14 +39,10 @@ metrics. That mistake has been made once already.
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 from pathlib import Path
 
-RESULT_RE = re.compile(
-    r"^RESULT\s+(\S+)\s+Final R-work = ([\d.]+), R-free = ([\d.]+)", re.M
-)
-PEAKS_RE = re.compile(r"^PEAKS\s+(\S+)\s+(\S+)", re.M)
+from integrator.utils import metrics
 
 # The replicate floors measured from four runs of one configuration
 # (docs/ablation_1118_360.md). Anything inside these is not an effect.
@@ -55,26 +51,31 @@ FLOOR_PEAK = 0.31
 
 
 def parse(text: str) -> dict[str, dict]:
-    """Pull the arm -> {r_work, r_free, peaks} map out of a chain log."""
+    """Pull the arm -> {r_work, r_free, peaks} map out of a chain log.
+
+    The line format is `integrator.utils.metrics`'s, not a private regular
+    expression: the one here read `RESULT <arm> Final R-work = ...` and the
+    chain has long emitted `RESULT <arm>_<variant> | Final R-work = ...`, so
+    it matched nothing and rendered an empty table instead of raising.
+    Keyed by the full label (`m9_geomshift_rb_F`) so the two estimators and
+    the two variants stay separate rows, which is what the table compares.
+    """
     out: dict[str, dict] = {}
-    for arm, rw, rf in RESULT_RE.findall(text):
-        out.setdefault(arm, {})["r_work"] = float(rw)
-        out[arm]["r_free"] = float(rf)
-    for arm, peaks in PEAKS_RE.findall(text):
-        try:
-            vals = [float(v) for v in peaks.split(",")]
-        except ValueError:
-            continue
-        out.setdefault(arm, {})["peaks"] = vals
+    for row in metrics.parse_result_lines(text):
+        key = f"{row['label']}_{row['variant']}"
+        out.setdefault(key, {})["r_work"] = row["r_work"]
+        out[key]["r_free"] = row["r_free"]
+    for row in metrics.parse_peaks_lines(text):
+        key = f"{row['label']}_{row['variant']}"
+        out.setdefault(key, {})["peaks"] = row["peaks"]
     return out
 
 
 def read_peak_csv(path: Path, r_free: float | None) -> dict[str, dict]:
     """A `peak_heights.csv` from `config4_refine`: a header row and one row of values."""
-    rows = [r for r in path.read_text().splitlines() if r.strip()]
-    if len(rows) < 2:
+    peaks = [r["peakz"] for r in metrics.peak_heights_from_csv(path)]
+    if not peaks:
         raise SystemExit(f"{path} has no values row")
-    peaks = [float(v) for v in rows[-1].split(",")]
     return {path.parent.name: {"r_free": r_free, "peaks": peaks}}
 
 

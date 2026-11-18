@@ -24,13 +24,22 @@ Filling `/n/holylabs` makes every `sbatch` fail at launch (SLURM can't create th
 |---|---|---|
 | preflight | `00_preflight.sh` | validate config + dataset + model build (mode-aware; no GPU) |
 | train | `02b_train_requeue.sh` | `integrator.train` on `gpu_requeue`, requeue-safe, resumes from `last.ckpt` |
-| pipeline | `03_pipeline.sh` | predict (single ckpt) → DIALS scale+merge → phenix.refine → `rs.find_peaks` → `merging_stats.csv` |
+| pipeline | `03_pipeline.sh` | predict (every checkpoint `SCORE_EPOCHS` selects) → DIALS scale+merge → phenix.refine → `rs.find_peaks` → `merging_stats.csv` |
 | figures | `04_figures.sh` | per-run training figures + HTML report |
 | plots | `05_plots.sh` | multi-model comparison via shared `scripts/make_figures.sh` + `plot_cfg.yaml` |
 
-`03_pipeline.sh` is a single job (not an array): with single-checkpoint predict
-there is exactly one refl file, so one `process_single.py` invocation. Predict
-needs the GPU; DIALS/phenix run inline on the same node.
+`03_pipeline.sh` is a single job (not an array). Predict needs the GPU;
+DIALS/phenix run inline on the same node, once per checkpoint predicted.
+
+**Which checkpoints get scored** is `--score-epochs` (`SCORE_EPOCHS`), passed
+to `integrator.utils.checkpoints`: `last`, `every:<n>`, `all`, or an epoch
+number. It defaults to **`every:5`** here, because the monochromatic chain is
+DIALS and phenix on CPU and a trajectory costs little; the polychromatic arm
+defaults to `last` because careless does not. `post_config.py` then globs
+every `preds*.refl` predict wrote, so the loop picks up each epoch without
+further argument.
+
+Do not confuse it with `--epochs`, which is how long to *train*.
 
 ## Usage
 
