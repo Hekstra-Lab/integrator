@@ -122,6 +122,13 @@ class HierarchicalIntegrator(BaseIntegrator):
             metadata=metadata,
             mask=mask,
             shape_signal=_shape_signal(counts, mask, qbg),
+            # Added, not substituted: every surrogate takes **kwargs, so the
+            # families that do not want the shoebox ignore it and their decode
+            # stays bit-identical. The ones that need it -- a basis-tied
+            # encoder, whose sufficient statistic is W^T c, or a conv stub
+            # looking for an overlapping neighbour -- cannot be built without
+            # it, because `shape_signal` is one scalar per shoebox.
+            counts=counts,
         )
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
@@ -213,6 +220,13 @@ class HierarchicalIntegrator2Enc(BaseIntegrator):
             metadata=metadata,
             mask=mask,
             shape_signal=_shape_signal(counts, mask, qbg),
+            # Added, not substituted: every surrogate takes **kwargs, so the
+            # families that do not want the shoebox ignore it and their decode
+            # stays bit-identical. The ones that need it -- a basis-tied
+            # encoder, whose sufficient statistic is W^T c, or a conv stub
+            # looking for an overlapping neighbour -- cannot be built without
+            # it, because `shape_signal` is one scalar per shoebox.
+            counts=counts,
         )
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
@@ -298,6 +312,13 @@ class HierarchicalIntegrator3EncIB(BaseIntegrator):
             metadata=metadata,
             mask=mask,
             shape_signal=_shape_signal(counts, mask, qbg),
+            # Added, not substituted: every surrogate takes **kwargs, so the
+            # families that do not want the shoebox ignore it and their decode
+            # stays bit-identical. The ones that need it -- a basis-tied
+            # encoder, whose sufficient statistic is W^T c, or a conv stub
+            # looking for an overlapping neighbour -- cannot be built without
+            # it, because `shape_signal` is one scalar per shoebox.
+            counts=counts,
         )
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)
@@ -383,6 +404,13 @@ class HierarchicalIntegrator3Enc(BaseIntegrator):
             metadata=metadata,
             mask=mask,
             shape_signal=_shape_signal(counts, mask, qbg),
+            # Added, not substituted: every surrogate takes **kwargs, so the
+            # families that do not want the shoebox ignore it and their decode
+            # stays bit-identical. The ones that need it -- a basis-tied
+            # encoder, whose sufficient statistic is W^T c, or a conv stub
+            # looking for an overlapping neighbour -- cannot be built without
+            # it, because `shape_signal` is one scalar per shoebox.
+            counts=counts,
         )
 
         zbg = qbg.rsample([self.mc_samples]).unsqueeze(-1).permute(1, 0, 2)

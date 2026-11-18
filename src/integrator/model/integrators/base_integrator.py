@@ -197,6 +197,11 @@ class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
             self._init_bg_from_checkpoint(
                 bg_ckpt, freeze=getattr(cfg, "bg_freeze", True)
             )
+        prof_ckpt = getattr(cfg, "profile_init_from_checkpoint", None)
+        if prof_ckpt:
+            self._init_profile_from_checkpoint(
+                prof_ckpt, freeze=getattr(cfg, "profile_freeze", True)
+            )
 
     def _init_bg_from_checkpoint(
         self, ckpt_path: str, freeze: bool = True
@@ -254,9 +259,67 @@ class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
             freeze,
         )
 
+    def _init_profile_from_checkpoint(
+        self, ckpt_path: str, freeze: bool = True
+    ) -> None:
+        """Load (and optionally freeze) the profile modules from a checkpoint.
+
+        Copies the `profile` encoder and the `qp` surrogate from another run's
+        checkpoint, so a profile learned where it can be learned -- a per-
+        observation integration run -- can be carried into a merge that collapses
+        its own. Shapes must match, which ties the merge's profile `encoder_out`
+        to the source's. When `freeze`, the parameters are frozen and the modules
+        stay in eval mode while the rest trains, as for the background.
+        """
+        from pathlib import Path
+
+        if not Path(ckpt_path).exists():
+            # At prediction the profile comes from the loaded checkpoint anyway.
+            logger.warning(
+                "profile_init_from_checkpoint: %s not found; skipping transplant.",
+                ckpt_path,
+            )
+            return
+        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        sd = ckpt.get("state_dict", ckpt)
+        targets = [
+            (
+                "encoders.profile",
+                self.encoders["profile"] if "profile" in self.encoders else None,
+            ),
+            (
+                "surrogates.qp",
+                self.surrogates["qp"] if "qp" in self.surrogates else None,
+            ),
+        ]
+        loaded = []
+        for name, module in targets:
+            if module is None:
+                continue
+            prefix = name + "."
+            sub = {k[len(prefix):]: v for k, v in sd.items() if k.startswith(prefix)}
+            if not sub:
+                raise KeyError(
+                    f"profile_init_from_checkpoint: no '{name}.*' params in "
+                    f"{ckpt_path} -- architecture/name mismatch."
+                )
+            module.load_state_dict(sub, strict=True)
+            loaded.append(name)
+            if freeze:
+                for p in module.parameters():
+                    p.requires_grad_(False)
+                module.eval()
+                self._frozen_eval_modules.append(module)
+        logger.info(
+            "profile_init_from_checkpoint: loaded %s from %s (freeze=%s)",
+            loaded,
+            ckpt_path,
+            freeze,
+        )
+
     def train(self, mode: bool = True):
-        """Keep frozen background modules in eval mode (no dropout) when the rest
-        of the model is switched to train."""
+        """Keep frozen transplanted modules in eval mode (no dropout) when the
+        rest of the model is switched to train."""
         super().train(mode)
         for module in getattr(self, "_frozen_eval_modules", []):
             module.eval()

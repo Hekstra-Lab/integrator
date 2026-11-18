@@ -222,6 +222,8 @@ class ConjugateMergingIntegrator(BaseIntegrator):
                 absorption_even_only=getattr(
                     cfg, "scale_mlp_absorption_even_only", True
                 ),
+                pe_frequencies=getattr(cfg, "scale_laue_pe_frequencies", 0),
+                pe_on_image=getattr(cfg, "scale_laue_pe_on_image", True),
             )
         elif cfg.scale_mlp:
             self.scale_fn = MLPScale(

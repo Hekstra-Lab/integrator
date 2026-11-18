@@ -12,15 +12,25 @@ from integrator.model.distributions import (
     DirichletDistribution,
     FixedBasisProfileSurrogate,
     GeometricProfileSurrogate,
+    HellingerBasisProfileSurrogate,
     NanoBraggProfileSurrogate,
     PhysicalProfileSurrogate,
     ProfileSurrogate,
     RaggedLogisticNormalSurrogate,
     ShapeletProfileSurrogate,
+    ControlMeshProfileSurrogate,
+    MixtureGaussianProfileSurrogate,
+    ShiftedBasisProfileSurrogate,
+    SteerableProfileSurrogate,
+    TuckerBasisProfileSurrogate,
     build_gamma,
+)
+from integrator.model.distributions.quasiconformal_profile import (
+    QuasiconformalProfileSurrogate,
 )
 from integrator.model.encoders import (
     IntensityEncoder,
+    SummaryStatsEncoder,
     ProfileEncoder,
     RaggedIntensityEncoder,
     RaggedShoeboxEncoder,
@@ -59,6 +69,7 @@ from integrator.model.loss import (
 REGISTRY = {
     "encoders": {
         "profile_encoder": ProfileEncoder,
+        "summary_stats_encoder": SummaryStatsEncoder,
         "intensity_encoder": IntensityEncoder,
         "ragged_shoebox_encoder": RaggedShoeboxEncoder,
         "ragged_intensity_encoder": RaggedIntensityEncoder,
@@ -102,7 +113,14 @@ REGISTRY = {
         "gamma": build_gamma,
         "dirichlet": DirichletDistribution,
         "learned_basis_profile": ProfileSurrogate,
+        "hellinger_basis_profile": HellingerBasisProfileSurrogate,
+        "tucker_basis_profile": TuckerBasisProfileSurrogate,
+        "control_mesh_profile": ControlMeshProfileSurrogate,
+        "mixture_gaussian_profile": MixtureGaussianProfileSurrogate,
+        "steerable_profile": SteerableProfileSurrogate,
+        "shifted_basis_profile": ShiftedBasisProfileSurrogate,
         "geometric_basis_profile": GeometricProfileSurrogate,
+        "quasiconformal_profile": QuasiconformalProfileSurrogate,
         "fixed_basis_profile": FixedBasisProfileSurrogate,
         "shapelet_profile": ShapeletProfileSurrogate,
         "physical_profile": PhysicalProfileSurrogate,

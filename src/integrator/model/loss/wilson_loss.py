@@ -68,6 +68,33 @@ class WilsonLoss(nn.Module):
         # per-bin correction to the fitted Wilson line, shrunk toward zero
         refit_residual: bool = False,
         refit_residual_max: float = 1.5,
+        # Scale-free intensity prior: keep the Wilson SHAPE, drop its RATE.
+        #
+        # `docs/prior_choice_theory.md` shows the prior's rate is the only
+        # gauge-breaking term in the model -- it breaks the invariance
+        # (I_h, s_i) -> (c I_h, s_i/c) by exactly alpha_W log c -- and that B is
+        # a gauge direction too once the scale model spans resolution, which
+        # careless's does (d is 7.7% of its log-scale variance, and in the
+        # polychromatic loss G is G(lambda), whose channel is 50.7%). Setting
+        # tau = 0 leaves Gamma(alpha_W, 0), whose posterior differs from the
+        # Wilson posterior by exactly one gauge transformation, and for
+        # acentrics is the flat prior.
+        #
+        # Measured on hewl_1118: the rate owns a median 1.4% of the posterior
+        # rate and never more than 12.4% of any reflection's, so the expected
+        # effect is small. The reason to use it is that it removes G and B, and
+        # with them the float32 overflow in `_get_tau`, the G/B collapse and the
+        # Wilson-plot fit that goes NaN.
+        #
+        # The rate becomes `scale_free_rate` rather than literally zero, since
+        # Gamma requires a positive rate and the KL to an improper prior
+        # diverges. The divergence is an additive constant in the posterior
+        # parameters, so gradients are unaffected, but the reported ELBO and
+        # intensity KL carry an offset of about -alpha log(scale_free_rate) and
+        # are NOT comparable across this flag. Compare R-free and peaks, never
+        # the loss.
+        scale_free_intensity_prior: bool = False,
+        scale_free_rate: float = 1e-6,
         refit_start_epoch: int = 1,
         refit_damping: float = 0.5,
         # bins below this resolution are excluded from the SLOPE: the Wilson
@@ -75,12 +102,27 @@ class WilsonLoss(nn.Module):
         wilson_fit_d_max: float = 3.5,
         # Resolution bins for per-bin background prior
         n_bins: int = 1,
-        # Pixel count likelihood: "poisson" (default) or "negative_binomial"
+        # Pixel count likelihood: "poisson" (default), "negative_binomial" or
+        # "normal". The Normal exists because neither discrete family can put
+        # the variance BELOW the mean: negative binomial is Var = rate +
+        # rate^2/r >= rate for every r, and a Gamma either ties the variance to
+        # rate^2 or to rate with no floor. A detector whose noise is a
+        # mean-independent constant -- which the nanoBragg DHFR simulation's is,
+        # at 9.2 counts^2 -- needs the additive term only `normal` has. See
+        # `CountLikelihood` for the measurements.
         likelihood: str = "poisson",
         nb_dispersion_init: float = 10.0,
         nb_dispersion_scope: str = "global",
         nb_dispersion_floor: float = 1e-3,
         nb_learn_dispersion: bool = True,
+        # Normal-likelihood options. Defaults reproduce CountLikelihood's own,
+        # and they are read only when `likelihood == "normal"`, so adding them
+        # leaves every existing configuration bit-identical.
+        normal_variance: str = "coupled",
+        normal_read_noise: float = 0.0,
+        normal_gain: float = 1.0,
+        normal_sigma_init: float = 1.0,
+        normal_learn_sigma: bool = True,
         # Prior configs from yaml
         pi_cfg=None,
         pbg_cfg=None,
@@ -147,6 +189,13 @@ class WilsonLoss(nn.Module):
         self.refit_guard = int(refit_guard)
         self.refit_residual = bool(refit_residual)
         self.refit_residual_max = float(refit_residual_max)
+        self.scale_free_intensity_prior = bool(scale_free_intensity_prior)
+        self.scale_free_rate = float(scale_free_rate)
+        if self.scale_free_rate <= 0:
+            raise ValueError(
+                "scale_free_rate must be positive; Gamma has no zero-rate form "
+                f"and the KL would be infinite, got {scale_free_rate}"
+            )
         self._fg_mask = None
         self._ann_mask = None
         self.refit_start_epoch = int(refit_start_epoch)
@@ -271,6 +320,11 @@ class WilsonLoss(nn.Module):
             n_bins=n_bins,
             dispersion_floor=nb_dispersion_floor,
             learn_dispersion=nb_learn_dispersion,
+            read_noise=normal_read_noise,
+            gain=normal_gain,
+            variance=normal_variance,
+            sigma_init=normal_sigma_init,
+            learn_sigma=normal_learn_sigma,
         )
 
     def diagnostics(self) -> dict[str, Tensor]:
@@ -743,6 +797,18 @@ class WilsonLoss(nn.Module):
         return stats
 
 
+    def _apply_scale_free(self, prior_rate: Tensor) -> Tensor:
+        """Replace the Wilson rate by a near-zero constant, keeping the shape.
+
+        Applied at both places the prior is built -- the KL in `forward` and
+        `intensity_prior_params`, which the deconvolution export divides by --
+        so the exported likelihood is divided by the prior that was actually
+        imposed rather than the one the config nominally describes.
+        """
+        if not self.scale_free_intensity_prior:
+            return prior_rate
+        return torch.full_like(prior_rate, self.scale_free_rate)
+
     def intensity_prior_params(
         self, metadata: dict, device: torch.device
     ) -> tuple[Tensor, Tensor]:
@@ -770,7 +836,7 @@ class WilsonLoss(nn.Module):
             centric = centric.to(device).reshape(tau.shape).bool()
             concentration = torch.where(centric, 0.5, 1.0)
             prior_rate = torch.where(centric, tau * 0.5, tau)
-        return concentration, prior_rate
+        return concentration, self._apply_scale_free(prior_rate)
 
     def forward(
         self,
@@ -883,7 +949,9 @@ class WilsonLoss(nn.Module):
             )
             self._warned_centric = True
 
-        p_i = Gamma(concentration=concentration, rate=prior_rate)
+        p_i = Gamma(
+            concentration=concentration, rate=self._apply_scale_free(prior_rate)
+        )
 
         ikl_w = self._intensity_kl_weight_for(group_labels, device)
         kl_i = kl_divergence(qi, p_i) * ikl_w

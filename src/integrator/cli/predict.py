@@ -68,6 +68,16 @@ def parse_args():
         help="Write predictions as an .mtz file; for polychromatic data only",
     )
     parser.add_argument(
+        "--refl-expt",
+        help=(
+            "With --write-refl, rewrite the output table's experiment identifiers "
+            "to match this .expt. mksbox gives its shoebox .refl a fresh "
+            "identifier, so without this dials.scale rejects the pair with "
+            "'Corrupted identifiers'. Pass the .expt the predictions were made "
+            "against; omitted, the source table's identifiers are kept"
+        ),
+    )
+    parser.add_argument(
         "--batch-size",
         type=int,
         help="Integer value specifying the size of each training batch",
@@ -227,8 +237,13 @@ def main():
             )
         else:
             integrator = construct_integrator(config)
+            # map_location: the checkpoint was saved from cuda:0, so an
+            # unqualified load restores every tensor to the GPU during
+            # unpickling -- before the `.to(cuda)` below. A busy or unavailable
+            # device then kills the load with cudaErrorDevicesUnavailable even
+            # though the model is about to be moved there anyway.
             integrator.load_state_dict(
-                torch.load(ckpt.as_posix())["state_dict"]
+                torch.load(ckpt.as_posix(), map_location="cpu")["state_dict"]
             )
             if torch.cuda.is_available():
                 integrator.to(torch.device("cuda"))
@@ -262,6 +277,7 @@ def main():
                 refl_file=refl_file,
                 epoch=epoch,
                 filetype="parquet",
+                expt_file=args.refl_expt,
             )
 
         if args.write_mtz:

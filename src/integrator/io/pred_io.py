@@ -73,8 +73,14 @@ def write_refl_from_preds(
     refl_file,
     epoch: int,
     filetype: Literal["pt", "parquet"],
+    expt_file=None,
 ):
-    """Write per-epoch predictions back into a copy of the source `.refl`."""
+    """Write per-epoch predictions back into a copy of the source `.refl`.
+
+    `expt_file` is forwarded to `write_refl_with_predictions`, which rewrites the
+    output table's experiment identifiers to match that `.expt`. Defaults to
+    `None`, leaving the source table's identifiers untouched.
+    """
     data = get_pred_files(ckpt_dir=ckpt_dir, filetype=filetype)
 
     # Exclude coset reflections
@@ -95,5 +101,6 @@ def write_refl_from_preds(
         i_value=pred_df["qi_mean"].to_numpy(),
         i_variance=pred_df["qi_var"].to_numpy(),
         bg_mean=pred_df["qbg_mean"].to_numpy(),
+        expt_file=expt_file,
     )
     return fname

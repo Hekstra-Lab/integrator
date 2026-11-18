@@ -14,10 +14,16 @@ from .background_plane import (
 from .profile_surrogates import (
     FixedBasisProfileSurrogate,
     GeometricProfileSurrogate,
+    HellingerBasisProfileSurrogate,
     PhysicalProfileSurrogate,
     ProfileSurrogate,
     ProfileSurrogateOutput,
     ShapeletProfileSurrogate,
+    ControlMeshProfileSurrogate,
+    MixtureGaussianProfileSurrogate,
+    ShiftedBasisProfileSurrogate,
+    SteerableProfileSurrogate,
+    TuckerBasisProfileSurrogate,
 )
 from .nanobragg_profile import NanoBraggProfileSurrogate
 from .ragged_logistic_normal import RaggedLogisticNormalSurrogate
@@ -32,12 +38,18 @@ __all__ = [
     "FixedBasisProfileSurrogate",
     "GammaDistributionRepamE",
     "GeometricProfileSurrogate",
+    "HellingerBasisProfileSurrogate",
     "NanoBraggProfileSurrogate",
     "PhysicalProfileSurrogate",
     "ProfileSurrogate",
     "ProfileSurrogateOutput",
     "RaggedLogisticNormalSurrogate",
     "ShapeletProfileSurrogate",
+    "ControlMeshProfileSurrogate",
+    "MixtureGaussianProfileSurrogate",
+    "ShiftedBasisProfileSurrogate",
+    "SteerableProfileSurrogate",
+    "TuckerBasisProfileSurrogate",
     "build_gamma",
     "compute_background_plane_kl",
 ]

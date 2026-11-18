@@ -35,6 +35,183 @@ class IntegratorCfg:
     mc_samples: int = 4
     predict_keys: Literal["default"] | list[str] = "default"
     profile_support: Literal["valid", "foreground"] = "valid"
+    shared_encoder: bool = False
+    """Feed one representation to both the profile and the signal heads.
+
+    The two encoders are handed the SAME tensor, `shoebox_reshaped`, and each
+    emits `encoder_out` dims; only the trunk is duplicated, and the profile
+    trunk is 758k of the sim model's 958k parameters. Sharing it also removes
+    the room for the two to fail independently: measured on the simulation,
+    the signal encoder stays alive (embedding norm 21, 62% of units positive)
+    while the profile encoder's output is identically zero, which a shared
+    trunk cannot do because the signal path keeps feeding it gradient.
+
+    Default False keeps the two-encoder path bit-identical.
+    """
+
+    gate_detach: bool = False
+    """Whether `gate: responsibility` treats the responsibilities as constants.
+
+    The responsibility `r_i = i0 p_i / (i0 p_i + b0)` is evaluated at the
+    current profile, so it is one coordinate-ascent step. In coordinate ascent,
+    and in an EM E-step, that quantity is held FIXED for the update. Left
+    differentiable (the default, which keeps existing runs bit-identical) it
+    carries gradient into the profile through
+
+        alpha = alpha_prior + sum_i r_i(p) c_i,   q(I) = Gamma(alpha, beta)
+
+    so `KL(q(I) || prior)` reaches the profile by a path that coordinate ascent
+    does not have. The sign is adverse: `r_i` increases with `p_i`, so lowering
+    `sum r_i c_i` means lowering the profile exactly where the counts are
+    large, which flattens the peak. Measured on 9b7c, `gate: responsibility`
+    gave a median `n_eff` of 814 of 1323 pixels against 37 for `gate: learned`,
+    R-free 0.3322 against 0.1775, and tripling the budget to 50 epochs moved it
+    to 0.3304 -- a fixed point, not slow convergence.
+
+    `true` detaches them, which is the intended coordinate ascent.
+    """
+
+    gate: Literal["learned", "responsibility"] = "learned"
+    """Where the SVAE's per-pixel signal/background split comes from.
+    `learned` (default) is the 55k-parameter sigmoid head, unchanged.
+
+    The gate's job is the Poisson split: for `c_i = s_i + b_i` with
+    `s_i ~ Poisson(I p_i)`, the exact posterior share of a count belonging to
+    signal is `r_i = I p_i / (I p_i + B)`, and with that share
+    `E[sum r_i c_i] = sum I p_i = I` identically -- unbiased with nothing
+    fitted. It is a deterministic function of (I, p, B), not a free parameter.
+
+    The learned head has no structural tie to the profile, so the model carries
+    two independent accounts of where the spot is and nothing enforces the
+    fixed point. Measured against the h5 per-pixel ground truth, the resulting
+    intensity is `b * sum(g)` -- gate mass times background -- reproducing the
+    actual estimate to 0.97-1.00, with the signal term `I * sum(g p)` only
+    0.03-0.27. At the weak end the intensity is therefore whatever the network
+    says the gate mass is, with no direct data term holding it in place.
+
+    `responsibility` computes the gate from the current profile and a robust
+    background instead, dropping `gate_head` from the graph. Because r depends
+    on I, this is one coordinate-ascent step from a starting estimate, not a
+    closed form: the background starts from the box median (robust, since a
+    Laue shoebox is 96.6% background) and the intensity from profile-weighted
+    least squares given it.
+    """
+    intensity_posterior: Literal["conjugate", "amortized"] = "conjugate"
+    """How the SVAE forms q(I). `conjugate` (default) is the Poisson-Gamma
+    update, unchanged.
+
+    The defect it repairs: the conjugate rate is tau + sum(profile*mask), and
+    the profile is normalized, so the rate is tau + 1 for every reflection. The
+    variational family is therefore {Gamma(a, tau+1) : a > 0} -- ONE free
+    parameter where a distribution needs two. The ELBO cannot choose the
+    variance because there is no variance to choose; this is an impoverished
+    family, not a convergence failure.
+
+    `amortized` instead uses the two-headed `qi` surrogate that
+    `hierarchical_integrator`, `integrator` and `ragged_hierarchical_integrator`
+    all use and that the SVAE alone bypasses, giving q(I) both parameters and
+    letting the ELBO set them. Strictly variational, and the most principled of
+    the three repairs -- with the caveat that reverse-KL amortized inference
+    underestimates posterior variance on its own, so a free family is necessary
+    but may not be sufficient.
+    """
+    intensity_variance: Literal["conjugate", "fisher"] = "conjugate"
+    """How the SVAE sets the VARIANCE of q(I). `conjugate` (default) leaves the
+    Poisson-Gamma update untouched, so existing runs are bit-identical.
+
+    The conjugate update makes q(I) = Gamma(alpha_I + sum(gate*counts),
+    tau + sum(profile*mask)). The profile is normalized, so that rate is
+    tau + 1 and the Fano factor is 1/(1+tau) for EVERY reflection -- measured
+    at 0.9903 across 204,471 reflections, reproduced from a single tau to
+    0.47%. The rate carries no data: only the shape moves. That is the exact
+    posterior for `c ~ Poisson(I p)` with the signal counts observed directly,
+    which is not the measurement we have -- 96.6% of a Laue shoebox is
+    background, the split is estimated by the gate, and on the nanoBragg
+    simulation the pixel noise is additive rather than Poisson. None of those
+    appear in the rate, so the reported sigma is sqrt(I/(1+tau)) by arithmetic.
+
+    `fisher` keeps the conjugate MEAN and replaces the variance with the
+    information the measurement actually carries,
+
+        Var(I) = pixel_variance * n / (n * sum(q^2) - (sum q)^2)
+                 + (profile_error_frac * I)^2
+
+    the first term being the 2x2 information matrix for (I, background) with
+    the background profiled out by Schur complement, the second the error a
+    mis-matched profile contributes, which scales with I rather than with the
+    noise. That is the SDFAC/SDADD form AIMLESS fits empirically, with the
+    first term derived instead of fitted. The Fano then falls as 1/I, which is
+    what the data requires: the needed Fano runs 39 at the faint end to 0.73
+    at the bright end, correlating with log I at -0.994 against the conjugate
+    form's +0.444.
+
+    This changes the ELBO -- q(I) is both sampled into the likelihood and
+    compared to the prior in the KL -- so it is an experiment, not a refactor.
+    """
+    pixel_variance: float | None = None
+    """Per-pixel noise variance in counts^2, for `intensity_variance: fisher`.
+    Measure it; do not assume Poisson. On the nanoBragg DHFR simulation it is
+    9.2, constant, against a local mean running 13 to 31."""
+    profile_error_frac: float = 0.0
+    """The intensity-proportional error term for `intensity_variance: fisher`,
+    covering profile mismatch. 0.0 keeps the information bound alone, which is
+    a floor rather than an estimate: the bound assumes the profile is exactly
+    right, and a profile error costs an absolute error proportional to I, so
+    it is negligible for weak reflections and dominant for bright ones."""
+    intensity_mean: Literal["conjugate", "gls"] = "conjugate"
+    """How the SVAE sets the MEAN of q(I). `conjugate` (default) is the gated
+    sum (alpha_I + sum(gate*counts)) / (tau + 1), unchanged.
+
+    Why this matters beyond the variance: the bias formula we test against,
+    E[I_hat] = kappa I/(1+beta) + ..., assumes weights proportional to the
+    profile, with kappa = sum(q p)/sum(q^2). The gated sum is a DIFFERENT
+    estimator, so kappa currently conflates "the profile is wrong" with "the
+    estimator is not the one the formula describes". `gls` makes the code
+    compute the estimator the theory assumes.
+
+    `gls` solves the two-parameter weighted least squares for (I, background)
+    that the Normal likelihood implies, which under a constant pixel variance
+    is the exact conditional posterior mean given the profile:
+
+        [[sum q^2, sum q], [sum q, n]] [I, B]^T = [sum q c, sum c]^T
+
+    This does NOT make kappa equal 1 -- with the wrong profile the GLS
+    estimator still has E[I_hat] = I * sum(q p)/sum(q^2), which IS kappa. What
+    it does is make kappa a clean measurement of profile error alone.
+
+    Requires `intensity_variance: fisher`: a GLS mean with a conjugate variance
+    would be two different models spliced together.
+    """
+    intensity_mean_floor: float = 1.0
+    """Floor on the GLS mean, in counts. The GLS solution is unbiased and so is
+    negative for roughly half of the reflections whose true intensity is near
+    zero -- correct, but a Gamma has no support there. Flooring reintroduces an
+    upward bias at the weak end, which is the honest cost of keeping a Gamma;
+    the alternative is a distribution on the whole line. Count how often it
+    binds before trusting weak-end numbers from this arm."""
+    variance_detach_profile: bool = False
+    """Detach the profile where it enters the VARIANCE under
+    `intensity_variance: fisher`. Default False keeps the gradient, unchanged.
+
+    Why it is needed: Var = s0^2 n/(n sum q^2 - (sum q)^2) FALLS as the profile
+    sharpens, and -KL contains +H[q], so a wider q raises the ELBO. Tying the
+    variance to the profile therefore creates a path by which the model can buy
+    entropy by spreading its profile out, which costs almost nothing in
+    reconstruction for weak reflections where the likelihood is flat in I.
+    Measured: N_eff went 66.9 (baseline) -> 102.4 (fisher) -> 160.6 (fisher +
+    gls, p90 556), and at that breadth the profile becomes collinear with the
+    flat background, so the GLS determinant n sum(q^2) - 1 fell 24.1 -> 2.0 and
+    (I, B) approached unidentifiable.
+
+    Detaching keeps the reported variance exactly the same while removing that
+    gradient path, so the profile is shaped by fitting the data and not by the
+    entropy of a distribution whose width it happens to set.
+    """
+    intensity_k_min: float = 0.01
+    """Floor on the Gamma concentration under `intensity_variance: fisher`.
+    A correct variance gives k = mu^2/var < 1 for weak reflections, which is
+    legitimate but makes `rsample` numerically fragile -- the same reason the
+    Gamma surrogates carry a `k_min`."""
     rb_gate_half_signal: float | None = None
     profile_coord_channels: bool = False
     """Give the profile encoder two extra channels holding each pixel's offset
@@ -83,6 +260,18 @@ class IntegratorCfg:
     # optimization, using a proven bg from a good integration run. ABSOLUTE path.
     bg_init_from_checkpoint: str | None = None
     bg_freeze: bool = True
+    # The same transplant for the profile side: copy the profile encoder and the
+    # qp surrogate from another run's checkpoint, then freeze them, taking the
+    # profile out of the merge's optimization. Measured after the fact, it buys
+    # nothing: the merger's profile is already peaked (n_eff 30 of 625 valid
+    # pixels, matching the empirical shoebox profile at CC 0.97 on the bright
+    # quartile), and pinning careless's scale onto runs with three different
+    # profiles lands them all on R-free 0.179 and anomalous peaks 6.2. Kept for
+    # the diagnostic -- a frozen profile isolates the scale -- not as a fix.
+    # Shapes must match: the source's profile encoder_out sets qp's input_dim.
+    # ABSOLUTE path.
+    profile_init_from_checkpoint: str | None = None
+    profile_freeze: bool = True
     merge_weight: float = 1.0
     merge_kl_weight: float = 1.0
     # Cross-observation scaling-consistency loss weight (ConjugateMergingIntegrator):
@@ -295,6 +484,32 @@ class IntegratorCfg:
     # The two are one gauge: left both free on hewl_1118 they settled on a
     # prior anti-correlated with the beam and a scale 3x too steep.
     scale_laue_use_wavelength: bool = True
+    # LaueMLPScale only. Sinusoidal features at 2^k*pi on detector x, y and
+    # (with scale_laue_pe_on_image) the shot index, for k < this many
+    # frequencies. 0 is off and leaves the scale bit-identical. Fit supervised
+    # to careless's scale, the plain feature set stalls at a 37.5% residual
+    # worth anomalous peaks of 4.27, while 4 frequencies at half the width
+    # reach 28.2% and 5.29 against careless's own 6.17 -- the content our
+    # scale misses is high-frequency. careless uses 4 on xcal, ycal, BATCH.
+    scale_laue_pe_frequencies: int = 0
+    scale_laue_pe_on_image: bool = True
+    # Encode wavelength too. Off by default: lambda reaches the scale as one
+    # raw feature while x, y and the shot index get every harmonic, even
+    # though the beam spans ~280x across the band.
+    scale_laue_pe_on_lambda: bool = False
+    # An explicit Chebyshev log G(lambda) added to the scale, instead of the
+    # MLP having to find the spectrum among the detector features. 0 is off.
+    # The spectrum belongs in the measurement model, not the Wilson prior,
+    # whose rate describes the crystal and should carry no wavelength: a
+    # merging latent is shared across observations at different lambda.
+    # `scale_laue_spectrum_init_from` warm-starts from an identified curve
+    # (its constant term is dropped -- the level is the per-image scale's).
+    # A key of its own: `scale_laue_spectrum_degree` is already taken by
+    # `LauePhysicalScale` and defaults to 6 there. Declaring it twice makes the
+    # LATER default win, which silently turned this spectrum on everywhere.
+    scale_laue_mlp_spectrum_degree: int = 0
+    scale_laue_mlp_spectrum_init_from: str | None = None
+    scale_laue_mlp_spectrum_freeze: bool = False
     # `svae_merging` only. On, the Wilson rate is evaluated at EACH
     # observation's own wavelength and resolution and the resulting rates are
     # averaged over the reflection, instead of evaluating the rate once at the
@@ -541,6 +756,58 @@ class IntegratorCfg:
 
         if self.mc_samples < 1:
             raise ValueError(f"mc_samples must be >= 1, got {self.mc_samples}")
+
+        if self.gate not in ("learned", "responsibility"):
+            raise ValueError(
+                "gate must be 'learned' or 'responsibility', got "
+                f"{self.gate!r}"
+            )
+
+        if self.intensity_posterior not in ("conjugate", "amortized"):
+            raise ValueError(
+                "intensity_posterior must be 'conjugate' or 'amortized', got "
+                f"{self.intensity_posterior!r}"
+            )
+        if self.intensity_posterior == "amortized" and (
+            self.intensity_variance != "conjugate"
+            or self.intensity_mean != "conjugate"
+        ):
+            # an amortized q(I) comes wholly from the surrogate, so a mean or
+            # variance rule for the conjugate path would silently do nothing
+            raise ValueError(
+                "intensity_posterior: amortized replaces q(I) entirely; leave "
+                "intensity_mean and intensity_variance at 'conjugate'"
+            )
+        if self.intensity_variance not in ("conjugate", "fisher"):
+            raise ValueError(
+                "intensity_variance must be 'conjugate' or 'fisher', got "
+                f"{self.intensity_variance!r}"
+            )
+        if self.intensity_mean not in ("conjugate", "gls"):
+            raise ValueError(
+                "intensity_mean must be 'conjugate' or 'gls', got "
+                f"{self.intensity_mean!r}"
+            )
+        if self.intensity_mean == "gls" and self.intensity_variance != "fisher":
+            raise ValueError(
+                "intensity_mean: gls needs intensity_variance: fisher; a GLS "
+                "mean with a conjugate variance splices two different models"
+            )
+        if self.intensity_variance == "fisher":
+            # no default: the whole point is that the pixel variance is a
+            # measured property of the detector, and guessing it would put a
+            # fabricated number straight into every error bar
+            if self.pixel_variance is None or self.pixel_variance <= 0:
+                raise ValueError(
+                    "intensity_variance: fisher needs a positive "
+                    "pixel_variance (counts^2 per pixel), measured from the "
+                    f"data; got {self.pixel_variance!r}"
+                )
+            if self.profile_error_frac < 0:
+                raise ValueError(
+                    "profile_error_frac must be >= 0, got "
+                    f"{self.profile_error_frac}"
+                )
 
         if self.coset_mode not in (
             "override",

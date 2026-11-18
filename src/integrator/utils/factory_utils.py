@@ -399,6 +399,20 @@ def _resolve_prior_paths(name: str, params: dict, data_dir: str) -> dict:
     return params
 
 
+# Encoders that may stand in for a slot's default, with the args dataclass each
+# substitute takes. The name check below exists to catch a mis-ordered
+# `encoders:` list, so a replacement is declared here rather than by relaxing
+# it. `summary_stats_encoder` reads order statistics, spatial moments and
+# detector metadata instead of the pixels, in 992 parameters against the CNN's
+# 128,576, and returns the same (B, encoder_out).
+from integrator.configs.encoder import SummaryStatsEncoderArgs
+
+INTERCHANGEABLE_ENCODERS: dict[str, dict[str, type]] = {
+    "profile_encoder": {"summary_stats_encoder": SummaryStatsEncoderArgs},
+    "intensity_encoder": {"summary_stats_encoder": SummaryStatsEncoderArgs},
+}
+
+
 def _get_encoder_modules(
     cfg: dict,
 ) -> dict[str, nn.Module]:
@@ -423,7 +437,13 @@ def _get_encoder_modules(
         # there is no name to check against.
         enc_name, args_cls = _encoder_spec(slot, spec)
         got = encoder_cfg.get("name")
-        if got != enc_name:
+        if got != enc_name and got in INTERCHANGEABLE_ENCODERS.get(enc_name, {}):
+            # a declared drop-in: the slot's contract is the shape of what it
+            # returns, (B, encoder_out) from the shoebox, not the class
+            enc_name, args_cls = got, INTERCHANGEABLE_ENCODERS[
+                _encoder_spec(slot, spec)[0]
+            ][got]
+        elif got != enc_name:
             raise ValueError(
                 f"Integrator '{model}' slot '{slot}' expects encoder "
                 f"'{enc_name}', got '{got}'. Check the order of `encoders:`."
@@ -1009,6 +1029,7 @@ def _inject_profile_geometry(cfg: dict) -> None:
     qp = cfg.get("surrogates", {}).get("qp", {})
     if qp.get("name") not in (
         "geometric_basis_profile",
+        "quasiconformal_profile",
         "shapelet_profile",
         "physical_profile",
         "nanobragg_profile",

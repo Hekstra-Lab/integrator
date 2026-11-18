@@ -281,7 +281,6 @@ def main():
                 ckpt_dir=ckpt_dir,
                 refl_file=refl_file,
                 epoch=epoch,
-                config=config,
                 filetype=args.save_preds_as,
             )
 

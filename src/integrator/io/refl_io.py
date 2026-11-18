@@ -13,6 +13,7 @@ def write_refl_with_predictions(
     i_value,
     i_variance,
     bg_mean,
+    expt_file=None,
 ):
     """Overwrite the intensity/background columns of a DIALS `.refl`.
 
@@ -23,6 +24,14 @@ def write_refl_with_predictions(
         i_value: predicted intensity (written to intensity.prf/sum.value).
         i_variance: predicted variance (written to intensity.prf/sum.variance).
         bg_mean: predicted background (written to background.mean).
+        expt_file: experiment list whose identifiers the output should carry.
+            `integrator.mksbox` writes its shoebox `.refl` with a freshly
+            generated experiment identifier rather than the one the source
+            `.expt` holds, so `dials.scale <ref>.expt <preds>.refl` fails with
+            "Corrupted identifiers" before reading a single reflection. Passing
+            the `.expt` that the predictions were made against rewrites the
+            table's identifier map to match it. Defaults to `None`, which
+            leaves the map exactly as the source table had it.
     """
     from dials.array_family import flex
     from dxtbx import flumpy
@@ -61,6 +70,25 @@ def write_refl_with_predictions(
     rt["intensity.sum.value"] = flumpy.from_numpy(i_value)
     rt["intensity.sum.variance"] = flumpy.from_numpy(i_variance)
     rt["background.mean"] = flumpy.from_numpy(bg_mean)
+
+    if expt_file is not None:
+        from dxtbx.model.experiment_list import ExperimentListFactory
+
+        expts = ExperimentListFactory.from_json_file(
+            str(expt_file), check_format=False
+        )
+        table_ids = sorted(set(flumpy.to_numpy(rt["id"]).tolist()))
+        if len(table_ids) != len(expts):
+            raise ValueError(
+                f"{out_file} spans {len(table_ids)} experiment id(s) but "
+                f"{expt_file} holds {len(expts)}; identifiers cannot be "
+                "matched by position"
+            )
+        id_map = rt.experiment_identifiers()
+        for i in table_ids:
+            del id_map[i]
+        for i, expt in zip(table_ids, expts):
+            id_map[i] = expt.identifier
 
     rt.as_file(str(out_file))
     return rt

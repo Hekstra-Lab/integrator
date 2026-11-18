@@ -26,9 +26,18 @@ Lengths are in Angstrom for the crystal and wavelength. Detector lengths can be 
 any unit as long as they are consistent with each other; only directions and the
 ratio in the solid angle enter.
 
+`render_pixels` computes the expected photons from Bragg scattering alone.
+`render_background` adds nonBragg's amorphous term, which is the same sum with the
+lattice removed and a tabulated form factor in place of `F_cell F_latt`.
+
 Not ported: phi rotation, detector thickness and absorption, the curved detector,
-water background, structure-factor interpolation, noise. The kernel computes the
-expected photons from Bragg scattering only.
+beam divergence, structure-factor interpolation, and noise. `noisify.c` applies
+the noise to the float image, in this order (`noisify.c:579-617`): optional
+multiplicative flicker and per-pixel calibration error, a Poisson draw per pixel,
+then the point spread, then `gain`, an ADC offset and additive readout. The point
+spread therefore smears photons that have already been drawn, which is why it
+divides the per-pixel shot variance instead of leaving it Poisson. Nothing here
+applies any of it.
 """
 
 import math
@@ -480,6 +489,157 @@ def render_shoeboxes_continuous(
     omega = detector.pixel_size**2 / airpath[..., 0] ** 2 * detector.close_distance / airpath[..., 0]
     polar = polarization_factor(kahn, inc.expand_as(diffracted[..., 0, :]), diffracted[..., 0, :], polar_vector)
     return R_E_SQR * fluence * intensity * polar * omega
+
+
+AVOGADRO = 6.02214179e23
+"""Avogadro's number, the value hard-coded in `nanoBragg.c`."""
+
+
+def amorphous_molecules(
+    thickness_mm: float,
+    beam_size_mm: float = 0.1,
+    density_gcm3: float = 1.0,
+    molecular_weight_da: float = 18.0,
+) -> float:
+    """Molecules of amorphous material the beam crosses.
+
+    `nonBragg` takes the illuminated volume to be the sample thickness times a
+    square beam cross-section, so a 0.5 mm path of water in a 0.1 mm beam holds
+    1.673e17 molecules, which is the figure it prints for those settings.
+
+    Args:
+        thickness_mm: Path length through the material.
+        beam_size_mm: Edge of the square beam profile.
+        density_gcm3: Density of the material; 1.0 for water.
+        molecular_weight_da: Mass per molecule; 18 for water.
+    """
+    volume_cm3 = thickness_mm * beam_size_mm**2 * 1e-3
+    return volume_cm3 * density_gcm3 * AVOGADRO / molecular_weight_da
+
+
+def interpolate_stol(stol: Tensor, curve_stol: Tensor, curve_f: Tensor) -> Tensor:
+    """`F_bg` at each `sin(theta) / lambda`, linear between tabulated points.
+
+    `nonBragg` passes the nearest four points to its `polint`, which is a
+    four-point Lagrange polynomial, not the cubic spline its comment calls it. On
+    the dense `water.stol`, whose points are 2e-4 inverse Angstrom apart, that
+    polynomial and this line agree far more closely than either agrees with the
+    data; on a sparse table, such as the fourteen-point default carried in
+    `simtbx/nanoBragg/utils.py`, they would not, and that table should be
+    resampled before it is used here.
+
+    Values beyond either end are held flat, as `nonBragg` holds them.
+
+    Args:
+        stol: Where to evaluate, in inverse Angstrom, any shape.
+        curve_stol: Tabulated `sin(theta) / lambda`, ascending, shape (N,).
+        curve_f: Tabulated `F_bg` in electrons, shape (N,).
+    """
+    idx = torch.searchsorted(curve_stol, stol.reshape(-1).contiguous())
+    idx = idx.clamp(1, curve_stol.numel() - 1)
+    x0, x1 = curve_stol[idx - 1], curve_stol[idx]
+    y0, y1 = curve_f[idx - 1], curve_f[idx]
+    t = ((stol.reshape(-1) - x0) / (x1 - x0).clamp_min(1e-30)).clamp(0.0, 1.0)
+    return (y0 + t * (y1 - y0)).reshape(stol.shape)
+
+
+def render_background(
+    fpix: Tensor,
+    spix: Tensor,
+    detector: Detector,
+    beam: Beam,
+    curve_stol: Tensor,
+    curve_f: Tensor,
+    molecules: float,
+    oversample: int = 1,
+    point_pixel: bool = False,
+) -> Tensor:
+    """Expected photons per pixel from amorphous scattering.
+
+    This is `nonBragg`'s per-pixel sum, which is the Bragg sum with the lattice
+    removed and a tabulated amorphous form factor in place of `F_cell F_latt`:
+
+        I = r_e^2 * fluence * molecules / steps
+            * sum_{subpixels, sources} F_bg(stol)^2 * polar * omega
+
+    with `stol = |s - s_0| / 2` and `steps = oversample^2 * n_sources`. Every
+    factor outside `F_bg` is one the Bragg path already computes, which is why
+    this belongs in the kernel rather than in a second simulator.
+
+    `polar` and `omega` are evaluated once per pixel, at its first subpixel and
+    first source, matching `render_pixels` and the C program's default.
+
+    Source weights are normalized to a mean of one, as `render_pixels` normalizes
+    them, so that the Bragg and background arrays are on one scale. `nonBragg`
+    instead uses the weights raw and still divides by `steps = oversample^2 *
+    n_sources`, so for a spectrum whose weights do not average to one its absolute
+    background differs from this by `sum(weight) / n_sources`. The two agree when
+    the weights are equal, which is the case the C output was checked against.
+
+    Not included, both of which `nonBragg` has: the detector-thickness capture
+    fraction, which is 1 unless `-detector_thick` is set, and the sign flip that
+    lets a negative tabulated `F_bg` produce negative intensity, which `water.stol`
+    never triggers.
+
+    The crystal's own scattering is not here: add this to `render_pixels` or
+    `render_shoeboxes` to get the full image, and keep the two arrays apart when
+    what is wanted is a known background.
+
+    Args:
+        fpix: Fast-axis pixel index of each pixel, shape (P,).
+        spix: Slow-axis pixel index of each pixel, shape (P,).
+        detector: Panel geometry.
+        beam: Sources, fluence and polarization.
+        curve_stol: Tabulated `sin(theta) / lambda`, ascending, shape (N,).
+        curve_f: Tabulated `F_bg` in electrons, shape (N,).
+        molecules: Molecules in the beam path, from `amorphous_molecules`.
+        oversample: Subpixels per pixel edge.
+        point_pixel: Use `1 / airpath^2` for the solid angle, dropping obliquity.
+
+    Returns:
+        Photons per pixel, shape (P,), on the scale of nanoBragg's float image.
+    """
+    dtype = detector.pix0.dtype
+    pos = subpixel_positions(fpix.to(dtype), spix.to(dtype), detector, oversample)
+    airpath = pos.norm(dim=-1)
+    diffracted = pos / airpath[..., None]
+
+    incident = beam.incident.to(dtype)
+    lam = beam.wavelength.to(dtype)
+    n_src = incident.shape[0]
+    weight = (
+        torch.ones(n_src, dtype=dtype, device=incident.device)
+        if beam.weight is None
+        else beam.weight.to(dtype) * n_src / beam.weight.to(dtype).sum()
+    )
+
+    # (P, O, S, 3) scattering vectors in inverse Angstrom; stol is half the length
+    scatter = (
+        diffracted[:, :, None, :] - incident[None, None, :, :]
+    ) / lam[None, None, :, None]
+    f_bg = interpolate_stol(0.5 * scatter.norm(dim=-1), curve_stol.to(dtype), curve_f.to(dtype))
+    intensity = (f_bg**2 * weight).sum(dim=(1, 2))
+    steps = oversample**2 * n_src
+
+    if point_pixel:
+        omega = 1.0 / airpath[:, 0] ** 2
+    else:
+        omega = (
+            detector.pixel_size**2
+            / airpath[:, 0] ** 2
+            * detector.close_distance
+            / airpath[:, 0]
+        )
+    if beam.nopolar:
+        polar = torch.ones_like(omega)
+    else:
+        polar = polarization_factor(
+            beam.kahn,
+            incident[0].expand_as(diffracted[:, 0]),
+            diffracted[:, 0],
+            beam.polar_vector,
+        )
+    return R_E_SQR * beam.fluence * molecules * intensity / steps * polar * omega
 
 
 def mosaic_domains(

@@ -247,6 +247,18 @@ class AmortizedMergingIntegrator(BaseIntegrator):
                     cfg, "scale_mlp_absorption_even_only", True
                 ),
                 use_wavelength=getattr(cfg, "scale_laue_use_wavelength", True),
+                pe_frequencies=getattr(cfg, "scale_laue_pe_frequencies", 0),
+                pe_on_image=getattr(cfg, "scale_laue_pe_on_image", True),
+                pe_on_lambda=getattr(cfg, "scale_laue_pe_on_lambda", False),
+                spectrum_degree=getattr(
+                    cfg, "scale_laue_mlp_spectrum_degree", 0
+                ),
+                spectrum_init_from=getattr(
+                    cfg, "scale_laue_mlp_spectrum_init_from", None
+                ),
+                spectrum_freeze=getattr(
+                    cfg, "scale_laue_mlp_spectrum_freeze", False
+                ),
             )
         elif getattr(cfg, "scale_physical", False):
             self.scale_fn = PhysicalScale(

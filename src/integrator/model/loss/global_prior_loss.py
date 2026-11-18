@@ -45,6 +45,7 @@ class GlobalPriorLoss(nn.Module):
         nb_learn_dispersion: bool = True,
         # Normal likelihood (for real-valued detector output)
         normal_read_noise: float = 0.0,
+        normal_gain: float = 1.0,
         normal_variance: str = "coupled",
         normal_sigma_init: float = 1.0,
         normal_learn_sigma: bool = True,
@@ -98,6 +99,7 @@ class GlobalPriorLoss(nn.Module):
             dispersion_floor=nb_dispersion_floor,
             learn_dispersion=nb_learn_dispersion,
             read_noise=normal_read_noise,
+            gain=normal_gain,
             variance=normal_variance,
             sigma_init=normal_sigma_init,
             learn_sigma=normal_learn_sigma,

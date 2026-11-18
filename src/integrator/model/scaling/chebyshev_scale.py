@@ -483,6 +483,12 @@ class LaueMLPScale(nn.Module):
         normalize_scale: bool = False,
         norm_momentum: float = 0.02,
         use_wavelength: bool = True,
+        pe_frequencies: int = 0,
+        pe_on_image: bool = True,
+        pe_on_lambda: bool = False,
+        spectrum_degree: int = 0,
+        spectrum_init_from: str | None = None,
+        spectrum_freeze: bool = False,
     ):
         super().__init__()
 
@@ -549,10 +555,71 @@ class LaueMLPScale(nn.Module):
             )
             n_abs_in = int(keep.sum())
 
-        # Input: [lambda_norm, x_norm, y_norm, d_norm] + selected SH features,
-        # less lambda_norm when `use_wavelength` is off.
+        # Optional per-image (per-shot) log-scale -- the standard Laue per-image
+        # scale factor. Zero-initialized so it starts as a no-op.
+        self.n_images = int(n_images) if n_images is not None else 0
+        if self.n_images > 0:
+            self.image_log_scale = nn.Embedding(self.n_images, 1)
+            nn.init.zeros_(self.image_log_scale.weight)
+
+        # Sinusoidal features on the detector position and the shot index.
+        # A plain MLP on raw coordinates is spectrally biased: fit supervised
+        # to careless's scale on hewl_1118 it stops at a 37.5% residual and
+        # pinning it back recovers anomalous peaks of 4.27 against careless's
+        # own 6.17, while the same MLP at HALF the width on 4-frequency
+        # sinusoids of (x, y, shot) reaches 28.2% and peaks of 5.29. The
+        # missing content is high-frequency, not high-capacity, and R-free is
+        # nearly saturated before any of it arrives (0.1845 at 37.5% against
+        # 0.1788 at zero), so this buys anomalous signal specifically.
+        # `pe_on_image` adds the shot index as a CONTINUOUS encoded feature
+        # beside the free per-image embedding, which shares structure between
+        # neighbouring shots the way careless's positionally-encoded BATCH
+        # does. 0 frequencies (the default) is the original feature set.
+        self.pe_frequencies = max(int(pe_frequencies), 0)
+        self.pe_on_image = bool(pe_on_image)
+        pe_img = self.pe_frequencies > 0 and self.pe_on_image and self.n_images > 0
+        self.pe_use_image = pe_img
+        # Wavelength can join the encoded columns. It is the largest single
+        # factor in a Laue scale -- the beam spans ~280x across the band --
+        # and without this it reaches the MLP as one raw number while the
+        # detector coordinates get every harmonic.
+        self.pe_on_lambda = bool(pe_on_lambda) and self.use_wavelength
+        pe_lam = self.pe_frequencies > 0 and self.pe_on_lambda
+        self.pe_use_lambda = pe_lam
+        n_pe_cols = 2 + (1 if pe_img else 0) + (1 if pe_lam else 0)
+        n_pe = (1 if pe_img else 0) + 2 * self.pe_frequencies * n_pe_cols
+
+        # An explicit G(lambda) added in log space, rather than asking the
+        # MLP to find the spectrum among the detector features. The Wilson
+        # prior is a statement about the CRYSTAL and its rate should carry no
+        # wavelength, so on a merging model -- where the latent I_h is shared
+        # across observations at different lambda -- the spectrum belongs
+        # here, in the measurement model. `polychromatic_wilson` puts it in
+        # the prior instead; with lambda also dropped from the scale that
+        # left the shared latent no mechanism for the band at all and R-free
+        # went to 0.40 (arm pmspecnl).
+        #
+        # c[0] is zeroed on a warm start: T_0 = 1, so it is the mean of
+        # log G, and the overall level is already owned by the per-image
+        # embedding. Only the SHAPE of the curve is wanted here.
+        self.spectrum_degree = max(int(spectrum_degree), 0)
+        if self.spectrum_degree > 0:
+            self.spectrum = ChebyshevSpectrum(
+                degree=self.spectrum_degree,
+                lambda_min=lambda_min,
+                lambda_max=lambda_max,
+                init_from=spectrum_init_from,
+                init_G=1.0,
+            )
+            with torch.no_grad():
+                self.spectrum.c[0] = 0.0
+            if spectrum_freeze:
+                self.spectrum.requires_grad_(False)
+
+        # Input: [lambda_norm, x_norm, y_norm, d_norm] + sinusoidal features
+        # + selected SH features, less lambda_norm when `use_wavelength` is off.
         layers = []
-        in_dim = (4 if self.use_wavelength else 3) + n_abs_in
+        in_dim = (4 if self.use_wavelength else 3) + n_pe + n_abs_in
         for _ in range(n_layers):
             layers.append(nn.Linear(in_dim, hidden_dim))
             layers.append(nn.SiLU())
@@ -567,12 +634,6 @@ class LaueMLPScale(nn.Module):
         else:
             nn.init.zeros_(self.net[-1].weight)
 
-        # Optional per-image (per-shot) log-scale -- the standard Laue per-image
-        # scale factor. Zero-initialized so it starts as a no-op.
-        self.n_images = int(n_images) if n_images is not None else 0
-        if self.n_images > 0:
-            self.image_log_scale = nn.Embedding(self.n_images, 1)
-            nn.init.zeros_(self.image_log_scale.weight)
 
     def forward(
         self,
@@ -606,6 +667,28 @@ class LaueMLPScale(nn.Module):
         cols = [lam_norm, x_norm, y_norm, d_norm]
         if not self.use_wavelength:
             cols = cols[1:]
+        if self.pe_frequencies > 0:
+            pe_cols = [x_norm, y_norm]
+            if self.pe_use_lambda:
+                pe_cols.append(lam_norm)
+            if self.pe_use_image:
+                if image_num is None:
+                    raise ValueError(
+                        "LaueMLPScale was built with encoded shot-index features "
+                        "(pe_frequencies > 0, pe_on_image) but image_num was not "
+                        "provided."
+                    )
+                img_norm = 2.0 * (
+                    image_num.to(x_norm.dtype).clamp(0, self.n_images - 1)
+                    / max(self.n_images - 1, 1)
+                ) - 1.0
+                pe_cols.append(img_norm)
+                cols = cols + [img_norm]
+            for k in range(self.pe_frequencies):
+                for c in pe_cols:
+                    a = (2.0**k) * math.pi * c
+                    cols.append(torch.sin(a))
+                    cols.append(torch.cos(a))
         features = torch.stack(cols, dim=-1)
         if self.n_abs_sh > 0:
             if absorption_sh is None:
@@ -622,6 +705,8 @@ class LaueMLPScale(nn.Module):
                 [features, absorption_sh[:, self.abs_cols]], dim=-1
             )
         log_s = self.net(features).squeeze(-1)
+        if self.spectrum_degree > 0:
+            log_s = log_s + self.spectrum.get_log_G(wavelength)
 
         if self.n_images > 0:
             if image_num is None:

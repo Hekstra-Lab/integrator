@@ -34,6 +34,8 @@ class ProfileEncoderArgs:
         conv2_padding: Padding of the second conv block.
         norm2_num_groups: Number of groups in the second group-norm.
         dropout: Dropout probability applied before the output projection.
+        output_activation: `relu` (default, the original encoder), `none` or
+            `layernorm` after the output projection; see `ProfileEncoder`.
     """
 
     data_dim: Literal["2d", "3d"]
@@ -51,8 +53,37 @@ class ProfileEncoderArgs:
     conv2_padding: tuple[int, ...]
     norm2_num_groups: int
     dropout: float = 0.0
+    output_activation: Literal["relu", "none", "layernorm"] = "relu"
+    head: Literal["flatten", "pool", "moments"] = "flatten"
+    """How the conv feature map is reduced to `encoder_out`.
+
+    `flatten` (default) is the original: flatten the whole map and apply one
+    dense layer. On a 41x41 shoebox that layer is 32 x 23,104 = 739,328
+    parameters, 97.5% of the encoder and 77% of the model, against 18,944 for
+    the conv stack that does the vision; it is also the layer whose units all
+    go negative when the profile encoder dies.
+
+    `pool` adds one more pooling stage before the flatten, cutting the dense
+    layer by roughly an order of magnitude while keeping position.
+
+    `moments` replaces the dense layer with the spatial moments of each
+    feature map -- mass, centroid and second moments -- which are the
+    quantities a profile is made of, at `6 * conv2_out_channels` inputs
+    instead of 23,104. Plain global average pooling is deliberately not an
+    option: it discards position, and the profile has to know where in the
+    box the spot sits.
+    """
 
     def __post_init__(self):
+        if self.head not in ("flatten", "pool", "moments"):
+            raise ValueError(
+                f"head must be flatten, pool or moments, got {self.head!r}"
+            )
+        if self.output_activation not in ("relu", "none", "layernorm"):
+            raise ValueError(
+                "output_activation must be relu, none or layernorm, "
+                f"got {self.output_activation!r}"
+            )
         if self.in_channels < 1:
             raise ValueError(
                 f"in_channels must be >= 1, got {self.in_channels}"
@@ -185,3 +216,23 @@ class IntensityEncoderArgs:
                 f"encoder_out must be >= 1, got {self.encoder_out}"
             )
         _check_spatial_ndims(self)
+
+
+@dataclass
+class SummaryStatsEncoderArgs:
+    """Arguments for `SummaryStatsEncoder`.
+
+    The statistics are scale-free by construction, so there is nothing to fit
+    per dataset except `log_total_loc` and `log_total_scale`, which standardize
+    the one feature that is a scale.
+    """
+
+    data_dim: str | None = None
+    input_shape: tuple[int, ...] = (3, 21, 21)
+    encoder_out: int = 32
+    hidden: int = 16
+    log_total_loc: float = 7.0
+    log_total_scale: float = 3.0
+    beam_center: tuple[float, float] | None = None
+    quantiles: tuple[float, ...] | None = None
+    tail_multiples: tuple[float, ...] | None = None

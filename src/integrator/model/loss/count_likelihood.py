@@ -33,9 +33,33 @@ class CountLikelihood(nn.Module):
     photon-equivalents, which are continuous and can be negative), where a discrete
     count likelihood does not apply. Its variance is either:
 
-    - `coupled`: `Var = rate + read_noise^2`, the physically-correct variance of a
-      Poisson count plus Gaussian read noise. `read_noise` is in the same (photon)
+    - `coupled`: `Var = gain * rate + read_noise^2`, the variance of a counting
+      process of gain `gain` plus Gaussian read noise. `read_noise` is in the same
       units as `rate`; JUNGFRAU G0 is ~0.024. This is the best a Gaussian can do.
+
+      `gain` is counts of variance per count of recorded signal, and the three
+      regimes it spans are why this form is worth having over Poisson:
+
+          gain 1, read_noise 0     Poisson's variance; photons, no read noise
+          gain 1, read_noise > 0   a real detector: shot noise plus a floor
+          gain 0, read_noise > 0   no counting statistics at all, only a floor
+
+      The last is not hypothetical. The nanoBragg DHFR Laue simulation measures
+      a variance of 9.2 counts^2 that does not move while the local mean runs
+      13 -> 31 counts/px, a signal gain of -0.046 +/- 0.05, a skewness of
+      +0.0011 where Poisson needs +0.2473, and a minimum count of -2, which a
+      Poisson image cannot produce. Its sub-images were averaged into a smooth
+      expectation and only read noise was added. Poisson on that data assigns a
+      bright pixel at rate 500 a variance of 500 against a true 9.2, so it
+      down-weights by 54x exactly the pixels that carry the intensity.
+
+      Neither of the discrete alternatives can represent this. Negative binomial
+      has Var = rate + rate^2/r >= rate for every r, so it only goes ABOVE
+      Poisson. A Gamma of fixed shape k has Var = rate^2/k, a constant relative
+      error, which grows fastest where this needs to stay flat; a Gamma of fixed
+      rate gives Var proportional to rate, which is the gain alone and cannot
+      hold a floor that survives at zero signal. A mean-independent additive
+      term is what is required, and only a Normal of this form has one.
     - `free`: a single learned `sigma`, ignoring the mean-variance coupling. This is
       the naive baseline; it is over-confident on bright pixels because one variance
       cannot describe both the quiet background and the noisy peak.
@@ -53,6 +77,10 @@ class CountLikelihood(nn.Module):
             `nn.Parameter`; if False it is a fixed buffer held at `dispersion_init`.
         read_noise: Gaussian read noise, in `rate` units, for the `coupled` Normal.
             Ignored unless `name == "normal"`.
+        gain: Counts of variance per count of recorded signal, for the `coupled`
+            Normal. Defaults to 1.0, which is the Poisson coupling and leaves
+            every existing configuration bit-identical. Ignored unless
+            `name == "normal"` and `variance == "coupled"`.
         variance: `coupled` or `free`; the Normal variance model (see above).
         sigma_init: Initial sigma for the `free` Normal.
         learn_sigma: If True (default) the `free` Normal sigma is a learned
@@ -69,6 +97,7 @@ class CountLikelihood(nn.Module):
         dispersion_floor: float = 1e-3,
         learn_dispersion: bool = True,
         read_noise: float = 0.0,
+        gain: float = 1.0,
         variance: str = _COUPLED,
         sigma_init: float = 1.0,
         learn_sigma: bool = True,
@@ -112,6 +141,11 @@ class CountLikelihood(nn.Module):
                 torch.as_tensor(float(read_noise)),
                 persistent=False,
             )
+            if gain < 0.0:
+                raise ValueError(f"gain must be >= 0; got {gain}")
+            self.register_buffer(
+                "gain", torch.as_tensor(float(gain)), persistent=False
+            )
             if variance == _FREE:
                 raw_init = _inv_softplus(torch.tensor(float(sigma_init)))
                 if learn_sigma:
@@ -140,7 +174,10 @@ class CountLikelihood(nn.Module):
         if self.name == NORMAL:
             if self.variance == _FREE:
                 return {"normal_sigma": self.sigma().detach()}
-            return {"normal_read_noise": self.read_noise.detach()}
+            return {
+                "normal_read_noise": self.read_noise.detach(),
+                "normal_gain": self.gain.detach(),
+            }
         return {}
 
     def neg_ll(
@@ -163,8 +200,13 @@ class CountLikelihood(nn.Module):
             ).log_prob(target)
         else:  # NORMAL
             if self.variance == _COUPLED:
-                # Var = rate + read_noise^2: Poisson variance + Gaussian read noise.
-                std = (rate + self.read_noise**2).clamp_min(_VAR_FLOOR).sqrt()
+                # Var = gain * rate + read_noise^2: a counting process of this
+                # gain plus Gaussian read noise. gain = 1 is the Poisson coupling.
+                std = (
+                    (self.gain * rate + self.read_noise**2)
+                    .clamp_min(_VAR_FLOOR)
+                    .sqrt()
+                )
             else:  # free: one learned sigma for every pixel
                 std = self.sigma()
             ll = Normal(rate, std).log_prob(target)

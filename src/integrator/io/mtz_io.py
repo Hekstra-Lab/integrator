@@ -20,6 +20,7 @@ def write_mtz_from_preds(
     drop_unmapped_batch: bool = True,
     intensity_key: str = "qi_mean",
     variance_key: str = "qi_var",
+    wavelength: float | None = None,
 ):
     """Build and write an MTZ file from integrator predictions.
 
@@ -81,7 +82,21 @@ def write_mtz_from_preds(
     H = _meta("H").astype(np.int32)
     K = _meta("K").astype(np.int32)
     L = _meta("L").astype(np.int32)
-    wavelength = _meta("wavelength").astype(np.float64)
+    if "wavelength" in meta:
+        wavelength_col = _meta("wavelength").astype(np.float64)
+    elif wavelength is not None:
+        # A monochromatic dataset carries no per-reflection wavelength, and
+        # hewl_9b7c's reference file has no such column at all. The MTZ still
+        # wants one, so a single-beam dataset supplies the scalar from its
+        # beam model. Laue data is unaffected: the column wins when present.
+        wavelength_col = np.full(len(refl_ids), float(wavelength), dtype=np.float64)
+        logger.info("no wavelength column; writing the scalar %g", wavelength)
+    else:
+        raise KeyError(
+            "write_mtz_from_preds: the metadata has no 'wavelength' column. "
+            "Pass `wavelength=<value>` for a monochromatic dataset."
+        )
+    wavelength = wavelength_col
     xcal = _meta("xyzcal.px.0").astype(np.float64)
     ycal = _meta("xyzcal.px.1").astype(np.float64)
 
