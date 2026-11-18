@@ -27,7 +27,17 @@ TREE=$M/$TREE_NAME
 source /n/lab_storage/hekstra_lab/people/aldama/micromamba/etc/profile.d/mamba.sh
 mkdir -p $TREE/scripts $TREE/logs
 cp $REF/scripts/{expt_concat.py,custom_ccsym.py,careless-cdef-ohp-mlpw.sh,stats_for_production.sh,wdm.py} $TREE/scripts/ 2>/dev/null
-cp $M/split_pdz2.py $TREE/scripts/
+# OUR scripts come from this script's own directory in the repository, not
+# from a copy on scratch. `$M/split_pdz2.py` was a copy that predated
+# `--estimator`, so this job ran a 22-second predict pass and then died on
+# `unrecognized arguments: --estimator model` while the repository had the
+# flag all along. The deposited scripts above stay at $REF, where they are
+# the originals as run.
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+for f in split_pdz2.py wdm_peaks_compare.py; do
+  [ -s "$HERE/$f" ] || { echo "MISSING $HERE/$f -- run this from the repo checkout"; exit 1; }
+  cp "$HERE/$f" $TREE/scripts/
+done
 ln -sf $REF/5e1y_phases.mtz $TREE/5e1y_phases.mtz
 
 echo "==================== 1) predict ($ARM), LAST checkpoint only"
@@ -85,7 +95,7 @@ PY
 echo "==================== 6) weighted difference map + Fig 9C/D peaks"
 cd $TREE && micromamba run -n integrator-cuda-dev python scripts/wdm.py 0.3 2>&1 | tail -3
 if [[ -s $TREE/gain_0,3_from_stills/wdm_rescut.mtz ]]; then
-  micromamba run -n integrator-cuda-dev python $M/wdm_peaks_compare.py \
+  micromamba run -n integrator-cuda-dev python $TREE/scripts/wdm_peaks_compare.py \
     --arm "laue=$REF/gain_0,3_from_stills/wdm_rescut.mtz" \
     --arm "$ARM=$TREE/gain_0,3_from_stills/wdm_rescut.mtz" 2>&1 | tail -30
 else
