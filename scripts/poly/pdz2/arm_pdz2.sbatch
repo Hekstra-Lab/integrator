@@ -70,7 +70,28 @@ EXTRA=""
 # ESTIMATOR picks which intensities are scored: `model` is the posterior and
 # `rb` the profile fit computed at export. Both are scored for an arm because
 # which one wins is not monotone across arms.
-micromamba run -n integrator-cuda-dev python $TREE/scripts/split_pdz2.py \
+# The splitter runs against the REPOSITORY's `integrator.io`, not the
+# environment's. Two different versions are in play on purpose:
+#
+#   predict  -- the environment's, because that is the code that trained
+#               the checkpoint being predicted from, and a model class that
+#               has moved since would not be the same model.
+#   split    -- the repository's, because `split_pdz2.py` is the
+#               repository's and calls `write_mtz_from_preds(intensity_key=,
+#               variance_key=)`, which the installed version does not accept:
+#                   TypeError: write_mtz_from_preds() got an unexpected
+#                   keyword argument 'intensity_key'
+#               It is also where the BATCH convention fix lives, and getting
+#               BATCH wrong both cuts the wrong frames and corrupts
+#               careless's per-image scale model.
+#
+# The split is a transformation of the prediction parquet with no model in
+# it, so pairing it with the repository's IO is sound. Remove this once the
+# environment's checkout is the repository's.
+REPO_SRC=$(cd "$HERE/../../.." && pwd)/src
+[ -d "$REPO_SRC/integrator" ] || { echo "no integrator package at $REPO_SRC"; exit 1; }
+micromamba run -n integrator-cuda-dev env PYTHONPATH=$REPO_SRC \
+  python $TREE/scripts/split_pdz2.py \
   --run-dir $RUN --tree $TREE --estimator ${ESTIMATOR:-model} $EXTRA 2>&1 | tail -22
 [[ -s $TREE/gain_0,3_from_stills/dials_files_f_off/integrated.mtz ]] || { echo "SPLIT_INCOMPLETE"; exit 1; }
 
