@@ -33,7 +33,17 @@ cp $REF/scripts/{expt_concat.py,custom_ccsym.py,careless-cdef-ohp-mlpw.sh,stats_
 # `unrecognized arguments: --estimator model` while the repository had the
 # flag all along. The deposited scripts above stay at $REF, where they are
 # the originals as run.
-HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# Under sbatch, $BASH_SOURCE is slurmd's spool copy of this file, not the
+# file in the repository, so `dirname` of it finds nothing. The submission
+# directory is the checkout the job was launched from. PDZ2_SCRIPTS overrides
+# both, and the plain `dirname` is the fallback when run outside SLURM.
+if [ -n "${PDZ2_SCRIPTS:-}" ]; then
+  HERE=$PDZ2_SCRIPTS
+elif [ -d "${SLURM_SUBMIT_DIR:-}/scripts/poly/pdz2" ]; then
+  HERE=$SLURM_SUBMIT_DIR/scripts/poly/pdz2
+else
+  HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+fi
 for f in split_pdz2.py wdm_peaks_compare.py; do
   [ -s "$HERE/$f" ] || { echo "MISSING $HERE/$f -- run this from the repo checkout"; exit 1; }
   cp "$HERE/$f" $TREE/scripts/
