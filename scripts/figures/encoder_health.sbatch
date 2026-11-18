@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH -J enc_health
-#SBATCH -p gpu
+#SBATCH -p gpu_test
 #SBATCH --gres=gpu:1
 #SBATCH -c 8
-#SBATCH --mem=120G
-#SBATCH -t 0-02:00
+#SBATCH --mem=48G
+#SBATCH -t 0-01:00
 #SBATCH -o enc_health_%j.out
 #
 # Measure whether the profile encoder is alive, over training.
@@ -19,6 +19,10 @@
 #
 #   DATASET=pdz2_1116 sbatch scripts/figures/encoder_health.sbatch \
 #       /path/to/runs/pdz2_svae /path/to/runs/pdz2_w21_k7m
+#
+# gpu_test, not gpu: this is a few minutes of forward passes and the arrays
+# are about 1.7 GB, well under the 65536 MB cap, so it starts at once where
+# gpu queues. REPO=<checkout> if submitting from somewhere else.
 #
 # STRIDE=n   every nth checkpoint (default every one; 25 is a quick look)
 # OUT=path   where the CSV goes (default enc_<dataset>.csv beside the log)
@@ -35,9 +39,16 @@ PY=$MAMBA_ROOT/envs/$ENV_NAME/bin/python
 # from a directory with no `integrator/` in it: Python puts the script's own
 # directory first on sys.path, and a staged stub package under `jobs/` has
 # shadowed the installed one twice.
-HERE=${SLURM_SUBMIT_DIR:?submit from a checkout}
-SCRIPT=$HERE/scripts/figures/dump_encoder_health.py
-[ -s "$SCRIPT" ] || { echo "no $SCRIPT"; exit 1; }
+# REPO, then the submitting directory. `$SLURM_SUBMIT_DIR` is where sbatch
+# was INVOKED, which is not the checkout when the job is submitted from an
+# output directory -- that is how this failed first time, with
+# `no .../enc/scripts/figures/dump_encoder_health.py`.
+REPO=${REPO:-${SLURM_SUBMIT_DIR:-}}
+SCRIPT=$REPO/scripts/figures/dump_encoder_health.py
+[ -s "$SCRIPT" ] || {
+  echo "no $SCRIPT -- submit from the checkout, or set REPO=<checkout>"
+  exit 1
+}
 
 echo "===== python:  $PY"
 echo "===== dataset: $DATASET, stride $STRIDE"

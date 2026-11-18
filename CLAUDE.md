@@ -218,7 +218,22 @@ three output MTZs each tool reads; they are not interchangeable.
 ## Cluster
 
 Harvard Cannon, `ssh cannon`. Scratch `/n/netscratch/hekstra_lab/Lab/laldama`, source checkout `$S/integrator_cur`, data under `/n/lab_storage/hekstra_lab/people/aldama/integrator_data/`.
-`gpu_test` allows 2 jobs and under 65636 MB; CPU-only work goes to `test` or `sapphire`.
+**Partitions: `test` and `gpu_test` are for submitting to, not just a last resort.**
+A short job belongs there, because the production partitions queue.
+
+| partition | for | limits |
+|---|---|---|
+| `gpu_test` | a GPU job of a few minutes: a predict pass, an export, a diagnostic | 2 jobs at once, under 65636 MB |
+| `test` | the same on CPU | CPU only |
+| `sapphire` | longer CPU work | CPU only |
+| `gpu` | training, and anything over the `gpu_test` memory cap | 35 nodes, usually available |
+| `gpu_requeue` | last choice | 15 nodes down and 6 draining on 18 Nov; a job sat PENDING over three hours and was resubmitted to `gpu`, where it ran |
+
+Memory is what usually decides between `gpu_test` and `gpu`: the data module
+loads `counts.npy` whole, so a PDZ2-sized set needs about 1.3 GB of arrays
+before torch, and 845 needs `--mem=250G`. Ask for what the arrays need, not a
+round number -- a 120G request that only needs 50G is a job that waits for
+`gpu` when `gpu_test` would have started it immediately.
 Paths baked in before the storage migration are stale, including inside other people's env scripts.
 A watcher that treats a transient `squeue` failure as completion will report success on an empty result; require several consecutive empty polls.
 
