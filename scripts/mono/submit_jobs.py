@@ -1,3 +1,9 @@
+"""Submit the monochromatic training jobs for a set of configs.
+
+Superseded for a whole chain by `cannon/run_all.sh`, which chains the
+stages with --dependency=afterok; this stays for submitting training alone.
+"""
+
 import argparse
 import subprocess
 import textwrap

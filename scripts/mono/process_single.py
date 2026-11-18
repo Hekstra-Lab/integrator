@@ -1,3 +1,15 @@
+"""Scale, merge, refine and peak-pick ONE reflection file.
+
+`dials.scale` then `dials.merge` at their defaults, then `phenix.refine`
+through the dataset's own .eff with the merged MTZ substituted in, then
+`rs.find_peaks`. The phase label handed to the peak search is read back out
+of that .eff rather than hardcoded, because phenix 2.0 writes PANOM where
+1.20 wrote PHANOM.
+
+Called once per file by `cannon/03_pipeline.sh`; the config comes from
+`post_config.py`.
+"""
+
 import argparse
 import subprocess
 from dataclasses import dataclass

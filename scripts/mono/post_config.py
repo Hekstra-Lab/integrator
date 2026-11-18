@@ -1,3 +1,10 @@
+"""Write `dials_phenix_cfg.yaml` for one run: the reflection files to
+process, and the DIALS and phenix settings `process_single.py` reads.
+
+The settings come from the dataset's own processing config, so a run is
+scored through the chain that belongs to its dataset rather than a default.
+"""
+
 import argparse
 import logging
 import os

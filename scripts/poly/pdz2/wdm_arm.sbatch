@@ -2,6 +2,9 @@
 #SBATCH -J pdz2_wdm
 #SBATCH -p shared,serial_requeue
 #SBATCH -c 2
+# Weighted 200ns-off difference map for an arm that is already merged,
+# then the Fig 9C/D peak comparison against laue.integrate. Step 10 of the
+# chain on its own, for when only the map needs redoing.
 #SBATCH --mem=24G
 #SBATCH -t 0-01:00
 #SBATCH -o /n/netscratch/hekstra_lab/Lab/laldama/laue_runs/pdz2_model/logs/wdm_%x_%j.out
