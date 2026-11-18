@@ -308,12 +308,99 @@ def posterior_mean(i_hat, prior: str, wilson_scale=1e3):
     return (alpha + np.maximum(i_hat, 0.0)) / (beta + 1.0)
 
 
+def coupling(r, counts):
+    """Does the split actually partition the counts?
+
+    The reason to want an SVAE at all: in an amortized model q(I) and q(B)
+    are separate heads with nothing holding them together, so the pair can
+    drift along a direction that leaves the likelihood alone -- raise the
+    background, lower the intensity, fit the same counts. In the SVAE the
+    gate is supposed to tie them, because every count is assigned to signal
+    or to background and `r + (1 - r) = 1` pixel by pixel.
+
+    That identity holds for ANY r, which is the point: the tie is
+    structural, not fitted. What varies is whether the split is in the
+    right PLACE. So this returns both the partition residual, which should
+    be zero to floating point for any gate, and the share of the total
+    assigned to signal, which is what the gate actually decides.
+    """
+    total = counts.sum(axis=1)
+    sig = (r * counts).sum(axis=1)
+    bkg = ((1.0 - r) * counts).sum(axis=1)
+    residual = np.abs(sig + bkg - total) / np.maximum(total, 1e-9)
+    return float(np.max(residual)), sig / np.maximum(total, 1e-9)
+
+
+REGIMES = {
+    # name:           (I range as 10^x,  B range as 10^x)
+    "laue_like": ((1.0, 4.0), (-0.5, 1.5)),
+    "low_background": ((1.0, 4.0), (-2.0, -0.5)),
+    "mono_like": ((2.0, 4.5), (-3.0, -1.5)),
+    "low_snr": ((0.5, 1.5), (-0.5, 1.0)),
+    "low_snr_low_bg": ((0.5, 1.5), (-2.5, -1.0)),
+}
+
+
+def simulate_regime(n: int, rng, regime: str):
+    """Profiles and counts for one (intensity, background) regime."""
+    (i_lo, i_hi), (b_lo, b_hi) = REGIMES[regime]
+    p = streaky_profiles(n, rng)
+    intensity = 10.0 ** rng.uniform(i_lo, i_hi, size=n)
+    background = 10.0 ** rng.uniform(b_lo, b_hi, size=n)
+    rate = intensity[:, None] * p + background[:, None]
+    counts = rng.poisson(rate).astype(float)
+    return p, intensity, background, counts
+
+
+def sweep(n: int, seed: int) -> list[dict]:
+    """Every gate in every regime, with the coupling diagnostic."""
+    rows = []
+    print(f"{'regime':<16}{'gate':<16}{'bias %':>9}{'rel sd %':>10}"
+          f"{'signal share':>14}{'partition':>11}")
+    for regime in REGIMES:
+        rng = np.random.default_rng(seed)
+        p, intensity, background, counts = simulate_regime(n, rng, regime)
+        snr = float(np.median(intensity / (background * p.shape[1])))
+        for name, fn in GATES.items():
+            r = fn(p, intensity, background, counts)
+            resid, share = coupling(r, counts)
+            ratio = (r * counts).sum(axis=1) / intensity
+            rows.append({
+                "regime": regime, "gate": name,
+                "median_snr": round(snr, 3),
+                "bias_pct": round(100 * (np.mean(ratio) - 1), 2),
+                "rel_sd_pct": round(100 * np.std(ratio), 2),
+                "signal_share": round(float(np.mean(share)), 4),
+                "partition_residual": float(f"{resid:.2e}"),
+                "n": n,
+            })
+            print(f"{regime:<16}{name:<16}{rows[-1]['bias_pct']:>9.2f}"
+                  f"{rows[-1]['rel_sd_pct']:>10.2f}"
+                  f"{rows[-1]['signal_share']:>14.3f}"
+                  f"{rows[-1]['partition_residual']:>11.1e}")
+        print()
+    return rows
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--n", type=int, default=3000)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", default="")
+    ap.add_argument("--sweep", action="store_true",
+                    help="every gate across the intensity/background "
+                         "regimes, with the partition diagnostic")
     args = ap.parse_args()
+
+    if args.sweep:
+        rows = sweep(args.n, args.seed)
+        if args.out:
+            with open(args.out, "w", newline="") as fh:
+                w = csv.DictWriter(fh, fieldnames=list(rows[0]))
+                w.writeheader()
+                w.writerows(rows)
+            print(f"{args.out}: {len(rows)} rows")
+        return 0
 
     rng = np.random.default_rng(args.seed)
     p, intensity, background, counts = simulate(args.n, rng)
