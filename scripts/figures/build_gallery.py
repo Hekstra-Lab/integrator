@@ -24,6 +24,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
+# The architecture diagrams, by name. A prefix list rather than a directory
+# test because the predicates below see only a file stem, and `profile_` is
+# shared with the measured profile-shape figures.
+ARCHITECTURE = (
+    "condensed_", "vec_", "gate_", "encoder_variants",
+    "hierarchical_integrator", "svae_integrator", "svae_ortho",
+    "shoebox_bright", "shoebox_weak", "shoebox_transformed",
+    "profile_encoders", "profile_learned_basis", "profile_geometric",
+    "profile_mixture_gaussian", "profile_shifted_basis",
+    "profile_bright", "profile_weak",
+)
+
 # (section title, note, predicate on the file stem) in the order the figures
 # are reported. The first rule that matches a file claims it.
 RULES: list[tuple[str, str, Callable[[str], bool]]] = [
@@ -57,6 +69,18 @@ RULES: list[tuple[str, str, Callable[[str], bool]]] = [
         lambda s: s.startswith("merging_"),
     ),
     (
+        "PDZ2: refinement against the deposited model",
+        "R-work and R-free per arm against laue.integrate, at fixed "
+        "geometry. This is the endpoint PDZ2 is ranked on: CCsym is a "
+        "half-dataset correlation and laue.integrate borrows profiles from "
+        "strong neighbours, which feeds both halves of it. Replicates are "
+        "drawn rather than a mean alone, because the careless merging seed "
+        "moves R-free by about 0.0012 and unseeded training by about 0.0050, "
+        "so one refinement is not a measurement; the band on the reference "
+        "is that training spread.",
+        lambda s: s.startswith("refinement_pdz2"),
+    ),
+    (
         "Refinement over training",
         "R-work and R-free from phenix.refine on the integrator-merged data, "
         "against the DIALS reference line.",
@@ -86,6 +110,20 @@ RULES: list[tuple[str, str, Callable[[str], bool]]] = [
         "GPU-minutes. Cross-validation repeats and Train/Test are "
         "categorical, not a ramp -- a repeat is not an ordering.",
         lambda s: s.startswith("careless_"),
+    ),
+    (
+        "svae against hierarchical",
+        "The two integrator families compared directly, each pair differing "
+        "by the family alone -- same profile model, same data, same basis "
+        "size. `basis_convergence` reduces each arm's basis to effective "
+        "rank, principal angle to its final basis and relative step, and "
+        "overlays the families per dataset. `model_cost` is parameters and "
+        "seconds per epoch; parameters come from a checkpoint's state dict "
+        "and do not depend on where a run happened, while seconds per epoch "
+        "is a property of the model only when the allocation matches, so a "
+        "pair is solid when both arms record one node and one CPU count and "
+        "hatched otherwise.",
+        lambda s: s.startswith(("basis_convergence", "model_cost")),
     ),
     (
         "The learned profile basis",
@@ -136,6 +174,14 @@ RULES: list[tuple[str, str, Callable[[str], bool]]] = [
         "checkpoint.",
         lambda s: s.startswith("arm_metrics"),
     ),
+    (
+        "Architecture diagrams",
+        "Drawn rather than measured: what the models are, not how they "
+        "scored. Matched by an explicit list of names because several share "
+        "a `profile_` prefix with the measured profile-shape figures above, "
+        "which claim theirs first.",
+        lambda s: s.startswith(ARCHITECTURE),
+    ),
 ]
 
 # the figures named in docs/figures/README.md that nothing here matched
@@ -151,6 +197,8 @@ EXPECTED = {
     "basis_components": "the learned profile basis",
     "wilson_params": "the Wilson prior over training",
     "ccsym_": "PDZ2 CCsym by resolution shell",
+    "basis_convergence": "svae against hierarchical, basis convergence",
+    "model_cost": "svae against hierarchical, parameters and throughput",
 }
 
 _RESIDUES = ("IOD", "CYS", "MET", "SER", "HOH", "ILE", "HIS", "ASP", "GLU")
