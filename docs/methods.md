@@ -450,6 +450,32 @@ moves CCsym by about 0.012 and R-free by about 0.0012, and dominates the
 phenix seed roughly ninefold on Laue data. Arms are therefore averaged over
 merging seeds, and `replicate` in `pdz2_refinement.csv` is that seed.
 
+### Exporting the Rao-Blackwellized intensity
+
+`integrator.predict --rb-export --write-mtz` on an existing checkpoint. No
+retraining, and the two traps are both silent until the very end.
+
+**`--rb-export` only tells the MTZ writer which columns to read.** The
+parquet's columns come from `predict_keys`, so a config that does not list
+`i_rb` and `var_rb` produces a parquet without them and the export dies on a
+`KeyError` after the whole predict pass has already run.
+`scripts/poly/rb_predict_config.py` derives a predict config with the four
+RB columns added.
+
+**It derives that config from the run's own `config_log.yaml`, never from
+the repository config.** The checkpoint has to load into the architecture it
+was trained with, and the PDZ2 arms differ from each other and from the
+repository file in window and kernel size; the repository `pdz2_1116.yaml`
+has a 3x3 first kernel where `pdz2_w21_k7m` trained a 7x7.
+
+**The console script on the cluster is not the current code.**
+`integrator.predict` resolves to the `lab_storage` checkout, which predates
+`--rb-export` and fails on an unrecognised argument. The current `src/`
+is staged into the job directory and put first on the path with `python -m
+integrator.cli.predict`, rather than changing a shared checkout that other
+jobs may depend on. That is a workaround for the stale-checkout problem
+below, not a fix for it.
+
 ## What is not reproducible from the repository today
 
 Verified against the repository and both cluster checkouts on 2026-11-18.
