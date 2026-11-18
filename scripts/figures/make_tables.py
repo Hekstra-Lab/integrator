@@ -36,7 +36,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import tables as sitables  # noqa: F401,E402  -- registers the "siunitx" renderer
+import tables as sitables  # noqa: F401,E402  -- registers "mydesign"
 from figtex.table import Table  # noqa: E402
 
 from integrator.utils import metrics  # noqa: E402
@@ -198,7 +198,7 @@ def write(t: Table, stem: str, caption: str, **opts) -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     tex = OUT / f"{stem}.tex"
     tex.write_text(
-        t.render("siunitx", float=True, caption=caption,
+        t.render("mydesign", float=True, caption=caption,
                  label=f"tab:{stem}", **opts)
     )
     (OUT / f"{stem}.md").write_text(t.render("markdown"))
@@ -539,6 +539,168 @@ def write_statistic_labels() -> None:
     print(f"  {(DATA / LABELS_CSV).relative_to(ROOT)}  ({len(names)} rows)")
 
 
+
+# the hyperparameter tables --------------------------------------------------
+
+# Which group a varying parameter is taken from first, when the table has to
+# be narrowed. Architecture before optimisation: what the model IS matters
+# more in a methods table than how it was fitted.
+GROUP_ORDER = ("integrator", "surrogate", "loss", "encoder", "optimizer",
+               "trainer", "data")
+# A paper table wider than this stops being readable at full measure.
+MAX_COLUMNS = 8
+HPARAMS = ROOT / "docs" / "figures" / "data" / "hparams.csv"
+COUNTS = ("cmp_mono.csv", "cmp_1118.csv")
+
+
+def _hparam_rows() -> list[dict]:
+    if not HPARAMS.is_file():
+        return []
+    import csv as _csv
+
+    with open(HPARAMS, newline="") as fh:
+        return list(_csv.DictReader(fh))
+
+
+def _parameter_counts() -> dict[tuple[str, str], int]:
+    """Total parameters per (dataset, method), where it was measured."""
+    import csv as _csv
+
+    out = {}
+    for name in COUNTS:
+        path = HPARAMS.parent / name
+        if not path.is_file():
+            continue
+        with open(path, newline="") as fh:
+            for r in _csv.DictReader(fh):
+                if r.get("quantity") == "n_params_total":
+                    try:
+                        out[(r["dataset"], r["method"])] = int(float(r["value"]))
+                    except (TypeError, ValueError):
+                        pass
+    return out
+
+
+def _columns_for(rows: list[dict]) -> list[str]:
+    """The varying parameters worth a column, narrowed to MAX_COLUMNS.
+
+    Two rules do the narrowing, and both are about information rather than
+    taste.
+
+    A parameter that varies only because it is ABSENT from some arms is
+    dropped: it takes one value wherever it appears, so a column of it is a
+    column of one value and a blank, which says less than a sentence.
+
+    A parameter whose value PATTERN across the arms is identical to one
+    already chosen is redundant and dropped. The window size shows up as
+    `integrator.h`, `integrator.w`, `encoder.*.input_shape` and
+    `surrogate.qp.output_dim` at once; they partition the arms identically,
+    so one column carries all four.
+    """
+    varying = [r for r in rows if r.get("varies") in ("1", 1, True)]
+    by_name: dict[str, dict[str, str]] = {}
+    groups: dict[str, str] = {}
+    for r in varying:
+        by_name.setdefault(r["parameter"], {})[r["method"]] = r["value"]
+        groups[r["parameter"]] = r["group"]
+
+    methods = {r["method"] for r in rows}
+    chosen: list[str] = []
+    seen_patterns: list[tuple] = []
+
+    def rank(name: str) -> tuple:
+        g = groups[name]
+        return (GROUP_ORDER.index(g) if g in GROUP_ORDER else len(GROUP_ORDER),
+                name)
+
+    for name in sorted(by_name, key=rank):
+        values = by_name[name]
+        if len(set(values.values())) < 2:
+            continue  # varies only by being absent
+        if len(values) < len(methods):
+            continue
+        # Compare the PARTITION a parameter induces, not its values.
+        # `integrator.h` is 21 or 35 and `surrogate.qp.output_dim` is 441
+        # or 1225; the raw tuples differ while the split of the arms is the
+        # same, and only one of the two is worth a column.
+        order: dict[str, int] = {}
+        pattern = tuple(
+            order.setdefault(values.get(m, ""), len(order))
+            for m in sorted(methods)
+        )
+        if pattern in seen_patterns:
+            continue
+        seen_patterns.append(pattern)
+        chosen.append(name)
+        if len(chosen) >= MAX_COLUMNS:
+            break
+    return chosen
+
+
+def table_hyperparameters() -> None:
+    """One row per model, columns the settings that tell them apart.
+
+    Built from each run's own `config_log.yaml`, so it reports what trained
+    rather than what a repository config says now. The constants are not
+    here by design: a column with one value in every row tells a reader
+    nothing, and `hparams.csv` beside this carries every parameter whether
+    it varies or not.
+    """
+    rows = _hparam_rows()
+    if not rows:
+        print("  hyperparameters: no hparams.csv "
+              "(pull_figdata.sh hparams)")
+        return
+    counts = _parameter_counts()
+
+    for dataset in sorted({r["dataset"] for r in rows if r["dataset"]}):
+        here = [r for r in rows if r["dataset"] == dataset]
+        columns = _columns_for(here)
+        if not columns:
+            continue
+        values: dict[str, dict[str, str]] = {}
+        for r in here:
+            if r["parameter"] in columns:
+                values.setdefault(r["method"], {})[r["parameter"]] = r["value"]
+
+        # Short column names, lengthened where two would collide:
+        # `integrator.name` and `surrogate.qp.name` are both "name", and
+        # the first is the most important column in the table.
+        tails = [c.rsplit(".", 1)[-1] for c in columns]
+        labels = {
+            c: (tail if tails.count(tail) == 1
+                else ".".join(c.split(".")[-2:]))
+            for c, tail in zip(columns, tails, strict=True)
+        }
+        out = []
+        for method in sorted(values):
+            row = {"arm": method}
+            row.update({labels[c]: values[method].get(c, "")
+                        for c in columns})
+            n = counts.get((dataset, method))
+            if n is not None:
+                row["n_params"] = n
+            out.append(row)
+        if not out:
+            continue
+
+        stem = f"hyperparameters_{dataset}"
+        t = Table(out)
+        n_total = len({r["parameter"] for r in here})
+        n_varying = len({r["parameter"] for r in here
+                         if r["varies"] in ("1", 1, True)})
+        write(
+            configure(t), stem,
+            f"Model settings for the {dataset.replace('_', ' ')} arms, read "
+            "from each run's own configuration log rather than from the "
+            f"repository. {n_varying} of {n_total} configured parameters "
+            "differ across these arms; the columns are those that take more "
+            "than one value and that are not determined by another column "
+            "already shown. The full set, varying or not, is in "
+            "\texttt{hparams.csv}.",
+        )
+
+
 def main() -> int:
     if not LOGS.is_dir():
         raise SystemExit(
@@ -552,6 +714,7 @@ def main() -> int:
     table_wilson()
     table_shells()
     table_anomalous_differences()
+    table_hyperparameters()
     write_long_format()
     write_statistic_labels()
     return 0

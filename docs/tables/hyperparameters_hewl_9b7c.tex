@@ -1,0 +1,19 @@
+\begin{table}[htbp]
+\centering
+\caption{Model settings for the hewl 9b7c arms, read from each run's own configuration log rather than from the repository. 12 of 88 configured parameters differ across these arms; the columns are those that take more than one value and that are not determined by another column already shown. The full set, varying or not, is in 	exttt{hparams.csv}.}
+\label{tab:hyperparameters_hewl_9b7c}
+\small
+\begin{tabular}{@{}l l l S[table-format=2.0] S[table-format=6.0]@{}}
+\toprule
+{arm} & {integrator.name} & {qp.name} & {max\_epochs} & {n\_params} \\
+\midrule
+{hewl9b7c\_mono\_expmean\_lp} & {hierarchical} & {learned\_basis\_profile} & 50 & 403086 \\
+{hewl9b7c\_svae} & {svae} & {learned\_basis\_profile} & 50 & 230841 \\
+{m9\_gate\_learned} & {svae} & {learned\_basis\_profile} & 15 & {--} \\
+{m9\_geom} & {svae} & {geometric\_basis\_profile} & 15 & {--} \\
+{m9\_geomresp} & {svae} & {geometric\_basis\_profile} & 15 & {--} \\
+{m9\_geomrespsteer} & {svae} & {geometric\_basis\_profile} & 15 & {--} \\
+{m9\_geomshift} & {svae} & {geometric\_basis\_profile} & 15 & {--} \\
+\bottomrule
+\end{tabular}
+\end{table}

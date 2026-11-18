@@ -22,8 +22,8 @@ specific, settled with the figtex side on 2026-11-17:
 Registered as a figTeX renderer rather than written into figTeX, so the
 table machinery stays one implementation:
 
-    import tables  # registers "siunitx"
-    t.save("refinement.tex", fmt="siunitx", caption="...", label="tab:ref")
+    import tables  # registers "mydesign"
+    t.save("refinement.tex", fmt="mydesign", caption="...", label="tab:ref")
 
 Single-letter quantities are italic and multi-letter names upright, the same
 rule the figure labels follow: $d_{\\min}$, but $\\mathrm{CC}_{1/2}$.
@@ -80,7 +80,13 @@ def _column_cells(table, index: int) -> list[str]:
     return out
 
 
-@renderer("siunitx")
+# Registered as "mydesign", not "siunitx": figtex ships its own siunitx
+# renderer, and registering a second one under that name shadows
+# whichever imported last. That is not a conflict worth winning -- the
+# two are different dialects, and this one is the mydesign house style
+# (caption above, booktabs only, units on a second header line). It is
+# superseded by figtex.sitable once make_tables.py ports onto it.
+@renderer("mydesign")
 def to_siunitx(
     table,
     float: bool = False,

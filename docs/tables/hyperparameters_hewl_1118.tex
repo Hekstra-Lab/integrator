@@ -1,0 +1,34 @@
+\begin{table}[htbp]
+\centering
+\caption{Model settings for the hewl 1118 arms, read from each run's own configuration log rather than from the repository. 22 of 86 configured parameters differ across these arms; the columns are those that take more than one value and that are not determined by another column already shown. The full set, varying or not, is in 	exttt{hparams.csv}.}
+\label{tab:hyperparameters_hewl_1118}
+\small
+\begin{tabular}{@{}l l l l S[table-format=1.2] l S[table-format=6.0]@{}}
+\toprule
+{arm} & {integrator.name} & {reparameterization} & {qp.name} & {intensity\_kl\_weight} & {transform} & {n\_params} \\
+\midrule
+{learned} & {svae} & {mean\_fano} & {learned\_basis\_profile} & 1.0 & {anscombe} & 393809 \\
+{q1\_transform\_anscombe} & {hierarchical\_3enc} & {shape\_rate} & {learned\_basis\_profile} & 1.0 & {anscombe} & {--} \\
+{q1\_transform\_log1p} & {hierarchical\_3enc} & {shape\_rate} & {learned\_basis\_profile} & 1.0 & {log1p} & {--} \\
+{q1\_transform\_standardization} & {hierarchical\_3enc} & {shape\_rate} & {learned\_basis\_profile} & 1.0 & {standardization} & {--} \\
+{q2\_profile\_fixed} & {hierarchical\_3enc} & {shape\_rate} & {fixed\_basis\_profile} & 1.0 & {anscombe} & {--} \\
+{q2\_profile\_geomboth} & {hierarchical\_3enc} & {shape\_rate} & {geometric\_basis\_profile} & 1.0 & {anscombe} & {--} \\
+{q2\_profile\_learned} & {hierarchical\_3enc} & {shape\_rate} & {learned\_basis\_profile} & 1.0 & {anscombe} & {--} \\
+{q2\_profile\_physical} & {hierarchical\_3enc} & {shape\_rate} & {physical\_profile} & 1.0 & {anscombe} & {--} \\
+{q2\_profile\_shapelet} & {hierarchical\_3enc} & {shape\_rate} & {shapelet\_profile} & 1.0 & {anscombe} & {--} \\
+{q2b\_coordchan} & {hierarchical\_3enc} & {shape\_rate} & {learned\_basis\_profile} & 1.0 & {anscombe} & {--} \\
+{q2b\_coordchan\_geomboth} & {hierarchical\_3enc} & {shape\_rate} & {geometric\_basis\_profile} & 1.0 & {anscombe} & {--} \\
+{q3\_gamma\_mean\_fano\_exp} & {hierarchical\_3enc} & {mean\_fano} & {learned\_basis\_profile} & 1.0 & {anscombe} & {--} \\
+{q3\_gamma\_mean\_fano\_softplus} & {hierarchical\_3enc} & {mean\_fano} & {learned\_basis\_profile} & 1.0 & {anscombe} & {--} \\
+{q3\_gamma\_nakagami\_exp} & {hierarchical\_3enc} & {nakagami} & {learned\_basis\_profile} & 1.0 & {anscombe} & {--} \\
+{q3\_gamma\_nakagami\_softplus} & {hierarchical\_3enc} & {nakagami} & {learned\_basis\_profile} & 1.0 & {anscombe} & {--} \\
+{q3\_gamma\_shape\_rate\_exp} & {hierarchical\_3enc} & {shape\_rate} & {learned\_basis\_profile} & 1.0 & {anscombe} & {--} \\
+{q3\_gamma\_shape\_rate\_softplus} & {hierarchical\_3enc} & {shape\_rate} & {learned\_basis\_profile} & 1.0 & {anscombe} & {--} \\
+{q4\_kl\_0p1} & {hierarchical\_3enc} & {shape\_rate} & {learned\_basis\_profile} & 0.1 & {anscombe} & {--} \\
+{q4\_kl\_0p25} & {hierarchical\_3enc} & {shape\_rate} & {learned\_basis\_profile} & 0.25 & {anscombe} & {--} \\
+{q4\_kl\_0p5} & {hierarchical\_3enc} & {shape\_rate} & {learned\_basis\_profile} & 0.5 & {anscombe} & {--} \\
+{q4\_kl\_1p0} & {hierarchical\_3enc} & {shape\_rate} & {learned\_basis\_profile} & 1.0 & {anscombe} & {--} \\
+{softmax\_std} & {hierarchical} & {mean\_fano} & {learned\_basis\_profile} & 1.0 & {standardization} & 664928 \\
+\bottomrule
+\end{tabular}
+\end{table}

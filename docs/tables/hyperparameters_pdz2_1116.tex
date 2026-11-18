@@ -1,0 +1,31 @@
+\begin{table}[htbp]
+\centering
+\caption{Model settings for the pdz2 1116 arms, read from each run's own configuration log rather than from the repository. 27 of 130 configured parameters differ across these arms; the columns are those that take more than one value and that are not determined by another column already shown. The full set, varying or not, is in 	exttt{hparams.csv}.}
+\label{tab:hyperparameters_pdz2_1116}
+\small
+\begin{tabular}{@{}l S[table-format=2.0] l l S[table-format=1.1] S[table-format=1.1] l@{}}
+\toprule
+{arm} & {h} & {integrator.name} & {qp.name} & {prior\_scale} & {intensity\_kl\_weight} & {conv1\_kernel\_size} \\
+\midrule
+{pdz2\_bgplane} & 21 & {hierarchical} & {geometric\_basis\_profile} & 3.0 & 1.0 & {7, 7} \\
+{pdz2\_bgplane03} & 21 & {hierarchical} & {geometric\_basis\_profile} & 3.0 & 1.0 & {7, 7} \\
+{pdz2\_geom\_both} & 21 & {hierarchical} & {geometric\_basis\_profile} & 3.0 & 1.0 & {7, 7} \\
+{pdz2\_geom\_shift} & 21 & {hierarchical} & {geometric\_basis\_profile} & 3.0 & 1.0 & {7, 7} \\
+{pdz2\_geom\_steer} & 21 & {hierarchical} & {geometric\_basis\_profile} & 3.0 & 1.0 & {7, 7} \\
+{pdz2\_invN} & 21 & {hierarchical} & {learned\_basis\_profile} & 3.0 & 1.0 & {7, 7} \\
+{pdz2\_kl0p1} & 21 & {hierarchical} & {learned\_basis\_profile} & 3.0 & 0.1 & {3, 3} \\
+{pdz2\_kl1} & 21 & {hierarchical} & {learned\_basis\_profile} & 3.0 & 1.0 & {3, 3} \\
+{pdz2\_svae} & 21 & {svae} & {learned\_basis\_profile} & 3.0 & 1.0 & {3, 3} \\
+{pdz2\_tau0p1} & 21 & {hierarchical} & {geometric\_basis\_profile} & 0.1 & 1.0 & {7, 7} \\
+{pdz2\_tau0p3} & 21 & {hierarchical} & {geometric\_basis\_profile} & 0.3 & 1.0 & {7, 7} \\
+{pdz2\_tau1p0} & 21 & {hierarchical} & {geometric\_basis\_profile} & 1.0 & 1.0 & {7, 7} \\
+{pdz2\_tau3p0} & 21 & {hierarchical} & {geometric\_basis\_profile} & 3.0 & 1.0 & {7, 7} \\
+{pdz2\_w21\_k3m} & 21 & {hierarchical} & {learned\_basis\_profile} & 3.0 & 1.0 & {3, 3} \\
+{pdz2\_w21\_k7m} & 21 & {hierarchical} & {learned\_basis\_profile} & 3.0 & 1.0 & {7, 7} \\
+{pdz2\_w35\_k3} & 35 & {hierarchical} & {learned\_basis\_profile} & 3.0 & 1.0 & {3, 3} \\
+{pdz2\_w35\_k3m} & 35 & {hierarchical} & {learned\_basis\_profile} & 3.0 & 1.0 & {3, 3} \\
+{pdz2\_w35\_k7} & 35 & {hierarchical} & {learned\_basis\_profile} & 3.0 & 1.0 & {7, 7} \\
+{pdz2\_w35\_k7m} & 35 & {hierarchical} & {learned\_basis\_profile} & 3.0 & 1.0 & {7, 7} \\
+\bottomrule
+\end{tabular}
+\end{table}
