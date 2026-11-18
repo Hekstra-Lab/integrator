@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-280 scripts.
+281 scripts.
 
 ## Start here
 
@@ -157,6 +157,7 @@ per job, and it lives in the repo".
 | `figures/compare_models.py` | Parameter counts and training throughput, per run, for comparing families. |
 | `figures/dump_basis.py` | Recover the learned profile basis over training, from the checkpoints. |
 | `figures/fig_arm_metrics.py` | What each arm is worth after scaling, merging and refinement. |
+| `figures/fig_basis_convergence.py` | The learned basis converging, svae against hierarchical, per dataset. |
 | `figures/fig_careless_stats.py` | What careless reports and DIALS cannot be asked for, by resolution shell. |
 | `figures/fig_ccsym.py` | CCsym by resolution shell, one panel per pump delay, arms on one axis. |
 | `figures/fig_detector_patch.py` | One patch of one diffraction image, and the profiles drawn inside it. |
