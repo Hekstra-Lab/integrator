@@ -44,7 +44,9 @@ PY=$MAMBA_ROOT/envs/$ENV_NAME/bin/python
 # output directory -- that is how this failed first time, with
 # `no .../enc/scripts/figures/dump_encoder_health.py`.
 REPO=${REPO:-${SLURM_SUBMIT_DIR:-}}
-SCRIPT=$REPO/scripts/figures/dump_encoder_health.py
+# SCRIPT lets this job run any reducer that needs the model AND the data;
+# the default is the encoder-health one it was written for.
+SCRIPT=${SCRIPT:-$REPO/scripts/figures/dump_encoder_health.py}
 [ -s "$SCRIPT" ] || {
   echo "no $SCRIPT -- submit from the checkout, or set REPO=<checkout>"
   exit 1
@@ -57,5 +59,6 @@ echo "===== runs:    $*"
 nvidia-smi --query-gpu=name --format=csv,noheader | head -1
 
 cd /tmp || exit 1
-DATASET=$DATASET STRIDE=$STRIDE "$PY" -u "$SCRIPT" "$OUT" "$@"
+DATASET=$DATASET STRIDE=$STRIDE N_BATCHES=${N_BATCHES:-4} \
+  "$PY" -u "$SCRIPT" "$OUT" "$@"
 echo "ENC_HEALTH_DONE"
