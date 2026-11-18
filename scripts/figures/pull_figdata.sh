@@ -16,6 +16,9 @@ J=$S/jobs/geomshape_1116_1730
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 DEST=$HERE/docs/figures/data
 P=/n/lab_storage/hekstra_lab/people/aldama/micromamba/envs/integrator-cuda-dev/bin/python
+# The cluster's checkout of this repository. Reducers are run FROM it rather
+# than copied to the job directory, and it is advanced by git pull.
+REPO=${REPO:-$S/integrator_main}
 mkdir -p "$DEST"
 
 # name                       how the cluster makes it
@@ -188,12 +191,11 @@ if has pdz2; then
   # which is CPU work and takes about two minutes an arm.
   PJ=${PDZ2_JOB:-$S/jobs/pdz2figs_1118}
   echo "pdz2 <- $PJ"
-  # always, not only when missing: a staged reducer that is never refreshed
-  # silently serves the version it was first copied with. `tidy_pdz2.py`
-  # gained the svae arm here and the cluster kept running the copy without
-  # it, so the pull came back without that arm and nothing said why.
-  scp -q "$HERE/scripts/figures/tidy_pdz2.py" "cannon:$PJ/"
-  ssh cannon "PYTHONPATH=$PJ $P $PJ/tidy_pdz2.py $PJ" || exit 1
+  # not copied: the reducer is RUN from the cluster's checkout, which is
+  # updated by git. Copying it is how a fix sat here while the cluster
+  # went on running an older copy -- see CLAUDE.md, "Code moves by git".
+  ssh cannon "git -C $REPO pull -q" || exit 1
+  ssh cannon "cd $PJ && $P $REPO/scripts/figures/tidy_pdz2.py $PJ" || exit 1
   for f in pdz2_ccsym pdz2_refinement pdz2_training_loss careless_stats_pdz2; do
     ssh cannon "[ -s $PJ/$f.csv ]" && scp -q "cannon:$PJ/$f.csv" "$DEST/"
   done
@@ -225,15 +227,14 @@ if has poly; then
   # arm, not a broken one, and the two are concatenated per table.
   PJ=${PDZ2_JOB:-$S/jobs/pdz2figs_1118}
   echo "poly <- $PJ"
-  # always, not only when missing: a staged reducer that is never refreshed
-  # silently serves the version it was first copied with. `tidy_pdz2.py`
-  # gained the svae arm here and the cluster kept running the copy without
-  # it, so the pull came back without that arm and nothing said why.
-  scp -q "$HERE/scripts/figures/tidy_poly.py" "cannon:$PJ/"
+  # not copied: the reducer is RUN from the cluster's checkout, which is
+  # updated by git. Copying it is how a fix sat here while the cluster
+  # went on running an older copy -- see CLAUDE.md, "Code moves by git".
+  ssh cannon "git -C $REPO pull -q" || exit 1
   ssh cannon "export PYTHONPATH=$PJ
-    ROOT=$S/ablate2 DATASET=hewl_1118 $P $PJ/tidy_poly.py $PJ/poly1118 \
+    ROOT=$S/ablate2 DATASET=hewl_1118 $P $REPO/scripts/figures/tidy_poly.py $PJ/poly1118 \
       \$(ls -1 $S/ablate2 | grep -E '^q[0-9]' | tr '\n' ' ')
-    ROOT=$S/sim_runs DATASET=dhfr_sim $P $PJ/tidy_poly.py $PJ/polysim \
+    ROOT=$S/sim_runs DATASET=dhfr_sim $P $REPO/scripts/figures/tidy_poly.py $PJ/polysim \
       ${SIM_ARMS:-sim_qc sim_qc_resp sim_qc_sigma sim_qc_sigma_resp \
       sim_qc_amortized sim_qc_sigma_amortized sim_shapelet \
       sim_shapelet_learned sim_geom_full sim_geom_full_amortized}" || exit 1
@@ -255,22 +256,21 @@ if has hparams; then
   # passed in one invocation and the four datasets are run separately.
   PJ=${PDZ2_JOB:-$S/jobs/pdz2figs_1118}
   echo "hparams <- $PJ"
-  # always, not only when missing: a staged reducer that is never refreshed
-  # silently serves the version it was first copied with. `tidy_pdz2.py`
-  # gained the svae arm here and the cluster kept running the copy without
-  # it, so the pull came back without that arm and nothing said why.
-  scp -q "$HERE/scripts/figures/tidy_hparams.py" "cannon:$PJ/"
+  # not copied: the reducer is RUN from the cluster's checkout, which is
+  # updated by git. Copying it is how a fix sat here while the cluster
+  # went on running an older copy -- see CLAUDE.md, "Code moves by git".
+  ssh cannon "git -C $REPO pull -q" || exit 1
   ssh cannon "export PYTHONPATH=$PJ
-    DATASET=hewl_9b7c $P $PJ/tidy_hparams.py $PJ/hp_mono \
+    DATASET=hewl_9b7c $P $REPO/scripts/figures/tidy_hparams.py $PJ/hp_mono \
       $S/mono9b7c/hewl9b7c_mono_expmean_lp $S/mono9b7c/hewl9b7c_svae \
       $S/sim_runs/m9_gate_learned $S/sim_runs/m9_geomshift $S/sim_runs/m9_geom \
       $S/sim_runs/m9_geomresp $S/sim_runs/m9_geomrespsteer
-    DATASET=hewl_1118 $P $PJ/tidy_hparams.py $PJ/hp_1118 \
+    DATASET=hewl_1118 $P $REPO/scripts/figures/tidy_hparams.py $PJ/hp_1118 \
       $S/full1000/learned $S/hier1000/softmax_std \
       \$(ls -1d $S/ablate2/q* | tr '\n' ' ')
-    DATASET=pdz2_1116 $P $PJ/tidy_hparams.py $PJ/hp_pdz2 \
+    DATASET=pdz2_1116 $P $REPO/scripts/figures/tidy_hparams.py $PJ/hp_pdz2 \
       \$(ls -1d $S/laue_runs/pdz2_model/runs/pdz2_* | tr '\n' ' ')
-    DATASET=dhfr_sim $P $PJ/tidy_hparams.py $PJ/hp_sim \
+    DATASET=dhfr_sim $P $REPO/scripts/figures/tidy_hparams.py $PJ/hp_sim \
       ${SIM_HP_ARMS:-$S/sim_runs/sim_qc $S/sim_runs/sim_qc_resp \
       $S/sim_runs/sim_qc_sigma $S/sim_runs/sim_shapelet \
       $S/sim_runs/sim_geom_full}" || exit 1
