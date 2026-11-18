@@ -60,12 +60,16 @@ ARMS = {
     "geom_both": f"{S}/laue_runs/pdz2_model/tree_geom_both",
     "k7m_mlclamp": f"{S}/laue_runs/pdz2_model/tree_k7m_mlclamp",
     "combo": f"{S}/laue_runs/pdz2_model/tree_combo",
+    # the svae arm: the integrator family comparison on PDZ2, trained and
+    # scored through the identical downstream as the hierarchical arms
+    "svae": f"{S}/laue_runs/pdz2_model/tree_svae",
 }
 # The training run behind each arm, for the loss curves. The export-only arms
 # (`k7m_ml`, `k7m_mlclamp`, `combo`, the swap trees) have no training of
 # their own: they rewrite a trained arm's intensities, so they share its
 # loss and are left out rather than drawn as a duplicate line.
 TRAINING_RUN = {
+    "svae": "pdz2_svae",
     "w21_k7m": "pdz2_w21_k7m",
     "k7m_bfix": "pdz2_w21_k7m",
     "geom_both": "pdz2_geom_both",

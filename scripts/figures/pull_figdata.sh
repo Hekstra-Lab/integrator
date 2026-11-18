@@ -188,7 +188,11 @@ if has pdz2; then
   # which is CPU work and takes about two minutes an arm.
   PJ=${PDZ2_JOB:-$S/jobs/pdz2figs_1118}
   echo "pdz2 <- $PJ"
-  ssh cannon "[ -s $PJ/tidy_pdz2.py ]" || scp -q "$HERE/scripts/figures/tidy_pdz2.py" "cannon:$PJ/"
+  # always, not only when missing: a staged reducer that is never refreshed
+  # silently serves the version it was first copied with. `tidy_pdz2.py`
+  # gained the svae arm here and the cluster kept running the copy without
+  # it, so the pull came back without that arm and nothing said why.
+  scp -q "$HERE/scripts/figures/tidy_pdz2.py" "cannon:$PJ/"
   ssh cannon "PYTHONPATH=$PJ $P $PJ/tidy_pdz2.py $PJ" || exit 1
   for f in pdz2_ccsym pdz2_refinement pdz2_training_loss careless_stats_pdz2; do
     ssh cannon "[ -s $PJ/$f.csv ]" && scp -q "cannon:$PJ/$f.csv" "$DEST/"
@@ -221,7 +225,11 @@ if has poly; then
   # arm, not a broken one, and the two are concatenated per table.
   PJ=${PDZ2_JOB:-$S/jobs/pdz2figs_1118}
   echo "poly <- $PJ"
-  ssh cannon "[ -s $PJ/tidy_poly.py ]" || scp -q "$HERE/scripts/figures/tidy_poly.py" "cannon:$PJ/"
+  # always, not only when missing: a staged reducer that is never refreshed
+  # silently serves the version it was first copied with. `tidy_pdz2.py`
+  # gained the svae arm here and the cluster kept running the copy without
+  # it, so the pull came back without that arm and nothing said why.
+  scp -q "$HERE/scripts/figures/tidy_poly.py" "cannon:$PJ/"
   ssh cannon "export PYTHONPATH=$PJ
     ROOT=$S/ablate2 DATASET=hewl_1118 $P $PJ/tidy_poly.py $PJ/poly1118 \
       \$(ls -1 $S/ablate2 | grep -E '^q[0-9]' | tr '\n' ' ')
@@ -247,7 +255,11 @@ if has hparams; then
   # passed in one invocation and the four datasets are run separately.
   PJ=${PDZ2_JOB:-$S/jobs/pdz2figs_1118}
   echo "hparams <- $PJ"
-  ssh cannon "[ -s $PJ/tidy_hparams.py ]" || scp -q "$HERE/scripts/figures/tidy_hparams.py" "cannon:$PJ/"
+  # always, not only when missing: a staged reducer that is never refreshed
+  # silently serves the version it was first copied with. `tidy_pdz2.py`
+  # gained the svae arm here and the cluster kept running the copy without
+  # it, so the pull came back without that arm and nothing said why.
+  scp -q "$HERE/scripts/figures/tidy_hparams.py" "cannon:$PJ/"
   ssh cannon "export PYTHONPATH=$PJ
     DATASET=hewl_9b7c $P $PJ/tidy_hparams.py $PJ/hp_mono \
       $S/mono9b7c/hewl9b7c_mono_expmean_lp $S/mono9b7c/hewl9b7c_svae \
