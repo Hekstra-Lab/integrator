@@ -198,8 +198,13 @@ def collect(base: Path) -> list[Path]:
 def main() -> int:
     # resolved, because the page prints the base relative to the repository
     # root and a relative argument raises there rather than here
+    # the whole figure tree, not just `m9`: the default was one dataset's
+    # directory, so the PDZ2, 1118 and cross-dataset comparison figures were
+    # all absent from the page that is supposed to show everything rendered,
+    # and the PDZ2 CCsym figure was reported as "not yet rendered" while it
+    # existed one directory over
     base = (Path(sys.argv[1]) if len(sys.argv) > 1
-            else ROOT / "docs" / "figures" / "m9").resolve()
+            else ROOT / "docs" / "figures").resolve()
     out = (Path(sys.argv[2]) if len(sys.argv) > 2
            else ROOT / "docs" / "figures" / "gallery.html").resolve()
     if not base.is_dir():
