@@ -353,6 +353,44 @@ The truth-mask sum is **not** a precision ceiling: over 570 flat pixels it is 2.
 `scripts/simulate_laue_merging.py` is the separate small synthetic: a Laue stills dataset in the real loader's format with the truth beside it, 50k observations on 250 stills generated in 1.8 s, six epochs in under three minutes on a laptop, scored by `scripts/score_simulated_merge.py`.
 It is calibrated against `hewl_1118` on what is known and deliberately mismatched on crystal-frame absorption and tilted-plane background so that it does not flatter the model.
 
+## Which script ran which tool
+
+Every external tool the project drives, and the script in this repository
+that drives it. A stage with no repository script is a stage that cannot be
+reproduced from a checkout, and those are named at the end.
+
+| tool | what it does | driven by |
+|---|---|---|
+| laue-dials | index, refine, predict, integrate a Laue sweep | `scripts/poly/laue_process.sh` |
+| DIALS (`dials.scale`, `dials.merge`) | scale and merge, monochromatic | `scripts/mono/process_single.py` |
+| refltorch (`mksbox-dials`, `mksbox-laue`) | shoeboxes from a reflection table | a separate repository at `~/refltorch` |
+| integrator (`integrator.train`) | train | `scripts/{mono,poly}/cannon/run_all.sh`; `scripts/poly/train.slurm` with `CONFIG=` |
+| integrator (`integrator.predict`) | export intensities, `--rb-export` for the RB fit | `scripts/poly/run_pipeline.py`; `scripts/poly/rb_predict_config.py` for the RB columns |
+| careless | scale and merge, polychromatic | `scripts/poly/run_pipeline.py` (config 4, one file); the deposited 8-file call for PDZ2 |
+| `careless.stats` | CChalf, CCanom, CCpred, Rsplit, I/sigma, completeness | `scripts/poly/run_pipeline.py --steps stats` |
+| phenix (`phenix.refine`) | refinement | `scripts/mono/process_single.py`; `run_pipeline.py --steps phenix`; `scripts/poly/pdz2/refine_pdz2.sbatch` |
+| `rs.find_peaks` | anomalous peaks | `run_pipeline.py --steps peaks`; `process_single.py` |
+| rs-booster (`rs.scaleit`, `rs.diffmap`) | weighted difference map | the deposited `wdm.py`, scored by `scripts/poly/pdz2/wdm_peaks_compare.py` |
+
+PDZ2's own chain, stage by stage, is in `scripts/poly/pdz2/README.md`.
+
+### What still cannot be reproduced from a checkout
+
+**The deposited laue-dials tutorial scripts are not vendored.** Eleven files
+-- `expt_concat.py`, `careless-cdef-ohp-mlpw.sh`, `custom_ccsym.py`,
+`stats_for_production.sh`, `wdm.py`, `wdm_peaks.py`, `one_pass-from_off.sh`,
+`rerun_pass_d.sh`, `run_pdz2_ref.sh`, `plot_HKLs.py`,
+`custom_ccsym-overall.py` -- live in `laue_runs/pdz2_ref/scripts/` on
+netscratch, copied there from the rs-station tutorial. They are steps 7 to
+10 of the PDZ2 chain: the frame cuts, the eight-file careless call, CCsym and
+the difference map.
+
+They are third-party, which is exactly why running them verbatim is the
+point: integration is then the only thing that differs from the published
+result. But a checkout cannot run them, and netscratch has purged this
+project's files once already. Vendoring them under a clear attribution, or
+pinning the upstream commit and a checksum, is the remaining decision.
+
 ## The model comparisons
 
 Three comparisons the project reports, with how each is measured and what
