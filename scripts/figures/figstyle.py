@@ -1,4 +1,4 @@
-"""The one place the figure scripts get their look: figTeX, witch scheme.
+"""The one place the figure scripts get their look: figTeX, the ink theme.
 
 `plot_loss.py`, `plot_merging.py`, `plot_peaks.py` and the rest import this
 rather than setting their own colours, so a figure drawn by one matches a
@@ -13,12 +13,29 @@ Text is typeset by LuaLaTeX with the fonts the documents use, which are
 installed on the laptop only, so these scripts run here and not on the
 cluster. The cluster's job is to reduce a run to the small tables and dumps
 they read.
+
+**ink is a THEME, not a colour scheme.** `style.use(..., theme="ink")` is
+how it is selected and `color.roles("ink")` raises, because the registered
+schemes are noir, charcoal, witch, inkblue, noir-helix, noir-dark2 and
+mono. The theme's colours live in `figtex.sizing.THEME` and are only
+populated once `style.use` has run, so `roles()` below calls it if nothing
+has yet.
+
+The function names here are unchanged from the witch version. Forty figure
+scripts call them, and the point of a routing module is that a change of
+look does not touch any of them.
+
+`FIGTEX_FAST=1` selects figTeX's fast mode, which skips the LaTeX text
+pass. Use it while iterating; the committed figures are drawn in final
+mode.
 """
 
 from __future__ import annotations
 
+import os
+
 try:
-    from figtex import color, style
+    from figtex import color, parts, sizing, style, texture
 except ModuleNotFoundError as exc:  # pragma: no cover - a setup message
     raise SystemExit(
         "figtex is not importable. Run this script as\n"
@@ -28,15 +45,19 @@ except ModuleNotFoundError as exc:  # pragma: no cover - a setup message
         "~/master/software/figtex`."
     ) from exc
 
-import numpy as np
-
-SCHEME = "witch"
+THEME = "ink"
 LAYOUT = "article"
+# `texture.system` carries six distinguishable series and raises IndexError
+# above that. Figures with more arms than this fall back to the ordered
+# ramp; see `arm_colors`.
+MAX_SERIES = 6
 
 __all__ = [
     "LAYOUT",
-    "SCHEME",
+    "MAX_SERIES",
+    "THEME",
     "arm_colors",
+    "arm_series",
     "categorical",
     "cmap",
     "diverging_cmap",
@@ -48,10 +69,19 @@ __all__ = [
     "use",
 ]
 
+# `SCHEME` was the witch scheme's name and is kept so that a script still
+# importing it does not fail at import; nothing routes through it now.
+SCHEME = THEME
 
-def use(layout: str = LAYOUT):
-    """Fonts, sizes and the witch colour cycle. Call once, before plotting."""
-    return style.use(layout, scheme=SCHEME)
+
+def _fast() -> bool:
+    return os.environ.get("FIGTEX_FAST", "").strip() not in ("", "0", "false")
+
+
+def use(layout: str = LAYOUT, fast: bool | None = None):
+    """Fonts, sizes and the ink look. Call once, before plotting."""
+    return style.use(layout, theme=THEME,
+                     fast=_fast() if fast is None else fast)
 
 
 def figsize(width="full", aspect: float = 0.618, column: bool = False):
@@ -65,59 +95,118 @@ def save(fig, path):
 
 
 def roles() -> dict[str, str]:
-    """`ink`, `muted`, `rule`, `grid`, `paper`, and the status colours."""
-    return color.roles(SCHEME)
+    """The theme's colours, under the names the scripts already ask for.
+
+    `color.roles` is a SCHEME function and raises for a theme, so this maps
+    `figtex.sizing.THEME` instead. Both spellings of each colour are
+    returned -- `ink` and `text`, `muted` and `frame` -- because the scripts
+    were written against the scheme's names and there is no reason to edit
+    forty of them to rename a key.
+    """
+    if "text_hex" not in sizing.THEME:
+        use()
+    t = sizing.THEME
+    return {
+        "ink": t["text_hex"],
+        "text": t["text_hex"],
+        "muted": t["frame_hex"],
+        "frame": t["frame_hex"],
+        "rule": t["frame_hex"],
+        "grid": t["grid_hex"],
+        "paper": t["ground"],
+        "ground": t["ground"],
+        "accent": t["accent"],
+        "ref": t["ref_hex"],
+    }
 
 
 def epoch_ramp(n: int):
     """`(cmap, colors)` for `n` checkpoints, earliest light to latest dark.
 
-    Replaces the seaborn cubehelix the scripts used to build. The witch
-    sequential ramp is a cubehelix in OKLCH whose lightness rises linearly
-    while the hue turns from the scheme's primary towards its secondary, so
-    the order survives greyscale and colour blindness.
+    The ink ramp, so the order survives greyscale and colour blindness.
+    `figtex.parts.epoch_bar` draws the colour bar that names the epochs.
     """
-    cmap = color.cmap(f"{SCHEME}_r")
     n = max(int(n), 1)
-    return cmap, cmap(np.linspace(0.0, 1.0, n))
+    return sizing.ramp_cmap(), parts.ramp(n)
 
 
 def cmap(name: str | None = None):
-    """The scheme's sequential colormap, pale through dark.
+    """The theme's sequential colormap, pale through dark.
 
     Image figures -- a shoebox, a profile, a detector patch -- take this
-    rather than `viridis` or `magma`, so that changing the scheme in one
+    rather than `viridis` or `magma`, so that changing the theme in one
     place changes them too.
     """
-    return color.cmap(name or f"{SCHEME}_r")
+    return color.cmap(name) if name else sizing.ramp_cmap()
 
 
 def diverging_cmap():
-    """Two hues through a neutral midpoint, for a signed residual."""
-    return color.cmap(f"{SCHEME}-div")
+    """Two hues through a neutral midpoint, for a signed residual.
+
+    `noir-div`: the ink theme has no diverging ramp of its own, and noir's
+    is the neutral-midpoint pair that sits with it.
+    """
+    return color.cmap("noir-div")
 
 
 def reference_style() -> dict:
     """How the reference integrator is drawn: one line, no epoch ramp.
 
-    It takes a categorical colour rather than a step of the epoch ramp, so it
-    cannot be mistaken for a checkpoint.
+    Vermilion, solid and heavier, so it cannot be mistaken for a checkpoint
+    of the epoch ramp or for one of the textured arms.
     """
-    # index 2 is the teal: the epoch ramp runs pale pink to dark violet, so a
-    # warm reference line sits inside that range and a cool one does not
-    return {"color": color.categorical(SCHEME, 8)[2], "lw": 1.6, "zorder": 5}
+    st = dict(parts.ref_style())
+    st.setdefault("zorder", 5)
+    return st
 
 
-def categorical(n: int = 8):
-    """`n` categorical colours from the scheme, for a figure with no arms.
+def arm_series(names) -> dict:
+    """A full `figtex.texture.Series` per name: colour, dash, marker, hatch.
+
+    Arms are told apart by texture as well as shade, so a figure survives
+    greyscale and print. `texture.plot(ax, x, y, series)` draws a line with
+    its texture.
+
+    Raises nothing for more than `MAX_SERIES` names: the series cycle, and
+    `arm_colors` is where the ordered fallback lives.
+    """
+    names = list(names)
+    base = texture.system(THEME, min(max(len(names), 1), MAX_SERIES),
+                          reference=True)
+    return {n: base[i % len(base)] for i, n in enumerate(names)}
+
+
+def categorical(n: int = 6):
+    """`n` categorical colours, for a figure with no arms.
 
     `arm_colors` is the one to use where the names are training arms, so an
     arm keeps its colour across figures. This is for everything else.
     """
-    return color.categorical(SCHEME, min(max(int(n), 3), 8))
+    n = max(int(n), 1)
+    if n <= MAX_SERIES:
+        return [s.color for s in texture.system(THEME, n, reference=True)]
+    return parts.ramp(n)
 
 
 def arm_colors(names) -> dict[str, str]:
-    """A witch categorical colour per name, in the order given."""
-    pal = color.categorical(SCHEME, min(max(len(list(names)), 3), 8))
+    """A colour per name, in the order given.
+
+    Up to `MAX_SERIES` arms take the theme's categorical series, which are
+    separable by hue and by texture. Beyond that the ink theme has no
+    categorical set -- `texture.system` raises `IndexError` at seven -- and
+    the ordered ramp is used instead.
+
+    A ramp is the right answer when the arms are ordered, as they are for an
+    epoch or a sweep value. It is the wrong answer for unordered arms, where
+    small multiples or a chosen subset reads better than eight lines of
+    graded blue; the figures in that position are the 8-arm m9 set and the
+    20-arm 1118 ablation, and they are worth revisiting rather than
+    accepting as drawn.
+    """
+    names = list(names)
+    if len(names) <= MAX_SERIES:
+        pal = [s.color for s in texture.system(THEME, max(len(names), 1),
+                                               reference=True)]
+    else:
+        pal = parts.ramp(len(names))
     return {n: pal[i % len(pal)] for i, n in enumerate(names)}

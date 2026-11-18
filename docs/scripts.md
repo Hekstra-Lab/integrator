@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-281 scripts.
+282 scripts.
 
 ## Start here
 
@@ -154,6 +154,7 @@ per job, and it lives in the repo".
 |---|---|
 | `figures/arms.py` | Names, colours and ordering for the m9 training arms, from figtex's witch. |
 | `figures/build_gallery.py` | One HTML page showing every figure currently rendered, in spec order. |
+| `figures/catalogue.py` | Every rendered figure, indexed by data type, dataset and experiment. |
 | `figures/compare_models.py` | Parameter counts and training throughput, per run, for comparing families. |
 | `figures/dump_basis.py` | Recover the learned profile basis over training, from the checkpoints. |
 | `figures/fig_arm_metrics.py` | What each arm is worth after scaling, merging and refinement. |
@@ -166,7 +167,7 @@ per job, and it lives in the repo".
 | `figures/fig_profile_basis.py` | Every component of the learned profile basis, and how it settled. |
 | `figures/fig_profile_shape.py` | Does a profile model follow the spot shape of the reflections beside it? |
 | `figures/fig_wilson_params.py` | The Wilson prior's learned scale and B-factor over training. |
-| `figures/figstyle.py` | The one place the figure scripts get their look: figTeX, witch scheme. |
+| `figures/figstyle.py` | The one place the figure scripts get their look: figTeX, the ink theme. |
 | `figures/make_tables.py` * | The LaTeX tables, from the DIALS logs each arm already wrote. |
 | `figures/pull_figdata.sh` * | Bring the plot-ready tables down from Cannon into docs/figures/data/. |
 | `figures/render_all.sh` * | Re-render every reported figure from docs/figures/data/, then rebuild the |

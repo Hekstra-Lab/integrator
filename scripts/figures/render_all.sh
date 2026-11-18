@@ -25,7 +25,7 @@ PDZ2_OUT=${PDZ2_OUT:-$HERE/docs/figures/pdz2}
 mkdir -p "$OUT" "$OUT/peaks" "$OUT/scatter" "$PDZ2_OUT"
 
 want=("$@")
-[ ${#want[@]} -eq 0 ] && want=(shoebox loss wilson basis scatter merging peaks spectrum careless ccsym pdz2 shape patch arms)
+[ ${#want[@]} -eq 0 ] && want=(shoebox loss wilson basis basiscmp cost scatter merging peaks spectrum careless ccsym pdz2 refine shape patch arms)
 has() { printf '%s\n' "${want[@]}" | grep -qx "$1"; }
 
 failed=()
@@ -118,6 +118,36 @@ if has pdz2; then
   else
     echo "===== pdz2 ====="
     echo "pdz2: no $DATA/careless_stats_pdz2.csv yet (pull_figdata.sh pdz2)"
+  fi
+fi
+
+# svae against hierarchical: the matched pairs, and what the families cost
+if has basiscmp; then
+  if [ -d "$DATA/basis_cmp" ]; then
+    step basiscmp "${PY[@]}" scripts/figures/fig_basis_convergence.py
+  else
+    echo "===== basiscmp ====="
+    echo "basiscmp: no $DATA/basis_cmp yet (pull_figdata.sh basis)"
+  fi
+fi
+
+if has cost; then
+  if ls "$DATA"/cmp_*.csv >/dev/null 2>&1; then
+    step cost "${PY[@]}" scripts/figures/fig_model_cost.py
+  else
+    echo "===== cost ====="
+    echo "cost: no $DATA/cmp_*.csv yet (pull_figdata.sh models)"
+  fi
+fi
+
+# PDZ2 refinement against the deposited model, per arm
+if has refine; then
+  if [ -s "$DATA/pdz2_refinement.csv" ]; then
+    step refine "${PY[@]}" scripts/figures/fig_pdz2_refinement.py \
+      --out-dir "$PDZ2_OUT"
+  else
+    echo "===== refine ====="
+    echo "refine: no $DATA/pdz2_refinement.csv yet (pull_figdata.sh pdz2)"
   fi
 fi
 
