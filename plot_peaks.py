@@ -1,6 +1,6 @@
 import argparse
 import logging
-import re
+import sys
 from dataclasses import dataclass
 from importlib.resources import as_file
 from pathlib import Path
@@ -8,26 +8,44 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import polars as pl
 import yaml
-from cycler import cycler
+
+from integrator.utils import metrics
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "scripts" / "figures"))
+import figstyle  # noqa: E402
 from matplotlib.lines import Line2D
 
 # logger
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
 
-# Dark2 qualitative palette for every plot and the per-run color source.
-_DARK2 = plt.get_cmap("Dark2").colors
-plt.rcParams["axes.prop_cycle"] = cycler(color=list(_DARK2))
+# The witch categorical palette is the per-run colour source; `figstyle.use`
+# installs it as the cycle, along with the document's fonts and sizes.
+_JOURNAL = figstyle.use()
+
+
+def _palette(n: int):
+    """Qualitative colors for `n` keys, without repeating one.
+
+    The witch categorical palette holds 8, ordered most distinct first; past
+    that `i % 8` would silently give the 9th run the 1st run's colour, so a
+    longer ramp is sampled instead.
+    """
+    if n <= 8:
+        return list(figstyle.arm_colors(range(8)).values())
+    cmap = figstyle.epoch_ramp(n)[0]
+    return [cmap(i / max(n - 1, 1)) for i in range(n)]
 
 
 def _assign_colors(keys) -> dict:
-    """Map each key to a fixed Dark2 color in the given order.
+    """Map each key to a fixed qualitative color in the given order.
 
     Build this once (from the plot-config run order) and share it across every
     figure so a model keeps the same color in the peak and refinement plots.
     """
     ordered = list(dict.fromkeys(keys))  # dedupe, preserve order
-    return {k: _DARK2[i % len(_DARK2)] for i, k in enumerate(ordered)}
+    pal = _palette(len(ordered))
+    return {k: pal[i % len(pal)] for i, k in enumerate(ordered)}
 
 
 def _group_key_col(frame: pl.DataFrame) -> str:
@@ -104,6 +122,73 @@ def parse_args():
         help="directory to write outputs to",
     )
     return parser.parse_args()
+
+
+# `rs.find_peaks` writes a `name` column for the nearest atom and the fork in
+# use leaves it empty, so the atom is resolved against the refined model that
+# the peak search itself ran on. The residue name does not settle it: a
+# sulfur peak is SD on a methionine and SG on a cysteine.
+def _atom_table(peak_csvs) -> pl.DataFrame | None:
+    """(chain, seqid, residue, atom, n_heavy) per site, from the models.
+
+    One row per site, not per epoch: an atom's identity does not change
+    between checkpoints, so the mapping is built once and joined on.
+    `metrics.peaks_from_find_peaks_csv` accepts the model's answer only
+    where the chain, residue number and residue name agree with what the
+    peak search reported, so a site it cannot confirm comes back with an
+    empty atom and is drawn under its residue alone.
+
+    `n_heavy` is how many atoms in that residue could carry an anomalous
+    peak, which is what `metrics.panel_site_label` needs: it is 1 for a
+    cysteine, a methionine, an iodide and a sulfate, so those titles do not
+    have to name the atom at all.
+    """
+    rows: dict[tuple, dict] = {}
+    for _, files in peak_csvs:
+        for f in files:
+            model = sorted(
+                Path(f).parent.glob("*[0-9].pdb"),
+                key=lambda q: q.stat().st_mtime,
+            )
+            if not model:
+                continue
+            candidates = metrics.heavy_atom_candidates(model[-1])
+            for peak in metrics.peaks_from_find_peaks_csv(f, model=model[-1]):
+                if not peak["atom"] or peak["seqid"] is None:
+                    continue
+                key = (peak["chain"], peak["seqid"], peak["residue"])
+                rows.setdefault(key, {
+                    "chain": peak["chain"],
+                    "seqid": peak["seqid"],
+                    "residue": peak["residue"],
+                    "atom": peak["atom"],
+                    "n_heavy": len(candidates.get(key, [])),
+                })
+    if not rows:
+        return None
+    return pl.DataFrame(
+        list(rows.values()),
+        schema={"chain": pl.Utf8, "seqid": pl.Int64,
+                "residue": pl.Utf8, "atom": pl.Utf8, "n_heavy": pl.Int64},
+    )
+
+
+def _with_atom_names(lf: pl.LazyFrame, peak_csvs) -> pl.LazyFrame:
+    """Add an `atom` column, empty where no model confirmed the site."""
+    table = _atom_table(peak_csvs)
+    if table is None:
+        logger.info(
+            "no refined PDB beside any peaks.csv: panel titles will name the "
+            "residue without the atom"
+        )
+        return lf.with_columns(
+            pl.lit("").alias("atom"), pl.lit(1, dtype=pl.Int64).alias("n_heavy")
+        )
+    return lf.join(
+        table.lazy(), on=["chain", "seqid", "residue"], how="left"
+    ).with_columns(
+        pl.col("atom").fill_null(""), pl.col("n_heavy").fill_null(1)
+    )
 
 
 def _get_peak_lf(
@@ -198,36 +283,25 @@ def _add_run_epoch_cols(
 
 
 # Matches a phenix.refine log line: "Final R-work = 0.1570, R-free = 0.1738".
-_FINAL_R_RE = re.compile(
-    r"Final R-work\s*=\s*([0-9]*\.?[0-9]+)\s*,\s*R-free\s*=\s*([0-9]*\.?[0-9]+)"
-)
-# Fallback for a stats file: "Rwork:  0.1570" / "Rfree:  0.1738".
-_STATS_RWORK_RE = re.compile(r"Rwork\s*[:=]\s*([0-9]*\.?[0-9]+)", re.IGNORECASE)
-_STATS_RFREE_RE = re.compile(r"Rfree\s*[:=]\s*([0-9]*\.?[0-9]+)", re.IGNORECASE)
-
-
 def _parse_refine_log(path) -> tuple[float | None, float | None]:
-    """Extract (r_work, r_free) from a phenix refine log or stats file.
+    """(r_work, r_free) from a phenix refine log or a stats file.
+
+    The regular expressions live in `integrator.utils.metrics`, with the
+    chain's own emitter, so this figure and the chain cannot disagree about
+    what a refinement produced. Two details that were easy to get wrong and
+    are pinned by its tests: the LAST `Final R-work` line wins, because
+    phenix prints `Start R-work` first and a rerun appends; and a stats file
+    writes the same numbers as `Rwork:`/`Rfree:`, which is the only form the
+    9b7c reference comes in.
 
     Returns (None, None) when the file is missing or has no parseable
     R-factors, so an epoch whose refinement failed is skipped rather than
     aborting the whole plot.
     """
-    try:
-        text = Path(path).read_text()
-    except OSError:
+    got = metrics.refinement_from_phenix_log(path)
+    if got is None:
         return None, None
-
-    matches = _FINAL_R_RE.findall(text)
-    if matches:
-        r_work, r_free = matches[-1]  # last refinement macro-cycle
-        return float(r_work), float(r_free)
-
-    mw = _STATS_RWORK_RE.search(text)
-    mf = _STATS_RFREE_RE.search(text)
-    if mw and mf:
-        return float(mw.group(1)), float(mf.group(1))
-    return None, None
+    return got["r_work"], got["r_free"]
 
 
 # phenix logs are named differently by the two pipelines: the Laue chain writes
@@ -320,9 +394,20 @@ def _plot_peakz(lf, out_dir, colors=None, ref_data=None):
         colors = _assign_colors(_lf[key].drop_nulls().unique().to_list())
 
     for (seqid,), df in _lf.group_by("seqid"):
-        fig, ax = plt.subplots(1, 1, figsize=(6, 4))
+        fig, ax = plt.subplots(
+            1, 1, figsize=figstyle.figsize("half", aspect=0.72),
+            layout="constrained")
+        site = ""
         for label, color, _df in _runs_by_label(df, colors):
             residue = _df["residue"].unique().item()
+            atom, n_heavy = "", 1
+            if "atom" in _df.columns:
+                atoms = _df["atom"].drop_nulls().unique().to_list()
+                atom = atoms[0] if len(atoms) == 1 else ""
+            if "n_heavy" in _df.columns:
+                counts = _df["n_heavy"].drop_nulls().unique().to_list()
+                n_heavy = max(counts) if counts else 1
+            site = metrics.panel_site_label(residue, seqid, atom, n_heavy)
 
             series = _per_epoch(_df, "peakz")
             if series.height == 0:
@@ -344,20 +429,24 @@ def _plot_peakz(lf, out_dir, colors=None, ref_data=None):
                 ax.axhline(
                     peak,
                     label="DIALS",
-                    color="red",
-                    linestyle="--",
+                    linestyle=(0, (4, 2)),
+                    **figstyle.reference_style(),
                 )
 
         # plot params
-        plt.grid()
-        plt.xlabel("epoch")
-        plt.ylabel("peakz")
-        plt.legend()
-        plt.title(f"Anomalous signal for {residue} {seqid}")
-        plt.savefig(f"{out_dir}/{residue}_{seqid}.png")
+        ax.grid(axis="x", visible=False)
+        ax.set_xlabel("epoch")
+        ax.set_ylabel(r"peak height ($\sigma$)")
+        ax.legend(frameon=False)
+        # the filename stays `<RESIDUE>_<seqid>` whatever the title says:
+        # the gallery sorts a per-site panel by that stem and a third field
+        # would drop every one of them into the unsorted section
+        plt.title(f"Anomalous signal for {site or f'{residue} {seqid}'}")
+        figstyle.save(fig, f"{out_dir}/{residue}_{seqid}")
         plt.close(fig)
 
 
+_R_LABELS = {"r_work": r"$R_\mathrm{work}$", "r_free": r"$R_\mathrm{free}$"}
 # R-work is drawn solid, R-free dashed; a run's two curves share a color.
 _R_STYLES = {"r_work": "-", "r_free": "--"}
 
@@ -394,10 +483,67 @@ def _legend_right(ax, **kwargs):
     )
 
 
+# The residues that carry the anomalous signal. A water or a side chain that
+# happens to sit near a peak is not an anomalous scatterer, and averaging it in
+# drags the mean towards the noise floor.
+# the residues carrying anomalous signal; defined once, beside the
+# parsers, because `tidy_mono.py` and the chain filter on the same set
+ANOMALOUS_RESIDUES = metrics.ANOMALOUS_RESIDUES
+
+
+def _plot_peakz_mean(lf, out_dir, colors=None, ref_data=None):
+    """Mean peak height over the anomalous scatterers, against epoch.
+
+    One number per epoch where `_plot_peakz` gives one panel per site: it is
+    the summary the per-site panels support, and it is what moves when the
+    model gets better rather than when one site happens to be well ordered.
+    """
+    _lf = lf.collect()
+    _lf = _lf.filter(pl.col("residue").is_in(ANOMALOUS_RESIDUES))
+    if _lf.height == 0:
+        logger.info("No anomalous scatterers in the peak table; skipping")
+        return
+    if colors is None:
+        colors = _assign_colors(
+            _lf[_group_key_col(_lf)].drop_nulls().unique().to_list()
+        )
+
+    fig, ax = plt.subplots(
+        1, 1, figsize=figstyle.figsize("half", aspect=0.72),
+        layout="constrained")
+    for label, color, _df in _runs_by_label(_lf, colors):
+        m = (
+            _df.group_by("epoch")
+            .agg(pl.col("peakz").mean().alias("mean"),
+                 pl.col("peakz").count().alias("n"))
+            .sort("epoch")
+        )
+        ax.plot(m["epoch"], m["mean"], color=color, marker="o", markersize=4,
+                label=f"{label} ({int(m['n'][0])} sites)")
+    if ref_data is not None and ref_data.peaks is not None:
+        ref_df = pl.read_csv(
+            ref_data.peaks,
+            schema_overrides={"seqid": pl.Int64, "epoch": pl.Int64,
+                              "peakz": pl.Float32},
+        ).filter(pl.col("residue").is_in(ANOMALOUS_RESIDUES))
+        if ref_df.height:
+            ax.axhline(
+                float(ref_df["peakz"].mean()), label="DIALS",
+                linestyle=(0, (4, 2)), **figstyle.reference_style(),
+            )
+    ax.grid(axis="x", visible=False)
+    ax.set_xlabel("epoch")
+    ax.set_ylabel(r"mean peak height ($\sigma$)")
+    ax.legend(frameon=False)
+    figstyle.save(fig, f"{out_dir}/peakz_mean")
+    plt.close(fig)
+    logger.info("Saved %s/peakz_mean", out_dir)
+
+
 def _plot_refinement(lf, out_dir, colors=None, ref_data=None):
     """Plot per-epoch Rwork/Rfree: one combined figure plus one per R-factor.
 
-    Every run keeps its shared Dark2 color. The combined figure draws R-work
+    Every run keeps its shared witch colour. The combined figure draws R-work
     solid and R-free dashed (a run's two curves share a color); the individual
     figures draw a single R-factor per run for easier reading. Missing epochs
     are skipped (one point per epoch, sorted). An optional DIALS reference is
@@ -416,7 +562,9 @@ def _plot_refinement(lf, out_dir, colors=None, ref_data=None):
     ref = _refine_reference(ref_data)
 
     # combined figure: both R-factors, solid = R-work, dashed = R-free
-    fig, ax = plt.subplots(1, 1, figsize=(7, 4))
+    fig, ax = plt.subplots(
+        1, 1, figsize=figstyle.figsize("half", aspect=0.72),
+        layout="constrained")
     for _label, color, _df in runs:
         for metric, style in _R_STYLES.items():
             series = _per_epoch(_df, metric)
@@ -432,28 +580,33 @@ def _plot_refinement(lf, out_dir, colors=None, ref_data=None):
             )
 
     handles = [Line2D([0], [0], color=c, lw=2, label=lab) for lab, c, _ in runs]
+    refkw = figstyle.reference_style()
     if ref:
-        ax.axhline(ref["r_work"], color="black", linestyle="-", lw=1)
-        ax.axhline(ref["r_free"], color="black", linestyle="--", lw=1)
-        handles.append(Line2D([0], [0], color="black", lw=1, label="DIALS"))
+        ax.axhline(ref["r_work"], linestyle="-", **refkw)
+        ax.axhline(ref["r_free"], linestyle=(0, (4, 2)), **refkw)
+        handles.append(
+            Line2D([0], [0], color=refkw["color"], lw=refkw["lw"], label="DIALS")
+        )
     # fold the R-factor line-style key into the same legend
     handles += [
-        Line2D([0], [0], color="gray", lw=2, linestyle=s, label=m.replace("_", "-"))
+        Line2D([0], [0], color=figstyle.roles()["muted"], lw=2, linestyle=s,
+               label=_R_LABELS[m])
         for m, s in _R_STYLES.items()
     ]
 
-    ax.grid(True)
+    ax.grid(axis="x", visible=False)
     ax.set_xlabel("epoch")
-    ax.set_ylabel("R-factor")
-    ax.set_title("Refinement R-factors")
+    ax.set_ylabel("$R$-factor")
     _legend_right(ax, handles=handles)
-    fig.savefig(f"{out_dir}/refinement.png", bbox_inches="tight")
+    figstyle.save(fig, f"{out_dir}/refinement")
     plt.close(fig)
 
     # individual figures: one R-factor each, easier to read
     for metric in _R_STYLES:
         name = metric.replace("_", "-")
-        fig, ax = plt.subplots(1, 1, figsize=(6, 4))
+        fig, ax = plt.subplots(
+            1, 1, figsize=figstyle.figsize("half", aspect=0.72),
+            layout="constrained")
         for label, color, _df in runs:
             series = _per_epoch(_df, metric)
             if series.height == 0:
@@ -468,14 +621,14 @@ def _plot_refinement(lf, out_dir, colors=None, ref_data=None):
             )
         if metric in ref:
             ax.axhline(
-                ref[metric], color="black", linestyle="--", lw=1, label="DIALS"
+                ref[metric], linestyle=(0, (4, 2)), label="DIALS",
+                **figstyle.reference_style(),
             )
-        ax.grid(True)
+        ax.grid(axis="x", visible=False)
         ax.set_xlabel("epoch")
-        ax.set_ylabel(name)
-        ax.set_title(f"Refinement {name}")
+        ax.set_ylabel(_R_LABELS[metric])
         _legend_right(ax)
-        fig.savefig(f"{out_dir}/refinement_{metric}.png", bbox_inches="tight")
+        figstyle.save(fig, f"{out_dir}/refinement_{metric}")
         plt.close(fig)
 
 
@@ -500,6 +653,8 @@ def main():
         {v["path"]: v["label"] for v in cfg.runs.values()} if cfg else None
     )
     lf = _get_peak_lf(csv, labels)
+    if lf is not None:
+        lf = _with_atom_names(lf, csv)
     refine_lf = _get_refine_lf(_get_refine_logs(run_dirs), labels)
 
     # one fixed color per model, shared by every plot so a model keeps its
@@ -533,6 +688,9 @@ def main():
         )
     else:
         _plot_peakz(lf, out_dir=out_dir, colors=colors, ref_data=ref_cfg)
+        _plot_peakz_mean(
+            lf, out_dir=out_dir, colors=colors, ref_data=ref_cfg
+        )
 
     # plot refinement R-factors
     if refine_lf.select(pl.len()).collect().item() == 0:
