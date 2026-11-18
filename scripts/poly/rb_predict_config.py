@@ -33,14 +33,20 @@ def strip_unknown(name: str, args: dict) -> list[str]:
     (the profile basis penalties were removed), so a September config cannot
     be rebuilt by today's factory at all.
     """
-    from integrator.registry import REGISTRY
-
-    cls = REGISTRY["surrogate"].get(name)
-    if cls is None:
-        return []
     import inspect
 
-    valid = set(inspect.signature(cls.__init__).parameters)
+    from integrator.registry import REGISTRY
+
+    # `surrogates`, plural, and an entry may be a builder function rather
+    # than a class -- `gamma` is `build_gamma`. `signature` of the object
+    # itself covers both and drops `self` for a class.
+    cls = REGISTRY["surrogates"].get(name)
+    if cls is None:
+        return []
+    params = inspect.signature(cls).parameters
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return []  # takes **kwargs, so nothing is unknown to it
+    valid = set(params)
     dropped = []
     for key in [k for k in args if k not in valid and k != "self"]:
         if args[key] in INERT:
