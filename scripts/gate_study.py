@@ -278,6 +278,38 @@ def gate_joint(p, _intensity, _background, counts):
     return lam / (lam + np.maximum(b0, 1e-6))
 
 
+def gate_joint_iter(p, _intensity, _background, counts, steps=3):
+    """`joint`, iterated: refit (I, B) with the gate's own weights.
+
+    `joint` is one least-squares fit, which weights every pixel equally.
+    The counts are Poisson, so their variance rises with the rate, and the
+    pixels under the spot are both the most informative about I and the
+    noisiest. Re-fitting with weights `1 / (I p + B)` from the current
+    estimate is the Poisson IRLS step, and repeating it is coordinate
+    ascent on the same objective the gate comes from.
+
+    This is the obvious thing to try for the residual low-SNR bias, so it
+    is measured rather than assumed to help.
+    """
+    i0, b0 = joint_fit(p, counts)
+    for _ in range(steps):
+        rate = np.maximum(i0 * p + b0, 1e-6)
+        w = 1.0 / rate
+        swpp = (w * p * p).sum(axis=1, keepdims=True)
+        swp = (w * p).sum(axis=1, keepdims=True)
+        sw = w.sum(axis=1, keepdims=True)
+        swpc = (w * p * counts).sum(axis=1, keepdims=True)
+        swc = (w * counts).sum(axis=1, keepdims=True)
+        det = (swpp * sw - swp * swp)
+        det = np.where(np.abs(det) < 1e-12, 1e-12, det)
+        i0 = (sw * swpc - swp * swc) / det
+        b0 = (swpp * swc - swp * swpc) / det
+        i0 = np.maximum(i0, 0.0)
+        b0 = np.maximum(b0, 1e-6)
+    lam = i0 * p
+    return lam / (lam + b0)
+
+
 GATES = {
     "exact": gate_exact,
     "plugin": gate_plugin,
@@ -290,6 +322,7 @@ GATES = {
     "plugin_noclamp": gate_plugin_noclamp,
     "plugin_lowmean": gate_plugin_lowmean,
     "joint": gate_joint,
+    "joint_iter": gate_joint_iter,
 }
 
 
@@ -355,8 +388,8 @@ def simulate_regime(n: int, rng, regime: str):
 def sweep(n: int, seed: int) -> list[dict]:
     """Every gate in every regime, with the coupling diagnostic."""
     rows = []
-    print(f"{'regime':<16}{'gate':<16}{'bias %':>9}{'rel sd %':>10}"
-          f"{'signal share':>14}{'partition':>11}")
+    print(f"{'regime':<16}{'gate':<14}{'mean %':>8}{'median %':>10}"
+          f"{'aggregate %':>13}{'share':>8}{'partition':>11}")
     for regime in REGIMES:
         rng = np.random.default_rng(seed)
         p, intensity, background, counts = simulate_regime(n, rng, regime)
@@ -364,19 +397,28 @@ def sweep(n: int, seed: int) -> list[dict]:
         for name, fn in GATES.items():
             r = fn(p, intensity, background, counts)
             resid, share = coupling(r, counts)
-            ratio = (r * counts).sum(axis=1) / intensity
+            i_hat = (r * counts).sum(axis=1)
+            ratio = i_hat / intensity
+            # the mean of a ratio is not the ratio of means, and at low SNR
+            # the per-reflection ratio is strongly right-skewed: a mean of
+            # 1.25 sat on a median of 0.99. All three are reported so that
+            # skew is never read as bias.
             rows.append({
                 "regime": regime, "gate": name,
                 "median_snr": round(snr, 3),
                 "bias_pct": round(100 * (np.mean(ratio) - 1), 2),
+                "median_bias_pct": round(100 * (np.median(ratio) - 1), 2),
+                "aggregate_bias_pct": round(
+                    100 * (float(np.sum(i_hat) / np.sum(intensity)) - 1), 2),
                 "rel_sd_pct": round(100 * np.std(ratio), 2),
                 "signal_share": round(float(np.mean(share)), 4),
                 "partition_residual": float(f"{resid:.2e}"),
                 "n": n,
             })
-            print(f"{regime:<16}{name:<16}{rows[-1]['bias_pct']:>9.2f}"
-                  f"{rows[-1]['rel_sd_pct']:>10.2f}"
-                  f"{rows[-1]['signal_share']:>14.3f}"
+            print(f"{regime:<16}{name:<14}{rows[-1]['bias_pct']:>8.1f}"
+                  f"{rows[-1]['median_bias_pct']:>10.1f}"
+                  f"{rows[-1]['aggregate_bias_pct']:>13.1f}"
+                  f"{rows[-1]['signal_share']:>8.3f}"
                   f"{rows[-1]['partition_residual']:>11.1e}")
         print()
     return rows
