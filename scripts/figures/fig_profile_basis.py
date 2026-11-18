@@ -60,8 +60,10 @@ DATA = ROOT / "docs" / "figures" / "data" / "basis"
 FIGURES = ROOT / "docs" / "figures"
 OUT = FIGURES / "m9"
 # Which figure directory each dataset's arms are written to. An arm whose
-# dataset is not listed falls back to OUT rather than inventing a directory.
-DATASET_DIR = {"hewl_9b7c": "m9", "pdz2_1116": "pdz2"}
+# dataset is not listed falls back to OUT rather than inventing a directory,
+# so a dataset missing from here files its figures under another dataset's
+# name: `hewl_1118` was absent and its two arms were written into `m9/`.
+DATASET_DIR = {"hewl_9b7c": "m9", "pdz2_1116": "pdz2", "hewl_1118": "poly1118"}
 SNAPSHOTS = "basis_snapshots.npz"
 COMPONENTS = "basis_components.csv"
 
