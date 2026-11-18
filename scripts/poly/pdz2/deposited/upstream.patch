@@ -1,0 +1,134 @@
+--- upstream/careless-cdef-ohp-mlpw.sh
++++ as-run/careless-cdef-ohp-mlpw.sh
+@@ -1,10 +1,9 @@
+ #!/bin/bash
+ #SBATCH --job-name=gpu_careless_integ
+-#SBATCH -p gpu_requeue,seas_gpu # partition (queue)
++#SBATCH -p gpu_requeue # partition (queue)
+ #SBATCH --mem 32G # memory pool for all cores
+ #SBATCH -t 0-02:30 # time (D-HH:MM)
+-#SBATCH --gres=gpu:1
+-#SBATCH --constraint=v100
++#SBATCH --gres=gpu:nvidia_a100-sxm4-80gb:1
+ #SBATCH -o logs/test_careless_integrate_off_%j.out        # Standard output
+ #SBATCH -e logs/test_careless_integrate_off_%j.err        # Standard error
+ 
+@@ -12,8 +11,8 @@
+ #This is an example careless script, hardcoded for analyzing PDZ2 EFX data, and used for running on Harvard's computing cluster. In line 16 and 17 of this script, the relevant conda environment (with careless in it) is activated and relevant modules are loaded so that the script functions on Harvard's computing cluster.  
+ ##########
+ 
+-eval "$(conda shell.bash hook)"
+-source activate careless
++source /n/lab_storage/hekstra_lab/people/aldama/micromamba/etc/profile.d/mamba.sh
++CARELESS="micromamba run -n crls python /n/lab_storage/hekstra_lab/people/aldama/micromamba/envs/crls/bin/careless"
+ 
+ gain=${1}
+ gain_str=$(echo "$gain" | tr . ,)
+@@ -43,7 +42,7 @@
+ 
+ )
+ 
+-careless poly \
++$CARELESS poly \
+   ${BASE_ARGS[@]} \
+   $in/cdef_${expt}_off.mtz \
+   $in/cdef_${expt}_50ns_shared_index.mtz \
+--- upstream/expt_concat.py
++++ as-run/expt_concat.py
+@@ -38,6 +38,22 @@
+ os.chdir(int_dir)
+ 
+ int_dir = os.getcwd()
++
++# Local deviation: pass d is processed with start angle 0 (the tutorial's pass-d
++# workaround needs stills built with laue-dials 0.3.dev48; laue-dials issue #49).
++# A few pass-d frames still refine badly, so drop every frame whose spot RMSD
++# exceeds 2 px in any timepoint; off and on then keep the same frames.
++import re
++def bad_frames(pass_, cut=2.0):
++    bad = set()
++    for t in times:
++        for ln in open(f"dials_files_{pass_}_{t}/rmsds.log"):
++            m = re.match(r"\s*(\d+)\s+(\d+)\s+([\d.]+)\s+([\d.]+)\s*$", ln)
++            if m and float(m.group(3)) > cut:
++                bad.add(int(m.group(2)))
++    return sorted(bad)
++BAD_D = bad_frames("d")
++print(f"pass d frames dropped (rmsd > 2 px in any timepoint): {BAD_D}")
+ mtz_dir =int_dir+f"/{int_type}_{gain_str}/"
+ 
+ try:
+@@ -81,6 +97,8 @@
+                 
+                 ##we remove the reflections for images that are improperly indexed. These reflections 
+                 # are improperly indexed due to crystal slippage. 
++                if expt == "d":
++                    curr = curr[~curr["BATCH"].isin(BAD_D)]
+                 if expt == "e":
+                     curr = curr[curr["BATCH"]<=85]
+                 if expt == "f":
+--- upstream/one_pass-from_off.sh
++++ as-run/one_pass-from_off.sh
+@@ -1,14 +1,20 @@
+ #!/bin/bash
+ #SBATCH --job-name=PDZ_index_ld
+-#SBATCH -p seas_compute,shared,serial_requeue # partition (queue)
++#SBATCH -p shared,serial_requeue # partition (queue)
+ #SBATCH --mem 64G # memory pool for all cores
+-#SBATCH -t 0-00:50 # time (D-HH:MM)
++#SBATCH -t 0-04:00 # time (D-HH:MM)
+ #SBATCH -c 4
+ #SBATCH -o logs/index_%j.out        # Standard output
+ #SBATCH -e logs/index_%j.err        # Standard error
+ 
+ # An example script for processing an electric-field-stimulated time-resolved dataset. This script can be run using slurm. This script takes six arguments, pass letter (RUN_NO), timepoint (TIME), start phi angle (START_ANGLE), phi angle step (OSC), gain (GAIN), and reindexing operation (CB_OP). See process-slurm.sh for an example script call.
+ 
++# Local adaptation (processing logic unchanged): laue-dials 0.5.1 env, and pin
++# BLAS/OpenMP threads so laue.predict's fork-after-KDE does not deadlock.
++source /n/lab_storage/hekstra_lab/people/aldama/micromamba/etc/profile.d/mamba.sh
++micromamba activate integrator-cuda-dev
++export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 NUMEXPR_NUM_THREADS=1
++
+ RUN_NO=${1}
+ TIME=${2}
+ CELL='"65.2,39.45,38.9,90.000,117.45,90.000"'
+# rerun_pass_d.sh: no upstream counterpart (ours, or added for this run)
+# run_pdz2_ref.sh: no upstream counterpart (ours, or added for this run)
+--- upstream/stats_for_production.sh
++++ as-run/stats_for_production.sh
+@@ -10,16 +10,17 @@
+ merged_mtz_dir=${merged_mtz_prefix}${careless_run}/
+ out_dir=${merged_mtz_dir}/
+ 
+-eval "$(conda shell.bash hook)"
+-conda activate careless
++source /n/lab_storage/hekstra_lab/people/aldama/micromamba/etc/profile.d/mamba.sh
++PY="micromamba run -n crls python"
++CCPRED="$PY /n/lab_storage/hekstra_lab/people/aldama/micromamba/envs/crls/bin/careless.ccpred"
+ 
+ cd $merged_mtz_dir
+ 
+ #careless.cchalf merged_${expt}_xval_*.mtz -o ${expt}_cchalf.csv --image ${expt}_cchalf.png
+ 
+-careless.ccpred merged_${expt}_predictions_*.mtz -o ${expt}_ccpred.csv --image ${expt}_ccpred.png -m spearman
++$CCPRED merged_${expt}_predictions_*.mtz -o ${expt}_ccpred.csv --image ${expt}_ccpred.png -m spearman
+ 
+-python ../../scripts/custom_ccsym.py merged_${expt}_xval_[4-7].mtz --spacegroup=5 --op=1 -p ${expt}_ccsym -b 10 --cb_op=a+b,a-b,-c  # -m weighted_pearson
++$PY ../../scripts/custom_ccsym.py merged_${expt}_xval_[4-7].mtz --spacegroup=5 --op=1 -p ${expt}_ccsym -b 10 --cb_op=a+b,a-b,-c  # -m weighted_pearson
+ 
+ #python ../../scripts/custom_ccsym.py merged_${expt}_xval_[4-7].mtz --spacegroup=5 --op=1 -p ${expt}_ccsym_b -b 1 --cb_op=a+b,a-b,-c  # -m weighted_pearson
+ 
+# wdm_peaks.py: no upstream counterpart (ours, or added for this run)
+--- upstream/wdm.py
++++ as-run/wdm.py
+@@ -47,7 +47,9 @@
+ def transfer_phases(small_mtz, big_mtz, sg_str, cb_op):
+     new_asu = expand_Rfree(small_mtz, sg_str, cb_op)
+     mtz_r3h = rs.read_mtz(big_mtz)
+-    new = mtz_r3h.merge(new_asu[["PHIC"]],on=["H","K","L"],how="left")
++    # 5E1Y's cell differs slightly from the merged data's, so rs calls them
++    # non-isomorphous; phases transfer by Miller index, so relax the check.
++    new = mtz_r3h.merge(new_asu[["PHIC"]],on=["H","K","L"],how="left",check_isomorphous=False)
+     new["PHIC"]=new["PHIC"].apply(random_fill)
+     new["PHIC"]=new["PHIC"].astype("Phase")
+     return new
