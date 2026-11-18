@@ -142,19 +142,22 @@ wandb/
 
 # Scratch working directories
 .scratch_*/
-docs_drafts/
+/docs_drafts/
 
-# Figure and evaluation output copied back from the cluster
-paper_figures/
-laue_figures/
-finished_figs_local/
-architecture_comparison/
-reference_eval/
-reference_data/
-friedel_pairs/
-friedel_pairs_9b7c/
-1117_eval/
-data/
+# Figure and evaluation output copied back from the cluster. Anchored with
+# a leading slash: an unanchored `data/` also matches `tests/data/`, which
+# silently left all 38 test fixtures out of the commit that claimed to
+# add them, making the committed suite unrunnable on a clone.
+/paper_figures/
+/laue_figures/
+/finished_figs_local/
+/architecture_comparison/
+/reference_eval/
+/reference_data/
+/friedel_pairs/
+/friedel_pairs_9b7c/
+/1117_eval/
+/data/
 
 # Rendered figures and tables: generated, so not sources
 docs/figures/**/*.pdf
