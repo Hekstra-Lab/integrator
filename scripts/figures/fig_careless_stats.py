@@ -122,15 +122,31 @@ def shell_axis(labels) -> list[float]:
 
 
 def resolution_ticks(ax, labels) -> None:
+    """One tick per DISPLAYED resolution, not per shell label.
+
+    The arms do not share a binning: careless rounds each run's own bin
+    edges, so `28.96 - 3.76` and `28.96 - 3.77` are the same shell written
+    two ways. Deduplicating on the label text kept both, which put two
+    ticks a hair apart and drew their identical names on top of each
+    other -- the "bold" tick labels in the CC-half and R-split panels were
+    two labels, not one.
+
+    Deduplicating on the formatted midpoint instead collapses them, which
+    is also the honest thing to show: the axis can only claim the
+    precision it prints.
+    """
     seen, ticks, names = set(), [], []
     for text in labels:
         span = metrics.d_range_from_label(text)
-        if not span or text in seen:
+        if not span:
             continue
-        seen.add(text)
         d = metrics.shell_midpoint(*span)
+        name = f"{d:.2f}"
+        if name in seen:
+            continue
+        seen.add(name)
         ticks.append(1.0 / d**2)
-        names.append(f"{d:.2f}")
+        names.append(name)
     if not ticks:
         return
     order = sorted(range(len(ticks)), key=lambda i: ticks[i])

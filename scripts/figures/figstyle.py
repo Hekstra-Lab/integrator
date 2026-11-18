@@ -47,14 +47,27 @@ except ModuleNotFoundError as exc:  # pragma: no cover - a setup message
 
 THEME = "ink"
 LAYOUT = "article"
-# `texture.system` carries six distinguishable series and raises IndexError
-# above that. Figures with more arms than this fall back to the ordered
-# ramp; see `arm_colors`.
-MAX_SERIES = 6
+# Two palettes, and which one a figure wants depends on whether its series
+# are ordered.
+#
+# `categorical=True` is Ink Dark2: eight distinct hues, for arms that have
+# no order -- integrator families, geometry variants, the reference against
+# the models. Amber stands in for Dark2's orange so that nothing competes
+# with the vermilion reference.
+#
+# `categorical=False` is the blue ramp, six shades, for series that ARE
+# ordered: epochs, a sweep value, or one emphasised arm against the rest.
+# `epoch_ramp` is the usual way to ask for it.
+#
+# Above eight the palette raises rather than cycling, and so does this; see
+# `arm_colors`.
+MAX_SERIES = 8
+MAX_SHADES = 6
 
 __all__ = [
     "LAYOUT",
     "MAX_SERIES",
+    "MAX_SHADES",
     "THEME",
     "arm_colors",
     "arm_series",
@@ -194,7 +207,7 @@ def arm_series(names) -> dict:
     _ensure()
     names = list(names)
     base = texture.system(THEME, min(max(len(names), 1), MAX_SERIES),
-                          reference=True)
+                          reference=True, categorical=True)
     return {n: base[i % len(base)] for i, n in enumerate(names)}
 
 
@@ -207,30 +220,31 @@ def categorical(n: int = 6):
     _ensure()
     n = max(int(n), 1)
     if n <= MAX_SERIES:
-        return [s.color for s in texture.system(THEME, n, reference=True)]
+        return [s.color for s in texture.system(THEME, n, reference=True,
+                                                categorical=True)]
     return parts.ramp(n)
 
 
 def arm_colors(names) -> dict[str, str]:
     """A colour per name, in the order given.
 
-    Up to `MAX_SERIES` arms take the theme's categorical series, which are
-    separable by hue and by texture. Beyond that the ink theme has no
-    categorical set -- `texture.system` raises `IndexError` at seven -- and
-    the ordered ramp is used instead.
+    Training arms have no order, so they take Ink Dark2's eight hues rather
+    than shades of one. Shades were what ink offered before the categorical
+    palette existed, and six arms of graded blue on one axes -- which is
+    what `careless_stats_pdz2_1116` is -- could not be told apart.
 
-    A ramp is the right answer when the arms are ordered, as they are for an
-    epoch or a sweep value. It is the wrong answer for unordered arms, where
-    small multiples or a chosen subset reads better than eight lines of
-    graded blue; the figures in that position are the 8-arm m9 set and the
-    20-arm 1118 ablation, and they are worth revisiting rather than
-    accepting as drawn.
+    Above eight the palette raises rather than cycling, and repeating a hue
+    would be worse than the ramp, so the ramp is used and the figure is
+    worth rebuilding: the 20-arm 1118 ablation is the one in that position,
+    and small multiples or a chosen subset reads better than twenty lines
+    however they are coloured.
     """
     _ensure()
     names = list(names)
     if len(names) <= MAX_SERIES:
         pal = [s.color for s in texture.system(THEME, max(len(names), 1),
-                                               reference=True)]
+                                               reference=True,
+                                               categorical=True)]
     else:
         pal = parts.ramp(len(names))
     return {n: pal[i % len(pal)] for i, n in enumerate(names)}
