@@ -22,9 +22,42 @@ from pathlib import Path
 
 import yaml
 
-from integrator.utils import phenix
+from integrator.utils import checkpoints, phenix
 
-ALL_STEPS = ("predict", "careless", "phenix", "peaks")
+ALL_STEPS = ("predict", "careless", "stats", "phenix", "peaks")
+
+# `careless.<tool>` -> which of careless's three outputs it reads, how many
+# resolution bins it defaults to, and whether it takes `-m/--method`.
+#
+# The three outputs are not interchangeable. `<base>_xval_0.mtz` carries
+# `repeat` and `half`, `<base>_predictions_0.mtz` carries `test`, `Iobs` and
+# `Ipred`, and `<base>_0.mtz` is the merged result with `I(+)/SigI(+)`;
+# handing a tool the wrong one raises a KeyError on the column it wanted.
+# Verified against careless 0.4's own parsers, not inferred from the names.
+CARELESS_STATS = {
+    "cchalf": {"input": "xval", "bins": 10, "method": True},
+    "ccanom": {"input": "xval", "bins": 10, "method": True},
+    "rsplit": {"input": "xval", "bins": 10, "method": False},
+    "ccpred": {"input": "predictions", "bins": 10, "method": True},
+    # isigi reads the merged file through --intensity-key, which defaults to
+    # None and then raises `KeyError: None`: an anomalous merge has I(+)/I(-)
+    # and no plain `I`, so the key has to be named.
+    "isigi": {"input": "merged", "bins": 20, "method": False, "keyed": True},
+    "completeness": {"input": "merged", "bins": 10, "method": False},
+}
+
+# Columns in a careless.stats CSV that say which row this is rather than
+# measuring anything. Everything else that parses as a number is a statistic.
+_STATS_ID_COLS = {
+    "", "index", "bin", "Bin", "file", "Spacegroup", "spacegroup", "cell",
+    "Resolution Range (Å)", "Resolution Range", "dHKL", "repeat", "half",
+    "test",
+}
+# the column naming the resolution shell, in the order careless might use
+_STATS_SHELL_COLS = ("Resolution Range (Å)", "Resolution Range", "dHKL")
+# a second grouping careless splits on: Train/Test for ccpred, the
+# crossvalidation repeat for cchalf and friends
+_STATS_GROUP_COLS = ("test", "repeat", "half")
 DEFAULT_CFG = Path(__file__).with_name("poly_pipeline_cfg.yaml")
 # micromamba hook; override with MAMBA_SH for a different install
 MAMBA_SH = os.environ.get(
@@ -35,8 +68,29 @@ MAMBA_SH = os.environ.get(
 
 def parse_args():
     p = argparse.ArgumentParser(description="Laue post-training pipeline")
-    p.add_argument("--run-dir", required=True, type=Path)
+    p.add_argument("--run-dir", type=Path, default=None)
     p.add_argument("--cfg", type=Path, default=DEFAULT_CFG)
+    p.add_argument(
+        "--out-base",
+        type=Path,
+        default=None,
+        help=(
+            "Run `stats` directly on a careless output base, e.g. "
+            "<dir>/merged_e35, instead of resolving it from --run-dir. For "
+            "chains that scaled outside this pipeline; PDZ2 is the case it "
+            "was added for. Implies --steps stats."
+        ),
+    )
+    p.add_argument(
+        "--method",
+        default=None,
+        help="Override the `method` key column written into the long table",
+    )
+    p.add_argument(
+        "--dataset",
+        default=None,
+        help="Override the `dataset` key column written into the long table",
+    )
     p.add_argument(
         "--steps",
         default=",".join(ALL_STEPS),
@@ -140,50 +194,57 @@ def find_mtz(
     return match[0]
 
 
-def epoch_of(path: Path) -> int:
-    """Epoch number parsed from a checkpoint filename, else -1."""
-    match = re.search(r"epoch[=_](\d+)", path.name)
-    return int(match.group(1)) if match else -1
+epoch_of = checkpoints.epoch_of
 
 
-def checkpoint_for(run_dir: Path, scope) -> Path | None:
-    """Resolve `scope` to one checkpoint: "last", "all" (None), or an epoch.
+def checkpoints_for(run_dir: Path, scope) -> list[Path] | None:
+    """The checkpoints `scope` names, or None to let predict walk them all.
 
-    `integrator.predict --run-dir` walks every checkpoint in the run, which
-    for a 40-epoch run checkpointed every 2 epochs is 20 forward passes over
-    all 2.66M reflections and 20 MTZs, when the downstream chain consumes
-    exactly one. Narrowing to a single checkpoint is the difference between
-    half an hour and ninety seconds.
+    The selection itself lives in `integrator.utils.checkpoints`, because the
+    monochromatic chain asks the same question and the two answers must not
+    drift apart. `None` is kept here as the "every one" signal, which is what
+    `integrator.predict --run-dir` does when given no `--ckpt`.
     """
     if scope == "all":
         return None
-    meta = yaml.safe_load((run_dir / "run_paths.yaml").read_text())
-    log_dir = Path(meta.get("log_dir") or Path(meta["output_root"]) / "files")
-    ckpts = [c for c in log_dir.glob("**/epoch*.ckpt") if c.name != "last.ckpt"]
-    if not ckpts:
+    try:
+        got = checkpoints.select(run_dir, scope)
+    except ValueError as e:
+        raise SystemExit(str(e)) from e
+    return got or None
+
+
+def checkpoint_for(run_dir: Path, scope) -> Path | None:
+    """The single checkpoint `scope` names, or None for "every one"."""
+    got = checkpoints_for(run_dir, scope)
+    if got is None:
         return None
-    if scope in (None, "last"):
-        return max(ckpts, key=epoch_of)
-    wanted = int(scope)
-    match = [c for c in ckpts if epoch_of(c) == wanted]
-    if not match:
-        raise SystemExit(f"no checkpoint for epoch {wanted} under {log_dir}")
-    return match[0]
+    if len(got) > 1:
+        raise SystemExit(
+            f"scope {scope!r} names {len(got)} checkpoints; this step takes one"
+        )
+    return got[0]
 
 
 def step_predict(cfg, run_dir, dry):
-    """integrator.predict over the run's checkpoints, writing MTZs."""
+    """integrator.predict over the selected checkpoints, writing MTZs."""
     pcfg = cfg.get("predict", {})
-    flags = ["--write-mtz"] if pcfg.get("write_mtz", True) else []
+    base = ["--write-mtz"] if pcfg.get("write_mtz", True) else []
     try:
-        ckpt = checkpoint_for(run_dir, pcfg.get("epoch", "last"))
+        ckpts = checkpoints_for(run_dir, pcfg.get("epoch", "last"))
     except (OSError, KeyError):
-        ckpt = None  # dry run against a run that has not trained yet
-    if ckpt is not None:
-        flags += ["--ckpt", str(ckpt)]
-        print(f"predict  : {ckpt.name}")
-    cmd = f"integrator.predict -v --run-dir {run_dir} {' '.join(flags)}"
-    run(in_env(cmd.strip(), pcfg.get("env")), dry=dry)
+        ckpts = None  # dry run against a run that has not trained yet
+    if ckpts is None:
+        # no --ckpt: predict walks every checkpoint itself
+        cmd = f"integrator.predict -v --run-dir {run_dir} {' '.join(base)}"
+        run(in_env(cmd.strip(), pcfg.get("env")), dry=dry)
+        return
+    print(f"predict  : {len(ckpts)} checkpoint(s): "
+          f"{', '.join(str(epoch_of(c)) for c in ckpts)}")
+    for ckpt in ckpts:
+        flags = base + ["--ckpt", str(ckpt)]
+        cmd = f"integrator.predict -v --run-dir {run_dir} {' '.join(flags)}"
+        run(in_env(cmd.strip(), pcfg.get("env")), dry=dry)
 
 
 def step_careless(cfg, mtz: Path, dry) -> Path:
@@ -223,6 +284,118 @@ def step_careless(cfg, mtz: Path, dry) -> Path:
         run(in_env(stats_cmd, cfg.get("predict", {}).get("env")), dry=dry)
 
     return Path(f"{out_base}_0.mtz")
+
+
+def step_stats(cfg, out_base: Path, epoch, dry) -> None:
+    """Every `careless.stats` tool, each to its own CSV, then one long table.
+
+    These are the numbers careless can report and DIALS cannot be asked for,
+    so they are the polychromatic counterpart of the per-shell merging table:
+    CChalf, CCanom, CCpred, Rsplit, I/sigma and completeness by resolution.
+    Each tool writes its own CSV with `-o`; `careless_stats.csv` beside them
+    is all of it concatenated with the `method`, `dataset` and `epoch` key
+    columns the figures group on.
+    """
+    scfg = cfg.get("stats", {})
+    tools = [t for t in (scfg.get("tools") or list(CARELESS_STATS))]
+    unknown = set(tools) - set(CARELESS_STATS)
+    if unknown:
+        raise SystemExit(f"unknown careless.stats tools: {sorted(unknown)}")
+
+    out_dir = out_base.parent / scfg.get("out_dir", "stats")
+    if not dry:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    sources = {
+        "merged": Path(f"{out_base}_0.mtz"),
+        "xval": Path(f"{out_base}_xval_0.mtz"),
+        "predictions": Path(f"{out_base}_predictions_0.mtz"),
+    }
+    written = []
+    for tool in tools:
+        spec = CARELESS_STATS[tool]
+        src = sources[spec["input"]]
+        if not dry and not src.exists():
+            print(f"stats    : {tool} skipped, no {src.name}")
+            continue
+        csv_path = out_dir / f"{tool}.csv"
+        flags = [f"-b {scfg.get('bins', spec['bins'])}"]
+        if spec["method"] and scfg.get("method"):
+            flags.append(f"-m {scfg['method']}")
+        if spec.get("keyed"):
+            flags += [
+                f"--intensity-key '{scfg.get('intensity_key', 'I(+)')}'",
+                f"--uncertainty-key '{scfg.get('uncertainty_key', 'SigI(+)')}'",
+            ]
+        flags += [str(a) for a in scfg.get("extra_args", [])]
+        cmd = (
+            f"careless.{tool} {' '.join(flags)} -o {csv_path} {src}"
+        )
+        run(in_env(via_python(cmd), scfg.get("env", "crls")), dry=dry)
+        written.append((tool, csv_path))
+
+    tidy = out_dir / "careless_stats.csv"
+    if dry:
+        print(f"stats    : would tidy {len(written)} tables into {tidy}")
+        return
+    _tidy_careless_stats(written, tidy, cfg, epoch)
+
+
+def _tidy_careless_stats(written, tidy: Path, cfg, epoch) -> None:
+    """Concatenate the per-tool CSVs into one long-format table.
+
+    Each tool writes its own columns, so the value column is found rather
+    than named: everything that is not a bin label, a resolution or an index
+    is melted into `statistic`/`value`. That way a tool added to careless
+    later needs no change here.
+    """
+    import csv as _csv
+
+    keys = cfg.get("keys", {})
+    method = keys.get("method", "integrator")
+    dataset = keys.get("dataset", "hewl_1118")
+    rows = []
+    for tool, path in written:
+        if not path.is_file():
+            continue
+        with open(path, newline="") as fh:
+            for i, rec in enumerate(_csv.DictReader(fh)):
+                shell = next(
+                    (rec[c] for c in _STATS_SHELL_COLS if rec.get(c)), ""
+                )
+                group = next(
+                    (rec[c] for c in _STATS_GROUP_COLS if rec.get(c) not in
+                     (None, "")), ""
+                )
+                try:
+                    shell_bin = int(float(rec.get("bin", i)))
+                except (TypeError, ValueError):
+                    shell_bin = i
+                for col, val in rec.items():
+                    if col in _STATS_ID_COLS or val in ("", None):
+                        continue
+                    try:
+                        v = float(val)
+                    except (TypeError, ValueError):
+                        continue
+                    rows.append({
+                        "method": method,
+                        "dataset": dataset,
+                        "epoch": epoch if epoch is not None else "",
+                        "tool": tool,
+                        "statistic": col,
+                        "bin": shell_bin + 1,
+                        "shell": shell,
+                        "group": group,
+                        "value": v,
+                    })
+    if not rows:
+        print(f"stats    : nothing to tidy into {tidy}")
+        return
+    with open(tidy, "w", newline="") as fh:
+        w = _csv.DictWriter(fh, fieldnames=list(rows[0]))
+        w.writeheader()
+        w.writerows(rows)
+    print(f"stats    : {tidy} ({len(rows)} rows from {len(written)} tools)")
 
 
 def step_phenix(cfg, merged: Path, work_dir: Path, dry) -> Path:
@@ -378,6 +551,22 @@ def main():
     cfg = load_cfg(args.cfg)
     if args.config is not None:
         cfg.setdefault("careless", {})["config"] = args.config
+    for key in ("method", "dataset"):
+        if getattr(args, key) is not None:
+            cfg.setdefault("keys", {})[key] = getattr(args, key)
+
+    # A chain that scaled outside this pipeline has no run directory to
+    # resolve, so `--out-base` names the careless output itself and only the
+    # `stats` step runs. Everything upstream of the merge already happened.
+    if args.out_base is not None:
+        out_base = args.out_base.resolve()
+        print(f"out base : {out_base}")
+        step_stats(cfg, out_base, args.epoch, args.dry_run)
+        print("\ndone")
+        return 0
+
+    if args.run_dir is None:
+        raise SystemExit("--run-dir is required unless --out-base is given")
     run_dir = args.run_dir.resolve()
     steps = [s for s in args.steps.split(",") if s]
     unknown = set(steps) - set(ALL_STEPS)
@@ -391,30 +580,67 @@ def main():
     if "predict" in steps:
         step_predict(cfg, run_dir, args.dry_run)
 
-    merged = refine2 = None
-    if {"careless", "phenix", "peaks"} & set(steps):
-        mtz = find_mtz(
-            predictions_dir(run_dir), args.epoch, allow_missing=args.dry_run
-        )
-        print(f"unmerged : {mtz}")
-        if args.dry_run and not mtz.exists():
-            print("           (does not exist yet; predict writes it)")
-        ccfg = cfg.get("careless", {})
-        config = int(ccfg.get("config", 4))
-        scaling_dir = mtz.parent / ccfg.get("out_dir", "scaling")
-        merged = scaling_dir / f"config{config}_0.mtz"
-        work_dir = scaling_dir / f"config{config}_refine"
-        if "careless" in steps:
-            merged = step_careless(cfg, mtz, args.dry_run)
-    if "phenix" in steps:
-        refine2 = step_phenix(cfg, merged, work_dir, args.dry_run)
-    if "peaks" in steps:
-        step_peaks(
-            cfg, refine2 or work_dir / "refine2", merged, args.dry_run
-        )
+    if {"careless", "stats", "phenix", "peaks"} & set(steps):
+        targets = downstream_mtzs(cfg, run_dir, args)
+        if len(targets) > 1:
+            print(f"scoring  : {len(targets)} epochs: "
+                  f"{', '.join(str(epoch_of(m)) for m in targets)}")
+        for mtz in targets:
+            process_one(cfg, mtz, steps, args)
 
     print("\ndone")
     return 0
+
+
+def downstream_mtzs(cfg, run_dir: Path, args) -> list[Path]:
+    """The unmerged MTZs the chain runs on, in epoch order.
+
+    This follows the same scope `predict` used rather than taking whatever
+    MTZ sits highest on disk. Under `every:<n>` predict writes one MTZ per
+    selected checkpoint, and scaling only the highest would quietly report a
+    single epoch as though the trajectory had been scored.
+    """
+    pred_dir = predictions_dir(run_dir)
+    if args.epoch is not None:
+        return [find_mtz(pred_dir, args.epoch, allow_missing=args.dry_run)]
+    scope = cfg.get("predict", {}).get("epoch", "last")
+    try:
+        ckpts = None if scope == "all" else checkpoints.select(run_dir, scope)
+    except (OSError, KeyError, ValueError):
+        ckpts = None
+    if not ckpts:
+        # no run yet, or "all": fall back to what predict has written
+        return [find_mtz(pred_dir, None, allow_missing=args.dry_run)]
+    out = []
+    for c in ckpts:
+        e = epoch_of(c)
+        expected = pred_dir / f"epoch_{e:04d}" / f"preds_epoch_{e:04d}.mtz"
+        out.append(expected if (expected.exists() or args.dry_run)
+                   else find_mtz(pred_dir, e, allow_missing=False))
+    return out
+
+
+def process_one(cfg, mtz: Path, steps, args) -> None:
+    """Scale, score, refine and peak-pick one epoch's unmerged MTZ."""
+    print(f"\nunmerged : {mtz}")
+    if args.dry_run and not mtz.exists():
+        print("           (does not exist yet; predict writes it)")
+    ccfg = cfg.get("careless", {})
+    config = int(ccfg.get("config", 4))
+    scaling_dir = mtz.parent / ccfg.get("out_dir", "scaling")
+    out_base = scaling_dir / f"config{config}"
+    merged = scaling_dir / f"config{config}_0.mtz"
+    work_dir = scaling_dir / f"config{config}_refine"
+    refine2 = None
+
+    if "careless" in steps:
+        merged = step_careless(cfg, mtz, args.dry_run)
+    if "stats" in steps:
+        step_stats(cfg, out_base, epoch_of(mtz), args.dry_run)
+    if "phenix" in steps:
+        refine2 = step_phenix(cfg, merged, work_dir, args.dry_run)
+    if "peaks" in steps:
+        step_peaks(cfg, refine2 or work_dir / "refine2", merged, args.dry_run)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,37 @@
+# careless.stats on the PDZ2 / 1116 electric-field TR-Laue merges.
+#
+# PDZ2 was scaled outside this pipeline, by the deposited Laue-DIALS tutorial
+# script `careless-cdef-ohp-mlpw.sh`, so there is no run directory to resolve
+# a careless output base from. The `stats` step is pointed at the base
+# directly:
+#
+#   python scripts/poly/run_pipeline.py --cfg scripts/poly/pdz2_stats_cfg.yaml \
+#       --out-base <tree>/gain_0,3_from_stills/careless-cdef-0,3-ohp-mlpw/merged_e35 \
+#       --method geom_both --dataset pdz2_1116
+#
+# That merge takes EIGHT input files with `--separate-files`, in the order
+# off, 50 ns, 100 ns, 200 ns in C2 with a shared index, then the same four in
+# P1. So `merged_e35_0.mtz` is the field-off C2 merge -- the file the
+# refinement endpoint is built on -- and file index 0 is what these tools
+# read. The field response lives in the P1 files (indices 4-7) and is
+# measured by CCsym, not by any careless.stats tool.
+keys:
+  method: integrator
+  dataset: pdz2_1116
+stats:
+  env: crls
+  out_dir: stats
+  # The merge is NOT anomalous: the tutorial script omits `--anomalous`, so
+  # the merged MTZ carries plain `I`/`SigI` and no `I(+)`/`I(-)`. Naming the
+  # keys is required because `careless.isigi` defaults `--intensity-key` to
+  # None and then raises `KeyError: None`.
+  intensity_key: I
+  uncertainty_key: SigI
+  # `ccanom` is left out rather than left to fail: with no Friedel split in
+  # the merge there is nothing for it to correlate.
+  #
+  # `-m/--method` is also left unset, so cchalf and ccpred report careless's
+  # default Pearson form. The deposited `stats_for_production.sh` runs its
+  # own ccpred with `-m spearman`; that is a different statistic and the two
+  # must not be put on one axis.
+  tools: [cchalf, rsplit, ccpred, isigi, completeness]
