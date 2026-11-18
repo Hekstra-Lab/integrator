@@ -1,0 +1,129 @@
+# hewl9b7c svae, gate = responsibility. One of three arms differing in that key
+# alone, derived from the run's own config_log.yaml -- what actually
+# trained -- because the committed hewl9b7c svae config is an older
+# format that no longer builds.
+# See scripts/gate_study.py and tests/test_svae_gate_joint.py.
+mode: monochromatic
+integrator:
+  name: svae
+  args:
+    encoder_out: 32
+    mc_samples: 100
+    predict_keys:
+    - refl_ids
+    - is_test
+    - qi_mean
+    - qi_var
+    - qbg_mean
+    - qbg_var
+    - intensity.prf.value
+    - intensity.prf.variance
+    - intensity.sum.value
+    - intensity.sum.variance
+    - background.mean
+    - d
+    - H
+    - K
+    - L
+    data_dim: 3d
+    d: 3
+    h: 21
+    w: 21
+    gate: responsibility
+encoders:
+- name: profile_encoder
+  args:
+    data_dim: 3d
+    encoder_out: 32
+    conv1_out_channels: 16
+    conv2_out_channels: 32
+    dropout: 0.0
+    input_shape:
+    - 3
+    - 21
+    - 21
+- name: intensity_encoder
+  args:
+    data_dim: 3d
+    encoder_out: 32
+    conv1_out_channels: 16
+    conv2_out_channels: 32
+    conv3_out_channels: 64
+optimizer:
+  lr: 0.001
+  weight_decay: 0.0
+  decoder_weight_decay: 0.0
+  lr_schedule: null
+  warmup_epochs: 5
+  lr_min: 1.0e-05
+surrogates:
+  qp:
+    name: learned_basis_profile
+    args:
+      latent_dim: 12
+      init_std: 0.5
+      prior_scale: 3.0
+      input_dim: 32
+      output_dim: 1323
+  qbg:
+    name: gamma
+    args:
+      reparameterization: mean_fano
+      eps: 1.0e-06
+      k_min: 0.01
+      in_features: 32
+  qi:
+    name: gamma
+    args:
+      reparameterization: mean_fano
+      eps: 1.0e-06
+      k_min: 0.01
+      in_features: 32
+loss:
+  name: monochromatic_wilson
+  args:
+    init_G: 3781.8
+    init_B: 7.5
+    b_min: 0.0
+    lp_correction: true
+    intensity_kl_weight: 1.0
+    background_kl_weight: 1.0
+    profile_kl_weight: 1.0
+    bg_rate: 1.0
+    bg_concentration: 1.0
+    n_bins: 1
+data_loader:
+  name: rotation_data
+  args:
+    data_dir: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/scaling_dataset
+    batch_size: 2048
+    validation_split: 0.2
+    num_workers: 8
+    include_test: true
+    subset_size: null
+    resolution_cutoff: null
+    min_valid_pixels: 10
+    transform: anscombe
+    shoebox_file_names:
+      data_dir: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/scaling_dataset
+      counts: counts.npy
+      masks: masks.npy
+      reference: metadata.npy
+trainer:
+  max_epochs: 50
+  accelerator: gpu
+  devices: 1
+  logger: true
+  precision: '32'
+  check_val_every_n_epoch: 5
+  log_every_n_steps: 1
+  deterministic: false
+  enable_checkpointing: true
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+checkpoint:
+  save_top_k: -1
+  monitor: val elbo
+  mode: min
+output:
+  refl_file: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/scaling_dataset/reflections_.refl
