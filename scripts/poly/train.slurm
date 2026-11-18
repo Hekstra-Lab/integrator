@@ -6,8 +6,8 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --mem=200G
 #SBATCH -t 0-12:00
-#SBATCH -o poly_train_%j.out
-#SBATCH -e poly_train_%j.err
+#SBATCH -o poly_train_%x_%j.out
+#SBATCH -e poly_train_%x_%j.err
 #
 # Train the Laue integrator, with the training-figure dumps enabled.
 #
@@ -22,6 +22,11 @@
 # The log records the interpreter, the source tree, its commit, the node and
 # the CPU count, because none of those are implied by the config and all
 # four change the result or the time it takes.
+#
+# `%x` in the log name is the job name, so `-J <arm>` makes the log
+# `poly_train_<arm>_<jobid>.out`. `compare_models.py` finds a run's
+# allocation by matching that name, and without `%x` it reports the
+# throughput with `hardware unrecorded` beside it.
 
 set -euo pipefail
 export TQDM_DISABLE=1
