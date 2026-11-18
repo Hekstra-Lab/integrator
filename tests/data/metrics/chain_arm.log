@@ -1,0 +1,9 @@
+Running dials.scale on m9_geomshift rb ...
+RESULT m9_geomshift_rb_F | Final R-work = 0.1702, R-free = 0.1899
+PEAKS m9_geomshift_rb_F 9.901,9.812,14.773,13.990,12.001,15.112,10.887,14.330,15.001,10.904,31.774,13.550,29.902
+--- rerun after the SigF fix ---
+RESULT m9_geomshift_rb_F | Final R-work = 0.1607, R-free = 0.1785
+PEAKS m9_geomshift_rb_F 10.508,10.558,15.694,14.669,12.668,15.975,11.302,15.078,15.977,11.44,33.598,14.176,30.816
+RESULT m9_geomshift_rb_I | Final R-work = 0.1605, R-free = 0.1783
+PEAKS m9_geomshift_rb_I 10.523,10.528,15.674,14.634,12.754,15.979,11.322,15.082,16.014,11.486,33.605,14.136,30.913
+RESULT dials_ref_F | Final R-work = 0.1588, R-free = 0.1736

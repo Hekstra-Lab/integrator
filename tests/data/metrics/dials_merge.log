@@ -1,0 +1,317 @@
+DIALS (2018) Acta Cryst. D74, 85-97. https://doi.org/10.1107/S2059798317017235
+DIALS 3.27
+The following parameters have been modified:
+
+output {
+  html = "merge.html"
+}
+input {
+  experiments = scaled.expt
+  reflections = scaled.refl
+}
+
+
+Merging scaled reflection data
+
+Read 1930231 predicted reflections
+Selected 1927402 scaled reflections
+Running systematic absences check
+Laue group: P 4/m m m
+Scoring method: direct
++--------------+---------+---------------+--------------+---------------+--------------+-------------------+------------------+
+| Screw axis   |   Score |   No. present |   No. absent |   <I> present |   <I> absent |   <I/sig> present |   <I/sig> absent |
+|--------------+---------+---------------+--------------+---------------+--------------+-------------------+------------------|
+| 41c          |       0 |             7 |           24 |       2156.32 |        1.901 |            39.428 |            4.295 |
+| 21a          |       0 |            33 |           33 |       1916.45 |        1.643 |            42.859 |            5.734 |
+| 42c          |       0 |            15 |           16 |       1007.28 |        1.917 |            20.646 |            4.336 |
++--------------+---------+---------------+--------------+---------------+--------------+-------------------+------------------+
++---------------+---------+
+| Space group   |   score |
+|---------------+---------|
+| P 4 2 2       |       1 |
+| P 4 21 2      |       0 |
+| P 41 2 2      |       0 |
+| P 42 2 2      |       0 |
+| P 41 21 2     |       0 |
+| P 42 21 2     |       0 |
++---------------+---------+
+Recommended space group: P 4 2 2
+
+Performing French-Wilson treatment of scaled intensities
+Total number of rejected intensities 0
+
+===================== Absolute scaling and Wilson analysis ====================
+
+
+        ----------Maximum likelihood isotropic Wilson scaling----------
+
+ ML estimate of overall B value:
+   16.56 A**2
+ Estimated -log of scale factor:
+   -1.89
+ The overall B value ("Wilson B-factor", derived from the Wilson plot) gives
+ an isotropic approximation for the falloff of intensity as a function of
+ resolution.  Note that this approximation may be misleading for anisotropic
+ data (where the crystal is poorly ordered along an axis).  The Wilson B is
+ strongly correlated with refined atomic B-factors but these may differ by
+ a significant amount, especially if anisotropy is present.
+
+       ----------Maximum likelihood anisotropic Wilson scaling----------
+
+ML estimate of overall B_cart value:
+  15.97,  0.00,  0.00
+         15.97,  0.00
+                17.95
+
+Equivalent representation as U_cif:
+   0.20, -0.00, -0.00
+          0.20,  0.00
+                 0.23
+
+Eigen analyses of B-cart:
+  -------------------------------------------------
+  | Eigenvector | Value   | Vector                |
+  -------------------------------------------------
+  | 1           |  17.950 | ( 0.00,  0.00,  1.00) |
+  | 2           |  15.974 | ( 0.71,  0.71, -0.00) |
+  | 3           |  15.974 | (-0.71,  0.71, -0.00) |
+  -------------------------------------------------
+ML estimate of  -log of scale factor:
+  -1.88
+
+                    ----------Anisotropy analyses----------
+
+
+ For the resolution shell spanning between 1.22 - 1.20 Angstrom,
+ the mean I/sigI is equal to  3.54. 68.2 % of these intensities have
+ an I/sigI > 3. When sorting these intensities by their anisotropic
+ correction factor and analysing the I/sigI behavior for this ordered
+ list, we can gauge the presence of 'anisotropy induced noise amplification'
+ in reciprocal space.
+
+ The quarter of Intensities *least* affected by the anisotropy correction show
+
+    <I/sigI>                 :   3.59e+00
+    Fraction of I/sigI > 3   :   6.94e-01     ( Z =     0.60 )
+  The quarter of Intensities *most* affected by the anisotropy correction show
+
+    <I/sigI>                 :   3.37e+00
+    Fraction of I/sigI > 3   :   6.44e-01     ( Z =     1.80 )
+ Z-scores are computed on the basis of a Bernoulli model assuming independence
+ of weak reflections with respect to anisotropy.
+
+                        ----------Wilson plot----------
+
+ The Wilson plot shows the falloff in intensity as a function in resolution;
+ this is used to calculate the overall B-factor ("Wilson B-factor") for the
+ data shown above.  The expected plot is calculated based on analysis of
+ macromolecule structures in the PDB, and the distinctive appearance is due to
+ the non-random arrangement of atoms in the crystal.  Some variation is
+ natural, but major deviations from the expected plot may indicate pathological
+ data (including ice rings, detector problems, or processing errors).
+
+                  ----------Mean intensity analyses----------
+
+ Inspired by: Morris et al. (2004). J. Synch. Rad.11, 56-59.
+ The following resolution shells are worrisome:
+  -----------------------------------------------------------------
+  | Mean intensity by shell (outliers)                            |
+  |---------------------------------------------------------------|
+  | d_spacing     | z_score       | completeness  | <Iobs>/<Iexp> |
+  |---------------------------------------------------------------|
+  |     4.653     |    4.78       |    1.01       |      0.699    |
+  |     3.775     |    5.17       |    1.01       |      0.719    |
+  |     3.576     |    4.66       |    1.00       |      0.747    |
+  |     2.959     |    5.76       |    1.00       |      0.711    |
+  |     2.861     |    4.57       |    1.00       |      0.778    |
+  |     2.730     |    4.56       |    1.00       |      0.777    |
+  |     1.671     |    4.71       |    1.00       |      1.317    |
+  -----------------------------------------------------------------
+
+ Possible reasons for the presence of the reported unexpected low or elevated
+ mean intensity in a given resolution bin are :
+   - missing overloaded or weak reflections
+   - suboptimal data processing
+   - satellite (ice) crystals
+   - NCS
+   - translational pseudo symmetry (detected elsewhere)
+   - outliers (detected elsewhere)
+   - ice rings (detected elsewhere)
+   - other problems
+ Note that the presence of abnormalities in a certain region of reciprocal
+ space might confuse the data validation algorithm throughout a large region
+ of reciprocal space, even though the data are acceptable in those areas.
+
+
+
+                     ----------Possible outliers----------
+
+  Inspired by: Read, Acta Cryst. (1999). D55, 1759-1764
+
+Acentric reflections:
+            None
+
+Centric reflections:
+            None
+
+
+                 ----------Ice ring related problems----------
+
+ The following statistics were obtained from ice-ring insensitive resolution
+ ranges:
+
+    mean bin z_score      : 1.44
+        ( rms deviation   : 1.17 )
+    mean bin completeness : 1.00
+        ( rms deviation   : 0.01 )
+
+ The following table shows the Wilson plot Z-scores and completeness for
+ observed data in ice-ring sensitive areas.  The expected relative intensity
+ is the theoretical intensity of crystalline ice at the given resolution.
+ Large z-scores and high completeness in these resolution ranges might
+ be a reason to re-assess your data processsing if ice rings were present.
+
+  -------------------------------------------------------------
+  | d_spacing | Expected rel. I | Data Z-score | Completeness |
+  -------------------------------------------------------------
+  |     3.897 |      1.000      |    1.00      |    1.00      |
+  |     3.669 |      0.750      |    4.66      |    1.00      |
+  |     3.441 |      0.530      |    2.71      |    1.00      |
+  |     2.671 |      0.170      |    1.14      |    1.00      |
+  |     2.249 |      0.390      |    1.49      |    1.00      |
+  |     2.072 |      0.300      |    2.05      |    1.00      |
+  |     1.948 |      0.040      |    2.14      |    1.00      |
+  |     1.918 |      0.180      |    0.42      |    1.00      |
+  |     1.883 |      0.030      |    0.70      |    1.00      |
+  |     1.721 |      0.020      |    0.68      |    1.00      |
+  -------------------------------------------------------------
+ Abnormalities in mean intensity or completeness at resolution ranges with a
+ relative ice ring intensity lower than 0.10 will be ignored.
+ No ice ring related problems detected.
+ If ice rings were present, the data does not look worse at ice ring related
+ d_spacings as compared to the rest of the data set.
+
+Size of anomalous differences
++---------+---------+----------------+
+|   d_max |   d_min |   <|ΔF|/σ(ΔF)> |
+|---------+---------+----------------|
+|   79.43 |    3.31 |          1.88  |
+|    3.31 |    2.57 |          1.566 |
+|    2.57 |    2.22 |          1.434 |
+|    2.22 |    2    |          1.294 |
+|    2    |    1.85 |          1.185 |
+|    1.85 |    1.73 |          1.172 |
+|    1.73 |    1.64 |          1.166 |
+|    1.64 |    1.56 |          1.161 |
+|    1.56 |    1.49 |          1.127 |
+|    1.49 |    1.44 |          1.089 |
+|    1.44 |    1.39 |          1.044 |
+|    1.39 |    1.35 |          0.964 |
+|    1.35 |    1.31 |          0.879 |
+|    1.31 |    1.28 |          0.712 |
+|    1.28 |    1.25 |          0.617 |
+|    1.25 |    1.22 |          0.551 |
+|    1.22 |    1.19 |          0.49  |
+|    1.19 |    1.17 |          0.423 |
+|    1.17 |    1.14 |          0.368 |
+|    1.14 |    1.1  |          0.319 |
++---------+---------+----------------+
+
+            ----------Merging statistics by resolution bin----------           
+
+  d_max  d_min     #obs  #uniq  mult.   %comp     <I>  <I/sI>  r_mrg  r_meas  r_pim  r_anom  cc1/2  cc_ano 
+  79.63   2.97   134360   2753  48.80  100.00  1888.8   125.0  0.039   0.040  0.006   0.017  1.000*  0.235*
+   2.97   2.36   140410   2593  54.15  100.00   551.7   100.0  0.047   0.048  0.006   0.021  1.000*  0.417*
+   2.36   2.06   135860   2553  53.22  100.00   328.7    81.8  0.057   0.058  0.008   0.022  1.000*  0.212*
+   2.06   1.87   124845   2537  49.21  100.00   171.4    60.7  0.076   0.077  0.011   0.028  1.000*  0.182*
+   1.87   1.74   133041   2520  52.79  100.00    86.6    46.1  0.102   0.103  0.014   0.035  0.999*  0.193*
+   1.74   1.64   134738   2510  53.68  100.00    51.8    35.9  0.135   0.136  0.018   0.045  0.999*  0.167*
+   1.64   1.56   135728   2502  54.25  100.00    35.1    29.3  0.170   0.172  0.023   0.056  0.998*  0.082*
+   1.56   1.49   120263   2506  47.99  100.00    23.8    22.5  0.209   0.211  0.030   0.073  0.996*  0.067*
+   1.49   1.43   127016   2492  50.97  100.00    14.7    18.1  0.270   0.273  0.038   0.093  0.995*  0.053*
+   1.43   1.38   130095   2493  52.18  100.00    10.1    15.0  0.317   0.320  0.044   0.109  0.991*  0.007 
+   1.38   1.34   130293   2465  52.86  100.00     6.9    12.6  0.370   0.374  0.051   0.129  0.982* -0.043 
+   1.34   1.30   129617   2481  52.24  100.00     5.5    11.1  0.395   0.399  0.055   0.137  0.979* -0.010 
+   1.30   1.27   109559   2481  44.16  100.00     4.4     9.1  0.409   0.414  0.062   0.144  0.972* -0.086 
+   1.27   1.23    75571   2476  30.52  100.00     3.4     6.8  0.421   0.428  0.076   0.180  0.934* -0.089 
+   1.23   1.21    56802   2419  23.48   98.05     3.0     5.5  0.423   0.432  0.087   0.207  0.906* -0.077 
+   1.21   1.18    43073   2349  18.34   94.72     2.6     4.5  0.422   0.434  0.099   0.232  0.824* -0.094 
+   1.18   1.16    29761   2097  14.19   85.52     2.2     3.7  0.415   0.431  0.111   0.258  0.680* -0.052 
+   1.16   1.14    21515   1750  12.29   70.82     1.9     3.3  0.411   0.429  0.118   0.281  0.600* -0.055 
+   1.14   1.11    11513   1198   9.61   48.88     1.7     2.8  0.406   0.429  0.134   0.302  0.462* -0.082 
+   1.11   1.10     3342    525   6.37   21.32     1.5     2.2  0.392   0.424  0.157   0.359  0.338*  0.012 
+  79.43   1.10  1927402  45700  42.18   91.22   186.8    33.4  0.056   0.056  0.008   0.023  1.000*  0.305*
+
+
+            -------------Summary of merging statistics--------------           
+
+                                             Overall    Low     High
+High resolution limit                           1.10    2.97    1.10
+Low resolution limit                           79.43   79.63    1.11
+Completeness                                   91.2   100.0    21.3
+Multiplicity                                   42.2    48.8     6.4
+I/sigma                                        33.4   125.0     2.2
+Rmerge(I)                                     0.056   0.039   0.392
+Rmerge(I+/-)                                  0.055   0.038   0.367
+Rmeas(I)                                      0.056   0.040   0.424
+Rmeas(I+/-)                                   0.056   0.039   0.427
+Rpim(I)                                       0.008   0.006   0.157
+Rpim(I+/-)                                    0.011   0.007   0.214
+CC half                                       1.000   1.000   0.338
+Wilson B factor                              16.564
+Anomalous completeness                         90.9   100.0    19.5
+Anomalous multiplicity                         22.3    28.1     3.4
+Anomalous correlation                         0.305   0.235   0.012
+Anomalous slope                               1.009
+dF/F                                          0.021
+dI/s(dI)                                      1.158
+Total observations                          1927402  134360    3342
+Total unique                                  45700    2753     525
+
+
+Writing reflections to merged.mtz
+Title: From None
+Total Number of Datasets = 2
+
+Dataset    0   HKL_base > HKL_base > HKL_base:
+        cell  79.4252 79.4252  37.793      90     90     90
+  wavelength  0
+Dataset    1   AUTOMATIC > XTAL > NATIVE:
+        cell  79.4252 79.4252  37.793      90     90     90
+  wavelength  1.03752
+
+Number of Columns = 21
+Number of Reflections = 45700
+Number of Batches = 0
+Missing values marked as: nan
+Global Cell (obsolete): 79.4252 79.4252  37.793      90     90     90
+Resolution: 1.10 - 79.43 A
+Sort Order: 0 0 0 0 0
+Space Group: P 43 21 2
+Space Group Number: 96
+Header info:
+Column    Type  Dataset    Min        Max
+H            H  0            0         70
+K            H  0            0         45
+L            H  0            0         33
+FreeR_flag   I  0            0         22
+IMEAN        J  1     0.305308    23637.9
+SIGIMEAN     Q  1    0.0676476    224.223
+N            I  1            1         65
+F            F  1     0.502015    153.653
+SIGF         Q  1    0.0304348    0.92701
+I(+)         K  1     0.305308    23926.7
+SIGI(+)      M  1    0.0676476    268.908
+I(-)         K  1     0.226945    23391.4
+SIGI(-)      M  1    0.0866046    248.428
+N(+)         I  1            1         33
+N(-)         I  1            1         33
+F(+)         G  1     0.502015    154.574
+SIGF(+)      L  1    0.0304348    0.92701
+F(-)         G  1     0.465756    152.848
+SIGF(-)      L  1    0.0507513   0.896045
+DANO         D  1     -2.54157    4.07954
+SIGDANO      Q  1    0.0726091    1.19039
+History (1 lines):
+From DIALS 3.27, run on 2026-11-16 at 13:34:23 EST  (2026-11-16 at 18:34:23 GMT)
+Writing html report to merge.html

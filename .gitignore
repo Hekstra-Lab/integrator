@@ -192,3 +192,12 @@ sim.yaml
 ragged_data_module.txt
 poisson2_*.npz
 sbgrid_anomalous_*.csv
+
+# Test fixtures are sources, whatever their extension. `*.log` above is for
+# run output, but `tests/data/metrics/` holds real `dials.scale`,
+# `dials.merge` and careless logs copied from output, and those are what
+# `test_metrics_contract.py` and `test_dials_log.py` read. CLAUDE.md calls
+# them the thing that stops the readers drifting; a test that skips or
+# errors for a missing fixture pins nothing.
+!tests/data/**/*.log
+!tests/data/**/*.csv
