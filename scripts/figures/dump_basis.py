@@ -45,7 +45,10 @@ import numpy as np
 
 from integrator.reporting.figure_data import BasisRecorder, column_cosines
 
-DATASET = os.environ.get("DATASET", "hewl_9b7c")
+# No default. Every file this writes carries `method` and `dataset` as key
+# columns, and a default silently labelled the PDZ2 pair `hewl_9b7c`, which
+# is the kind of error that survives into a figure legend unchallenged.
+DATASET = os.environ.get("DATASET", "")
 STRIDE = int(os.environ.get("STRIDE", "1"))
 # where the basis lives in a checkpoint's state dict
 WEIGHT_KEY = "surrogates.qp.decoder.weight"
@@ -184,6 +187,13 @@ def dump_one(out_dir: str, run_dir: str) -> list[dict]:
 
 
 def main() -> None:
+    if not DATASET:
+        raise SystemExit(
+            "set DATASET to the dataset these runs trained on, e.g.\n"
+            "    DATASET=pdz2_1116 python dump_basis.py <out-dir> <run-dir>...\n"
+            "It is a key column in every file written here and cannot be "
+            "guessed from the run directory."
+        )
     if len(sys.argv) < 3:
         raise SystemExit(__doc__)
     out_dir, runs = sys.argv[1], sys.argv[2:]
