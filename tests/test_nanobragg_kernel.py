@@ -6,8 +6,11 @@ from integrator.physics.nanobragg import (
     Beam,
     Crystal,
     Detector,
+    amorphous_molecules,
+    interpolate_stol,
     mosaic_cells,
     mosaic_domains,
+    render_background,
     render_pixels,
     sincg,
 )
@@ -161,3 +164,81 @@ def test_continuous_wavelength_matches_dense_grid():
     sel = ref > 1e-3 * ref.max()
     assert sel.sum() > 20
     assert torch.allclose(cont[sel], ref[sel], rtol=1e-3)
+
+
+def _bg_setup(n_src=5):
+    """The geometry nonBragg printed for the water render these tests pin.
+
+    detector origin 0.200498 0.176022 -0.173968 m, fast axis (0, 0, 1), slow
+    axis (0, -1, 0), beam along (1, 0, 0), pixel 8.854e-5 m, five equal sources.
+    """
+    det = Detector(
+        pix0=torch.tensor([0.200498, 0.176022, -0.173968], dtype=DT),
+        fdet=torch.tensor([0.0, 0.0, 1.0], dtype=DT),
+        sdet=torch.tensor([0.0, -1.0, 0.0], dtype=DT),
+        odet=torch.tensor([1.0, 0.0, 0.0], dtype=DT),
+        pixel_size=8.854e-05,
+    )
+    beam = Beam(
+        incident=torch.tensor([[1.0, 0.0, 0.0]], dtype=DT).expand(n_src, 3),
+        wavelength=torch.linspace(1.02375, 1.07625, n_src, dtype=DT),
+        fluence=1.25932e29,
+    )
+    # a short stand-in for water.stol: the simtbx default table, which rises to
+    # the 3.1 A ring and falls away
+    curve_stol = torch.tensor(
+        [0.0, 0.0365, 0.07, 0.12, 0.162, 0.18, 0.2, 0.216, 0.236, 0.28, 0.3,
+         0.345, 0.436, 0.5], dtype=DT
+    )
+    curve_f = torch.tensor(
+        [2.57, 2.58, 2.8, 5.0, 8.0, 7.32, 6.75, 6.75, 6.5, 4.5, 4.3, 4.36,
+         3.77, 3.17], dtype=DT
+    )
+    return det, beam, curve_stol, curve_f
+
+
+def test_amorphous_molecules_matches_nonbragg():
+    """nonBragg prints 1.67282e17 for 0.5 mm of water in a 0.1 mm beam."""
+    n = amorphous_molecules(0.5, beam_size_mm=0.1, density_gcm3=1.0, molecular_weight_da=18.0)
+    assert math.isclose(n, 1.67282e17, rel_tol=1e-5)
+
+
+def test_interpolate_stol_is_exact_on_the_table_and_flat_outside():
+    _, _, cs, cf = _bg_setup()
+    assert torch.allclose(interpolate_stol(cs, cs, cf), cf)
+    ends = torch.tensor([-1.0, 0.0, 0.5, 9.0], dtype=DT)
+    got = interpolate_stol(ends, cs, cf)
+    assert torch.isclose(got[0], cf[0]) and torch.isclose(got[-1], cf[-1])
+    mid = interpolate_stol(torch.tensor([0.5 * (0.0365 + 0.07)], dtype=DT), cs, cf)
+    assert torch.isclose(mid[0], torch.tensor(0.5 * (2.58 + 2.8), dtype=DT))
+
+
+def test_background_is_linear_in_molecules_and_fluence():
+    """Both enter as plain prefactors, so doubling either doubles the image."""
+    det, beam, cs, cf = _bg_setup()
+    ff = torch.arange(1900, 1910, dtype=DT)
+    ss = torch.full_like(ff, 1900.0)
+    one = render_background(ff, ss, det, beam, cs, cf, 1.0e17)
+    two = render_background(ff, ss, det, beam, cs, cf, 2.0e17)
+    assert torch.allclose(two, 2.0 * one, rtol=1e-12)
+    hot = Beam(
+        incident=beam.incident, wavelength=beam.wavelength, fluence=2 * beam.fluence
+    )
+    assert torch.allclose(
+        render_background(ff, ss, det, beam, cs, cf, 1.0e17) * 2.0,
+        render_background(ff, ss, det, hot, cs, cf, 1.0e17),
+        rtol=1e-12,
+    )
+
+
+def test_background_peaks_at_the_water_ring():
+    """Walking out from the beam centre, the background must rise to the 3.1 A
+    ring and fall again -- a monotone profile would mean stol is wrong."""
+    det, beam, cs, cf = _bg_setup()
+    ff = torch.arange(1965.0, 3840.0, 40.0, dtype=DT)
+    ss = torch.full_like(ff, 1965.0)
+    bg = render_background(ff, ss, det, beam, cs, cf, 1.67282e17)
+    peak = int(torch.argmax(bg))
+    assert 0 < peak < len(bg) - 1, "the maximum must be interior, not at an edge"
+    assert bg[peak] > 2.0 * bg[0], "the ring should stand well above forward scattering"
+    assert bg[-1] < bg[peak], "the background must fall away past the ring"
