@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-283 scripts.
+284 scripts.
 
 ## Start here
 
@@ -77,6 +77,7 @@ per job, and it lives in the repo".
 | `poly/pdz2/ml_from_preds.py` | Prior-free profile-fit intensities from any arm's predicted profiles. |
 | `poly/pdz2/pdz2_refine_prep.py` | Prepare PDZ2 off-state merges for refinement against the deposited model. |
 | `poly/pdz2/pool_pdz2.py` | Pool the 16 PDZ2 sweeps into one poly training set. |
+| `poly/pdz2/rb_export.sbatch` | VENDORED from laue_runs/pdz2_model/pdz2_rb.sbatch, which lived on |
 | `poly/pdz2/refine_pdz2.sbatch` | Refine the deposited model against each arm off-state merge. Identical protocol and |
 | `poly/pdz2/split_pdz2.py` | Split pooled integrator predictions into the 16 per-sweep MTZs the reference |
 | `poly/pdz2/split_pdz2_ml.py` | Write the PRIOR-FREE maximum-likelihood intensities into the per-sweep MTZs. |
