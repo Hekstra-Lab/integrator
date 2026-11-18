@@ -27,6 +27,11 @@ stats:
   # None and then raises `KeyError: None`.
   intensity_key: I
   uncertainty_key: SigI
+  # Both correlations, recorded in the `correlation` column. The deposited
+  # CCsym script uses Spearman (its default, and `stats_for_production.sh`
+  # passes no -m), so Spearman is the one comparable with the published
+  # numbers; Pearson is carried beside it rather than instead of it.
+  methods: [spearman, pearson]
   # `ccanom` is left out rather than left to fail: with no Friedel split in
   # the merge there is nothing for it to correlate.
   #

@@ -293,8 +293,8 @@ def step_stats(cfg, out_base: Path, epoch, dry) -> None:
     so they are the polychromatic counterpart of the per-shell merging table:
     CChalf, CCanom, CCpred, Rsplit, I/sigma and completeness by resolution.
     Each tool writes its own CSV with `-o`; `careless_stats.csv` beside them
-    is all of it concatenated with the `method`, `dataset` and `epoch` key
-    columns the figures group on.
+    is all of it concatenated with the `method`, `dataset`, `epoch` and
+    `correlation` key columns the figures group on.
     """
     scfg = cfg.get("stats", {})
     tools = [t for t in (scfg.get("tools") or list(CARELESS_STATS))]
@@ -310,6 +310,14 @@ def step_stats(cfg, out_base: Path, epoch, dry) -> None:
         "xval": Path(f"{out_base}_xval_0.mtz"),
         "predictions": Path(f"{out_base}_predictions_0.mtz"),
     }
+    # Which correlation `careless.stats` computes, for the tools that take
+    # `-m`. CChalf, CCanom and CCpred are correlations and Pearson and
+    # Spearman do not rank arms the same way -- Pearson follows the bright
+    # end, Spearman is insensitive to the scale of the intensities -- so a
+    # single one is a choice that has to be declared. `methods` runs the
+    # tool once per entry; absent, the behaviour is exactly as before, one
+    # run using `method`, so existing configs are unchanged.
+    correlations = list(scfg.get("methods") or [scfg.get("method") or ""])
     written = []
     for tool in tools:
         spec = CARELESS_STATS[tool]
@@ -317,27 +325,42 @@ def step_stats(cfg, out_base: Path, epoch, dry) -> None:
         if not dry and not src.exists():
             print(f"stats    : {tool} skipped, no {src.name}")
             continue
-        csv_path = out_dir / f"{tool}.csv"
-        flags = [f"-b {scfg.get('bins', spec['bins'])}"]
-        if spec["method"] and scfg.get("method"):
-            flags.append(f"-m {scfg['method']}")
-        if spec.get("keyed"):
-            flags += [
-                f"--intensity-key '{scfg.get('intensity_key', 'I(+)')}'",
-                f"--uncertainty-key '{scfg.get('uncertainty_key', 'SigI(+)')}'",
-            ]
-        flags += [str(a) for a in scfg.get("extra_args", [])]
-        cmd = (
-            f"careless.{tool} {' '.join(flags)} -o {csv_path} {src}"
-        )
-        run(in_env(via_python(cmd), scfg.get("env", "crls")), dry=dry)
-        written.append((tool, csv_path))
+        # a tool with no `-m` runs once whatever `methods` says
+        for corr in (correlations if spec["method"] else [""]):
+            _run_one_stat(tool, spec, src, out_dir, scfg, corr,
+                          len(correlations) > 1, written, dry)
 
     tidy = out_dir / "careless_stats.csv"
     if dry:
         print(f"stats    : would tidy {len(written)} tables into {tidy}")
         return
     _tidy_careless_stats(written, tidy, cfg, epoch)
+
+
+def _run_one_stat(tool, spec, src, out_dir, scfg, corr, suffixed,
+                  written, dry) -> None:
+    """One `careless.<tool>` invocation, for one correlation method.
+
+    The output file carries the method in its name only when more than one
+    is being run, so a single-method run writes the same `<tool>.csv` it
+    always has and nothing downstream has to know about this.
+    """
+    csv_path = out_dir / (f"{tool}_{corr}.csv" if suffixed and corr
+                          else f"{tool}.csv")
+    flags = [f"-b {scfg.get('bins', spec['bins'])}"]
+    if spec["method"] and corr:
+        flags.append(f"-m {corr}")
+    if spec.get("keyed"):
+        flags += [
+            f"--intensity-key '{scfg.get('intensity_key', 'I(+)')}'",
+            f"--uncertainty-key '{scfg.get('uncertainty_key', 'SigI(+)')}'",
+        ]
+    flags += [str(a) for a in scfg.get("extra_args", [])]
+    cmd = (
+        f"careless.{tool} {' '.join(flags)} -o {csv_path} {src}"
+    )
+    run(in_env(via_python(cmd), scfg.get("env", "crls")), dry=dry)
+    written.append((tool, csv_path, corr))
 
 
 def _tidy_careless_stats(written, tidy: Path, cfg, epoch) -> None:
@@ -354,7 +377,7 @@ def _tidy_careless_stats(written, tidy: Path, cfg, epoch) -> None:
     method = keys.get("method", "integrator")
     dataset = keys.get("dataset", "hewl_1118")
     rows = []
-    for tool, path in written:
+    for tool, path, corr in written:
         if not path.is_file():
             continue
         with open(path, newline="") as fh:
@@ -382,6 +405,12 @@ def _tidy_careless_stats(written, tidy: Path, cfg, epoch) -> None:
                         "dataset": dataset,
                         "epoch": epoch if epoch is not None else "",
                         "tool": tool,
+                        # which correlation careless computed, empty for a
+                        # tool that does not take `-m`. Not folded into
+                        # `statistic`, which already names the column within
+                        # a tool's own CSV, and not into `method`, which is
+                        # the arm.
+                        "correlation": corr,
                         "statistic": col,
                         "bin": shell_bin + 1,
                         "shell": shell,

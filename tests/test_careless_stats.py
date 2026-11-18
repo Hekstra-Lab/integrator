@@ -21,6 +21,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "tests" / "data" / "careless"
 TOOLS = ("cchalf", "ccanom", "ccpred", "rsplit", "isigi", "completeness")
+# the tools careless gives a `-m/--method` flag: the correlations
+CORRELATION_TOOLS = ("cchalf", "ccanom", "ccpred")
 
 sys.path.insert(0, str(ROOT / "scripts" / "poly"))
 sys.path.insert(0, str(ROOT / "scripts" / "figures"))
@@ -35,7 +37,10 @@ def tidy(tmp_path_factory):
     """The long table, built by the pipeline's own tidy step."""
     out = tmp_path_factory.mktemp("stats") / "careless_stats.csv"
     run_pipeline._tidy_careless_stats(
-        [(t, DATA / f"{t}.csv") for t in TOOLS],
+        # (tool, path, correlation). The correlation is what `-m` asked
+        # careless for; the tools that do not take `-m` carry "".
+        [(t, DATA / f"{t}.csv", "spearman" if t in CORRELATION_TOOLS else "")
+         for t in TOOLS],
         out,
         {"keys": {"method": "integrator", "dataset": "hewl_1118"}},
         49,
@@ -169,3 +174,65 @@ def test_one_series_when_nothing_varies(tidy):
     column, lines = figure.series_of(panel)
     assert column == ""
     assert len(lines) == 1
+
+
+# the correlation method ------------------------------------------------------
+
+
+class TestCorrelationMethod:
+    """Pearson and Spearman are different numbers and must stay separable.
+
+    They do not rank arms the same way -- Pearson follows the bright end,
+    Spearman is insensitive to the scale -- so a table that lost which one
+    it held would silently mix them in one panel.
+    """
+
+    def test_the_correlation_is_its_own_column(self, tidy):
+        assert "correlation" in tidy.columns
+
+    def test_only_the_tools_with_a_method_flag_carry_one(self, tidy):
+        carried = (tidy.filter(pl.col("correlation") != "")["tool"]
+                   .unique().sort().to_list())
+        assert carried == sorted(CORRELATION_TOOLS)
+
+    def test_it_is_not_folded_into_the_arm_or_the_statistic(self, tidy):
+        # `method` is the arm and `statistic` names the column within a
+        # tool's own CSV; neither may absorb the correlation
+        assert tidy["method"].unique().to_list() == ["integrator"]
+        assert not any("spearman" in s.lower()
+                       for s in tidy["statistic"].unique().to_list())
+
+    def test_two_methods_of_one_tool_coexist(self, tmp_path):
+        out = tmp_path / "both.csv"
+        run_pipeline._tidy_careless_stats(
+            [("cchalf", DATA / "cchalf.csv", "spearman"),
+             ("cchalf", DATA / "cchalf.csv", "pearson")],
+            out,
+            {"keys": {"method": "integrator", "dataset": "hewl_1118"}},
+            49,
+        )
+        df = pl.read_csv(out, infer_schema_length=None)
+        assert sorted(df["correlation"].unique().to_list()) == [
+            "pearson", "spearman"]
+        # the same tool and statistic, told apart only by `correlation`
+        one = df.filter((pl.col("tool") == "cchalf")
+                        & (pl.col("correlation") == "pearson"))
+        assert one.height * 2 == df.height
+
+
+def test_a_tool_without_a_method_flag_still_gets_a_panel(tidy):
+    """rsplit, isigi and completeness take no `-m` and must not vanish.
+
+    Their correlation is an empty field, which a CSV round-trip returns as
+    null rather than "". Matching on equality dropped all three from the
+    figure while cchalf, ccanom and ccpred still drew, so the figure got
+    shorter and nothing raised.
+    """
+    tools = {t for t, _, _ in figure.panels_of(tidy)}
+    assert {"rsplit", "isigi", "completeness"} <= tools
+
+
+def test_the_correlation_reaches_the_panel_name(tidy):
+    """Two correlations of one tool must be distinguishable in the figure."""
+    names = [s for t, s, _ in figure.panels_of(tidy) if t == "cchalf"]
+    assert all("spearman" in n for n in names), names

@@ -33,7 +33,6 @@ import matplotlib
 
 matplotlib.use("Agg")
 
-import matplotlib as mpl  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 import polars as pl  # noqa: E402
 
@@ -94,6 +93,13 @@ def parse_args():
     p.add_argument("--data", type=Path, default=DATA,
                    help="careless_stats.csv written by the stats step")
     p.add_argument("--out-dir", type=Path, default=OUT)
+    p.add_argument("--method", default=None,
+                   help="draw only these arms, comma separated; the default "
+                        "draws every arm in the table, which is the "
+                        "comparison. One arm gives the single-model figure.")
+    p.add_argument("--correlation", default=None,
+                   help="draw only this correlation (pearson, spearman); "
+                        "the default draws a panel for each present")
     p.add_argument("--dataset", default=None,
                    help="draw only this dataset (default: each one)")
     p.add_argument("--prefix", default="careless",
@@ -234,25 +240,41 @@ def draw_panel(ax, panel: pl.DataFrame, tool: str, statistic: str,
 
 
 def panels_of(df: pl.DataFrame) -> list[tuple[str, str, pl.DataFrame]]:
-    keys = (
-        df.select("tool", "statistic")
-        .unique()
-        .sort("tool", "statistic")
-        .rows()
-    )
+    """One panel per (tool, statistic, correlation) present.
+
+    `correlation` is part of the key, not a line style: Pearson and
+    Spearman CChalf are different numbers on the same axis label, and
+    overlaying them would read as six arms where there are three. A table
+    written before the column existed has none, and then this behaves
+    exactly as it did.
+    """
+    has_corr = "correlation" in df.columns
+    if has_corr:
+        # an empty correlation is written as an empty field and read back as
+        # null, so the tools that take no `-m` -- rsplit, isigi,
+        # completeness -- matched nothing and vanished from the figure
+        df = df.with_columns(pl.col("correlation").fill_null(""))
+    cols = ["tool", "statistic"] + (["correlation"] if has_corr else [])
+    keys = df.select(cols).unique().sort(cols).rows()
 
     def rank(key):
         tool = key[0].lower()
         return (TOOL_ORDER.index(tool) if tool in TOOL_ORDER else len(TOOL_ORDER),
-                key[0], key[1])
+                key[0], key[1], key[2] if len(key) > 2 else "")
 
     out = []
-    for tool, statistic in sorted(keys, key=rank):
-        panel = df.filter(
-            (pl.col("tool") == tool) & (pl.col("statistic") == statistic)
-        )
+    for key in sorted(keys, key=rank):
+        tool, statistic = key[0], key[1]
+        corr = key[2] if has_corr else ""
+        where = (pl.col("tool") == tool) & (pl.col("statistic") == statistic)
+        if has_corr:
+            where = where & (pl.col("correlation") == corr)
+        panel = df.filter(where)
         if len(panel):
-            out.append((tool, statistic, panel))
+            # the correlation rides on the statistic so every caller --
+            # label, slug, title -- carries it without further plumbing
+            name = f"{statistic} ({corr})" if corr else statistic
+            out.append((tool, name, panel))
     return out
 
 
@@ -338,6 +360,27 @@ def main() -> int:
     if missing:
         raise SystemExit(f"{args.data} has no {sorted(missing)} column")
     df = df.with_columns(pl.col("value").cast(pl.Float64, strict=False))
+
+    if args.method:
+        want = [m.strip() for m in args.method.split(",") if m.strip()]
+        have = df["method"].unique().to_list()
+        unknown = [m for m in want if m not in have]
+        if unknown:
+            raise SystemExit(
+                f"no rows for {unknown}; the table has {sorted(have)}"
+            )
+        df = df.filter(pl.col("method").is_in(want))
+    if args.correlation and "correlation" in df.columns:
+        have = [c for c in df["correlation"].unique().to_list() if c]
+        if args.correlation not in have:
+            raise SystemExit(
+                f"no rows with correlation {args.correlation!r}; the table "
+                f"has {sorted(have) or 'none -- it predates the column'}"
+            )
+        # the tools with no `-m` carry "" and are kept, since they are not
+        # a correlation and dropping them would silently shorten the figure
+        df = df.filter(pl.col("correlation").fill_null("")
+                       .is_in([args.correlation, ""]))
 
     datasets = (
         [args.dataset] if args.dataset

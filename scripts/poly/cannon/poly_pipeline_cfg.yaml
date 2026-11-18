@@ -35,7 +35,16 @@ stats:                          # careless.stats -> one CSV per tool, plus a
   out_dir: stats                # created next to the careless output
   bins: 10                      # overrides every tool's own default
   method: null                  # null | pearson | spearman | weighted;
-                                #   applies to cchalf, ccanom and ccpred only
+                                #   applies to cchalf, ccanom and ccpred only.
+                                #   Superseded by `methods` below; kept so an
+                                #   older config still resolves.
+  methods: [spearman, pearson]  # run each correlation tool once per entry and
+                                #   record which in the `correlation` column.
+                                #   Pearson follows the bright end and Spearman
+                                #   is insensitive to the scale, so they do not
+                                #   rank arms the same way and one alone is a
+                                #   choice that has to be declared. Remove the
+                                #   key to go back to a single run.
   intensity_key: "I(+)"         # isigi reads the MERGED mtz and has no
   uncertainty_key: "SigI(+)"    #   default key: an anomalous merge carries
                                 #   I(+)/I(-), never a plain I, and leaving
