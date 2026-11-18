@@ -310,6 +310,78 @@ def gate_joint_iter(p, _intensity, _background, counts, steps=3):
     return lam / (lam + b0)
 
 
+def gate_vb(p, _intensity, _background, counts, steps=1,
+            alpha_i=1.0, beta_i=1e-3, alpha_b=1.0, beta_b=1e-3):
+    """The mean-field update the model actually implies.
+
+    With the pixel allocation `s_i` known the model is fully conjugate:
+    `sum_i s_i` is sufficient for I (the profile sums to one, so the rate
+    is just `I`), `sum_i (c_i - s_i)` is sufficient for B over N pixels,
+    and `{s_i}` is sufficient for p. The only non-conjugate piece is the
+    missing allocation, which makes this Poisson NMF with two components --
+    one shaped like the profile, one flat.
+
+    Coordinate ascent on that bound does NOT plug point estimates into
+    `I p / (I p + B)`. It uses geometric expectations:
+
+        r_i  proportional to  exp(E[log I] + log p_i)
+        1-r_i proportional to exp(E[log B])
+
+    and for `Gamma(a, b)`, `E[log x] = psi(a) - log b`, which is strictly
+    below `log(a/b)`. That gap is the point: a component with little
+    evidence is pulled DOWN rather than left at its point estimate, so a
+    background that happens to be faint cannot drive the gate to one. The
+    saturation that the median background produces is impossible here, not
+    merely unlikely.
+
+    Priors are weak and fixed (`beta = 1e-3`), so this is the structure
+    being tested and not a prior doing the work.
+
+    **`steps` defaults to 1, because iterating makes it worse.** Measured
+    at low SNR, the median of `sum r c / I` over the step count: 1.022,
+    1.051, 1.097, 1.160, 1.269 at 1, 2, 4, 8 and 16. It does not converge,
+    it drifts, and the mechanism is already written down elsewhere in this
+    repository. The conjugate shape for I is `alpha + sum_i r_i c_i` and
+    the conjugate RATE is `beta + sum_i p_i`, which is `beta + 1` for every
+    reflection because the profile is normalised. So assigning more counts
+    to signal raises the shape and leaves the rate alone, `E[log I]` rises,
+    and the gate assigns more still -- a feedback with nothing opposing it.
+
+    `svae_integrator._get_qi` records the same thing from the other end:
+    "the conjugate rate is tau + sum(profile*mask), and the profile is
+    normalized, so it is tau + 1 for every reflection ... only the shape
+    carries data." The one-parameter variational family and this runaway
+    are the same defect seen twice.
+
+    One step from a least-squares start is therefore the stable choice,
+    and one step from a least-squares start is what `joint` already is.
+    """
+    from scipy.special import digamma
+
+    npix = p.shape[1]
+    i0, b0 = joint_fit(p, counts)
+    i0 = np.maximum(i0, 1e-3)
+    b0 = np.maximum(b0, 1e-6)
+    logp = np.log(np.maximum(p, 1e-30))
+    r = None
+    for _ in range(steps):
+        # E-step: responsibilities from geometric expectations
+        a_i = alpha_i + (r * counts).sum(axis=1, keepdims=True) if r is not None \
+            else alpha_i + i0
+        b_i = beta_i + 1.0
+        a_b = alpha_b + ((1 - r) * counts).sum(axis=1, keepdims=True) \
+            if r is not None else alpha_b + b0 * npix
+        b_b = beta_b + npix
+        e_log_i = digamma(np.maximum(a_i, 1e-6)) - np.log(b_i)
+        e_log_b = digamma(np.maximum(a_b, 1e-6)) - np.log(b_b)
+        log_sig = e_log_i + logp
+        log_bkg = np.broadcast_to(e_log_b, log_sig.shape)
+        mx = np.maximum(log_sig, log_bkg)
+        es, eb = np.exp(log_sig - mx), np.exp(log_bkg - mx)
+        r = es / (es + eb)
+    return r
+
+
 GATES = {
     "exact": gate_exact,
     "plugin": gate_plugin,
@@ -323,6 +395,7 @@ GATES = {
     "plugin_lowmean": gate_plugin_lowmean,
     "joint": gate_joint,
     "joint_iter": gate_joint_iter,
+    "vb": gate_vb,
 }
 
 
