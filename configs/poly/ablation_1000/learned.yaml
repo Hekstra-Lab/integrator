@@ -1,0 +1,118 @@
+mode: polychromatic
+integrator:
+  name: svae
+  args:
+    encoder_out: 32
+    mc_samples: 50
+    predict_keys:
+    - refl_ids
+    - is_test
+    - qi_mean
+    - qi_var
+    - qbg_mean
+    - qbg_var
+    - intensity.sum.value
+    - intensity.sum.variance
+    - background.sum.value
+    - background.sum.variance
+    - d
+    - wavelength
+    - H
+    - K
+    - L
+    data_dim: 2d
+    d: 1
+    h: 25
+    w: 25
+optimizer:
+  lr: 0.001
+  weight_decay: 0.0
+  lr_schedule: null
+surrogates:
+  qp:
+    name: learned_basis_profile
+    args:
+      latent_dim: 12
+      init_std: 0.5
+      prior_scale: 3.0
+      output_dim: 625
+      input_dim: 32
+  qbg:
+    name: gamma
+    args:
+      reparameterization: mean_fano
+      eps: 1.0e-06
+      k_min: 0.01
+      in_features: 32
+  qi:
+    name: gamma
+    args:
+      reparameterization: mean_fano
+      eps: 1.0e-06
+      k_min: 0.01
+      in_features: 32
+loss:
+  name: polychromatic_wilson
+  args:
+    degree: 5
+    lambda_min: 0.97
+    lambda_max: 1.25
+    init_G: 5000.0
+    init_B: 30.0
+    b_min: 1.0
+    polarization: false
+    lorentz: false
+    intensity_kl_weight: 1.0
+    background_kl_weight: 1.0
+    profile_kl_weight: 1.0
+    bg_rate: 1.0
+    bg_concentration: 1.0
+    n_bins: 30
+    beam_center:
+    - 1990.3078185435238
+    - 1972.797095353857
+data_loader:
+  name: polychromatic_data
+  args:
+    data_dir: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_1118/pytorch_data
+    batch_size: 512
+    validation_split: 0.2
+    num_workers: 8
+    include_test: true
+    subset_size: null
+    resolution_cutoff: null
+    min_valid_pixels: 10
+    transform: anscombe
+    shoebox_file_names:
+      data_dir: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_1118/pytorch_data
+      counts: counts.npy
+      masks: masks.npy
+      reference: metadata.pt
+trainer:
+  max_epochs: 20
+  accelerator: gpu
+  devices: 1
+  logger: true
+  precision: '32'
+  check_val_every_n_epoch: 5
+  log_every_n_steps: 10
+  deterministic: false
+  enable_checkpointing: true
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+checkpoint:
+  save_top_k: -1
+output:
+  refl_file: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_1118/pytorch_data/reflections_.refl
+encoders:
+- name: profile_encoder
+  args:
+    data_dim: 2d
+    encoder_out: 32
+    input_shape:
+    - 25
+    - 25
+- name: intensity_encoder
+  args:
+    data_dim: 2d
+    encoder_out: 32
