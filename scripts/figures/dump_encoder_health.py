@@ -62,6 +62,32 @@ def checkpoints(run_dir: str) -> list[tuple[int, str]]:
     return found[::STRIDE] if STRIDE > 1 else found
 
 
+def ensure_group_label(metadata, device):
+    """Supply `group_label` when the installed data module did not.
+
+    The repository's `POLY_DS_COLS` lists it, but the environment's
+    installed package is older and the PDZ2 metadata carries `radial_bin`
+    instead, so the forward died on `KeyError: 'group_label'`. It selects
+    the per-group prior, so a wrong value would move the PRIOR -- not the
+    encoder, the profile shape or the gate, which is what is being
+    measured here. `radial_bin` is used where present and zeros
+    otherwise, and the substitution is printed rather than done quietly.
+    """
+    import torch
+
+    if "group_label" in metadata:
+        return metadata, ""
+    ref = next((v for v in metadata.values() if hasattr(v, "shape")), None)
+    if ref is None:
+        return metadata, ""
+    if "radial_bin" in metadata:
+        metadata["group_label"] = metadata["radial_bin"].long()
+        return metadata, "group_label <- radial_bin"
+    metadata["group_label"] = torch.zeros(
+        ref.shape[0], dtype=torch.long, device=device)
+    return metadata, "group_label <- zeros (prior groups collapsed)"
+
+
 def profile_encoder(model):
     """The encoder whose output the profile surrogate consumes."""
     encoders = getattr(model, "encoders", None)
@@ -102,7 +128,16 @@ def measure(model, batch, device) -> dict | None:
     ]
     try:
         with torch.no_grad():
-            model(*batch) if isinstance(batch, (list, tuple)) else model(batch)
+            if isinstance(batch, (list, tuple)) and len(batch) == 4:
+                counts, shoebox, mask, metadata = batch
+                metadata, note = ensure_group_label(dict(metadata), device)
+                if note:
+                    print(f"    {note}")
+                model(counts, shoebox, mask, metadata)
+            elif isinstance(batch, (list, tuple)):
+                model(*batch)
+            else:
+                model(batch)
     except Exception as exc:  # the step signature differs by integrator
         for h in handles:
             h.remove()
@@ -158,7 +193,6 @@ def main() -> int:
         raise SystemExit(__doc__.strip().splitlines()[-1])
 
     import torch
-
     import yaml
 
     from integrator.utils.factory_utils import construct_integrator

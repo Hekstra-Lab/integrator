@@ -44,6 +44,7 @@ import sys
 
 DATASET = os.environ.get("DATASET", "")
 N_BATCHES = int(os.environ.get("N_BATCHES", "4"))
+N_EXAMPLES = int(os.environ.get("N_EXAMPLES", "6"))
 GRID = 3
 
 
@@ -95,6 +96,7 @@ def accumulate(model, loader, device, n_batches: int):
     cells: dict[tuple[int, int], tuple] = {}
     xs, ys = [], []
     kept, gates = [], []
+    examples: dict = {}
     with torch.no_grad():
         for i, batch in enumerate(loader):
             if i >= n_batches:
@@ -105,6 +107,9 @@ def accumulate(model, loader, device, n_batches: int):
             mask = mask.to(device)
             metadata = {k: (v.to(device) if hasattr(v, "to") else v)
                         for k, v in metadata.items()}
+            metadata, note = ensure_group_label(metadata, device)
+            if note and i == 0:
+                print(f"    {note}")
             out = model(counts, shoebox, mask, metadata)
             prf = profile_of(out)
             if prf is None:
@@ -114,6 +119,15 @@ def accumulate(model, loader, device, n_batches: int):
             g = gate_of(out)
             gates.append(g.detach().float().cpu().numpy()
                          if g is not None else None)
+            if i == 0:
+                # a few whole reflections, kept as they are: the observed
+                # counts, the profile drawn for them, and the gate. A mean
+                # over thousands hides whether any single shoebox is fitted
+                # at all, which is the thing the eye settles fastest.
+                examples["counts"] = counts.detach().float().cpu().numpy()
+                examples["profile"] = p
+                if g is not None:
+                    examples["gate"] = g.detach().float().cpu().numpy()
             xs.append(metadata["xyzcal.px.0"].detach().float().cpu().numpy())
             ys.append(metadata["xyzcal.px.1"].detach().float().cpu().numpy())
     if not kept:
@@ -141,7 +155,33 @@ def accumulate(model, loader, device, n_batches: int):
                 else None,
             )
     gate_total = gate.mean(axis=0) if gate is not None else None
-    return total, cells, (x0, x1, y0, y1), gate_total
+    return total, cells, (x0, x1, y0, y1), gate_total, examples
+
+
+def ensure_group_label(metadata, device):
+    """Supply `group_label` when the installed data module did not.
+
+    The repository's `POLY_DS_COLS` lists it, but the environment's
+    installed package is older and the PDZ2 metadata carries `radial_bin`
+    instead, so the forward died on `KeyError: 'group_label'`. It selects
+    the per-group prior, so a wrong value would move the PRIOR -- not the
+    encoder, the profile shape or the gate, which is what is being
+    measured here. `radial_bin` is used where present and zeros
+    otherwise, and the substitution is printed rather than done quietly.
+    """
+    import torch
+
+    if "group_label" in metadata:
+        return metadata, ""
+    ref = next((v for v in metadata.values() if hasattr(v, "shape")), None)
+    if ref is None:
+        return metadata, ""
+    if "radial_bin" in metadata:
+        metadata["group_label"] = metadata["radial_bin"].long()
+        return metadata, "group_label <- radial_bin"
+    metadata["group_label"] = torch.zeros(
+        ref.shape[0], dtype=torch.long, device=device)
+    return metadata, "group_label <- zeros (prior groups collapsed)"
 
 
 def profile_stats(p, h: int, w: int) -> tuple[float, float]:
@@ -205,7 +245,7 @@ def main() -> int:
         if got is None:
             print(f"  {arm}: the forward returned no profile")
             continue
-        total, cells, extent, gate_total = got
+        total, cells, extent, gate_total, examples = got
         grid = np.zeros((GRID, GRID, total.size), dtype=np.float32)
         counts = np.zeros((GRID, GRID), dtype=np.int32)
         gate_grid = np.zeros_like(grid)
@@ -224,6 +264,16 @@ def main() -> int:
         if has_gate:
             blobs[f"{arm}_gate_mean"] = gate_total.astype(np.float32)
             blobs[f"{arm}_gate_cells"] = gate_grid
+        # the brightest, the dimmest and a few between, by observed counts,
+        # so the examples are not all one kind of reflection
+        ex_counts = examples.get("counts")
+        if ex_counts is not None:
+            order = np.argsort(ex_counts.reshape(ex_counts.shape[0], -1).sum(1))
+            pick = order[np.linspace(0, len(order) - 1, N_EXAMPLES).astype(int)]
+            for key in ("counts", "profile", "gate"):
+                arr = examples.get(key)
+                if arr is not None:
+                    blobs[f"{arm}_ex_{key}"] = arr[pick].astype(np.float32)
 
         n_eff, outside = profile_stats(total, h, w)
         rows.append({"method": arm, "dataset": DATASET, "profile_model": qp,
