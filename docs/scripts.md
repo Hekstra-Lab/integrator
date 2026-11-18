@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-286 scripts.
+288 scripts.
 
 ## Start here
 
@@ -159,6 +159,7 @@ per job, and it lives in the repo".
 | `figures/compare_models.py` | Parameter counts and training throughput, per run, for comparing families. |
 | `figures/dump_basis.py` | Recover the learned profile basis over training, from the checkpoints. |
 | `figures/dump_encoder_health.py` | Is the profile encoder alive? Dead-unit fractions over training. |
+| `figures/dump_profile_maps.py` | The profile each model draws, overall and by detector region. |
 | `figures/encoder_health.sbatch` | Measure whether the profile encoder is alive, over training. |
 | `figures/fig_arm_metrics.py` | What each arm is worth after scaling, merging and refinement. |
 | `figures/fig_basis_convergence.py` | The learned basis converging, svae against hierarchical, per dataset. |
@@ -311,6 +312,7 @@ per job, and it lives in the repo".
 | `gamma_init_diagnostic.py` | Sweep N random seeds and log gammaB-relevant initial-step statistics. |
 | `gamma_repam_diagnostics.py` | Gamma Reparameterization Diagnostics |
 | `gamma_vs_fano_gamma_analysis.py` | Gamma vs FanoGamma Gradient Reliability Analysis |
+| `gate_study.py` | How should the per-pixel signal gate be built from the profile? |
 | `generate_maps.py` | Generate electron density maps from a refinement model checkpoint. |
 | `generate_per_bin_data.py` | Generate simulated per-resolution-bin shoebox data from pre-fitted parameters. |
 | `generate_rfree_flags.py` | Generate R-free flags by unique HKL (asu_id), not by observation. |
