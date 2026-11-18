@@ -106,7 +106,8 @@ class SVAEIntegrator(BaseIntegrator):
             signal_prob = torch.sigmoid(self.gate_head(x_signal))  # (B, P)
             return signal_prob, 1.0 - signal_prob, prf
 
-        # `responsibility`: compute the gate instead of learning it.
+        # `responsibility` and `joint`: compute the gate instead of
+        # learning it. They differ only in how (I, B) are estimated.
         #
         # The gate's job is the Poisson split. For c_i = s_i + b_i with
         # s_i ~ Poisson(I p_i) and b_i ~ Poisson(B), the exact posterior share
@@ -129,8 +130,8 @@ class SVAEIntegrator(BaseIntegrator):
         # the profile-weighted least squares given that background.
         if raw_counts is None:
             raise ValueError(
-                "gate='responsibility' needs raw_counts: the gate is derived "
-                "from the data, not emitted by a head"
+                f"gate={self.cfg.gate!r} needs raw_counts: the gate is "
+                "derived from the data, not emitted by a head"
             )
         m = mask.squeeze(-1) if mask is not None else torch.ones_like(prf)
         c = raw_counts * m
@@ -158,8 +159,26 @@ class SVAEIntegrator(BaseIntegrator):
         # it differentiable lets KL(q(I) || prior) pull the profile down where
         # the counts are large, because r increases with p; see `gate_detach`.
         prf_r = prf.detach() if getattr(self.cfg, "gate_detach", False) else prf
-        s2 = (prf_r.pow(2) * m).sum(-1, keepdim=True).clamp_min(1e-12)
-        i0 = ((prf_r * (c - b0) * m).sum(-1, keepdim=True) / s2).clamp_min(0.0)
+        if self.cfg.gate == "joint":
+            # (I, B) together against the design [p, 1], on the valid pixels.
+            # `b0` above is an order statistic and is not used here: the
+            # median quantises to zero on a faint background, which saturates
+            # the gate, and swapping it for another robust statistic moves the
+            # bias the other way. `c = I p + B` is linear in both and `p` is
+            # known, so the 2x2 normal equation is the estimator that does
+            # neither. See scripts/gate_study.py.
+            n = m.sum(-1, keepdim=True).clamp_min(1.0)
+            spp = (prf_r.pow(2) * m).sum(-1, keepdim=True)
+            sp = (prf_r * m).sum(-1, keepdim=True)
+            spc = (prf_r * c).sum(-1, keepdim=True)
+            sc = c.sum(-1, keepdim=True)
+            det = (spp * n - sp * sp).clamp_min(1e-12)
+            i0 = ((n * spc - sp * sc) / det).clamp_min(0.0)
+            b0 = ((spp * sc - sp * spc) / det).clamp_min(0.0)
+        else:
+            s2 = (prf_r.pow(2) * m).sum(-1, keepdim=True).clamp_min(1e-12)
+            i0 = ((prf_r * (c - b0) * m).sum(-1, keepdim=True)
+                  / s2).clamp_min(0.0)
         lam_s = i0 * prf_r
         signal_prob = lam_s / (lam_s + b0.clamp_min(1e-6) + 1e-12)
         signal_prob = signal_prob * m

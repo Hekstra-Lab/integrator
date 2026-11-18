@@ -71,7 +71,7 @@ class IntegratorCfg:
     `true` detaches them, which is the intended coordinate ascent.
     """
 
-    gate: Literal["learned", "responsibility"] = "learned"
+    gate: Literal["learned", "responsibility", "joint"] = "learned"
     """Where the SVAE's per-pixel signal/background split comes from.
     `learned` (default) is the 55k-parameter sigmoid head, unchanged.
 
@@ -95,6 +95,30 @@ class IntegratorCfg:
     closed form: the background starts from the box median (robust, since a
     Laue shoebox is 96.6% background) and the intensity from profile-weighted
     least squares given it.
+
+    `joint` is `responsibility` with (I, B) fitted TOGETHER by least squares
+    against the design `[p, 1]`, rather than the background taken from an
+    order statistic and the intensity fitted given it.
+
+    The background estimator is where `responsibility` loses most of what
+    the exact form gives, measured on simulated streaky Gaussians by
+    `scripts/gate_study.py`. A Poisson median is exactly 0 whenever the rate
+    is below about 0.7, and `b0 = 0` saturates `r` to 1 wherever the profile
+    is non-zero: in 10% of those shoeboxes the median was 0, and they carry
+    +285% bias in `sum r c` where the other 90% carry +6.6%. The comment on
+    `_get_pixel_probs` records this for shoeboxes that are mostly MASKED; it
+    happens for the same reason on any faint background with nothing masked.
+
+    Substituting a different order statistic makes it worse -- the mean of
+    the dim half is below the mean of the whole by construction, and scored
+    +122%. `c = I p + B` is linear in both with `p` known, so the 2x2 normal
+    equation is the estimator that neither quantises nor is robust by
+    accident: bias 29% -> 2.6%, spread 139% -> 45%, weak-quartile bias
+    112% -> 10%, against 0.1% for the exact gate with the true I and B.
+
+    Once the fit is joint, `sum r c` and the fitted I agree to within a
+    tenth of a percentage point, so the gate stops setting the intensity and
+    becomes a representation.
     """
     intensity_posterior: Literal["conjugate", "amortized"] = "conjugate"
     """How the SVAE forms q(I). `conjugate` (default) is the Poisson-Gamma
@@ -757,7 +781,7 @@ class IntegratorCfg:
         if self.mc_samples < 1:
             raise ValueError(f"mc_samples must be >= 1, got {self.mc_samples}")
 
-        if self.gate not in ("learned", "responsibility"):
+        if self.gate not in ("learned", "responsibility", "joint"):
             raise ValueError(
                 "gate must be 'learned' or 'responsibility', got "
                 f"{self.gate!r}"
