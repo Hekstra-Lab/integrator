@@ -266,27 +266,33 @@ if has basis; then
   # Images stay in the npz because an image is not a table; the per-component
   # norms and cosines come down as one CSV.
   PJ=${PDZ2_JOB:-$S/jobs/pdz2figs_1118}
-  for set in m9 pdz2; do
+  # `basis_<set>` is one dataset's arms; `basis_cmp_<set>` is a matched
+  # svae-against-hierarchical pair on one dataset, which is what the
+  # family comparison draws, so the two land in separate directories and
+  # `fig_profile_basis.py --data .../basis_cmp` selects between them.
+  for set in m9 pdz2 cmp_mono cmp_1118 cmp_pdz2; do
     src=$PJ/basis_$set
+    case "$set" in cmp_*) sub=basis_cmp; tag=${set#cmp_};; *) sub=basis; tag=$set;; esac
     if ssh cannon "[ -s $src/basis_components.csv ]"; then
       echo "basis ($set) <- $src"
-      mkdir -p "$DEST/basis"
-      scp -qr "cannon:$src/"*/ "$DEST/basis/" 2>/dev/null
+      mkdir -p "$DEST/$sub"
+      scp -qr "cannon:$src/"*/ "$DEST/$sub/" 2>/dev/null
       scp -q "cannon:$src/basis_components.csv" \
-        "$DEST/basis/basis_components_$set.csv"
+        "$DEST/$sub/basis_components_$tag.csv"
     else
       echo "basis ($set): not built yet (run dump_basis.py on the cluster)"
     fi
   done
   # one table per set, but the figure reads one file
-  if ls "$DEST"/basis/basis_components_*.csv >/dev/null 2>&1; then
-    head -1 "$(ls "$DEST"/basis/basis_components_*.csv | head -1)" \
-      > "$DEST/basis/basis_components.csv"
-    for f in "$DEST"/basis/basis_components_*.csv; do
+  for sub in basis basis_cmp; do
+    ls "$DEST"/$sub/basis_components_*.csv >/dev/null 2>&1 || continue
+    head -1 "$(ls "$DEST"/$sub/basis_components_*.csv | head -1)" \
+      > "$DEST/$sub/basis_components.csv"
+    for f in "$DEST"/$sub/basis_components_*.csv; do
       case "$f" in *basis_components.csv) continue;; esac
-      tail -n +2 "$f" >> "$DEST/basis/basis_components.csv"
+      tail -n +2 "$f" >> "$DEST/$sub/basis_components.csv"
     done
-  fi
+  done
 fi
 
 ls -la "$DEST"
