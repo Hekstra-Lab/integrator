@@ -1,0 +1,171 @@
+# PDZ2 svae, gate = learned. One of three arms differing in that key alone.
+# learned        the sigmoid head: no structural tie to the profile
+# responsibility computed, background from the box median
+# joint          computed, (I, B) fitted together against [p, 1]
+# See scripts/gate_study.py and tests/test_svae_gate_joint.py.
+integrator:
+  name: svae
+  args:
+    data_dim: 2d
+    d: 1
+    h: 21
+    w: 21
+    encoder_out: 64
+    mc_samples: 50
+    predict_keys: default
+    gate: learned
+optimizer:
+  lr: 0.001
+  weight_decay: 0.0
+  decoder_weight_decay: null
+  lr_schedule: cosine_warmup
+  warmup_epochs: 5
+  warmup_steps: 0
+  lr_min: 1.0e-05
+encoders:
+- name: profile_encoder
+  args:
+    data_dim: 2d
+    in_channels: 1
+    input_shape:
+    - 21
+    - 21
+    encoder_out: 64
+    conv1_out_channels: 64
+    conv1_kernel_size:
+    - 3
+    - 3
+    conv1_padding:
+    - 1
+    - 1
+    norm1_num_groups: 4
+    pool_kernel_size:
+    - 2
+    - 2
+    pool_stride:
+    - 2
+    - 2
+    conv2_out_channels: 128
+    conv2_kernel_size:
+    - 3
+    - 3
+    conv2_padding:
+    - 0
+    - 0
+    norm2_num_groups: 4
+    dropout: 0.0
+- name: intensity_encoder
+  args:
+    data_dim: 2d
+    in_channels: 1
+    encoder_out: 64
+    conv1_out_channels: 64
+    conv1_kernel_size:
+    - 3
+    - 3
+    conv1_padding:
+    - 1
+    - 1
+    norm1_num_groups: 4
+    pool_kernel_size:
+    - 2
+    - 2
+    pool_stride:
+    - 2
+    - 2
+    conv2_out_channels: 128
+    conv2_kernel_size:
+    - 3
+    - 3
+    conv2_padding:
+    - 0
+    - 0
+    norm2_num_groups: 4
+    conv3_out_channels: 256
+    conv3_kernel_size:
+    - 3
+    - 3
+    conv3_padding:
+    - 1
+    - 1
+    norm3_num_groups: 8
+surrogates:
+  qp:
+    name: learned_basis_profile
+    args:
+      input_dim: 64
+      latent_dim: 16
+      output_dim: 441
+      init_std: 0.5
+      prior_scale: 3.0
+  qbg:
+    name: gamma
+    args:
+      reparameterization: mean_fano
+      in_features: 64
+      eps: 1.0e-06
+      k_min: 0.1
+      positive_constraint: softplus
+  qi:
+    name: gamma
+    args:
+      reparameterization: mean_fano
+      in_features: 64
+      eps: 1.0e-06
+      k_min: 0.1
+      positive_constraint: softplus
+loss:
+  name: polychromatic_wilson
+  args:
+    degree: 40
+    lambda_min: 0.95
+    lambda_max: 1.2
+    spectrum_init_from: null
+    init_B: 30.0
+    b_min: 0.0
+    polarization: false
+    polarization_fraction: 0.99
+    lorentz: false
+    beam_center: null
+    intensity_kl_weight: 1.0
+    background_kl_weight: 1.0
+    profile_kl_weight: 1.0
+    bg_rate: 1.0
+    bg_concentration: 1.0
+    n_bins: 1
+data_loader:
+  name: polychromatic_data
+  args:
+    data_dir: /n/netscratch/hekstra_lab/Lab/laldama/laue_runs/pdz2_model/pooled
+    batch_size: 512
+    validation_split: 0.2
+    num_workers: 8
+    include_test: true
+    subset_size: null
+    resolution_cutoff: null
+    min_valid_pixels: 10
+    transform: anscombe
+trainer:
+  max_epochs: 100
+  accelerator: gpu
+  devices: 1
+  logger: true
+  precision: '32'
+  check_val_every_n_epoch: 2
+  log_every_n_steps: 1
+  enable_checkpointing: true
+  deterministic: false
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+early_stop:
+  monitor: val elbo
+  mode: min
+  patience: 3
+  min_delta: 0.0
+  strict: true
+checkpoint:
+  save_top_k: -1
+  monitor: val elbo
+  mode: min
+output:
+  refl_file: /n/netscratch/hekstra_lab/Lab/laldama/laue_runs/pdz2_model/pooled/predictions.refl
