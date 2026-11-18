@@ -172,9 +172,38 @@ If one is close but wrong, **extend it** -- add an option that defaults to
 today's behaviour, so existing runs stay bit-identical. Do not write a second
 script beside it, and do not write a one-off sbatch to launch one.
 
+**Code moves by git, never by copy.** `scp` and `rsync` are for DATA and
+OUTPUTS -- reduced tables, npz dumps, logs, MTZs -- in that direction only.
+A script or a module reaches the cluster by `git push` here and `git pull`
+there, so what ran is a commit and can be named.
+
+Copying code is what produced every one of these, all on 18 November:
+
+- a staged stub package under `jobs/.../src/integrator` shadowed the
+  installed one, twice, because Python puts a script's own directory first
+  on `sys.path`;
+- `pull_figdata.sh` copied each reducer to the cluster only when it was
+  MISSING, so a fix to `tidy_pdz2.py` sat here while the cluster went on
+  running the copy without it, and the pull came back without the svae arm
+  with nothing to say why;
+- `arm_pdz2.sbatch` copied `split_pdz2.py` from a scratch directory whose
+  copy predated `--estimator`, and a job died after its predict pass on an
+  argument the repository had had for days;
+- the environment's checkout sat 52 commits behind and three arms failed
+  preflight on `IntegratorCfg.__init__() got an unexpected keyword
+  argument 'gate'`.
+
+The checkouts on Cannon and what each is for:
+
+| path | role | how it updates |
+|---|---|---|
+| `$S/integrator_main` | the checkout jobs are submitted FROM; `$SLURM_SUBMIT_DIR` | `git pull` |
+| `/n/lab_storage/.../software/integrator` | what `integrator-cuda-dev` imports | `git pull` |
+| `$S/integrator_cur` | a pre-git copy, kept until nothing points at it | superseded |
+
 A new script is justified only when no existing one covers the job. It is
-then written in `scripts/`, committed, and copied to the cluster -- in that
-order. A script authored on scratch is lost at the next purge and
+then written in `scripts/`, committed, pushed, and pulled on the cluster --
+in that order. A script authored on scratch is lost at the next purge and
 unreproducible in the meantime, which has already happened to this project
 once.
 
