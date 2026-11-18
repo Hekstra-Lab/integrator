@@ -38,6 +38,7 @@ import csv
 import glob
 import os
 import re
+import subprocess
 import sys
 
 EPOCH_RE = re.compile(r"epoch=?_?(\d+)")
@@ -125,9 +126,42 @@ def seconds_per_epoch(ckpts: list[tuple[int, str]]) -> tuple[float, int]:
     return median, len(rates)
 
 
+def logs_of(run_dir: str) -> list[str]:
+    """The run's SLURM logs, wherever the submitting script put them.
+
+    Not always beside the run: the PDZ2 scripts write to a shared `logs/`
+    one level up from `runs/`, named `<arm>_<jobid>.out`. Looking only in
+    the run directory is why `seconds_per_epoch` was reported for months
+    with no hardware beside it, and an unmatched pair -- 8 CPUs against 16,
+    two months apart -- read as a model difference.
+    """
+    arm = os.path.basename(run_dir.rstrip("/"))
+    up = os.path.dirname(os.path.dirname(run_dir.rstrip("/")))
+    # A log is not always named after its run directory: `runs/pdz2_w21_k7m`
+    # was submitted as `train_w21_k7m_<jobid>.out`, the dataset tag being in
+    # the path rather than the job name. Both spellings are tried.
+    cands = [arm] + ([arm.split("_", 1)[1]] if "_" in arm else [])
+    found = sorted(glob.glob(f"{run_dir}/*.out"))
+    for cand in cands:
+        for pattern in (f"{run_dir}/logs/*{cand}*.out",
+                        f"{up}/logs/*{cand}*.out",
+                        f"{up}/*{cand}*.out"):
+            found += sorted(glob.glob(pattern))
+    # an arm name is a prefix of others (`w21_k7m` of `w21_k7m_b`), so keep
+    # only logs whose name is the arm plus a job id and nothing else
+    keep = []
+    for f in found:
+        base = os.path.basename(f)
+        if any(re.fullmatch(rf"{re.escape(c)}[_.]?\d*\.out"
+                            rf"|.*_{re.escape(c)}_\d+\.out", base)
+               for c in cands):
+            keep.append(f)
+    return list(dict.fromkeys(keep)) or found
+
+
 def gpu_of(run_dir: str) -> str:
     """The GPU the run reported, where a log recorded it."""
-    for path in sorted(glob.glob(f"{run_dir}/*.out"))[:1]:
+    for path in logs_of(run_dir)[:2]:
         try:
             head = open(path, errors="replace").read(4000)
         except OSError:
@@ -136,6 +170,41 @@ def gpu_of(run_dir: str) -> str:
         if m:
             return m.group(1).strip()
     return ""
+
+
+def allocation_of(run_dir: str) -> dict[str, str]:
+    """Node and CPU count from SLURM accounting, via the log's job id.
+
+    Seconds per epoch is only a model number when the allocation is the
+    same, and on this cluster it frequently is not: data loading scales
+    with `-c`, and the partitions mix A100, H100 and H200. Recording the
+    node and the CPU count is what makes a pair checkable rather than
+    assumed. Returns empty off-cluster, where `sacct` does not exist.
+    """
+    ids = []
+    for path in logs_of(run_dir):
+        m = re.search(r"(\d{6,})\.out$", os.path.basename(path))
+        if m:
+            ids.append(m.group(1))
+    if not ids:
+        return {}
+    try:
+        out = subprocess.run(
+            ["sacct", "-j", ",".join(sorted(set(ids))), "--parsable2",
+             "--noheader", "-o", "JobID,NodeList,ReqTRES,Elapsed"],
+            capture_output=True, text=True, timeout=60,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    for line in out.splitlines():
+        parts = line.split("|")
+        if len(parts) < 4 or "." in parts[0]:
+            continue  # a step, not the job
+        node, tres = parts[1], parts[2]
+        cpu = re.search(r"cpu=(\d+)", tres)
+        if node and node != "None assigned":
+            return {"node": node, "cpus": cpu.group(1) if cpu else ""}
+    return {}
 
 
 def rows_for(run_dir: str) -> list[dict]:
@@ -170,8 +239,17 @@ def rows_for(run_dir: str) -> list[dict]:
     gpu = gpu_of(run_dir)
     if gpu:
         out.append({**common, "quantity": "gpu", "value": gpu, "unit": ""})
+    alloc = allocation_of(run_dir)
+    for key, value in alloc.items():
+        if value:
+            out.append({**common, "quantity": key, "value": value,
+                        "unit": "cpus" if key == "cpus" else ""})
+    where = " ".join(filter(None, [gpu, alloc.get("node", ""),
+                                   f"-c {alloc['cpus']}" if alloc.get("cpus")
+                                   else ""]))
     print(f"  {arm}: {integrator}/{qp}, {params['total']:,} params, "
-          f"{rate:.1f} s/epoch over {n_intervals} interval(s)")
+          f"{rate:.1f} s/epoch over {n_intervals} interval(s)"
+          + (f"  [{where}]" if where else "  [hardware unrecorded]"))
     return out
 
 
