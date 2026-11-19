@@ -73,6 +73,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 DATASET = os.environ.get("DATASET", "")
 # tile size for the hold-out; 0 is the old scattered-pixel draw
 BLOCK = int(os.environ.get("HOLDOUT_BLOCK", "0"))
+# align the tiling to each reflection's own profile peak, so the bright
+# end is sampled at all
+PEAK_ALIGNED = os.environ.get("HOLDOUT_PEAK", "1") not in ("0", "false", "")
 N_BATCHES = int(os.environ.get("N_BATCHES", "40"))
 HOLDOUT = float(os.environ.get("HOLDOUT", "0.2"))
 MIN_KEPT = int(os.environ.get("MIN_KEPT", "40"))
@@ -130,18 +133,67 @@ def holdout_mask(refl_ids, n_px, frac, device, block: int = 0):
     return torch.from_numpy(out).to(device)
 
 
-def centre_mask(n_px: int, block: int, device):
-    """The centre pixel of every `block x block` tile."""
+def centre_mask(n_px: int, block: int, device, peak=None):
+    """The centre pixel of every `block x block` tile.
+
+    `peak` shifts the tiling per reflection so that one centre lands on
+    that pixel. Without it the centres sit on a fixed grid and the spot,
+    which occupies a few pixels out of 625, almost never coincides with
+    one: measured, the scored rates stopped at 15.7 ADU with 102 pixels
+    in the top bin, so the whole bright end -- the only part of the
+    variance function that was unmeasured -- went unsampled.
+    """
     import numpy as np
     import torch
 
     side = int(round(n_px ** 0.5))
-    grid = np.zeros((side, side), bool)
     half = block // 2
-    for bi in range(side // block):
-        for bj in range(side // block):
-            grid[bi * block + half, bj * block + half] = True
-    return torch.from_numpy(grid.ravel()).to(device)
+    if peak is None:
+        grid = np.zeros((side, side), bool)
+        for bi in range(side // block):
+            for bj in range(side // block):
+                grid[bi * block + half, bj * block + half] = True
+        return torch.from_numpy(grid.ravel()).to(device)
+
+    pr = (peak // side).long()
+    pc = (peak % side).long()
+    rows = torch.arange(side, device=peak.device)
+    # a centre wherever (row - peak_row) is a multiple of `block`
+    r_ok = ((rows[None, :] - pr[:, None]) % block == 0)
+    c_ok = ((rows[None, :] - pc[:, None]) % block == 0)
+    return (r_ok[:, :, None] & c_ok[:, None, :]).reshape(len(peak), -1)
+
+
+def tile_mask_at(peak, n_px: int, block: int, frac: float, refl_ids):
+    """Hold out tiles on a grid aligned to each reflection's own peak.
+
+    The tile holding the peak is ALWAYS held out, so every reflection
+    contributes one bright sample; the rest are drawn at `frac`.
+    """
+    import numpy as np
+    import torch
+
+    side = int(round(n_px ** 0.5))
+    half = block // 2
+    pr = (peak // side).detach().cpu().numpy()
+    pc = (peak % side).detach().cpu().numpy()
+    out = np.zeros((len(refl_ids), n_px), bool)
+    for k, rid in enumerate(refl_ids):
+        rng = np.random.default_rng(int(rid) & 0x7FFFFFFF)
+        r0 = (pr[k] - half) % block
+        c0 = (pc[k] - half) % block
+        grid = np.zeros((side, side), bool)
+        nb = side // block + 1
+        for bi in range(-1, nb):
+            for bj in range(-1, nb):
+                r, c = r0 + bi * block, c0 + bj * block
+                if r < -block or c < -block or r >= side or c >= side:
+                    continue
+                is_peak = (r <= pr[k] < r + block) and (c <= pc[k] < c + block)
+                if is_peak or rng.random() < frac:
+                    grid[max(r, 0):r + block, max(c, 0):c + block] = True
+        out[k] = grid.ravel()
+    return torch.from_numpy(out).to(peak.device)
 
 
 def last_checkpoint(run: str):
@@ -205,14 +257,20 @@ def score(model, loader, device, n_batches, want):
 
             m2 = mask.squeeze(-1) if mask.dim() == 3 else mask
             n_px = m2.shape[-1]
-            held = holdout_mask(rid_np, n_px, HOLDOUT, device, BLOCK)
+            pr_peak = prof.reshape(len(rid_np), -1).argmax(-1)
+            if BLOCK and PEAK_ALIGNED:
+                held = tile_mask_at(pr_peak, n_px, BLOCK, HOLDOUT, rid_np)
+                ctr = centre_mask(n_px, BLOCK, device, peak=pr_peak)
+            else:
+                held = holdout_mask(rid_np, n_px, HOLDOUT, device, BLOCK)
+                ctr = (centre_mask(n_px, BLOCK, device).unsqueeze(0)
+                       if BLOCK else None)
             # only pixels that were valid to begin with can be held out
             held = held & m2.bool()
             # with tiles, only the centres are SCORED; the rest of the
             # tile is removed so the centre has no kept neighbour, but a
             # residual is taken from the centre alone
-            scored = (held & centre_mask(n_px, BLOCK, device).unsqueeze(0)
-                      if BLOCK else held)
+            scored = (held & ctr) if ctr is not None else held
             reduced = (m2.bool() & ~held).to(m2.dtype)
             if mask.dim() == 3:
                 reduced_in = reduced.unsqueeze(-1)
