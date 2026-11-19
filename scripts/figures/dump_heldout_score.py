@@ -137,7 +137,7 @@ def score(model, loader, device, n_batches, want):
     # per held-out PIXEL, for the two diagnostics that need the pixel and
     # not the reflection: the residual against the profile value it sits
     # on, and the squared residual against the rate
-    px_p, px_lam, px_res = [], [], []
+    px_p, px_lam, px_res, px_ldec = [], [], [], []
     # the per-reflection pedestal and where on the detector it came from,
     # so its structure can be seen rather than assumed
     ped, pos_x, pos_y, img_id = [], [], [], []
@@ -208,10 +208,23 @@ def score(model, loader, device, n_batches, want):
             # want 10^6 points, not 10^8
             keep = sel.detach().cpu().numpy()
             pr = prof.reshape(len(rid_np), -1)
-            pk = (pr / pr.max(-1, keepdim=True).values.clamp_min(1e-12))
+            # Binned by RANK WITHIN THE SHOEBOX, not by a global quantile.
+            # A profile is peaked enough that over 90% of its pixels sit at
+            # p/pmax ~ 0, so global quantile edges are all zero and every
+            # pixel lands in one bin; and a shoebox is background enough
+            # that global rate deciles span 10.1 to 11.6 ADU, a lever arm
+            # too short to fit a line to. A within-shoebox decile puts 10%
+            # of EVERY shoebox in each bin, so decile 9 is its peak and
+            # decile 0 its background, whatever the reflection is worth.
+            npx_row = pr.shape[-1]
+            dec_p = (pr.argsort(-1).argsort(-1).float()
+                     / npx_row * 10).floor().clamp(0, 9)
+            dec_l = (lam.argsort(-1).argsort(-1).float()
+                     / npx_row * 10).floor().clamp(0, 9)
             hb = h.detach().cpu().numpy()[keep]
-            px_p.append(pk.detach().cpu().numpy()[keep][hb][::7])
+            px_p.append(dec_p.detach().cpu().numpy()[keep][hb][::7])
             px_lam.append(lam.detach().cpu().numpy()[keep][hb][::7])
+            px_ldec.append(dec_l.detach().cpu().numpy()[keep][hb][::7])
             px_res.append((c - lam).detach().cpu().numpy()[keep][hb][::7])
 
             # c0 = mean - var over the half of the valid pixels with the
@@ -245,7 +258,8 @@ def score(model, loader, device, n_batches, want):
         return None
     return (tuple(np.concatenate(v) for v in (logp, chi2, bias, npx, dd))
             + (np.concatenate(px_p), np.concatenate(px_lam),
-               np.concatenate(px_res), np.concatenate(ped),
+               np.concatenate(px_res), np.concatenate(px_ldec),
+               np.concatenate(ped),
                np.concatenate(pos_x), np.concatenate(pos_y),
                np.concatenate(img_id)))
 
@@ -305,22 +319,18 @@ def shape_of_misfit(pk, res, n_bins: int = 10) -> list[dict]:
     """
     import numpy as np
 
-    edges = np.quantile(pk, np.linspace(0, 1, n_bins + 1))
-    edges[-1] += 1e-9
-    idx = np.clip(np.digitize(pk, edges) - 1, 0, n_bins - 1)
     rows = []
-    for k in range(n_bins):
-        m = idx == k
+    for k in range(10):
+        m = pk == k
         if m.sum() < 50:
             continue
-        rows.append({"bin": k, "p_over_pmax": float(np.median(pk[m])),
-                     "n": int(m.sum()),
+        rows.append({"bin": k, "profile_decile": k, "n": int(m.sum()),
                      "resid": float(np.mean(res[m])),
                      "resid_med": float(np.median(res[m]))})
     return rows
 
 
-def noise_model(lam, res, n_bins: int = 12) -> dict:
+def noise_model(lam, res, ldec=None, n_bins: int = 12) -> dict:
     """Fit `Var(c) = a * rate + b` from the held-out residuals.
 
     Poisson is `a = 1, b = 0`. A detector that stores `g` units per photon
@@ -336,7 +346,18 @@ def noise_model(lam, res, n_bins: int = 12) -> dict:
     """
     import numpy as np
 
-    edges = np.quantile(lam, np.linspace(0, 1, n_bins + 1))
+    # LOG-SPACED in the rate, not quantiles and not ranks. Quantile edges
+    # put every bin at 10.5 ADU, because that is what nine pixels in ten
+    # are, and a within-shoebox rank decile lumps the whole peak -- 20 to
+    # 1000 ADU -- into one bin, where the median rate and the median
+    # squared residual no longer describe the same pixels. Fixed log bins
+    # give the bright end its own resolution, which is the only place the
+    # slope is identifiable at all.
+    lo = max(float(np.nanmin(lam)), 1e-3)
+    hi = float(np.nanmax(lam))
+    if not np.isfinite(hi) or hi <= lo * 1.01:
+        return {"a": float("nan"), "b": float("nan"), "bins": []}
+    edges = np.logspace(np.log10(lo), np.log10(hi), n_bins + 1)
     edges[-1] += 1e-9
     idx = np.clip(np.digitize(lam, edges) - 1, 0, n_bins - 1)
     x, y, rows = [], [], []
@@ -352,7 +373,13 @@ def noise_model(lam, res, n_bins: int = 12) -> dict:
                      "n": int(m.sum())})
     if len(x) < 3:
         return {"a": float("nan"), "b": float("nan"), "bins": rows}
-    a, b = np.polyfit(np.asarray(x), np.asarray(y), 1)
+    x, y = np.asarray(x), np.asarray(y)
+    # each bin's median squared residual has relative error ~sqrt(2/n), so
+    # the fit is weighted by sqrt(n); without it the sparse bright bins,
+    # which carry the whole lever arm, are fitted as loosely as the
+    # background ones that carry none
+    wt = np.sqrt([r["n"] for r in rows])
+    a, b = np.polyfit(x, y, 1, w=wt)
     return {"a": float(a), "b": float(b), "bins": rows}
 
 
@@ -404,13 +431,13 @@ def main() -> int:
         if got is None:
             print(f"  {arm}: nothing scored")
             continue
-        (lp, c2, bi, npx, d, pk, lam_px, res_px,
+        (lp, c2, bi, npx, d, pk, lam_px, res_px, ldec_px,
          ped_r, px_x, px_y, px_img) = got
         print(f"  {arm}: pedestal c0 median {np.median(ped_r):.2f} ADU, "
               f"spread {np.std(ped_r):.2f}")
         for r in pedestal_structure(ped_r, px_x, px_y, px_img, d):
             structure.append({"method": arm, **r})
-        nm = noise_model(lam_px, res_px)
+        nm = noise_model(lam_px, res_px, ldec_px)
         print(f"  {arm}: noise model Var = {nm['a']:.3f} rate "
               f"+ {nm['b']:.2f}   (Poisson is 1.000 rate + 0)")
         for r in shape_of_misfit(pk, res_px):
@@ -457,11 +484,11 @@ def main() -> int:
         w2 = max(len(r["method"]) for r in misfit) + 2
         print(f"\nheld-out residual by profile decile "
               f"(p over the shoebox max)\n")
-        print(f"{'arm':<{w2}}{'p/pmax':>9}{'n':>10}{'mean resid':>12}"
+        print(f"{'arm':<{w2}}{'p decile':>10}{'n':>10}{'mean resid':>12}"
               f"{'median':>9}")
         for r in misfit:
             print(f"{r['method'].replace('hewl1118_', ''):<{w2}}"
-                  f"{r['p_over_pmax']:>9.4f}{r['n']:>10d}"
+                  f"{r['profile_decile']:>10d}{r['n']:>10d}"
                   f"{r['resid']:>12.3f}{r['resid_med']:>9.3f}")
     if noise_bins:
         w3 = max(len(r["method"]) for r in noise_bins) + 2
