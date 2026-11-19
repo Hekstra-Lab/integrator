@@ -233,6 +233,18 @@ def _one_point_per_bin(part: pl.DataFrame) -> pl.DataFrame:
 REFERENCE = "laue"
 
 
+def short(name: str) -> str:
+    """The arm without its dataset prefix.
+
+    `tidy_poly` writes `method` as the run directory name, which carries
+    the dataset -- `hewl1118_svae_bg_rb` -- and the dataset is already a
+    column of its own. Ten characters per entry is the difference between
+    a legend that fits the text block and one cut off in the output.
+    """
+    return (str(name).replace("hewl1118_", "").replace("hewl9b7c_", "")
+            .replace("pdz2_", ""))
+
+
 def draw_panel(ax, panel: pl.DataFrame, tool: str, statistic: str, P,
                legend: bool = True) -> bool:
     # `careless.completeness` reports an `overall` row beside its shells. A
@@ -247,7 +259,7 @@ def draw_panel(ax, panel: pl.DataFrame, tool: str, statistic: str, P,
     if column == "epoch" and len(lines) > 1:
         _, ramp = figstyle().epoch_ramp(len(lines))
     prefix = GROUP_PREFIX.get(tool.lower(), "") if column == "group" else ""
-    names = [f"{prefix} {n}".strip() for n, _ in lines]
+    names = [short(f"{prefix} {n}".strip()) for n, _ in lines]
     palette = figstyle().arm_colors(names) if ramp is None else {}
 
     drawn = False
@@ -279,7 +291,10 @@ def draw_panel(ax, panel: pl.DataFrame, tool: str, statistic: str, P,
     resolution_ticks(ax, panel["shell"].to_list(), P)
     ax.set_ylabel(label_for(tool, statistic))
     if legend and ramp is None and any(names):
-        ax.legend(frameon=False)
+        # boxed, like the grid's: the ink theme draws a legend on the page
+        # rather than on a panel, and an unframed one over the data reads
+        # as an annotation of it
+        ax.legend(frameon=True, loc="best")
     return True
 
 
@@ -404,7 +419,7 @@ def draw(df: pl.DataFrame, out_dir: Path, dataset: str, prefix: str) -> int:
         for ax in spare:
             ax.set_visible(False)
         if handles and handles[0]:
-            P.top_legend(*handles, frameon=True)
+            figstyle().top_legend(P, *handles)
     P.finish()
     path = out_dir / f"{prefix}_stats_{slug}"
     figstyle().save(P.fig, path)

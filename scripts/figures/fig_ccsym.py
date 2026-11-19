@@ -273,16 +273,7 @@ def top_legend(P, ax) -> None:
     handles, labels = ax.get_legend_handles_labels()
     if not handles:
         return
-    n = len(labels)
-    for ncols in [n] + [c for c in (3, 2, 1) if c < n]:
-        leg = P.top_legend(handles, labels, frameon=True, ncols=ncols)
-        r = P.fig.canvas.get_renderer()
-        w_pt = leg.get_window_extent(r).width * 72 / P.fig.dpi
-        if w_pt <= P.info["W"]:
-            return
-        leg.remove()
-        P._top_legend = None
-    P.top_legend(handles, labels, frameon=True, ncols=1)
+    figstyle().top_legend(P, handles, labels)
 
 
 def main() -> int:

@@ -82,6 +82,7 @@ __all__ = [
     "active",
     "fit",
     "panels",
+    "top_legend",
     "MAX_SERIES",
     "MAX_SHADES",
     "THEME",
@@ -170,6 +171,30 @@ def panels(layout: str = "1", **kw):
 def fit(fig, width="full", **kw):
     """Size an already-built figure to the active template."""
     return sizing.fit(fig, _ACTIVE, width=width, **kw)
+
+
+def top_legend(P, handles, labels, **kw):
+    """A boxed legend strip above the panels, wrapped to the figure width.
+
+    `Panels.top_legend` puts every entry in one row, which overflows as
+    soon as there are more than three or four: four arms ran 47 pt past
+    the article text block and six ran 146 pt past it, and the overflow is
+    silently cut off in the output rather than raised. This draws the
+    strip, MEASURES it, and gives it another row until it fits, so the one
+    call works at a 243 pt column and at a 1015 pt poster column.
+    """
+    if not handles:
+        return None
+    n = len(labels)
+    for ncols in [n] + [c for c in (4, 3, 2, 1) if c < n]:
+        leg = P.top_legend(handles, labels, frameon=True, ncols=ncols, **kw)
+        w_pt = (leg.get_window_extent(P.fig.canvas.get_renderer()).width
+                * 72 / P.fig.dpi)
+        if w_pt <= P.info["W"]:
+            return leg
+        leg.remove()
+        P._top_legend = None
+    return P.top_legend(handles, labels, frameon=True, ncols=1, **kw)
 
 
 def save(fig, path):
