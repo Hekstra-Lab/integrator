@@ -182,6 +182,20 @@ Anomalous peaks, mean over the ten sulfur sites, go 8.37 / 5.92 / 5.78 posterior
 **The spread across architectures is 0.0086 in R-free under the posterior export and 0.0010 under the RB export.**
 0.0010 is below the 0.005 unseeded-training floor, so under the RB export the three are tied; under the posterior export they are not, and the computed gate appears worst.
 
+Against the `laue.integrate` reference, refined through the SAME chain: the same pinned flag set, the same eff pair, and both cut to 1.70 A, because the reference merges to 1.60 A and refining each to its own limit would let it bring 16% more data to its own R-free.
+
+| arm | R-free | sulfur mean (10 sites) | IOD 204 | IOD 206 |
+|---|---|---|---|---|
+| `laue.integrate`, 1.70 A | 0.1840 | **8.01** | **21.01** | **20.46** |
+| `svae`, posterior | 0.1768 | 8.37 | 20.91 | 18.62 |
+| `svae`, RB | 0.1712 | 6.96 | 18.84 | 14.80 |
+| `svae_bg`, RB | **0.1710** | 7.85 | 19.95 | 18.37 |
+| `svae_conjugate`, RB | 0.1720 | 7.26 | 19.11 | 16.71 |
+
+Every arm beats the reference on R-free, by 0.0072 (`svae` posterior) to 0.0130 (`svae_bg` RB), which clears both the 0.005 unseeded-training floor and the 0.003 refinement floor.
+The reference still leads on the two strong iodine sites by 1.1 and 2.1 sigma, and the sulfur mean is a tie within the site-to-site spread, 8.01 against 7.85.
+This is the trade already recorded above at 1440 frames, now measured on a matched domain with a pinned flag set: the model wins the R factor and ties or slightly trails the anomalous peak.
+
 The effect is entirely in the weak data.
 Rsplit by shell, mean over the three cross-validation repeats:
 
