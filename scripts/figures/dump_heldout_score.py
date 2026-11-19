@@ -138,6 +138,9 @@ def score(model, loader, device, n_batches, want):
     # not the reflection: the residual against the profile value it sits
     # on, and the squared residual against the rate
     px_p, px_lam, px_res = [], [], []
+    # the per-reflection pedestal and where on the detector it came from,
+    # so its structure can be seen rather than assumed
+    ped, pos_x, pos_y, img_id = [], [], [], []
     with torch.no_grad():
         for i, batch in enumerate(loader):
             if i >= n_batches:
@@ -211,6 +214,25 @@ def score(model, loader, device, n_batches, want):
             px_lam.append(lam.detach().cpu().numpy()[keep][hb][::7])
             px_res.append((c - lam).detach().cpu().numpy()[keep][hb][::7])
 
+            # c0 = mean - var over the half of the valid pixels with the
+            # lowest profile, which is this shoebox's own background. No
+            # detector constant and no bias frame: for a background pixel
+            # `mean = c0 + N` and `var = N`.
+            pb = torch.where(reduced.bool(), pr,
+                             torch.full_like(pr, float("inf")))
+            thr = pb.quantile(0.5, dim=-1, keepdim=True)
+            bsel = ((pb <= thr) & reduced.bool()).to(c.dtype)
+            nb = bsel.sum(-1, keepdim=True).clamp_min(2.0)
+            mu_b = (c * bsel).sum(-1, keepdim=True) / nb
+            var_b = (((c - mu_b) ** 2) * bsel).sum(-1, keepdim=True) / (nb - 1)
+            ped.append((mu_b - var_b).reshape(-1)[sel].detach().cpu().numpy())
+            for key, store in (("xyzcal.px.0", pos_x), ("xyzcal.px.1", pos_y),
+                               ("BATCH", img_id)):
+                v = metadata.get(key)
+                store.append(v.detach().float().cpu().numpy()[keep]
+                             if v is not None
+                             else np.full(int(sel.sum().item()), np.nan))
+
             logp.append((ll.sum(-1) / n)[sel].detach().cpu().numpy())
             chi2.append((pearson.sum(-1) / n)[sel].detach().cpu().numpy())
             bias.append((resid.sum(-1) / n)[sel].detach().cpu().numpy())
@@ -223,7 +245,47 @@ def score(model, loader, device, n_batches, want):
         return None
     return (tuple(np.concatenate(v) for v in (logp, chi2, bias, npx, dd))
             + (np.concatenate(px_p), np.concatenate(px_lam),
-               np.concatenate(px_res)))
+               np.concatenate(px_res), np.concatenate(ped),
+               np.concatenate(pos_x), np.concatenate(pos_y),
+               np.concatenate(img_id)))
+
+
+def pedestal_structure(ped, x, y, img, d, n_bins: int = 6) -> list[dict]:
+    """Does the pedestal vary, and with what?
+
+    A multi-panel detector reads each module through its own electronics,
+    so the offset can differ by panel; it also drifts with temperature
+    over a run, and it has no reason to depend on the reflection. Binning
+    `c0` by detector x, detector y, image and resolution says which of
+    those is true here. If it is flat in all four, one constant would do;
+    if it steps with x or y, the panels differ; if it drifts with image,
+    a per-image value is needed. The per-reflection estimator is correct
+    under all of them, so this is for understanding and not for a fix.
+    """
+    import numpy as np
+
+    out = []
+    for name, v in (("detector x", x), ("detector y", y),
+                    ("image", img), ("resolution", d)):
+        if v is None or not np.isfinite(v).any():
+            continue
+        good = np.isfinite(v) & np.isfinite(ped)
+        if good.sum() < 200:
+            continue
+        vv, pp = v[good], ped[good]
+        edges = np.quantile(vv, np.linspace(0, 1, n_bins + 1))
+        edges[-1] += 1e-9
+        idx = np.clip(np.digitize(vv, edges) - 1, 0, n_bins - 1)
+        for k in range(n_bins):
+            m = idx == k
+            if m.sum() < 30:
+                continue
+            out.append({"against": name, "bin": k,
+                        "value": float(np.median(vv[m])),
+                        "n": int(m.sum()),
+                        "pedestal": float(np.median(pp[m])),
+                        "spread": float(np.std(pp[m]))})
+    return out
 
 
 def shape_of_misfit(pk, res, n_bins: int = 10) -> list[dict]:
@@ -316,7 +378,7 @@ def main() -> int:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"holding out {HOLDOUT:.0%} of the valid pixels, keyed by refl_id")
 
-    rows, misfit, noise, noise_bins = [], [], [], []
+    rows, misfit, noise, noise_bins, structure = [], [], [], [], []
     for run in runs:
         arm = os.path.basename(run.rstrip("/"))
         cfg_path = os.path.join(run, "config_log.yaml")
@@ -342,7 +404,12 @@ def main() -> int:
         if got is None:
             print(f"  {arm}: nothing scored")
             continue
-        lp, c2, bi, npx, d, pk, lam_px, res_px = got
+        (lp, c2, bi, npx, d, pk, lam_px, res_px,
+         ped_r, px_x, px_y, px_img) = got
+        print(f"  {arm}: pedestal c0 median {np.median(ped_r):.2f} ADU, "
+              f"spread {np.std(ped_r):.2f}")
+        for r in pedestal_structure(ped_r, px_x, px_y, px_img, d):
+            structure.append({"method": arm, **r})
         nm = noise_model(lam_px, res_px)
         print(f"  {arm}: noise model Var = {nm['a']:.3f} rate "
               f"+ {nm['b']:.2f}   (Poisson is 1.000 rate + 0)")
@@ -418,10 +485,21 @@ def main() -> int:
             w.writerows(recs)
         print(f"{path}: {len(recs)} rows")
 
+    if structure:
+        w4 = max(len(r["method"]) for r in structure) + 2
+        print("\npedestal c0 against where it came from\n")
+        print(f"{'arm':<{w4}}{'against':<13}{'value':>12}{'n':>9}"
+              f"{'c0':>8}{'spread':>9}")
+        for r in structure:
+            print(f"{r['method'].replace('hewl1118_', ''):<{w4}}"
+                  f"{r['against']:<13}{r['value']:>12.1f}{r['n']:>9d}"
+                  f"{r['pedestal']:>8.2f}{r['spread']:>9.2f}")
+
     write(out_path, rows)
     base = out_path.rsplit(".csv", 1)[0]
     write(f"{base}_misfit.csv", misfit)
     write(f"{base}_noise.csv", noise_bins)
+    write(f"{base}_pedestal.csv", structure)
     return 0
 
 

@@ -70,6 +70,8 @@ def rao_blackwellized_intensity(
     gate_half_signal: float | None = None,
     noise_a: float = 1.0,
     noise_b: float = 0.0,
+    pedestal: str = "none",
+    pedestal_frac: float = 0.5,
 ) -> dict[str, Tensor]:
     """Profile-fit intensity with the profile's own uncertainty propagated into sigma.
 
@@ -109,6 +111,27 @@ def rao_blackwellized_intensity(
             sub-Poisson residual means. On hewl_1118 the held-out chi-square per
             pixel is 0.24 at high resolution, so the Poisson weights there are
             about four times too cautious.
+        pedestal: `"per_reflection"` estimates an additive offset carrying no
+            photons from each shoebox's OWN background pixels and subtracts it
+            from the rate before the variance is formed, so
+            `Var = a * (rate - c0) + b`. `"none"` is the default and leaves
+            `c0 = 0`. For background pixels `mean = c0 + N` and `var = N`, so
+            `c0 = mean - var` with nothing else needed -- no detector constant,
+            no bias frame, no fit. Being local to one shoebox it is already the
+            right panel, the right image and the right local regime, which
+            matters because a multi-panel detector reads out each module with
+            its own offset and the offset drifts with temperature.
+
+            On hewl_1118 `c0` is 9.06 ADU against an apparent background of
+            10.5, so a background pixel holds about 1.6 photons and its Poisson
+            variance is overstated sevenfold. Measured across shoeboxes `c0` has
+            spread 0.46 against a counting floor of 0.17, so it is not constant
+            and a single global value leaves about 29% error where this leaves
+            about 12%.
+        pedestal_frac: Fraction of the valid pixels, taken from the lowest mean
+            profile, used as the background sample for `c0`. Profile rather than
+            geometry, because this function sees flat arrays and not the
+            shoebox's shape.
 
     Returns:
         `i_rb` and `var_rb`, plus the two variance components and the gate, each
@@ -123,6 +146,29 @@ def rao_blackwellized_intensity(
         bg = bg.expand_as(pi)
     bg = bg * m
 
+    # An additive offset carrying no photons, from the pixels this shoebox
+    # itself says are background. It enters the VARIANCE only: the mean is
+    # unaffected because `bg` already absorbs it.
+    if pedestal == "per_reflection":
+        pbar = pi.mean(0)
+        big = torch.finfo(pbar.dtype).max
+        pb = torch.where(m > 0, pbar, torch.full_like(pbar, big))
+        thr = pb.quantile(pedestal_frac, dim=-1, keepdim=True)
+        sel = ((pb <= thr) & (m > 0)).to(c.dtype)
+        nb = sel.sum(-1, keepdim=True).clamp_min(2.0)
+        mu_b = (c * sel).sum(-1, keepdim=True) / nb
+        var_b = (((c - mu_b) ** 2) * sel).sum(-1, keepdim=True) / (nb - 1.0)
+        c0 = (mu_b - var_b).clamp_min(0.0)
+    elif pedestal == "none":
+        c0 = torch.zeros_like(c[:, :1])
+    else:
+        raise ValueError(
+            f"pedestal must be 'none' or 'per_reflection'; got {pedestal!r}"
+        )
+
+    def pixel_var(rate_):
+        return (noise_a * (rate_ - c0) + noise_b).clamp_min(eps)
+
     resid = c.unsqueeze(0) - bg
     # a summation start, then reweight; the weights need an intensity to exist
     i_hat = resid.sum(-1).clamp_min(0.0)
@@ -136,7 +182,7 @@ def rao_blackwellized_intensity(
         rate = (i_hat.clamp_min(0.0).unsqueeze(-1) * pi + bg).clamp_min(eps)
         # the optimal weight is the inverse VARIANCE of the pixel, which is
         # the rate only when the counts are Poisson
-        w = m / (noise_a * rate + noise_b).clamp_min(eps)
+        w = m / pixel_var(rate)
         denom = (w * pi * pi).sum(-1).clamp_min(eps)
         i_hat = (w * pi * resid).sum(-1) / denom
 
@@ -145,7 +191,7 @@ def rao_blackwellized_intensity(
     # the rate clamped they overstate it by ~1/eps, which would hand careless a
     # weak observation with sigma ~0.01 against an honest ~3.
     rate = (i_hat.clamp_min(0.0).unsqueeze(-1) * pi + bg).clamp_min(eps)
-    inv = m / (noise_a * rate + noise_b).clamp_min(eps)
+    inv = m / pixel_var(rate)
     f_ii = (inv * pi * pi).sum(-1)
     f_ib = (inv * pi).sum(-1)
     f_bb = (inv).sum(-1).clamp_min(eps)
@@ -167,6 +213,7 @@ def rao_blackwellized_intensity(
         "var_rb_cond": var_cond,
         "var_rb_profile": var_profile,
         "rb_gate": gate,
+        "rb_pedestal": c0.reshape(-1),
     }
 
 def _assemble_outputs(

@@ -174,3 +174,76 @@ def test_read_noise_floors_the_variance_on_empty_pixels():
     floored = rao_blackwellized_intensity(counts, mask, prof, bg,
                                           noise_b=25.0)
     assert (floored["var_rb_cond"] > base["var_rb_cond"]).all()
+
+
+def test_pedestal_default_is_off_and_bit_identical():
+    """`pedestal="none"` must reproduce the previous export exactly."""
+    counts, mask, pi, _, b_true = _shoeboxes(n=48)
+    prof = pi.expand(5, 48, -1)
+    bg = torch.full((5, 48, 1), b_true)
+    base = rao_blackwellized_intensity(counts, mask, prof, bg)
+    same = rao_blackwellized_intensity(counts, mask, prof, bg,
+                                       pedestal="none")
+    for k in base:
+        assert torch.equal(base[k], same[k]), k
+    assert (base["rb_pedestal"] == 0).all()
+
+
+def test_pedestal_is_recovered_from_a_shoebox_that_has_one():
+    """An offset carrying no photons comes back as `c0 = mean - var`.
+
+    Built so the answer is known: the background is `c0 + Poisson(rate)`,
+    so a correct estimator returns `c0` whatever `c0` is, and the signal
+    pixels must not drag it.
+    """
+    torch.manual_seed(0)
+    n, npx, c0, bg_rate = 64, 625, 9.0, 1.6
+    pi = torch.zeros(n, npx)
+    centre = npx // 2
+    pi[:, centre - 13:centre + 13] = 1.0
+    pi = pi / pi.sum(-1, keepdim=True)
+    counts = (torch.poisson(torch.full((n, npx), bg_rate)) + c0
+              + torch.poisson(400.0 * pi))
+    mask = torch.ones(n, npx)
+    prof = pi.unsqueeze(0).expand(3, n, -1)
+    bg = torch.full((3, n, 1), c0 + bg_rate)
+
+    out = rao_blackwellized_intensity(counts, mask, prof, bg,
+                                      pedestal="per_reflection")
+    got = out["rb_pedestal"]
+    assert abs(float(got.median()) - c0) < 0.6, float(got.median())
+
+
+def test_the_pedestal_sharpens_sigma_because_the_pixels_are_quieter():
+    """Removing an offset that carries no photons lowers the variance.
+
+    This is the whole point: a background pixel reading 10.5 ADU on a
+    9 ADU pedestal holds 1.5 photons, not 10.5, so it is seven times less
+    noisy than Poisson-on-ADU claims and carries seven times the weight.
+    """
+    torch.manual_seed(1)
+    n, npx, c0 = 64, 625, 9.0
+    pi = torch.zeros(n, npx)
+    centre = npx // 2
+    pi[:, centre - 13:centre + 13] = 1.0
+    pi = pi / pi.sum(-1, keepdim=True)
+    counts = (torch.poisson(torch.full((n, npx), 1.6)) + c0
+              + torch.poisson(400.0 * pi))
+    mask = torch.ones(n, npx)
+    prof = pi.unsqueeze(0).expand(3, n, -1)
+    bg = torch.full((3, n, 1), c0 + 1.6)
+
+    plain = rao_blackwellized_intensity(counts, mask, prof, bg)
+    ped = rao_blackwellized_intensity(counts, mask, prof, bg,
+                                      pedestal="per_reflection")
+    assert (ped["var_rb_cond"] < plain["var_rb_cond"]).all()
+    assert torch.isfinite(ped["var_rb"]).all()
+    assert (ped["var_rb"] > 0).all()
+
+
+def test_pedestal_rejects_an_unknown_mode():
+    counts, mask, pi, _, b_true = _shoeboxes(n=8)
+    prof = pi.expand(2, 8, -1)
+    bg = torch.full((2, 8, 1), b_true)
+    with pytest.raises(ValueError, match="pedestal must be"):
+        rao_blackwellized_intensity(counts, mask, prof, bg, pedestal="auto")

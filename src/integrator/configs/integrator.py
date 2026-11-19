@@ -25,6 +25,10 @@ class IntegratorCfg:
             are Poisson, so an existing run exports what it always did. Fit them
             with `scripts/figures/dump_heldout_score.py`, which regresses the
             held-out squared residual on the rate.
+        rb_pedestal: `"per_reflection"` subtracts an additive offset carrying no
+            photons, estimated from each shoebox's own background pixels, from the
+            rate before the variance is formed. Default `"none"` leaves the export
+            as it was. See `rao_blackwellized_intensity`.
         rb_gate_half_signal: Signal photons at which the profile-uncertainty term of
             the Rao-Blackwellized sigma is half-weighted. `None` applies it in full.
             Only consulted when an `i_rb`/`var_rb` column is requested; the term is
@@ -244,6 +248,7 @@ class IntegratorCfg:
     rb_gate_half_signal: float | None = None
     rb_noise_a: float = 1.0
     rb_noise_b: float = 0.0
+    rb_pedestal: Literal["none", "per_reflection"] = "none"
     profile_coord_channels: bool = False
     """Give the profile encoder two extra channels holding each pixel's offset
     in the beam-centred radial/tangential frame. A conv encoder is translation

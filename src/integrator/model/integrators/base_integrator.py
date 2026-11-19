@@ -26,6 +26,7 @@ _RAO_BLACKWELL_KEYS = (
     "var_rb",
     "var_rb_cond",
     "var_rb_profile",
+    "rb_pedestal",
     "rb_gate",
 )
 
@@ -173,6 +174,7 @@ class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
         self.rb_gate_half_signal = cfg.rb_gate_half_signal
         self.rb_noise_a = cfg.rb_noise_a
         self.rb_noise_b = cfg.rb_noise_b
+        self.rb_pedestal = cfg.rb_pedestal
         self.profile_coord_channels = getattr(
             cfg, "profile_coord_channels", False
         )
@@ -543,6 +545,7 @@ class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
                 gate_half_signal=self.rb_gate_half_signal,
                 noise_a=getattr(self, "rb_noise_a", 1.0),
                 noise_b=getattr(self, "rb_noise_b", 0.0),
+                pedestal=getattr(self, "rb_pedestal", "none"),
             )
         )
 
