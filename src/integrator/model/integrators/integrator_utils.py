@@ -158,6 +158,16 @@ def rao_blackwellized_intensity(
         nb = sel.sum(-1, keepdim=True).clamp_min(2.0)
         mu_b = (c * sel).sum(-1, keepdim=True) / nb
         var_b = (((c - mu_b) ** 2) * sel).sum(-1, keepdim=True) / (nb - 1.0)
+        # `c0 <= mu_b` holds by construction since `var_b >= 0`. What it does
+        # NOT survive is a profile flat enough that the low-profile half is
+        # not background at all, which is where the measured spread of 45 ADU
+        # around a median of 9.04 comes from. Bounding by the smallest count
+        # in the box was tried and is WRONG: about 4% of background pixels
+        # read below the offset, so there is Gaussian read noise and a stored
+        # value is not bounded below by the pedestal. On hewl_1118 the global
+        # value is flat across the detector -- 8.77 to 9.25 over six bins in x
+        # and y -- so `rb_noise_b` with a fitted constant is the safer choice
+        # until the tail is understood.
         c0 = (mu_b - var_b).clamp_min(0.0)
     elif pedestal == "none":
         c0 = torch.zeros_like(c[:, :1])
