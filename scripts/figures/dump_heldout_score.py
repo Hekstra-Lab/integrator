@@ -241,6 +241,8 @@ def shape_of_misfit(pk, res, n_bins: int = 10) -> list[dict]:
     shoebox, so a decile means the same thing in a bright reflection and
     a weak one.
     """
+    import numpy as np
+
     edges = np.quantile(pk, np.linspace(0, 1, n_bins + 1))
     edges[-1] += 1e-9
     idx = np.clip(np.digitize(pk, edges) - 1, 0, n_bins - 1)
@@ -270,6 +272,8 @@ def noise_model(lam, res, n_bins: int = 12) -> dict:
     0.4549 of its variance for a normal, so the bin medians are rescaled
     by that factor before the straight line is fitted.
     """
+    import numpy as np
+
     edges = np.quantile(lam, np.linspace(0, 1, n_bins + 1))
     edges[-1] += 1e-9
     idx = np.clip(np.digitize(lam, edges) - 1, 0, n_bins - 1)
