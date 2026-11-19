@@ -102,6 +102,9 @@ def parse_args():
                         "the default draws a panel for each present")
     p.add_argument("--dataset", default=None,
                    help="draw only this dataset (default: each one)")
+    p.add_argument("--template", default=None,
+                   help="figTeX template to size for (article, paper, book, "
+                        "slides, poster); default is figstyle's")
     p.add_argument("--prefix", default="careless",
                    help="stem of the written figures")
     return p.parse_args()
@@ -121,7 +124,7 @@ def shell_axis(labels) -> list[float]:
     return out
 
 
-def resolution_ticks(ax, labels) -> None:
+def resolution_ticks(ax, labels, P) -> None:
     """One tick per DISPLAYED resolution, not per shell label.
 
     The arms do not share a binning: careless rounds each run's own bin
@@ -135,28 +138,41 @@ def resolution_ticks(ax, labels) -> None:
     is also the honest thing to show: the axis can only claim the
     precision it prints.
     """
-    seen, ticks, names = set(), [], []
+    ds = []
     for text in labels:
         span = metrics.d_range_from_label(text)
         if not span:
             continue
-        d = metrics.shell_midpoint(*span)
-        name = f"{d:.2f}"
-        if name in seen:
-            continue
-        seen.add(name)
-        ticks.append(1.0 / d**2)
-        names.append(name)
-    if not ticks:
+        ds.append(metrics.shell_midpoint(*span))
+    ds = _merge_close(sorted(ds, reverse=True))
+    if not ds:
         return
-    order = sorted(range(len(ticks)), key=lambda i: ticks[i])
-    ticks = [ticks[i] for i in order]
-    names = [names[i] for i in order]
-    step = max(1, len(ticks) // 8)  # a dense binning would crowd the axis
-    ax.set_xticks(ticks[::step])
-    ax.set_xticklabels(names[::step], rotation=55, ha="right")
+    figstyle().parts.shell_axis(ax, P, [1.0 / d**2 for d in ds], ds)
     ax.set_xlabel(r"resolution (\AA)")
     ax.grid(axis="x", visible=False)
+
+
+def _merge_close(ds: list[float], tol: float = 0.02) -> list[float]:
+    """Collapse shells the arms binned a hair apart into one tick.
+
+    Deduplicating on the PRINTED midpoint was not enough: the arms' first
+    shell comes back as 5.29 and 5.27 A, 0.38% apart, which are two ticks
+    with two labels drawn almost on top of each other -- the doubled, bold
+    "5.29" in the CC-half and R-split panels. They are the same shell;
+    careless rounds each run's own bin edges and the runs differ in the
+    second decimal.
+
+    Two midpoints within `tol` of each other (relative) are averaged, so
+    one tick is drawn where there is one shell. The next real gap in this
+    data is 5.27 to 3.32, a factor of 1.6, so nothing distinct is merged.
+    """
+    out: list[list[float]] = []
+    for d in ds:
+        if out and abs(d - out[-1][-1]) <= tol * max(d, out[-1][-1]):
+            out[-1].append(d)
+        else:
+            out.append([d])
+    return [sum(g) / len(g) for g in out]
 
 
 # What a `group` value means, for the legend. careless splits cchalf,
@@ -210,7 +226,14 @@ def _one_point_per_bin(part: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def draw_panel(ax, panel: pl.DataFrame, tool: str, statistic: str,
+# the arm that is the reference integrator rather than a model arm. It is
+# drawn as the reference -- vermilion, dashed, on top -- as in `fig_ccsym`,
+# instead of taking the next categorical colour, which made it green and
+# indistinguishable from a model arm.
+REFERENCE = "laue"
+
+
+def draw_panel(ax, panel: pl.DataFrame, tool: str, statistic: str, P,
                legend: bool = True) -> bool:
     # `careless.completeness` reports an `overall` row beside its shells. A
     # number over every reflection has no position on a resolution axis, so
@@ -240,15 +263,20 @@ def draw_panel(ax, panel: pl.DataFrame, tool: str, statistic: str,
         if not y:
             continue
         x = shell_axis(part["shell"].to_list())
-        colour = ramp[i] if ramp is not None else palette.get(names[i])
+        is_ref = ramp is None and str(names[i]).strip() == REFERENCE
+        colour = (figstyle().reference_style()["color"] if is_ref else
+                  ramp[i] if ramp is not None else palette.get(names[i]))
         if "lo" in part.columns and part["lo"].ne(part["hi"]).any():
             ax.fill_between(x, part["lo"], part["hi"], color=colour,
                             alpha=0.15, linewidth=0)
-        ax.plot(x, y, lw=0.9, color=colour, label=names[i] or None)
+        if is_ref:
+            figstyle().parts.reference(ax, x, y, label=names[i] or None)
+        else:
+            ax.plot(x, y, lw=0.9, color=colour, label=names[i] or None)
         drawn = True
     if not drawn:
         return False
-    resolution_ticks(ax, panel["shell"].to_list())
+    resolution_ticks(ax, panel["shell"].to_list(), P)
     ax.set_ylabel(label_for(tool, statistic))
     if legend and ramp is None and any(names):
         ax.legend(frameon=False)
@@ -316,29 +344,35 @@ def draw(df: pl.DataFrame, out_dir: Path, dataset: str, prefix: str) -> int:
 
     # one panel per statistic, each its own figure
     for tool, statistic, panel in panels:
-        fig, ax = plt.subplots(
-            figsize=figstyle().figsize("half", aspect=0.85),
-            layout="constrained")
-        if draw_panel(ax, panel, tool, statistic):
+        P = figstyle().panels("1", column=True)
+        ax, fig = P.axs, None
+        if draw_panel(ax, panel, tool, statistic, P):
             # `careless.completeness` reports three statistics -- all,
             # anomalous and non-anomalous -- from one tool, so naming the
             # file after the tool alone wrote three panels to one path and
             # kept whichever was drawn last
+            P.finish()
             path = out_dir / f"{prefix}_{_panel_slug(tool, statistic)}_{slug}"
-            figstyle().save(fig, path)
+            figstyle().save(P.fig, path)
             logger.info("Saved %s", path)
             written += 1
-        plt.close(fig)
+        plt.close(P.fig)
 
     # and the grid, which is the reported figure
     n = len(panels)
     cols = 2 if n > 1 else 1
     rows = (n + cols - 1) // cols
-    fig, axes = plt.subplots(
-        rows, cols,
-        figsize=figstyle().figsize("full", aspect=0.42 * rows),
-        layout="constrained", squeeze=False)
-    flat = axes.ravel()
+    # Each panel is a DIFFERENT statistic, so neither axis is shared:
+    # `panels` shares both by default once there is more than one row, and
+    # that put CC-half, R-split and completeness on I/sigma's 0-110 scale,
+    # where all three are flat lines along the bottom. careless also bins
+    # each tool separately -- isigi defaults to 20 shells, the rest to
+    # 10 -- so position 5 is a different resolution in different panels and
+    # x cannot be shared either.
+    P = figstyle().panels(f"{rows}x{cols}", shared=False)
+    import numpy as np
+
+    flat = list(np.ravel(np.asarray(P.axs, dtype=object)))
     handles = None
     for i, (tool, statistic, panel) in enumerate(panels):
         # the axis furniture is written once, not once per panel: every
@@ -347,19 +381,35 @@ def draw(df: pl.DataFrame, out_dir: Path, dataset: str, prefix: str) -> int:
         # LABELS stay on every panel, because careless bins each tool
         # separately -- isigi defaults to 20 shells and the rest to 10 --
         # so position 5 is a different resolution in different panels.
-        if draw_panel(flat[i], panel, tool, statistic, legend=False):
+        if draw_panel(flat[i], panel, tool, statistic, P, legend=False):
             if handles is None:
                 handles = flat[i].get_legend_handles_labels()
+            P.head(flat[i], i, label_for(tool, statistic))
         if i < n - cols:
             flat[i].set_xlabel("")
-    for ax in flat[n:]:
-        ax.set_visible(False)
-    if handles and handles[0]:
-        flat[0].legend(*handles, frameon=False)
+    # The legend goes in the leftover cell rather than on top of panel 1.
+    # With five statistics in a 3x2 grid the sixth cell is empty, and a
+    # legend drawn there is both off the data and larger than one squeezed
+    # into a panel corner. The cell keeps its axes object so the grid
+    # stays rectangular; only its frame and ticks come off.
+    spare = flat[n:]
+    if handles and handles[0] and spare:
+        cell = spare[0]
+        cell.set_axis_off()
+        cell.legend(*handles, loc="center", frameon=True,
+                    ncols=1 if len(handles[1]) <= 6 else 2)
+        for ax in spare[1:]:
+            ax.set_visible(False)
+    else:
+        for ax in spare:
+            ax.set_visible(False)
+        if handles and handles[0]:
+            P.top_legend(*handles, frameon=True)
+    P.finish()
     path = out_dir / f"{prefix}_stats_{slug}"
-    figstyle().save(fig, path)
+    figstyle().save(P.fig, path)
     logger.info("Saved %s (%d panels)", path, n)
-    plt.close(fig)
+    plt.close(P.fig)
     return written + 1
 
 
@@ -370,7 +420,10 @@ def main() -> int:
             f"no {args.data}; the polychromatic `stats` step writes it "
             "(scripts/poly/run_pipeline.py --steps stats)"
         )
-    figstyle().use()
+    if args.template:
+        figstyle().use(args.template)
+    else:
+        figstyle().use()
     df = pl.read_csv(args.data, infer_schema_length=None)
     missing = {"tool", "statistic", "value", "shell"} - set(df.columns)
     if missing:

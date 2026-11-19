@@ -79,6 +79,9 @@ def parse_args():
     p.add_argument("--dataset", default=None,
                    help="draw only this dataset (default: each one)")
     p.add_argument("--prefix", default="ccsym")
+    p.add_argument("--template", default=None,
+                   help="figTeX template to size for (article, paper, book, "
+                        "slides, poster); default is figstyle's")
     return p.parse_args()
 
 
@@ -114,8 +117,16 @@ def shell_axis(frame: pl.DataFrame) -> list[float]:
     return out
 
 
-def resolution_ticks(ax, frame: pl.DataFrame) -> None:
-    seen, ticks, names = set(), [], []
+def resolution_ticks(ax, frame: pl.DataFrame, P) -> None:
+    """Shell labels in d, horizontal, thinned to the panel's width.
+
+    `parts.shell_axis` keeps a minor tick at every shell and labels only as
+    many as the size model says fit side by side, so nothing is rotated.
+    Rotated labels were costing about a line and a half of panel height and
+    are unreadable at slide size; a thinned horizontal axis reads at every
+    template.
+    """
+    seen, s2, ds = set(), [], []
     for d_max, d_min in zip(frame["d_max"], frame["d_min"], strict=True):
         key = (d_max, d_min)
         if key in seen:
@@ -125,21 +136,19 @@ def resolution_ticks(ax, frame: pl.DataFrame) -> None:
         except (TypeError, ValueError):
             continue
         seen.add(key)
-        ticks.append(1.0 / d**2)
-        names.append(f"{d:.2f}")
-    if not ticks:
+        s2.append(1.0 / d**2)
+        ds.append(d)
+    if not s2:
         return
-    order = sorted(range(len(ticks)), key=lambda i: ticks[i])
-    ticks = [ticks[i] for i in order]
-    names = [names[i] for i in order]
-    step = max(1, len(ticks) // 6)
-    ax.set_xticks(ticks[::step])
-    ax.set_xticklabels(names[::step], rotation=55, ha="right")
+    order = sorted(range(len(s2)), key=lambda i: s2[i])
+    figstyle().parts.shell_axis(ax, P, [s2[i] for i in order],
+                               [ds[i] for i in order])
     ax.set_xlabel(r"resolution (\AA)")
     ax.grid(axis="x", visible=False)
 
 
-def draw_panel(ax, panel: pl.DataFrame, arms: list[str], palette: dict) -> bool:
+def draw_panel(ax, panel: pl.DataFrame, arms: list[str], palette: dict,
+               P) -> bool:
     """One delay: the mean over repeats per arm, with the repeat spread."""
     drawn = False
     for arm in arms:
@@ -158,19 +167,24 @@ def draw_panel(ax, panel: pl.DataFrame, arms: list[str], palette: dict) -> bool:
             .sort("bin")
         )
         x = shell_axis(by_bin)
-        # `reference_style` carries its own colour, width and z-order, so it
-        # is merged over the defaults rather than passed alongside them
-        style = {"lw": 1.0, "color": palette.get(arm)}
+        # the reference is drawn by `parts.reference`, which carries the
+        # vermilion, the dash and the z-order that mark a reference in
+        # every other figure; a model arm takes its own colour
         if arm == REFERENCE:
-            style.update(figstyle().reference_style())
-        ax.fill_between(x, by_bin["lo"], by_bin["hi"],
-                        color=style["color"], alpha=0.15, linewidth=0)
-        ax.plot(x, by_bin["mean"], label=arm, **style)
+            band = figstyle().reference_style()["color"]
+            ax.fill_between(x, by_bin["lo"], by_bin["hi"],
+                            color=band, alpha=0.15, linewidth=0)
+            figstyle().parts.reference(ax, x, by_bin["mean"], label=arm)
+        else:
+            color = palette.get(arm)
+            ax.fill_between(x, by_bin["lo"], by_bin["hi"],
+                            color=color, alpha=0.15, linewidth=0)
+            ax.plot(x, by_bin["mean"], label=arm, lw=1.0, color=color)
         drawn = True
     if not drawn:
         return False
     ax.axhline(0.0, lw=0.5, color="0.6", zorder=0)
-    resolution_ticks(ax, panel.sort("bin"))
+    resolution_ticks(ax, panel.sort("bin"), P)
     ax.set_ylabel(r"$\mathrm{CC}_\mathrm{sym}$ (Spearman)")
     return True
 
@@ -186,49 +200,89 @@ def draw(df: pl.DataFrame, out_dir: Path, dataset: str, prefix: str) -> int:
     slug = str(dataset).replace(" ", "_")
     written = 0
 
+    # one panel per delay, sized to a single figure in the template: a
+    # column where the template has columns, the text block where it does
+    # not. `panels` reads the template's own geometry, which `figsize` on
+    # figTeX's journal path does not.
     for delay in delays:
         panel = df.filter(pl.col("delay") == delay)
-        fig, ax = plt.subplots(
-            figsize=figstyle().figsize("half", aspect=0.85),
-            layout="constrained")
-        if draw_panel(ax, panel, arms, dict(palette)):
-            ax.set_title(TITLES.get(delay, delay))
-            ax.legend(frameon=False)
+        P = figstyle().panels("1", column=True)
+        ax = P.axs
+        if draw_panel(ax, panel, arms, dict(palette), P):
+            P.head(ax, 0, TITLES.get(delay, delay))
+            top_legend(P, ax)
+            P.finish()
             path = out_dir / f"{prefix}_{delay}_{slug}"
-            figstyle().save(fig, path)
+            figstyle().save(P.fig, path)
             logger.info("Saved %s", path)
             written += 1
-        plt.close(fig)
+        plt.close(P.fig)
 
     # the reported figure: every delay on one grid, a shared y-axis so the
     # off panel can be read against the others rather than rescaled to fill
     n = len(delays)
     cols = 2 if n > 1 else 1
     rows = (n + cols - 1) // cols
-    fig, axes = plt.subplots(
-        rows, cols, sharey=True,
-        figsize=figstyle().figsize("full", aspect=0.42 * rows),
-        layout="constrained", squeeze=False)
-    flat = axes.ravel()
+    P = figstyle().panels(f"{rows}x{cols}", shared="y")
+    flat = list(np_ravel(P.axs))
     for i, delay in enumerate(delays):
         if draw_panel(flat[i], df.filter(pl.col("delay") == delay), arms,
-                      dict(palette)):
-            flat[i].set_title(TITLES.get(delay, delay))
+                      dict(palette), P):
+            P.head(flat[i], i, TITLES.get(delay, delay))
         # every panel is the same binning against the same axis, so the x
-        # label goes on the bottom row only; sharey already suppresses the
-        # inner y tick labels, and the y label belongs on the left column
+        # label goes on the bottom row only; the shared y suppresses the
+        # inner y tick numbers, and the y label belongs on the left column
         if i < n - cols:
             flat[i].set_xlabel("")
         if i % cols:
             flat[i].set_ylabel("")
     for ax in flat[n:]:
         ax.set_visible(False)
-    flat[0].legend(frameon=False)
+    # the legend as a strip above the panels rather than inside the first
+    # one: with four arms and a band each it covered the weak end of the
+    # off panel, which is the control and the thing being read
+    top_legend(P, flat[0])
+    P.finish()
     path = out_dir / f"{prefix}_{slug}"
-    figstyle().save(fig, path)
+    figstyle().save(P.fig, path)
     logger.info("Saved %s (%d panels)", path, n)
-    plt.close(fig)
+    plt.close(P.fig)
     return written + 1
+
+
+def np_ravel(axs):
+    """`P.axs` is an array for a grid and a single axes for one panel."""
+    import numpy as np
+
+    return np.ravel(np.asarray(axs, dtype=object))
+
+
+def top_legend(P, ax) -> None:
+    """The arm legend as a boxed strip above the panels.
+
+    Boxed, because the ink theme draws it on the page rather than on a
+    panel and an unframed strip over a title reads as part of the title.
+    `Panels.finish` sets the frame to the spine weight.
+
+    The number of columns is MEASURED rather than set to the number of
+    entries: four arms in one row is 47 pt wider than the article text
+    block and was cut off in the output. The strip is drawn, measured, and
+    given a row more until it fits, so the same call works at 243 pt and
+    at 1015 pt.
+    """
+    handles, labels = ax.get_legend_handles_labels()
+    if not handles:
+        return
+    n = len(labels)
+    for ncols in [n] + [c for c in (3, 2, 1) if c < n]:
+        leg = P.top_legend(handles, labels, frameon=True, ncols=ncols)
+        r = P.fig.canvas.get_renderer()
+        w_pt = leg.get_window_extent(r).width * 72 / P.fig.dpi
+        if w_pt <= P.info["W"]:
+            return
+        leg.remove()
+        P._top_legend = None
+    P.top_legend(handles, labels, frameon=True, ncols=1)
 
 
 def main() -> int:
@@ -239,7 +293,10 @@ def main() -> int:
             "scripts/figures/tidy_pdz2.py, pulled by "
             "`bash scripts/figures/pull_figdata.sh pdz2`"
         )
-    figstyle().use()
+    if args.template:
+        figstyle().use(args.template)
+    else:
+        figstyle().use()
     df = pl.read_csv(args.data, infer_schema_length=None)
     datasets = ([args.dataset] if args.dataset
                 else sorted(df["dataset"].unique().to_list()))

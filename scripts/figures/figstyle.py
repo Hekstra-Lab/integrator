@@ -47,6 +47,19 @@ except ModuleNotFoundError as exc:  # pragma: no cover - a setup message
 
 THEME = "ink"
 LAYOUT = "article"
+# The template the last `use` selected, which is the one every size here is
+# measured against.
+#
+# It has to be remembered on this side because figTeX's own `style.figsize`
+# does not: `style.use(name, theme=...)` records the template in its state
+# but leaves `_STATE["journal"]` at its default, `iucr`, so `style.figsize`
+# returns iucr's 469.76 pt text width whatever template is active. Every
+# PDZ2 figure came out 470 pt wide for that reason -- the article text
+# block is 374 pt, a paper column 243 -- so the figures were sized for a
+# page none of the documents use. `panels` and `fit` below take the
+# template explicitly and go through `figtex.sizing`, which reads the
+# template's own geometry.
+_ACTIVE = LAYOUT
 # Two palettes, and which one a figure wants depends on whether its series
 # are ordered.
 #
@@ -66,6 +79,9 @@ MAX_SHADES = 6
 
 __all__ = [
     "LAYOUT",
+    "active",
+    "fit",
+    "panels",
     "MAX_SERIES",
     "MAX_SHADES",
     "THEME",
@@ -93,13 +109,67 @@ def _fast() -> bool:
 
 def use(layout: str = LAYOUT, fast: bool | None = None):
     """Fonts, sizes and the ink look. Call once, before plotting."""
-    return style.use(layout, theme=THEME,
-                     fast=_fast() if fast is None else fast)
+    global _ACTIVE
+    out = style.use(layout, theme=THEME,
+                    fast=_fast() if fast is None else fast)
+    _ACTIVE = layout
+    return out
+
+
+def active() -> str:
+    """The template `use` last selected."""
+    return _ACTIVE
 
 
 def figsize(width="full", aspect: float = 0.618, column: bool = False):
-    """Inches for a fraction of the document's text width."""
-    return style.figsize(width, aspect=aspect, column=column)
+    """Inches for a fraction of the ACTIVE TEMPLATE's text width.
+
+    Not `style.figsize`, which measures against the default journal rather
+    than the template in force; see `_ACTIVE`. A figure that can be drawn
+    through `panels` should be, because that also sizes the data areas and
+    the gaps; this is for the ones not converted yet.
+    """
+    t = sizing.TEMPLATES[_ACTIVE]
+    frac = _WIDTHS.get(width, width) if isinstance(width, str) else float(width)
+    if t.medium == "slides":
+        base = t.paper_width - 2 * t.slide_margin
+    elif column and t.column:
+        base = t.column
+    else:
+        base = t.text_width
+    w = base * frac / 72.27
+    return (w, w * aspect)
+
+
+# `style.WIDTHS` by name, so `figsize("half")` keeps meaning what it did
+_WIDTHS = {"full": 1.0, "half": 0.5, "third": 1 / 3, "twothirds": 2 / 3,
+           "quarter": 0.25}
+
+
+def panels(layout: str = "1", **kw):
+    """A sized grid for the active template: returns figTeX's `Panels`.
+
+    The template-aware path. `layout` is figTeX's grid spelling ("1",
+    "2x2", ...), and the keywords are `sizing.panels`': `column`, `width`,
+    `shared`, `images`, `legend`, `header`, `caption`, `height`.
+    Call `P.finish()` once everything is drawn, then `save(P.fig, path)`.
+
+    `column=True` asks for one column of a multi-column page and is
+    DROPPED where the template has no columns, because there the text
+    block is the column: `article`, `book`, `slides` and `poster` all
+    carry `column = None` and figTeX computes the panel width as
+    `(None - gap) / cols`, which raises. A caller can therefore say
+    `column=True` once for every template and get the column where there
+    is one (paper, 243 pt) and the text block where there is not.
+    """
+    if kw.get("column") and not sizing.TEMPLATES[_ACTIVE].column:
+        kw = {**kw, "column": False}
+    return sizing.panels(_ACTIVE, layout, **kw)
+
+
+def fit(fig, width="full", **kw):
+    """Size an already-built figure to the active template."""
+    return sizing.fit(fig, _ACTIVE, width=width, **kw)
 
 
 def save(fig, path):
