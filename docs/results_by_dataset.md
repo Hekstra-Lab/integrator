@@ -48,7 +48,7 @@ R values are work/free; peaks are the top anomalous site in sigma.
 | HEWL 1118 (360 fr) | Laue | same family | - | IOD 204 15.2 | - | laue.integrate 15.7 |
 | HEWL 1118 (360 fr) | Laue | fixed-basis profile, Oct 2026 | 0.1678 / 0.2166 | IOD 204 11.8 | - | laue.integrate 15.7 |
 | SBGrid 1117 (DHFR) | Laue | `configs/poly/dhfr_1117.yaml` | no deposited model | native S, weak | - | CC1/2 only |
-| PDZ2 / 1116 | Laue | reference arm running | 5E11 off-state | n/a | - | CCsym |
+| PDZ2 / 1116 | Laue | 18 arms, all `hierarchical` | 0.1355 / **0.1690** (`k7m_mlclamp`, off state) | n/a | - | laue.integrate 0.1746; CCsym and difference-map peaks below |
 
 Three headline results: 9b7c is the clean win (36.5 vs 32.7 at the strongest iodine, R-free 0.180 vs 0.174, i.e. a little R traded for anomalous signal); 845 at beta 0.5 beats the DIALS reference on R-free *and* `cc_anom` simultaneously; 1118 at 1440 frames ties `laue.integrate` on iodine.
 
@@ -162,6 +162,49 @@ Standing conclusion: **profile borrowing is an R-free lever, not an anomalous on
 Fixed-basis merging statistics, careless config 4, for reference: CC-half 0.926 at low resolution rising to 0.999, then 0.947 at 1.83-1.76 A and 0.911 at 1.76-1.59 A; I/sigma 26.1 falling to 1.25; R-pim 0.125 to 0.049.
 `cc_anom` is 0.15-0.26 through the mid shells and unusable at the lowest-resolution bin, where three repeats of the same calculation gave -0.675, +0.387 and -0.724 on 1512 unique reflections.
 
+#### Gate architecture, and why the better gate lost downstream
+
+Three architectures trained on hewl_1118, scored through careless config 4 and two-pass phenix on the **pinned** R-free set (`reference_data/hewl_1118_rfree.mtz`), epoch 19 in every arm.
+`svae` computes the responsibility gate from the fitted intensity and background; `svae_bg` and `svae_conjugate` predict it.
+
+Each arm was exported twice from the SAME checkpoint: the posterior mean and variance (`qi_mean`, `qi_var`), and the Rao-Blackwellized profile fit (`i_rb`, `var_rb`).
+The careless merging seed is its fixed default 1234 and the flag set is the same file, so the two exports of one arm differ only in the estimator.
+
+| arm | R-free posterior | R-free RB | Rsplit posterior | Rsplit RB | CC-anom posterior | CC-anom RB |
+|---|---|---|---|---|---|---|
+| `svae` | 0.1768 | 0.1712 | 0.0177 | 0.0211 | 0.350 | 0.366 |
+| `svae_bg` | 0.1824 | 0.1710 | 0.0245 | 0.0207 | 0.341 | 0.381 |
+| `svae_conjugate` | 0.1854 | 0.1720 | 0.0296 | 0.0208 | 0.323 | 0.388 |
+
+CC-anom is the Pearson form, meaned over its shells; the Spearman form is 0.320 / 0.340 / 0.325 posterior and 0.351 / 0.355 / 0.368 RB.
+Anomalous peaks, mean over the ten sulfur sites, go 8.37 / 5.92 / 5.78 posterior to 6.96 / **7.85** / 7.26 RB, and at IOD 204 20.91 / 13.82 / 14.97 to 18.84 / **19.95** / 19.11.
+
+**The spread across architectures is 0.0086 in R-free under the posterior export and 0.0010 under the RB export.**
+0.0010 is below the 0.005 unseeded-training floor, so under the RB export the three are tied; under the posterior export they are not, and the computed gate appears worst.
+
+The effect is entirely in the weak data.
+Rsplit by shell, mean over the three cross-validation repeats:
+
+| shell (A) | `svae` post | `svae` RB | `bg` post | `bg` RB | `conj` post | `conj` RB |
+|---|---|---|---|---|---|---|
+| 39.76 - 3.91 | 0.0094 | 0.0094 | 0.0098 | 0.0096 | 0.0095 | 0.0096 |
+| 2.46 - 2.28 | 0.0127 | 0.0136 | 0.0141 | 0.0137 | 0.0170 | 0.0133 |
+| 2.04 - 1.95 | 0.0232 | 0.0270 | 0.0303 | 0.0271 | 0.0392 | 0.0274 |
+| 1.95 - 1.88 | 0.0279 | 0.0363 | 0.0429 | 0.0357 | 0.0546 | 0.0372 |
+| 1.88 - 1.70 | 0.0455 | 0.0611 | 0.0817 | 0.0572 | 0.0968 | 0.0576 |
+
+In the first shell every arm and both exports agree to 4%.
+In the last shell the predicted gates are 80% and 113% worse than the baseline under the posterior export, and 6% BETTER than it under the RB export.
+
+The cause is the exported sigma, not the gate.
+`q(I)` has a one-parameter family: $\beta = \beta_I + \sum_i p_i = \beta_I + 1$ is fixed because the profile is normalised, so the Fano factor is constant and $\mathrm{var} = I/1.014$ in every arm, with $\mathrm{corr}(\log I, \log \mathrm{var}) = 0.99993$ to $0.99995$.
+careless config 4 selects `StudentTLikelihood`, whose `dist()` takes `get_uncertainties(inputs)` as the scale and does **not** refit an error model -- only the `Ev11` likelihoods carry `Sdfac`, and config 4 selects neither.
+So the reported sigma reaches the likelihood intact and carries no per-reflection information: the merging weight of a reflection is fixed by the intensity it reported, and a measurement summed over 4 clean pixels and one summed over 200 pixels of background are weighted alike.
+The RB estimator breaks the family -- $\mathrm{corr}(\log i_{rb}, \log \mathrm{var}_{rb})$ is 0.656 (`bg`) and 0.805 (`conj`) -- and the architecture difference disappears with it.
+
+Second cause, specific to the computed gate: it is a plug-in estimator built from the same counts it then weights, so $E[\sum_i r_i(c) c_i] \neq I$ and the reuse adds both bias and variance.
+It also sums $n_{\mathrm{eff}}$ of 23 to 28 pixels against the baseline's 4, in shoeboxes that are 96.6% background.
+
 ### SBGrid 1117 -- DHFR, CC1/2 comparison only
 
 No deposited PDB, so refinement is not a valid reference.
@@ -190,8 +233,103 @@ The odds transform r = CC/(1-CC) is correct and Fisher's z is not, but r is stra
 Normal-theory standard errors understate by ~1.8x from heavy tails, so "+19 sigma" should be restated nearer +10 sigma using a paired reflection bootstrap.
 The recommended estimator is **CC_Delta**: correlate the per-reflection field response formed inside each half and report 2CC/(1-CC) = S/N; it is split-rule invariant and cancels bias common to on and off.
 
-State: reference pipeline running under `laue_runs/pdz2_ref/`.
-Our own reprocessing could not reach the ~1% field signal; that was first diagnosed as a data wall and later corrected -- the reference pipeline had never been run verbatim.
+State on 2026-11-18: the reference pipeline is done, the integrator arm is done, and the model inventory is six weeks behind the current one.
+Nothing has been trained or scored on this dataset since 2026-10-04.
+
+The reference pipeline under `laue_runs/pdz2_ref/` reproduced the Laue-DIALS paper's EF-X result in September.
+CCsym in the first bin came out 0.190 / 0.357 / 0.371 / 0.415 for off / 50 / 100 / 200 ns against the published 0.19 / 0.33 / 0.38 / 0.40, and the weighted 200 ns difference map reproduces all ten published peaks in sign within 0.5-1 $\sigma$.
+The earlier claim that our reprocessing could not reach the ~1% field signal was a processing error on our side, not a limit of the data, and is withdrawn.
+
+#### The arms that were trained
+
+Eighteen under `laue_runs/pdz2_model/runs/`, every one `integrator: hierarchical` with `loss: polychromatic_wilson` on the 993,143-reflection pool.
+CCsym is the mean over bins and repeats at 200 ns; the off column is the control, where the true value is zero.
+
+| arm | `qp` | what differs | CCsym 200 ns | off | CCpred bin 0 |
+|---|---|---|---|---|---|
+| `kl1` | learned basis | baseline, `intensity_kl_weight` 1.0 | 0.211 | 0.037 | 0.845 |
+| `kl0p1` | learned basis | `intensity_kl_weight` 0.1 | 0.223 | 0.028 | 0.865 |
+| `w21_k3m` | learned basis | 21 px, kernel 3, neighbour-masked | 0.203 | 0.042 | 0.833 |
+| `w21_k7m` | learned basis | kernel 7 | 0.216 | 0.042 | 0.847 |
+| `w35_k3m` | learned basis | 35 px, kernel 3 | 0.176 | 0.020 | 0.790 |
+| `w35_k7m` | learned basis | 35 px, kernel 7 | 0.176 | 0.021 | 0.790 |
+| `geom_shift` | geometric | `local_shift` | **not scored** | -- | -- |
+| `geom_steer` | geometric | `steer` | 0.218 | 0.025 | 0.838 |
+| `geom_both` | geometric | both | 0.234 | 0.042 | 0.863 |
+| `tau0p1` | geometric | `qp.prior_scale` 0.1 | 0.228 | 0.049 | 0.865 |
+| `tau0p3` | geometric | 0.3 | 0.223 | 0.033 | 0.861 |
+| `tau1p0` | geometric | 1.0 | 0.235 | 0.044 | 0.865 |
+| `tau3p0` | geometric | 3.0, the `geom_both` default, re-run as the sweep control | 0.240 | 0.043 | 0.862 |
+| `bgplane` | geometric | `qbg_plane: background_plane`, prior scale 0.1 | 0.229 | 0.037 | 0.856 |
+| `bgplane03` | geometric | prior scale 0.3 | 0.235 | 0.036 | 0.862 |
+| `invN` | learned basis | `kl_per_multiplicity: true` | **not scored** | -- | -- |
+| `w35_k3`, `w35_k7` | learned basis | unmasked; stopped at 3 checkpoints, replaced by the masked pair | -- | -- | -- |
+
+Every checkpoint of every arm is on disk, 14 to 51 per run, so any of these can be re-exported without retraining.
+
+#### The arms that were built from a trained arm's predictions
+
+No retraining; these change the export or the merge.
+
+| arm | from | what it changes | CCsym 200 ns | off | CCpred bin 0 |
+|---|---|---|---|---|---|
+| `w21_k7m_bfix` | `w21_k7m` | BATCH convention repaired | 0.224 | 0.035 | 0.844 |
+| `k7m_ml` | `w21_k7m` | prior-free profile fit, negatives kept | 0.239 | 0.043 | 0.857 |
+| `k7m_mlclamp` | `w21_k7m` | the same, clamped at zero | 0.242 | 0.048 | 0.857 |
+| `k7m_ev11` | `w21_k7m` | careless `--refine-uncertainties` | 0.206 | 0.057 | 0.848 |
+| `combo` | `geom_both` | geometry-steered profiles **and** the prior-free fit | **0.267** | 0.049 | **0.884** |
+| `swap_LL` / `LM` / `ML` / `MM` | both arms | $I$ and $\sigma$ crossed between arms | 0.241 / 0.244 / 0.221 / 0.215 | -- | -- |
+| `laue.integrate` | -- | the reference | 0.253 | 0.076 | 0.869 |
+
+`combo` is the best CCsym and the best CCpred of anything run here, reference included, and it was never written down.
+Three merging seeds give 0.2667 / 0.2690 / 0.2498 against the reference's 0.2530 / 0.252 / 0.257, so +0.008 against a seed noise floor of 0.012 -- a tie, not a lead.
+Its difference map is worse: mean $|{\rm peak}|$ 2.92 against 3.14, with 8 sites above 3 $\sigma$ against 10.
+So the trade the prior-free export already showed reappears in `combo` and is larger: the two interventions add on CCsym, and they add on the map in the wrong direction.
+
+#### Where each endpoint stands
+
+| endpoint | arms scored | best | reference |
+|---|---|---|---|
+| CCsym, by delay | 36 trees, all of them | `combo` 0.262 $\pm$ 0.011 (n=3) | 0.254 |
+| weighted difference map, 20 published sites | 19 trees | `geom_both` 3.12 | **3.14** |
+| $R_\mathrm{free}$ on the off state | **4 arms** | `k7m_mlclamp` **0.1690 $\pm$ 0.0013** | 0.1746 $\pm$ 0.0007 |
+
+No arm leads on all three, and the one that leads on $R_\mathrm{free}$ by 3.8 $\sigma$ is not the one that leads on CCsym.
+$R_\mathrm{free}$ is the endpoint to weigh: it is the only one of the three that half-dataset profile borrowing cannot inflate, and the deposited pipeline computes none, so the refinement chain is ours (`pdz2_model/pdz2_refine_prep.py`, one R-free set of 404 reflections shared across every arm).
+
+#### What has not been run
+
+Three gaps in what exists, then the model generation.
+
+- **`combo` has no $R_\mathrm{free}$.** The best CCsym arm has never been through the endpoint the dataset is judged on. The refinement chain is built and takes one merged MTZ, so this is a short CPU job.
+- **`invN` was trained and never scored.** `kl_per_multiplicity: true` applies the Wilson prior once per unique reflection instead of once per observation at multiplicity ~25, which is the structural form of the fix that `k7m_ml` achieves by removing the prior after the fact. 42 checkpoints are on disk and no tree was ever built.
+- **`geom_shift` was trained and never scored**, so `local_shift` alone is untested here while `steer` alone and both together are not.
+
+Nothing from the current model generation has touched this dataset.
+
+| what | state on PDZ2 | where it was established |
+|---|---|---|
+| `integrator: hierarchical_3enc` | never run; all 18 arms are `hierarchical` | every `ablate2` arm on 1118 |
+| `integrator: svae` | never run | `configs/poly/ablation_1000/`, 13 poly arms |
+| the `ablation_1000` profile set (`physical`, `shapelet`, `fixed`, `learned`, `geom_both` crossed with both integrators) | never run | `ablation_1118_1000.md`; `svae physical` best $R_\mathrm{free}$, `svae learned` best peaks |
+| `intensity_variance: fisher` | never run | the $q(I)$ one-parameter family fix |
+| `gate: responsibility` | never run | 1118 poly, CC-against-$F_\mathrm{calc}$ 0.8881 to 0.9218 |
+| `predict --rb-export` (`i_rb`, `var_rb`) | never run | `scripts/figures/tidy_xtal.sh`, both mono arms |
+
+The `--rb-export` line is the one to run first, and it needs no retraining.
+`rao_blackwellized_intensity` is the same estimator class as `pdz2_model/ml_from_preds.py`, the script behind the winning arm -- the variance-weighted profile fit over the model's own profile and background, with negatives surviving because only the rate inside the weights is floored.
+It differs in the two places the hand-written version is weakest: it fits once per profile sample and adds the spread of the fits to $\sigma$ by the law of total variance, where `ml_from_preds.py` conditions on one profile, and its conditional term is the Schur complement of the $(I,b)$ information rather than $1/F_{II}$, so it charges for the background being estimated.
+Running it on the `w21_k7m` and `geom_both` checkpoints replaces a one-off script with maintained code and tests whether the better $\sigma$ moves the endpoint that the $\sigma$-swap trees said $\sigma$ does not own.
+
+Two things that would otherwise have to be checked are already settled for this dataset.
+The Anscombe manifest defect does **not** apply: `fix_manifest_stats.py` found 1118 and 1117 wrong by 1.85x and 1.47x in sd and PDZ2 in agreement with its own counts, and `pooled/dataset.yaml` has never been rewritten, so a predict pass on a September checkpoint is safe.
+And profiles can be exported here: `pdz2_profile_predict.yaml` carries `additional_predict_keys: [profile]` and produced `prof_preds_geom_both`, so the rule against judging a profile model on metrics alone is satisfiable without new plumbing.
+
+#### The chain is not in the repository
+
+The entire PDZ2 chain -- about 110 scripts, including `pool_pdz2.py`, `split_pdz2.py`, `split_pdz2_ml.py`, `ml_from_preds.py`, `wdm_peaks_compare.py`, `pdz2_refine_prep.py`, `collect_rfree.py`, `unmerged_ccsym.py` and every `.sbatch` -- exists only in `/n/netscratch/.../laue_runs/pdz2_model/`.
+There is no PDZ2 pipeline configuration, no PDZ2 step in `scripts/poly/run_pipeline.py`, and no figure script that reads CCsym.
+That scratch filesystem has already purged this project's raw images once.
 
 ## The workflow
 
@@ -327,4 +465,4 @@ Stated so the table is not read as complete.
 - **834 and 845 reference refinements undershoot their deposited values** (0.216 vs 0.139; 0.188 vs 0.154); the reference refinement needs redoing before those rows are quoted as replications.
 - **140 is broken** and needs the single-sweep bug fixed before any model comparison.
 - **1117 has no deposited model**, so MR of 1RX2 is needed for a refinement reference; the first phaser attempt produced no solution.
-- **PDZ2 CCsym values are not tabulated here** -- the reference pipeline is still running, and the quartile numbers in the notes are from our own arm with standard errors that need restating on a paired bootstrap.
+- **PDZ2 CCsym is now tabulated per arm above.** The quartile numbers in the notes still carry normal-theory standard errors and need restating on a paired bootstrap.
