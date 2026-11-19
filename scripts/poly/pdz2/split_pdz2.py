@@ -49,11 +49,15 @@ ap.add_argument("--legacy-batch", action="store_true",
 ap.add_argument("--estimator", choices=("model", "rb"), default="model",
                 help="which intensities to write: the posterior (model) or "
                      "the profile fit computed at export (rb)")
+ap.add_argument("--pred-dir", default=None,
+                help="read the prediction parquet from here rather than the "
+                     "run's predictions_dir (arm_pdz2.sbatch RB_BACKGROUND_TERM)")
 args = ap.parse_args()
 
 run, tree = Path(args.run_dir), Path(args.tree)
 paths = yaml.safe_load((run / "run_paths.yaml").read_text())
-pdir = Path(paths.get("predictions_dir") or (run / "predictions"))
+pdir = (Path(args.pred_dir) if args.pred_dir
+        else Path(paths.get("predictions_dir") or (run / "predictions")))
 
 cands = sorted(pdir.glob("**/pred.parquet")) + sorted(pdir.glob("**/preds_epoch_*.parquet"))
 if not cands:

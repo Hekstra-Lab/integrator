@@ -61,8 +61,32 @@ if [[ ! -s $RUN/run_paths.yaml ]]; then echo "NO_RUN_DIR $RUN"; exit 1; fi
 CKPT=${CKPT:-$(ls -1 $RUN/files/checkpoints/epoch=*.ckpt 2>/dev/null | sort | tail -1)}
 if [[ -z "$CKPT" ]]; then echo "NO_CHECKPOINT $RUN"; exit 1; fi
 echo "checkpoint: $(basename $CKPT)"
+# RB_BACKGROUND_TERM (sample_bg | fixed_bg) sets `integrator.args.
+# rb_background_term` for this predict pass only. It acts at the RB export
+# and not in training, so one trained run is scored both ways. Each setting
+# predicts from a config copy into its own predictions_<term>/, which the
+# splitter is pointed at, so the two passes never overwrite each other.
+# Unset, the predict pass is the run's own config into predictions/, as
+# before. Use a different TREE_NAME per setting.
+PRED_ARGS=()
+SPLIT_ARGS=()
+if [[ -n "${RB_BACKGROUND_TERM:-}" ]]; then
+  RB_CFG=$RUN/config_rb_${RB_BACKGROUND_TERM}.yaml
+  RB_PRED=$RUN/predictions_${RB_BACKGROUND_TERM}
+  micromamba run -n integrator-cuda-dev python - "$RUN/run_paths.yaml" \
+      "$RB_CFG" "$RB_BACKGROUND_TERM" <<'PY' || exit 1
+import sys, yaml
+paths, out, term = sys.argv[1:]
+cfg = yaml.safe_load(open(yaml.safe_load(open(paths))["config"]))
+cfg.setdefault("integrator", {}).setdefault("args", {})["rb_background_term"] = term
+yaml.safe_dump(cfg, open(out, "w"), sort_keys=False)
+print(f"rb_background_term = {term} -> {out}")
+PY
+  PRED_ARGS=(--config "$RB_CFG" --out-dir "$RB_PRED")
+  SPLIT_ARGS=(--pred-dir "$RB_PRED")
+fi
 micromamba run -n integrator-cuda-dev integrator.predict \
-  --run-dir $RUN --ckpt "$CKPT" 2>&1 | tail -4
+  --run-dir $RUN --ckpt "$CKPT" ${PRED_ARGS[@]+"${PRED_ARGS[@]}"} 2>&1 | tail -4
 
 echo "==================== 2) split into 16 per-sweep MTZs (BATCH from poly_refined.expt)"
 EXTRA=""
@@ -92,7 +116,8 @@ REPO_SRC=$(cd "$HERE/../../.." && pwd)/src
 [ -d "$REPO_SRC/integrator" ] || { echo "no integrator package at $REPO_SRC"; exit 1; }
 micromamba run -n integrator-cuda-dev env PYTHONPATH=$REPO_SRC \
   python $TREE/scripts/split_pdz2.py \
-  --run-dir $RUN --tree $TREE --estimator ${ESTIMATOR:-model} $EXTRA 2>&1 | tail -22
+  --run-dir $RUN --tree $TREE --estimator ${ESTIMATOR:-model} $EXTRA \
+  ${SPLIT_ARGS[@]+"${SPLIT_ARGS[@]}"} 2>&1 | tail -22
 [[ -s $TREE/gain_0,3_from_stills/dials_files_f_off/integrated.mtz ]] || { echo "SPLIT_INCOMPLETE"; exit 1; }
 
 echo "==================== 3) expt_concat (same frame cuts as reference)"
