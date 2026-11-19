@@ -21,12 +21,22 @@ The held-out residuals cannot do this job: at bright pixels they are
 dominated by rate misfit -- chi-square per pixel of 73 to 86 on
 hewl_1118 -- which inflates the apparent variance and with it the slope.
 
-Where the lever arm comes from. One shoebox gives one (mean, variance)
-pair and a line cannot be fitted to a point. Different reflections sit at
-different detector radii and so on different background levels: on
-hewl_1118 the modelled background runs from 7.4 to 65 ADU, an eightfold
-range, which is enough. An earlier attempt on 600 reflections failed
-because they happened to span 10.1 to 11.3.
+There is NO lever arm, and that is the finding. One shoebox gives one
+(mean, variance) pair and a line cannot be fitted to a point. Different
+reflections sit at different detector radii, so their background levels
+might have differed -- but measured over 2.66M shoeboxes the background
+ring spans only 9.76 to 11.72 ADU, no wider than the 600-reflection
+sample that was dismissed as too narrow. (The 7.4 to 65 range this file
+once cited was `qbg_mean`, the model's FITTED background, which is
+inflated wherever a shoebox holds signal or a neighbour. It is not the
+background level.)
+
+So the slope here is a line through a 20% span and the gain is NOT
+identifiable from it: 0.140 through the origin and 0.188 with an
+intercept both fit, and the residuals are 20 to 30 times the statistical
+floor, so neither model is adequate. Read this fit as a consistency
+check, not a measurement. The number the export needs comes from
+`autocorr` and `block_ratio` below, which do not need a lever arm.
 
 The background sample is the outer frame of each shoebox, `--ring` pixels
 deep, which holds no spot by construction. Reads `counts.npy` and

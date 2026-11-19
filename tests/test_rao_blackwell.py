@@ -209,7 +209,8 @@ def test_pedestal_is_recovered_from_a_shoebox_that_has_one():
     bg = torch.full((3, n, 1), c0 + bg_rate)
 
     out = rao_blackwellized_intensity(counts, mask, prof, bg,
-                                      pedestal="per_reflection")
+                                      pedestal="per_reflection",
+                                      noise_b=0.5)
     got = out["rb_pedestal"]
     assert abs(float(got.median()) - c0) < 0.6, float(got.median())
 
@@ -233,9 +234,11 @@ def test_the_pedestal_sharpens_sigma_because_the_pixels_are_quieter():
     prof = pi.unsqueeze(0).expand(3, n, -1)
     bg = torch.full((3, n, 1), c0 + 1.6)
 
-    plain = rao_blackwellized_intensity(counts, mask, prof, bg)
+    plain = rao_blackwellized_intensity(counts, mask, prof, bg,
+                                        noise_b=0.5)
     ped = rao_blackwellized_intensity(counts, mask, prof, bg,
-                                      pedestal="per_reflection")
+                                      pedestal="per_reflection",
+                                      noise_b=0.5)
     assert (ped["var_rb_cond"] < plain["var_rb_cond"]).all()
     assert torch.isfinite(ped["var_rb"]).all()
     assert (ped["var_rb"] > 0).all()
@@ -246,7 +249,27 @@ def test_pedestal_rejects_an_unknown_mode():
     prof = pi.expand(2, 8, -1)
     bg = torch.full((2, 8, 1), b_true)
     with pytest.raises(ValueError, match="pedestal must be"):
-        rao_blackwellized_intensity(counts, mask, prof, bg, pedestal="auto")
+        rao_blackwellized_intensity(counts, mask, prof, bg, pedestal="auto",
+                                    noise_b=0.5)
+
+
+def test_a_negative_variance_floor_is_refused():
+    """`noise_b` is read-noise variance; negative is not a variance."""
+    counts, mask, pi, _, b_true = _shoeboxes(n=8)
+    prof = pi.expand(2, 8, -1)
+    bg = torch.full((2, 8, 1), b_true)
+    with pytest.raises(ValueError, match="cannot be negative"):
+        rao_blackwellized_intensity(counts, mask, prof, bg, noise_b=-9.04)
+
+
+def test_an_offset_without_a_floor_is_refused():
+    """Subtracting c0 with no floor is the 1e6-weight path."""
+    counts, mask, pi, _, b_true = _shoeboxes(n=8)
+    prof = pi.expand(2, 8, -1)
+    bg = torch.full((2, 8, 1), b_true)
+    with pytest.raises(ValueError, match="pedestal needs noise_b"):
+        rao_blackwellized_intensity(counts, mask, prof, bg,
+                                    pedestal="per_reflection")
 
 
 def test_fixed_bg_is_smaller_because_it_stops_double_charging():

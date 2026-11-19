@@ -184,6 +184,31 @@ def rao_blackwellized_intensity(
             f"pedestal must be 'none' or 'per_reflection'; got {pedestal!r}"
         )
 
+    # A variance that reaches the clamp is a weight of 1/eps, which hands
+    # one pixel a million times the pull of its neighbours. The existing
+    # code already guards the Poisson case this way ("lets the peak pixel
+    # clamp to eps and carry weight 1/eps"); subtracting an offset
+    # reopens it from the other end, at pixels whose rate falls to c0.
+    # Measured: with c0 from `mean - var` and a background sample 14% low,
+    # the fitted intensity went from 391 to 91,549.
+    #
+    # So an offset requires a positive floor, and that floor is physical:
+    # `noise_b` is read-noise variance, which no pixel's variance can fall
+    # below. Refused rather than clamped, because a silent 1e6 weight is
+    # worse than a stopped job.
+    if noise_b < 0.0:
+        raise ValueError(
+            f"noise_b is a variance floor and cannot be negative; got "
+            f"{noise_b}. To subtract an offset from the rate use "
+            f"`pedestal`, which keeps the floor positive."
+        )
+    if pedestal != "none" and noise_b <= 0.0:
+        raise ValueError(
+            "pedestal needs noise_b > 0: with the offset subtracted, a "
+            "pixel whose rate reaches c0 would otherwise get a variance of "
+            "eps and a weight of 1/eps."
+        )
+
     def pixel_var(rate_):
         return (noise_a * (rate_ - c0) + noise_b).clamp_min(eps)
 
