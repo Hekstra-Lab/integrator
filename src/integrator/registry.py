@@ -5,21 +5,21 @@ from integrator.data_loaders import (
     RotationDataModule,
 )
 from integrator.model.distributions import (
-    GammaDistributionRepamE,
-    GammaDistributionRepamB,
-    GammaDistributionRepamA,
     BackgroundPlaneSurrogate,
+    ControlMeshProfileSurrogate,
     DirichletDistribution,
     FixedBasisProfileSurrogate,
+    GammaDistributionRepamA,
+    GammaDistributionRepamB,
+    GammaDistributionRepamE,
     GeometricProfileSurrogate,
     HellingerBasisProfileSurrogate,
+    MixtureGaussianProfileSurrogate,
     NanoBraggProfileSurrogate,
     PhysicalProfileSurrogate,
     ProfileSurrogate,
     RaggedLogisticNormalSurrogate,
     ShapeletProfileSurrogate,
-    ControlMeshProfileSurrogate,
-    MixtureGaussianProfileSurrogate,
     ShiftedBasisProfileSurrogate,
     SteerableProfileSurrogate,
     TuckerBasisProfileSurrogate,
@@ -30,10 +30,10 @@ from integrator.model.distributions.quasiconformal_profile import (
 )
 from integrator.model.encoders import (
     IntensityEncoder,
-    SummaryStatsEncoder,
     ProfileEncoder,
     RaggedIntensityEncoder,
     RaggedShoeboxEncoder,
+    SummaryStatsEncoder,
 )
 from integrator.model.integrators import (
     HierarchicalIntegrator,
@@ -44,26 +44,33 @@ from integrator.model.integrators import (
     SVAEHybridIntegrator,
     SVAEIntegrator,
 )
+from integrator.model.integrators.svae_gate_integrators import (
+    SVAEBackgroundIntegrator,
+    SVAECalibIntegrator,
+    SVAEConjugateIntegrator,
+)
+from integrator.model.loss import (
+    AmplitudeWilsonLoss,
+    GlobalPriorLoss,
+    MonochromaticWilsonLoss,
+    PolychromaticWilsonLoss,
+    RefinementLoss,
+)
 from integrator.model.scaling import (
     AmortizedMergingIntegrator,
     ConjugateIntegrator,
     ConjugateMergingIntegrator,
     DeepSetsMergingIntegrator,
-    HierarchicalSVAEIntegrator,
     HierarchicalScalingIntegrator,
+    HierarchicalSVAEIntegrator,
     MergingIntegrator,
     RefinementIntegrator,
-    SVAEIntegrator as ScalingSVAEIntegrator,
-    SVAEMergingIntegrator,
     ScalingIntegrator,
+    SVAEMergingIntegrator,
     VariationalRefinementIntegrator,
 )
-from integrator.model.loss import (
-    GlobalPriorLoss,
-    AmplitudeWilsonLoss,
-    MonochromaticWilsonLoss,
-    PolychromaticWilsonLoss,
-    RefinementLoss,
+from integrator.model.scaling import (
+    SVAEIntegrator as ScalingSVAEIntegrator,
 )
 
 REGISTRY = {
@@ -89,6 +96,11 @@ REGISTRY = {
         "ragged_hierarchical": RaggedHierarchicalIntegrator,
         "svae": SVAEIntegrator,
         "svae_hybrid": SVAEHybridIntegrator,
+        # gate-construction variants; `svae` itself is untouched so every
+        # run already on disk keeps the architecture it trained with
+        "svae_conjugate": SVAEConjugateIntegrator,
+        "svae_bg": SVAEBackgroundIntegrator,
+        "svae_calib": SVAECalibIntegrator,
         "scaling": ScalingIntegrator,
         "merging": MergingIntegrator,
         "deepsets_merging": DeepSetsMergingIntegrator,

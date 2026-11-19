@@ -212,6 +212,36 @@ the deposited eight-file joint careless call rather than config 4 on one
 file. That is a reason to wire it in, not a licence to keep writing one-offs
 around it.
 
+## Testing an architecture means writing a new class
+
+The registry exists so that an architecture is a CLASS with a name and a
+config, not a flag threaded through an existing one. Testing a new way to
+build a model means:
+
+1. a new class, usually subclassing the one it varies from;
+2. a line in `REGISTRY["integrator"]`;
+3. a config per dataset, differing from its baseline in `integrator.name`
+   and nothing else;
+4. a test that builds it through `construct_integrator` and runs a
+   forward.
+
+**Never modify an existing integrator to try something.** A run on disk
+has to keep the architecture it trained with, and a class that quietly
+changes meaning makes every earlier result unreadable. `svae` is
+`SVAEIntegrator` and stays that way; `svae_conjugate`, `svae_bg` and
+`svae_calib` are separate entries in
+`model/integrators/svae_gate_integrators.py`.
+
+Check, every time, that nothing is built which training never reaches.
+It has happened twice: `SVAEIntegrator` builds a 387,008-parameter signal
+encoder that receives ZERO gradient once the gate is computed, and the
+first draft of `svae_bg` initialised its head to zero weights, which cuts
+the encoder out of the graph -- `d(out)/d(x) = W = 0` -- so the encoder
+was dead at initialisation in the class written to give it a job. A dead
+module is invisible: the run completes, the loss falls, and it inflates
+every parameter count it appears in.
+`tests/test_svae_gate_architectures.py` pins it.
+
 ## Pipelines
 
 There are two, and they are already written. Do not write a new sbatch
