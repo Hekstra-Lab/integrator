@@ -147,7 +147,7 @@ def resolution_ticks(ax, labels, P) -> None:
     ds = _merge_close(sorted(ds, reverse=True))
     if not ds:
         return
-    figstyle().parts.shell_axis(ax, P, [1.0 / d**2 for d in ds], ds)
+    figstyle().shell_axis(ax, P, [1.0 / d**2 for d in ds], ds)
     ax.set_xlabel(r"resolution (\AA)")
     ax.grid(axis="x", visible=False)
 
@@ -361,7 +361,14 @@ def draw(df: pl.DataFrame, out_dir: Path, dataset: str, prefix: str) -> int:
     for tool, statistic, panel in panels:
         P = figstyle().panels("1", column=True)
         ax, fig = P.axs, None
-        if draw_panel(ax, panel, tool, statistic, P):
+        if draw_panel(ax, panel, tool, statistic, P, legend=False):
+            # the legend beside the panel, on every template: inside it,
+            # `loc="best"` put the box over the lower half of the CC-half
+            # dip band in the book render and over the dip itself on a
+            # slide, and the dip is what that panel is there to show
+            handles, labels = ax.get_legend_handles_labels()
+            if handles:
+                P.side_legend(handles, labels, frameon=True)
             # `careless.completeness` reports three statistics -- all,
             # anomalous and non-anomalous -- from one tool, so naming the
             # file after the tool alone wrote three panels to one path and

@@ -234,9 +234,16 @@ def collect(base: Path) -> list[Path]:
     The same figure can exist in two directories when a render was pointed
     at the wrong `--out-dir`; the newest wins, so the page never shows one
     figure twice.
+
+    `templates/` is skipped: it holds the PDZ2 set again at each LaTeX
+    template's size (`TEMPLATE=... render_all.sh`), under the same
+    basenames, and the newest-wins rule would put those copies on the page
+    in place of the figures in `pdz2/`.
     """
     best: dict[str, Path] = {}
     for p in sorted(base.rglob("*.png")):
+        if "templates" in p.relative_to(base).parts[:-1]:
+            continue
         prev = best.get(p.name)
         if prev is None or p.stat().st_mtime > prev.stat().st_mtime:
             best[p.name] = p

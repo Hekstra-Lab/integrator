@@ -70,6 +70,9 @@ TITLES = {
     "100ns": r"100\,ns",
     "200ns": r"200\,ns",
 }
+# headings for the slide grid, where four panels share one row and the full
+# "field off" heading is wider than its panel
+SHORT_TITLES = {**TITLES, "off": "field off"}
 
 
 def parse_args():
@@ -141,7 +144,7 @@ def resolution_ticks(ax, frame: pl.DataFrame, P) -> None:
     if not s2:
         return
     order = sorted(range(len(s2)), key=lambda i: s2[i])
-    figstyle().parts.shell_axis(ax, P, [s2[i] for i in order],
+    figstyle().shell_axis(ax, P, [s2[i] for i in order],
                                [ds[i] for i in order])
     ax.set_xlabel(r"resolution (\AA)")
     ax.grid(axis="x", visible=False)
@@ -206,29 +209,53 @@ def draw(df: pl.DataFrame, out_dir: Path, dataset: str, prefix: str) -> int:
     # figTeX's journal path does not.
     for delay in delays:
         panel = df.filter(pl.col("delay") == delay)
-        P = figstyle().panels("1", column=True)
-        ax = P.axs
-        if draw_panel(ax, panel, arms, dict(palette), P):
+        max_cols = None
+        while True:
+            P = figstyle().panels("1", column=True)
+            ax = P.axs
+            if not draw_panel(ax, panel, arms, dict(palette), P):
+                plt.close(P.fig)
+                break
             P.head(ax, 0, TITLES.get(delay, delay))
-            top_legend(P, ax)
+            # beside the panel on a slide: a strip of seven arms above it
+            # took half the 144 pt frame
+            if figstyle().on_slides():
+                P.side_legend(*ax.get_legend_handles_labels(), frameon=True)
+            else:
+                top_legend(P, ax, max_cols)
             P.finish()
-            path = out_dir / f"{prefix}_{delay}_{slug}"
-            figstyle().save(P.fig, path)
-            logger.info("Saved %s", path)
-            written += 1
-        plt.close(P.fig)
+            # see `figstyle.legend_fits`: on slides `finish` can narrow the
+            # figure under a strip that fitted when it was measured
+            used = figstyle().legend_cols(P)
+            if figstyle().legend_fits(P) or used <= 1:
+                path = out_dir / f"{prefix}_{delay}_{slug}"
+                figstyle().save(P.fig, path)
+                logger.info("Saved %s", path)
+                written += 1
+                plt.close(P.fig)
+                break
+            plt.close(P.fig)
+            max_cols = used - 1
 
     # the reported figure: every delay on one grid, a shared y-axis so the
     # off panel can be read against the others rather than rescaled to fill
     n = len(delays)
     cols = 2 if n > 1 else 1
     rows = (n + cols - 1) // cols
-    P = figstyle().panels(f"{rows}x{cols}", shared="y")
+    # on a slide, one row with the legend beside it. A 2x2 grid there is
+    # 200 x 144 pt, and a strip of seven arms above it left the panels
+    # 30 pt tall; the per-delay files are what a slide normally shows
+    slide = figstyle().on_slides()
+    if slide:
+        rows, cols = 1, n
+    titles = SHORT_TITLES if slide else TITLES
+    P = figstyle().panels(f"{rows}x{cols}" if rows > 1 else str(cols),
+                          shared="y")
     flat = list(np_ravel(P.axs))
     for i, delay in enumerate(delays):
         if draw_panel(flat[i], df.filter(pl.col("delay") == delay), arms,
                       dict(palette), P):
-            P.head(flat[i], i, TITLES.get(delay, delay))
+            P.head(flat[i], i, titles.get(delay, delay))
         # every panel is the same binning against the same axis, so the x
         # label goes on the bottom row only; the shared y suppresses the
         # inner y tick numbers, and the y label belongs on the left column
@@ -241,7 +268,10 @@ def draw(df: pl.DataFrame, out_dir: Path, dataset: str, prefix: str) -> int:
     # the legend as a strip above the panels rather than inside the first
     # one: with four arms and a band each it covered the weak end of the
     # off panel, which is the control and the thing being read
-    top_legend(P, flat[0])
+    if slide:
+        P.side_legend(*flat[0].get_legend_handles_labels(), frameon=True)
+    else:
+        top_legend(P, flat[0])
     P.finish()
     path = out_dir / f"{prefix}_{slug}"
     figstyle().save(P.fig, path)
@@ -257,7 +287,7 @@ def np_ravel(axs):
     return np.ravel(np.asarray(axs, dtype=object))
 
 
-def top_legend(P, ax) -> None:
+def top_legend(P, ax, max_cols: int | None = None) -> None:
     """The arm legend as a boxed strip above the panels.
 
     Boxed, because the ink theme draws it on the page rather than on a
@@ -273,7 +303,7 @@ def top_legend(P, ax) -> None:
     handles, labels = ax.get_legend_handles_labels()
     if not handles:
         return
-    figstyle().top_legend(P, handles, labels)
+    figstyle().top_legend(P, handles, labels, max_cols=max_cols)
 
 
 def main() -> int:

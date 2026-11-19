@@ -76,6 +76,12 @@ def parse_args():
                    help="override the per-dataset directory for every arm")
     p.add_argument("--arm", default=None, help="draw only this arm")
     p.add_argument("--prefix", default="basis")
+    p.add_argument("--dataset", default=None,
+                   help="draw only the arms of this dataset, as named in "
+                        "the `dataset` column of basis_components.csv")
+    p.add_argument("--template", default=None,
+                   help="figTeX template to size for (article, paper, book, "
+                        "slides, poster); default is figstyle's")
     return p.parse_args()
 
 
@@ -115,56 +121,87 @@ def as_images(weight: np.ndarray, shape) -> np.ndarray:
     return weight.T.reshape(n, 1, k)
 
 
-def draw_basis(images: np.ndarray, bias: np.ndarray, shape, arm: str,
-               epoch: float, out_dir: Path, prefix: str) -> Path:
-    """Every component at one epoch, plus the bias, on one grid."""
-    n = images.shape[0]
-    bias_image = as_images(np.asarray(bias).reshape(-1, 1), shape)[0]
-    cols = min(4, n + 1)
-    rows = (n + 1 + cols - 1) // cols
-    fig, axes = plt.subplots(
-        rows, cols,
-        figsize=figstyle().figsize("full", aspect=0.30 * rows),
-        layout="constrained", squeeze=False)
-    flat = axes.ravel()
-
-    # one symmetric scale across every component, so a component with
-    # little amplitude reads as having little rather than being rescaled
-    # up to look like the others
-    span = float(np.abs(images).max()) or 1.0
-    for i in range(n):
-        ax = flat[i]
-        ax.imshow(images[i], cmap=figstyle().diverging_cmap(),
-                  vmin=-span, vmax=span, interpolation="nearest")
-        ax.set_title(f"{i}", fontsize="small")
-        ax.set_xticks([])
-        ax.set_yticks([])
-    ax = flat[n]
-    ax.imshow(bias_image, cmap=figstyle().cmap(), interpolation="nearest")
-    ax.set_title("bias", fontsize="small")
+def _image_axes(ax) -> None:
+    """An image panel: no ticks, and `Panels.finish` leaves it alone."""
+    ax._image = True
     ax.set_xticks([])
     ax.set_yticks([])
+    ax.grid(False)
+
+
+def draw_basis(images: np.ndarray, bias: np.ndarray, shape, arm: str,
+               epoch: float, out_dir: Path, prefix: str) -> Path:
+    """Every component at one epoch, plus the bias, on one grid.
+
+    The components share one colour bar on a symmetric norm, so zero is the
+    midpoint of the diverging ramp and a component with little amplitude
+    reads as pale rather than being rescaled to look like the others. The
+    bias is a different quantity -- the decoded shape at zero latent -- and
+    is drawn on the sequential ramp without a bar of its own: only its
+    shape is read from it, never its values.
+
+    The headings are the component index and nothing else; which run drew
+    the basis belongs in the filename, where it already is.
+    """
+    from matplotlib.colors import Normalize
+
+    n = images.shape[0]
+    bias_image = as_images(np.asarray(bias).reshape(-1, 1), shape)[0]
+    # six across once there are more than twelve cells: sixteen components
+    # and the bias at four across left the bias alone on a fifth row and
+    # the figure at figTeX's 0.6 text-height cap
+    cols = min(4, n + 1) if n + 1 <= 12 else 6
+    rows = (n + 1 + cols - 1) // cols
+    aspect = images.shape[1] / images.shape[2]
+    P = figstyle().panels(f"{rows}x{cols}", images=aspect, shared=False)
+    flat = list(P.flat)
+
+    span = float(np.abs(images).max()) or 1.0
+    norm = Normalize(vmin=-span, vmax=span)
+    mappable = None
+    for i in range(n):
+        ax = flat[i]
+        mappable = ax.imshow(images[i], cmap=figstyle().diverging_cmap(),
+                             norm=norm, interpolation="nearest")
+        P.head(ax, i, f"{i}")
+        _image_axes(ax)
+    ax = flat[n]
+    ax.imshow(bias_image, cmap=figstyle().cmap(), interpolation="nearest")
+    P.head(ax, n, "bias")
+    _image_axes(ax)
     for ax in flat[n + 1:]:
         ax.set_visible(False)
-    fig.suptitle(f"{arm}, epoch {int(epoch)}: {n} basis components, "
-                 "depth summed")
+    # named by a short title over the bar rather than a rotated label beside
+    # it: figTeX's image geometry reserves 8 tick-sizes for the bar, which
+    # holds the tick numbers but not a rotated label as well, and in final
+    # mode `weight, depth summed` ran 6.8 pt past the right edge of the
+    # article figure
+    cb = P.colorbar(mappable)
+    cb.ax.set_title("weight", fontsize=P.v["f"], loc="center")
+    P.finish()
     path = out_dir / f"{prefix}_components_{arm}"
-    figstyle().save(fig, path)
-    plt.close(fig)
+    figstyle().save(P.fig, path)
+    plt.close(P.fig)
+    logger.info("  %s: epoch %d, %d components, symmetric span %.3g",
+                arm, int(epoch), n, span)
     return path
 
 
 def draw_history(frame: pl.DataFrame, arm: str, out_dir: Path,
                  prefix: str) -> Path | None:
-    """Per-component norm and cosine to final, against epoch."""
+    """Per-component norm and cosine to final, against epoch.
+
+    Two quantities on two scales, so neither axis is shared: `panels`
+    shares x by default on a grid, and sharing y would put a cosine on a
+    norm's axis.
+    """
     part = frame.filter(pl.col("method") == arm)
     if not len(part):
         return None
     components = sorted(part["component"].unique().to_list())
     _, ramp = figstyle().epoch_ramp(len(components))
-    fig, axes = plt.subplots(
-        1, 2, figsize=figstyle().figsize("full", aspect=0.38),
-        layout="constrained")
+    P = figstyle().panels("2", shared=False)
+    axes = list(P.flat)
     for i, component in enumerate(components):
         line = part.filter(pl.col("component") == component).sort("epoch")
         axes[0].plot(line["epoch"], line["norm"], lw=0.8, color=ramp[i])
@@ -174,12 +211,12 @@ def draw_history(frame: pl.DataFrame, arm: str, out_dir: Path,
     axes[1].set_ylabel("cosine to its final value")
     for ax in axes:
         ax.set_xlabel("epoch")
-    axes[0].set_title("amplitude per component")
-    axes[1].set_title("convergence per component")
-    fig.suptitle(f"{arm}: {len(components)} components over training")
+    P.head(axes[0], 0, "amplitude per component")
+    P.head(axes[1], 1, "convergence per component")
+    P.finish()
     path = out_dir / f"{prefix}_history_{arm}"
-    figstyle().save(fig, path)
-    plt.close(fig)
+    figstyle().save(P.fig, path)
+    plt.close(P.fig)
     return path
 
 
@@ -197,7 +234,10 @@ def main() -> int:
         if not found:
             raise SystemExit(f"no snapshots for arm {args.arm!r}")
 
-    figstyle().use()
+    if args.template:
+        figstyle().use(args.template)
+    else:
+        figstyle().use()
     history = None
     csv_path = args.data / COMPONENTS
     if csv_path.is_file():
@@ -213,6 +253,14 @@ def main() -> int:
     if history is not None and "dataset" in history.columns:
         for arm, dataset in history.select("method", "dataset").unique().rows():
             where[arm] = FIGURES / DATASET_DIR.get(str(dataset), OUT.name)
+
+    if args.dataset:
+        if history is None or "dataset" not in history.columns:
+            raise SystemExit(f"--dataset needs the dataset column of {csv_path}")
+        keep = set(history.filter(pl.col("dataset") == args.dataset)["method"])
+        found = [(a, p) for a, p in found if a in keep]
+        if not found:
+            raise SystemExit(f"no arms of dataset {args.dataset!r}")
 
     written = 0
     for arm, path in found:

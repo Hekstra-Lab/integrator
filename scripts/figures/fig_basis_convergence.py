@@ -74,6 +74,13 @@ def parse_args():
     p.add_argument("--data", type=Path, default=DATA)
     p.add_argument("--out-dir", type=Path, default=OUT)
     p.add_argument("--prefix", default="basis_convergence")
+    p.add_argument("--split", action="store_true",
+                   help="write one row per quantity, <prefix>_<quantity>, "
+                        "instead of the 3-row grid; the grid does not fit "
+                        "a slide frame")
+    p.add_argument("--template", default=None,
+                   help="figTeX template to size for (article, paper, book, "
+                        "slides, poster); default is figstyle's")
     return p.parse_args()
 
 
@@ -126,31 +133,25 @@ def components_of(data_dir: Path, method: str) -> int | None:
     return sub["component"].n_unique() if "component" in sub.columns else None
 
 
-def main() -> None:
-    args = parse_args()
-    arms = arm_table(args.data)
-    if not arms.height:
-        raise SystemExit("no arms with diagnostics")
-    figstyle().use()
-    args.out_dir.mkdir(parents=True, exist_ok=True)
-
-    cat = figstyle().categorical(8)
-    colours = {f: cat[s % len(cat)] for f, s in FAMILY_SLOT.items()}
-    present = [d for d in DATASETS if d in arms["dataset"].to_list()]
-
-    fig, axes = plt.subplots(
-        len(PANELS), len(present), sharex=False, squeeze=False,
-        figsize=figstyle().figsize("full", aspect=0.34 * len(PANELS)),
-        # figTeX typesets through LuaLaTeX at a fixed box, so a tick label
-        # that does not fit is clipped rather than growing the figure: the
-        # 1118 effective-rank axis was showing `2.5` for `12.5`.
-        layout="constrained",
-    )
+def draw_grid(arms: pl.DataFrame, present: list[str], quantities,
+              colours: dict, data_dir: Path, path: Path) -> None:
+    """One row per quantity, one column per dataset."""
+    # rows are different quantities and columns datasets with different
+    # component counts, so no axis is shared: `panels` would otherwise
+    # share x on a grid, and sharing y would put an angle on an effective
+    # rank's axis
+    ncols, nrows = len(present), len(quantities)
+    layout = f"{nrows}x{ncols}" if nrows > 1 else str(ncols)
+    P = figstyle().panels(layout, shared=False)
+    flat = list(P.flat)
+    if len(flat) != nrows * ncols:
+        raise SystemExit(f"{figstyle().active()}: panels returned "
+                         f"{len(flat)} axes for a {nrows}x{ncols} grid")
 
     for col, dataset in enumerate(present):
         here = arms.filter(pl.col("dataset") == dataset)
-        for rowi, (metric, ylabel) in enumerate(PANELS):
-            ax = axes[rowi][col]
+        for rowi, (metric, ylabel) in enumerate(quantities):
+            ax = flat[rowi * ncols + col]
             for arm in here.iter_rows(named=True):
                 diag = pl.read_parquet(arm["path"])
                 if metric not in diag.columns:
@@ -163,7 +164,7 @@ def main() -> None:
                 ax.plot(sub["epoch"].to_numpy()[keep], y[keep], lw=1.1,
                         color=colours.get(arm["family"]), label=arm["family"])
             if metric == "eff_rank":
-                n = components_of(args.data, here["method"][0])
+                n = components_of(data_dir, here["method"][0])
                 if n:
                     ax.axhline(n, ls=":", lw=0.8,
                                color=figstyle().roles().get("muted", "0.5"))
@@ -173,21 +174,45 @@ def main() -> None:
             if col == 0:
                 ax.set_ylabel(ylabel)
             if rowi == 0:
-                ax.set_title(TITLES.get(dataset, dataset))
-            if rowi == len(PANELS) - 1:
+                P.head(ax, col, TITLES.get(dataset, dataset))
+            if rowi == nrows - 1:
                 ax.set_xlabel("epoch")
 
     handles = [plt.Line2D([], [], color=colours[f], lw=1.4)
                for f in FAMILY_SLOT]
-    # on the figure rather than in a panel: inside the first axes it sat on
-    # the 9b7c curves, and every panel shares the same two series
-    fig.legend(handles, list(FAMILY_SLOT), frameon=False, ncol=2,
-               loc="outside upper center", handlelength=1.4)
-
-    path = args.out_dir / args.prefix
-    figstyle().save(fig, path)
-    plt.close(fig)
+    # a boxed strip above the panels rather than inside one: inside the
+    # first axes it sat on the 9b7c curves, and every panel shares the
+    # same two series
+    P.top_legend(handles, list(FAMILY_SLOT), frameon=True,
+                 handlelength=1.4)
+    P.finish()
+    figstyle().save(P.fig, path)
+    plt.close(P.fig)
     logger.info("Saved %s", path)
+
+
+def main() -> None:
+    args = parse_args()
+    arms = arm_table(args.data)
+    if not arms.height:
+        raise SystemExit("no arms with diagnostics")
+    if args.template:
+        figstyle().use(args.template)
+    else:
+        figstyle().use()
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+
+    cat = figstyle().categorical(8)
+    colours = {f: cat[s % len(cat)] for f, s in FAMILY_SLOT.items()}
+    present = [d for d in DATASETS if d in arms["dataset"].to_list()]
+
+    if args.split:
+        for metric, ylabel in PANELS:
+            draw_grid(arms, present, ((metric, ylabel),), colours, args.data,
+                      args.out_dir / f"{args.prefix}_{metric}")
+    else:
+        draw_grid(arms, present, PANELS, colours, args.data,
+                  args.out_dir / args.prefix)
 
     for arm in arms.sort(["dataset", "family"]).iter_rows(named=True):
         diag = pl.read_parquet(arm["path"]).sort("epoch")

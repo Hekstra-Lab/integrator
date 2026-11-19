@@ -173,7 +173,7 @@ def fit(fig, width="full", **kw):
     return sizing.fit(fig, _ACTIVE, width=width, **kw)
 
 
-def top_legend(P, handles, labels, **kw):
+def top_legend(P, handles, labels, max_cols=None, **kw):
     """A boxed legend strip above the panels, wrapped to the figure width.
 
     `Panels.top_legend` puts every entry in one row, which overflows as
@@ -182,10 +182,15 @@ def top_legend(P, handles, labels, **kw):
     silently cut off in the output rather than raised. This draws the
     strip, MEASURES it, and gives it another row until it fits, so the one
     call works at a 243 pt column and at a 1015 pt poster column.
+
+    `max_cols` caps the columns tried first. The measurement is against the
+    width at the time of the call, and on slides `P.finish` can narrow the
+    figure afterwards; `legend_fits` checks the finished figure, and a
+    caller redraws with `max_cols` one below what was used.
     """
     if not handles:
         return None
-    n = len(labels)
+    n = min(len(labels), max_cols or len(labels))
     for ncols in [n] + [c for c in (4, 3, 2, 1) if c < n]:
         leg = P.top_legend(handles, labels, frameon=True, ncols=ncols, **kw)
         w_pt = (leg.get_window_extent(P.fig.canvas.get_renderer()).width
@@ -195,6 +200,71 @@ def top_legend(P, handles, labels, **kw):
         leg.remove()
         P._top_legend = None
     return P.top_legend(handles, labels, frameon=True, ncols=1, **kw)
+
+
+def legend_fits(P) -> bool:
+    """Whether the top legend is inside the figure as finally sized.
+
+    On slides `P.finish` narrows the data areas to keep their proportions
+    when the strip takes height from a frame that has none to spare, so a
+    strip measured to fit before `finish` can overflow after it:
+    `ccsym_off` on slides came out with its legend 9.4 pt past the right
+    edge that way.
+    """
+    leg = getattr(P, "_top_legend", None)
+    if leg is None:
+        return True
+    w_pt = leg.get_window_extent(P.fig.canvas.get_renderer()).width * 72 / P.fig.dpi
+    return w_pt <= P.info["W"]
+
+
+def legend_cols(P) -> int:
+    """The column count of the top legend, 0 when there is none."""
+    leg = getattr(P, "_top_legend", None)
+    return 0 if leg is None else leg._ncols
+
+
+def shell_axis(ax, P, s2, d, minor: bool = True) -> None:
+    """`parts.shell_axis`, with the labelled shells chosen by POSITION.
+
+    figTeX picks `room` labels evenly spaced in shell INDEX, which collides
+    wherever the shells crowd on the 1/d^2 axis: careless bins I/sigma into
+    20 shells, and on a slide `1.94` and `1.90` printed over each other.
+    This keeps figTeX's minor ticks and its count, then walks the shells
+    and labels one only when it is at least one `tick_dx` of panel width
+    past the last label, always keeping both ends.
+    """
+    import numpy as np
+    from matplotlib.ticker import FixedLocator
+
+    parts.shell_axis(ax, P, s2, d, minor=minor)
+    s2, d = np.asarray(s2, float), np.asarray(d, float)
+    if len(s2) < 3:
+        return
+    span = float(s2.max() - s2.min()) or 1.0
+    gap = span * P.v["tick_dx"] / P.info["panel"]
+    keep = [0]
+    for i in range(1, len(s2)):
+        if s2[i] - s2[keep[-1]] >= gap:
+            keep.append(i)
+    last = len(s2) - 1
+    if keep[-1] != last:
+        if s2[last] - s2[keep[-1]] < gap and len(keep) > 1:
+            keep.pop()
+        keep.append(last)
+    ax.xaxis.set_major_locator(FixedLocator(s2[keep]))
+    ax.set_xticklabels([f"{d[i]:.2f}" for i in keep])
+
+
+def on_slides() -> bool:
+    """Whether the active template is a slide frame.
+
+    A slide frame is 144 pt tall, and a legend strip above a single panel
+    takes about half of it; the scripts put the legend beside the panel
+    there instead (`Panels.side_legend`), which widens the figure rather
+    than shortening the data area.
+    """
+    return sizing.TEMPLATES[_ACTIVE].medium == "slides"
 
 
 def save(fig, path):

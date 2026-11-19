@@ -70,6 +70,9 @@ def parse_args():
     p.add_argument("--data", type=Path, default=DATA)
     p.add_argument("--out-dir", type=Path, default=OUT)
     p.add_argument("--prefix", default="model_cost")
+    p.add_argument("--template", default=None,
+                   help="figTeX template to size for (article, paper, book, "
+                        "slides, poster); default is figstyle's")
     return p.parse_args()
 
 
@@ -149,7 +152,10 @@ def grouped_bars(ax, datasets, values, families, colours, hollow=()):
 def main() -> None:
     args = parse_args()
     df = load(args.data)
-    figstyle().use()
+    if args.template:
+        figstyle().use(args.template)
+    else:
+        figstyle().use()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     cat = figstyle().categorical(8)
@@ -172,16 +178,16 @@ def main() -> None:
             if not matched(df, d):
                 hollow.add(d)
 
-    fig, axes = plt.subplots(
-        1, 2, figsize=figstyle().figsize("full", aspect=0.46),
-        # figTeX typesets through LuaLaTeX at a fixed box, so a label that
-        # does not fit is clipped rather than growing the figure: the
-        # two-line `PDZ2 (matched)` tick was being cut off the bottom.
-        layout="constrained")
+    # two quantities on two scales, and different datasets on the two x
+    # axes (the matched-allocation run is on the right only): nothing shared
+    P = figstyle().panels("2", shared=False, header=False)
+    axes = list(P.flat)
 
-    grouped_bars(axes[0], present, params, list(FAMILY), colours)
-    axes[0].set_ylabel("parameters")
-    axes[0].ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
+    # in millions on the axis: matplotlib's `1e6` offset text sits above
+    # the axes, outside the layout, and reads as a stray label
+    grouped_bars(axes[0], present, {k: v / 1e6 for k, v in params.items()},
+                 list(FAMILY), colours)
+    axes[0].set_ylabel("parameters (millions)")
 
     grouped_bars(axes[1], timing_sets, rates, list(FAMILY), colours,
                  hollow=hollow)
@@ -194,19 +200,18 @@ def main() -> None:
                                      edgecolor=figstyle().roles().get(
                                          "text", "0.3"), hatch="///"))
         labels.append("allocation not matched")
-    # across the top rather than `loc="best"`, which put the legend on the
-    # 1118 bars; the headroom is made for it instead of overlapping data
-    top = max(rates.values()) if rates else 1.0
-    axes[1].set_ylim(0, top * 1.55)
-    # two columns, not three: at three the legend was wider than its axes
-    # and ran across into the parameters panel, over its y-axis label
-    axes[1].legend(handles, labels, loc="upper center", ncol=2, frameon=False,
-                   handlelength=1.2, columnspacing=0.9, borderaxespad=0.2,
-                   fontsize="small")
+    # a boxed strip above both panels. Inside the timing panel it needed
+    # the y axis stretched to 1.55 times the tallest bar to stay off the
+    # bars, and at three columns it was wider than its axes and ran over
+    # the parameters panel's y label
+    axes[1].set_ylim(bottom=0)
+    figstyle().top_legend(P, handles, labels, handlelength=1.2,
+                          columnspacing=0.9)
+    P.finish()
 
     path = args.out_dir / f"{args.prefix}"
-    figstyle().save(fig, path)
-    plt.close(fig)
+    figstyle().save(P.fig, path)
+    plt.close(P.fig)
     logger.info("Saved %s", path)
 
     for d in present:

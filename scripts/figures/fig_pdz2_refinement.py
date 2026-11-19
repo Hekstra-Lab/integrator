@@ -76,6 +76,9 @@ def parse_args():
     p.add_argument("--dataset", default=None,
                    help="draw only this dataset (default: each one present)")
     p.add_argument("--prefix", default="refinement")
+    p.add_argument("--template", default=None,
+                   help="figTeX template to size for (article, paper, book, "
+                        "slides, poster); default is figstyle's")
     return p.parse_args()
 
 
@@ -175,7 +178,10 @@ def main() -> None:
     if missing:
         raise SystemExit(f"{args.data} is missing {sorted(missing)}")
 
-    figstyle().use()
+    if args.template:
+        figstyle().use(args.template)
+    else:
+        figstyle().use()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     datasets = ([args.dataset] if args.dataset
                 else df["dataset"].unique().sort().to_list())
@@ -192,36 +198,37 @@ def main() -> None:
         arms = sorted(sub["method"].unique().to_list(),
                       key=lambda m: (m != REFERENCE, m))
         palette = dict(figstyle().arm_colors(arms))
+        # the reference's replicates in the reference colour, so its points
+        # and its vermilion mean line read as one arm
+        if REFERENCE in palette:
+            palette[REFERENCE] = figstyle().reference_style()["color"]
 
-        fig, axes = plt.subplots(
-            1, len(PANELS), sharey=True,
-            # tall enough for two panels, four arm labels and an x label.
-            # figTeX typesets through LuaLaTeX at a fixed box, so text that
-            # does not fit is clipped rather than expanding the figure: at
-            # 0.34 both x labels and the longest arm name were cut off.
-            figsize=figstyle().figsize("full", aspect=0.46),
-            # constrained, as fig_profile_basis does: figTeX typesets
-            # through LuaLaTeX at a fixed box, so an axis label or a long
-            # arm name that does not fit is clipped rather than growing the
-            # figure. Both x labels and `k7m mlclamp` were being cut.
-            layout="constrained",
-        )
-        flat = np.atleast_1d(axes)
+        # the template-aware path: `panels` sizes the data areas for the
+        # active template. y is shared because both panels list the same
+        # arms in the same order; x is not, because R-work and R-free sit
+        # about 0.04 apart and one scale would squeeze both spreads. No
+        # header line: the x label already names each panel.
+        P = figstyle().panels(str(len(PANELS)), shared="y", header=False)
+        flat = list(P.flat)
         # once, not per panel: the axes share y, so inverting in the loop
         # would invert twice and put the lowest R-free at the bottom
         flat[0].invert_yaxis()
         # one order for both panels, from the metric the arms are ranked on
         order = ranking(sub, PANELS[0][0])
-        for ax, (metric, label) in zip(flat, PANELS, strict=True):
+        for i, (ax, (metric, label)) in enumerate(
+                zip(flat, PANELS, strict=True)):
             stats = summarise(sub, metric, order)
             draw_panel(ax, stats, metric, label, palette)
+            if i:  # the shared y carries the arm names once, on the left
+                ax.tick_params(axis="y", labelleft=False)
             if metric == "r_free":
                 for row in stats.iter_rows(named=True):
                     logger.info("  %-14s %s = %.4f over %d refinement(s)",
                                 row["method"], metric, row["mean"], row["n"])
+        P.finish()
         path = args.out_dir / f"{args.prefix}_{dataset}"
-        figstyle().save(fig, path)
-        plt.close(fig)
+        figstyle().save(P.fig, path)
+        plt.close(P.fig)
         logger.info("Saved %s", path)
         n += 1
 
