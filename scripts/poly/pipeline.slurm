@@ -20,11 +20,26 @@
 #
 #   RUN_DIR=<run-dir> PRED_DIR=<run-dir>/rb_preds STEPS=careless,stats,phenix,peaks \
 #       sbatch scripts/poly/pipeline.slurm
+#
+# OUT_BASE scores a merge the pipeline did not make -- a reference
+# integrator's careless output, say -- naming the base that `_0.mtz` hangs
+# off. It replaces RUN_DIR, and METHOD and DATASET then label the rows that
+# the stats step writes. PHENIX_DMIN fixes the resolution both refinement
+# passes use, which is what makes a reference merged to a different limit
+# comparable:
+#
+#   OUT_BASE=<.../laue_c4/laue> METHOD=laue DATASET=hewl_1118 \
+#       STEPS=phenix,peaks PHENIX_DMIN=1.70 sbatch scripts/poly/pipeline.slurm
 
 set -euo pipefail
 
 INTEGRATOR_ROOT="${INTEGRATOR_ROOT:?INTEGRATOR_ROOT must be set (add to ~/.bashrc).}"
-RUN_DIR="${RUN_DIR:?RUN_DIR must be set to the trained run directory.}"
+OUT_BASE="${OUT_BASE:-}"
+if [ -z "$OUT_BASE" ]; then
+  RUN_DIR="${RUN_DIR:?set RUN_DIR to the trained run directory, or OUT_BASE to a merge base.}"
+else
+  RUN_DIR=""
+fi
 PIPELINE_CFG="${PIPELINE_CFG:-$INTEGRATOR_ROOT/scripts/poly/poly_pipeline_cfg.yaml}"
 STEPS="${STEPS:-predict,careless,phenix,peaks}"
 MAMBA_SH="${MAMBA_SH:-/n/lab_storage/hekstra_lab/people/aldama/micromamba/etc/profile.d/mamba.sh}"
@@ -53,7 +68,11 @@ if [ "$PKG_SHA" != "$REPO_SHA" ]; then
 fi
 
 "$PY_BIN" "$INTEGRATOR_ROOT/scripts/poly/run_pipeline.py" \
-    --run-dir "$RUN_DIR" \
+    ${RUN_DIR:+--run-dir "$RUN_DIR"} \
+    ${OUT_BASE:+--out-base "$OUT_BASE"} \
     --cfg "$PIPELINE_CFG" \
     --steps "$STEPS" \
-    ${PRED_DIR:+--pred-dir "$PRED_DIR"}
+    ${PRED_DIR:+--pred-dir "$PRED_DIR"} \
+    ${METHOD:+--method "$METHOD"} \
+    ${DATASET:+--dataset "$DATASET"} \
+    ${PHENIX_DMIN:+--phenix-dmin "$PHENIX_DMIN"}
