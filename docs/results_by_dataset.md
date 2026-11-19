@@ -196,11 +196,24 @@ Rsplit by shell, mean over the three cross-validation repeats:
 In the first shell every arm and both exports agree to 4%.
 In the last shell the predicted gates are 80% and 113% worse than the baseline under the posterior export, and 6% BETTER than it under the RB export.
 
-The cause is the exported sigma, not the gate.
-`q(I)` has a one-parameter family: $\beta = \beta_I + \sum_i p_i = \beta_I + 1$ is fixed because the profile is normalised, so the Fano factor is constant and $\mathrm{var} = I/1.014$ in every arm, with $\mathrm{corr}(\log I, \log \mathrm{var}) = 0.99993$ to $0.99995$.
+The cause is the exported sigma, not the gate, and the bound on it is one-sided.
+`_get_qi` sets $\beta' = \beta_I + \sum_i p_i m_i$, the profile is normalised so that sum is exactly 1, and $\beta_I$ is a Gamma rate and cannot be negative.
+So $\beta' = 1 + \tau \ge 1$ and
+
+$$\mathrm{Fano} = \frac{\mathrm{var}}{\mathrm{mean}} = \frac{1}{\beta'} \le 1$$
+
+for every reflection: the posterior can be Poisson-like or slightly under-dispersed and can **never** be over-dispersed.
+Measured at epoch 19 on 2,664,858 reflections per arm, the posterior Fano factor runs 0.873 to 0.99995 with **zero** reflections above 1 in any of the three arms, against a Rao-Blackwellized Fano of median 11.2 to 18.8 and p99 587 to 1395, every one of them above 1.
+The data wants an order of magnitude more dispersion than the family can reach, in the direction it is closed.
+$\mathrm{corr}(\log I, \log \mathrm{var})$ is 0.99993 to 0.99995 as a consequence.
 careless config 4 selects `StudentTLikelihood`, whose `dist()` takes `get_uncertainties(inputs)` as the scale and does **not** refit an error model -- only the `Ev11` likelihoods carry `Sdfac`, and config 4 selects neither.
 So the reported sigma reaches the likelihood intact and carries no per-reflection information: the merging weight of a reflection is fixed by the intensity it reported, and a measurement summed over 4 clean pixels and one summed over 200 pixels of background are weighted alike.
 The RB estimator breaks the family -- $\mathrm{corr}(\log i_{rb}, \log \mathrm{var}_{rb})$ is 0.656 (`bg`) and 0.805 (`conj`) -- and the architecture difference disappears with it.
+
+`intensity_variance: fisher`, which computes the same Schur-complement variance inside the model, was tried in the week of 2026-11-10 and does not work: it enters the ELBO and changes the training dynamics.
+The post-hoc export does not, which is why it is the one that works.
+The inference variance and the reported variance are different objects, and the family that makes training stable is exactly the one that cannot express the dispersion the data has.
+**Score the RB export; treat the posterior sigma as diagnostic only.**
 
 Second cause, specific to the computed gate: it is a plug-in estimator built from the same counts it then weights, so $E[\sum_i r_i(c) c_i] \neq I$ and the reuse adds both bias and variance.
 It also sums $n_{\mathrm{eff}}$ of 23 to 28 pixels against the baseline's 4, in shoeboxes that are 96.6% background.
