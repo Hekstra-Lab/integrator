@@ -734,7 +734,8 @@ def measure_trained(path: str, out: str = "") -> list[dict]:
 TAU = 0.0097
 
 
-def variance_rules(p_row, counts, tau=TAU):
+def variance_rules(p_row, counts, tau=TAU, q_kappa=None, draws=4,
+                   rng=None):
     """Every claim about the error bar, on one set of shoeboxes.
 
     Each rule is `(estimate, reported variance)` for ONE estimator, so a
@@ -758,6 +759,13 @@ def variance_rules(p_row, counts, tau=TAU):
       Var = J_BB / (J_II J_BB - J_IB^2). The background is profiled out
       rather than conditioned on. This is what the Rao-Blackwellized
       export reports.
+    - `fisher_marg` the same, with the PROFILE marginalised as well as the
+      background. `fisher` is conditional on the one profile it was
+      handed; on real data that profile is itself estimated, and its
+      error moves the estimate from exposure to exposure. With a
+      `q(p) = Dirichlet(q_kappa * p_hat)` the law of total variance gives
+      `E_p[Var(I|p)] + Var_p[E(I|p)]`, and the second term is the
+      contribution `fisher` is missing. Only built when `q_kappa` is set.
     """
     i0, b0 = plugin_estimates(p_row, counts)
     lam = i0 * p_row
@@ -773,12 +781,31 @@ def variance_rules(p_row, counts, tau=TAU):
     j_bb = (1.0 / rate).sum(axis=1)
     det = np.maximum(j_ii * j_bb - j_ib ** 2, 1e-30)
 
-    return {
+    out = {
         "conjugate": (alpha / beta, alpha / beta ** 2),
         "split": (alpha / beta, (alpha + split_term) / beta ** 2),
         "naive": (gate_sum, (r ** 2 * rate).sum(axis=1)),
         "fisher": (i0.ravel(), j_bb / det),
     }
+    if q_kappa:
+        rng = rng or np.random.default_rng(0)
+        means, vars_ = [], []
+        for _ in range(draws):
+            ps = rng.gamma(np.maximum(q_kappa * p_row, 1e-6))
+            ps = ps / np.maximum(ps.sum(axis=1, keepdims=True), 1e-30)
+            i_s, b_s = plugin_estimates(ps, counts)
+            lam_s = np.maximum(i_s * ps + b_s, 1e-9)
+            a_ii = (ps ** 2 / lam_s).sum(axis=1)
+            a_ib = (ps / lam_s).sum(axis=1)
+            a_bb = (1.0 / lam_s).sum(axis=1)
+            d_s = np.maximum(a_ii * a_bb - a_ib ** 2, 1e-30)
+            means.append(i_s.ravel())
+            vars_.append(a_bb / d_s)
+        means = np.asarray(means)
+        vars_ = np.asarray(vars_)
+        out["fisher_marg"] = (means.mean(axis=0),
+                              vars_.mean(axis=0) + means.var(axis=0, ddof=1))
+    return out
 
 
 def robust_sd(z: np.ndarray) -> float:
@@ -797,7 +824,9 @@ def robust_sd(z: np.ndarray) -> float:
     return float(1.4826 * np.median(np.abs(v - np.median(v))))
 
 
-def calibrate_variance(n_refl: int, n_rep: int, seed: int) -> list[dict]:
+def calibrate_variance(n_refl: int, n_rep: int, seed: int,
+                       profile_kappa: float | None = None,
+                       draws: int = 4) -> list[dict]:
     """Does the reported error bar equal the spread of the estimate?
 
     The question merging asks is frequentist and it is not the question a
@@ -827,11 +856,32 @@ def calibrate_variance(n_refl: int, n_rep: int, seed: int) -> list[dict]:
     background = 10.0 ** rng.uniform(-0.5, 1.5, size=n_refl)
     rate = intensity[:, None] * p_row + background[:, None]
 
+    # the Cramer-Rao floor, from the TRUE (I, B, p): the information the
+    # experiment contains, which no estimator of I can beat. Reported as
+    # `efficiency` = floor / achieved spread, so 1.0 is an estimator that
+    # extracts everything the shoebox holds and 0.5 is one throwing half
+    # of it away. It bounds UNBIASED estimators, so a biased one can show
+    # above 1 and that is a warning, not a win.
+    t_ii = (p_row ** 2 / rate).sum(axis=1)
+    t_ib = (p_row / rate).sum(axis=1)
+    t_bb = (1.0 / rate).sum(axis=1)
+    crb = t_bb / np.maximum(t_ii * t_bb - t_ib ** 2, 1e-30)
+
     est = {}
     var = {}
     for _ in range(n_rep):
         counts = rng.poisson(rate).astype(float)
-        for name, (e, v) in variance_rules(p_row, counts).items():
+        # the profile the ESTIMATOR sees. On real data it is predicted
+        # from these very counts, so it is redrawn per realisation: a
+        # profile fixed across exposures would show up as bias, not as
+        # spread, and would leave the variance question untouched.
+        seen = p_row
+        if profile_kappa:
+            seen = rng.gamma(np.maximum(profile_kappa * p_row, 1e-6))
+            seen = seen / np.maximum(seen.sum(axis=1, keepdims=True), 1e-30)
+        for name, (e, v) in variance_rules(
+                seen, counts, q_kappa=profile_kappa, draws=draws,
+                rng=rng).items():
             est.setdefault(name, []).append(e)
             var.setdefault(name, []).append(v)
 
@@ -864,6 +914,8 @@ def calibrate_variance(n_refl: int, n_rep: int, seed: int) -> list[dict]:
                 "fano": float(np.median(reported[sel]
                                         / np.maximum(
                                             e[:, sel].mean(axis=0), 1e-30))),
+                "efficiency": float(np.median(
+                    crb[sel] / np.maximum(spread[sel], 1e-30))),
             })
     return rows
 
@@ -880,6 +932,11 @@ def main() -> int:
                     help="is the reported error bar the spread of the "
                          "estimate? repeated realisations of the same "
                          "simulated reflection")
+    ap.add_argument("--profile-error", type=float, default=None,
+                    metavar="KAPPA",
+                    help="the estimator sees Dirichlet(KAPPA p) instead of "
+                         "the true profile, redrawn per realisation; "
+                         "smaller is noisier")
     ap.add_argument("--reps", type=int, default=200,
                     help="count realisations per reflection for --variance")
     ap.add_argument("--npz", default="",
@@ -893,13 +950,19 @@ def main() -> int:
         return 0
 
     if args.variance:
-        rows = calibrate_variance(args.n, args.reps, args.seed)
+        rows = calibrate_variance(args.n, args.reps, args.seed,
+                                  args.profile_error)
         width = max(len(r["rule"]) for r in rows) + 2
+        if args.profile_error:
+            print(f"profile seen by the estimator: "
+                  f"Dirichlet({args.profile_error} p), redrawn per "
+                  f"realisation\n")
         print(f"{'rule':<{width}}{'band':<8}{'reported/spread':>16}"
-              f"{'z sd':>8}{'bias':>9}{'Fano':>8}")
+              f"{'z sd':>8}{'bias':>9}{'Fano':>8}{'efficiency':>12}")
         for r in rows:
             print(f"{r['rule']:<{width}}{r['band']:<8}{r['ratio']:>16.3f}"
-                  f"{r['z_sd']:>8.2f}{r['bias']:>9.3f}{r['fano']:>8.2f}")
+                  f"{r['z_sd']:>8.2f}{r['bias']:>9.3f}{r['fano']:>8.2f}"
+                  f"{r['efficiency']:>12.3f}")
         if args.out:
             with open(args.out, "w", newline="") as fh:
                 w = csv.DictWriter(fh, fieldnames=list(rows[0]))
