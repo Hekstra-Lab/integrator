@@ -43,6 +43,9 @@ set -uo pipefail
 M=${RB_ROOT:-/n/netscratch/hekstra_lab/Lab/laldama/laue_runs/pdz2_model}
 RUNS=${RB_RUNS:-$M/runs}
 OUT=${RB_OUT:-$M/rb_preds}
+# the derived config goes next to the ROOT, which exists; writing it under
+# $OUT fails before predict has had a chance to create $OUT
+mkdir -p "$OUT" || { echo "cannot create $OUT"; exit 1; }
 # the checkout this job was submitted from, so what runs is what is
 # committed. SLURM copies a batch script to its spool before running
 # it, so $BASH_SOURCE is not the repository.
@@ -54,7 +57,7 @@ for arm in "${@:-pdz2_geom_both}"; do
   run=$RUNS/$arm
   ckpt=$(ls -1 $run/files/checkpoints/epoch=*.ckpt 2>/dev/null | sort | tail -1)
   [ -z "$ckpt" ] && { echo "SKIP $arm: no checkpoint"; continue; }
-  cfg=$OUT/../rb_cfg_$arm.yaml
+  cfg=$M/rb_cfg_$arm.yaml
   echo "===== $arm <- $(basename $ckpt)"
   micromamba run -n integrator-cuda-dev env PYTHONPATH=$SRC \
     python $SLURM_SUBMIT_DIR/scripts/poly/rb_predict_config.py $run $cfg || { echo "CFG_FAIL $arm"; continue; }
