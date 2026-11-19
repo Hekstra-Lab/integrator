@@ -608,8 +608,11 @@ def measure_trained(path: str, out: str = "") -> list[dict]:
 
         thirds = (np.digitize(d, np.nanquantile(d, [1 / 3, 2 / 3]))
                   if np.isfinite(d).all() else np.zeros(len(d), int))
-        for band, label in ((slice(None), "all"), (0, "low_res"),
-                            (1, "mid_res"), (2, "high_res")):
+        # `d` is in angstrom, so the SMALLEST d is the highest resolution
+        # and `digitize` puts it in band 0. Labelling band 0 `low_res`
+        # inverted every resolution trend these tables report.
+        for band, label in ((slice(None), "all"), (0, "high_res"),
+                            (1, "mid_res"), (2, "low_res")):
             sel = (np.ones(len(c), bool) if label == "all"
                    else thirds == band)
             if sel.sum() < 10:
