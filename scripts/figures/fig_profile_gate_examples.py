@@ -132,6 +132,76 @@ def draw_arm(blob, arm, out_dir: Path, prefix: str) -> Path | None:
     return path
 
 
+def draw_combined(blob, arms, out_dir: Path, prefix: str) -> Path | None:
+    """All arms on one grid, one row per reflection.
+
+    Only valid when the arms picked the SAME reflections, which they do
+    when they share a dataset and a dataloader seed. That is checked on
+    the stored resolutions rather than assumed: rows that are not the same
+    reflection cannot be compared across columns, and the figure would
+    invite exactly that comparison.
+    """
+    ds = [blob.get(f"{a}_ex_d") for a in arms]
+    if any(d is None for d in ds):
+        return None
+    ref = ds[0]
+    if not all(np.allclose(d, ref, rtol=1e-4) for d in ds):
+        logger.warning("  combined: arms picked different reflections "
+                       "(%s), drawing separately only",
+                       ", ".join(f"{a}:{float(d[0]):.2f}"
+                                 for a, d in zip(arms, ds, strict=True)))
+        return None
+
+    n = len(ref)
+    counts = blob[f"{arms[0]}_ex_counts"]
+    shape = blob.get(f"{arms[0]}_shape", np.array([0, 0]))
+    # counts once, then profile and gate per arm
+    blocks = []
+    for a in arms:
+        blocks.append((a, blob.get(f"{a}_ex_profile"),
+                       blob.get(f"{a}_ex_gate")))
+    cols = 1 + sum(1 + (1 if g is not None else 0) for _a, _p, g in blocks)
+
+    fig, axes = plt.subplots(
+        n, cols, squeeze=False, layout="constrained",
+        figsize=figstyle().figsize("full", aspect=0.17 * n * 7 / cols),
+    )
+    for i in range(n):
+        j = 0
+        ax = axes[i][j]
+        ax.imshow(square(counts[i], shape), cmap=figstyle().cmap(),
+                  interpolation="nearest")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        if i == 0:
+            ax.set_title("counts", fontsize="x-small")
+        ax.set_ylabel(f"{float(ref[i]):.2f}", fontsize="x-small")
+        j += 1
+        for arm, prof, gate in blocks:
+            short = arm.replace("hewl1118_", "").replace("hewl9b7c_", "")
+            ax = axes[i][j]
+            ax.imshow(square(prof[i], shape), cmap=figstyle().cmap(),
+                      interpolation="nearest")
+            ax.set_xticks([])
+        ax.set_yticks([])
+            if i == 0:
+                ax.set_title(f"{short}\nprofile", fontsize="x-small")
+            j += 1
+            if gate is not None:
+                ax = axes[i][j]
+                ax.imshow(square(gate[i], shape), cmap=figstyle().cmap(),
+                          vmin=0.0, vmax=1.0, interpolation="nearest")
+                ax.set_xticks([])
+        ax.set_yticks([])
+                if i == 0:
+                    ax.set_title(f"{short}\ngate", fontsize="x-small")
+                j += 1
+    path = out_dir / f"{prefix}_combined"
+    figstyle().save(fig, path)
+    plt.close(fig)
+    return path
+
+
 def main() -> None:
     args = parse_args()
     if not args.data.is_file():
@@ -146,6 +216,9 @@ def main() -> None:
     arms = arms_in(blob)
     if not arms:
         raise SystemExit(f"{args.data} holds no `<arm>_ex_counts`")
+    combined = draw_combined(blob, arms, args.out_dir, args.prefix)
+    if combined is not None:
+        logger.info("  combined: %s", combined)
     drawn = 0
     for arm in arms:
         path = draw_arm(blob, arm, args.out_dir, args.prefix)
