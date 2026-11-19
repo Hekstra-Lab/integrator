@@ -309,7 +309,15 @@ def main() -> int:
             model.load_state_dict(state.get("state_dict", state), strict=False)
             dm = construct_data_loader(cfg)
             dm.setup("fit")
-            got = accumulate(model, dm.train_dataloader(), device, N_BATCHES)
+            # The VALIDATION loader, which does not shuffle. The training
+            # loader does, and every run shuffles differently, so two arms'
+            # first batches held no reflection in common -- measured, zero
+            # of 2048 -- and no gate could be compared with another one.
+            # Unshuffled, every arm sees the same reflections in the same
+            # order and the comparison is of models, not of batches.
+            loader = (dm.val_dataloader() if hasattr(dm, "val_dataloader")
+                      else dm.train_dataloader())
+            got = accumulate(model, loader, device, N_BATCHES)
         except Exception as exc:
             print(f"  {arm}: {type(exc).__name__}: {str(exc)[:110]}")
             continue
