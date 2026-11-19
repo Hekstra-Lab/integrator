@@ -530,6 +530,27 @@ def measure_trained(path: str, out: str = "") -> list[dict]:
       responsibility implies, `sum r c / sum r* c`, median.
     - `n_eff_gate` `(sum r)^2 / sum r^2`, the number of pixels the gate
       effectively sums, which sets how much background it admits.
+    - `precision` the share of what the gate ADMITS that is excess rather
+      than background, `sum_i r_i (c_i - b)_+ / sum_i r_i c_i`. With
+      `captured` it makes a precision/recall pair, and the pair is what
+      separates "the gate covers the signal" from "the gate covers the
+      detector": `captured` alone goes to 1 for a gate that is 1
+      everywhere, and in a shoebox that is 96.6% background that gate is
+      the worst one available.
+    - `calib_err` how far the gate is from being a probability. If `r_i`
+      is the posterior probability that a count at pixel `i` is signal,
+      then over pixels binned by `r` the observed excess share
+      `(c - b)_+ / c` should equal the bin's mean `r`. This is the mean
+      absolute gap over ten bins, weighted by the counts in each -- the
+      expected calibration error. A gate reading 0.8 where three tenths of
+      the counts are excess is over-confident by 0.5 there, and that is
+      exactly what inflates `sum_i r_i c_i`.
+    - `calib_slope` the slope of observed excess share on `r` through those
+      same bins. 1 is calibrated, below 1 over-confident at the top end.
+
+    The calibration curve itself is written to `<out>` with
+    `band = "calibration"` rows, one per bin, so it can be drawn rather
+    than only summarised.
     """
     import numpy as np
 
@@ -553,7 +574,7 @@ def measure_trained(path: str, out: str = "") -> list[dict]:
             "measured on the same ids"
         )
 
-    rows = []
+    rows, curve = [], []
     for arm in arms:
         order = {int(r): i for i, r in enumerate(id_sets[arm])}
         take = np.array([order[r] for r in common])
@@ -593,13 +614,29 @@ def measure_trained(path: str, out: str = "") -> list[dict]:
                    else thirds == band)
             if sel.sum() < 10:
                 continue
-            rg, rx, cap, ratio, neff = [], [], [], [], []
+            rg, rx, cap, ratio, neff, prec = [], [], [], [], [], []
+            # the calibration curve is pooled over reflections rather than
+            # averaged per reflection: a single shoebox has too few pixels
+            # in the high-`r` bins to estimate a share from
+            n_bins = 10
+            cal_num = np.zeros(n_bins)   # excess counts in the bin
+            cal_den = np.zeros(n_bins)   # all counts in the bin
+            cal_r = np.zeros(n_bins)     # sum of r, for the bin's mean r
+            cal_n = np.zeros(n_bins)     # pixels in the bin
             for i in np.flatnonzero(sel):
                 mm = m[i]
                 if mm.sum() < 20:
                     continue
                 gi, ri, ei = g[i][mm], rstar[i][mm], excess[i][mm]
                 ci = c[i][mm]
+                # pooled calibration: which bin each pixel's gate falls in,
+                # and how much of that pixel's counts are excess
+                b_idx = np.clip((gi * n_bins).astype(int), 0, n_bins - 1)
+                pos_i = np.maximum(ei, 0.0)
+                np.add.at(cal_num, b_idx, pos_i)
+                np.add.at(cal_den, b_idx, np.maximum(ci, 0.0))
+                np.add.at(cal_r, b_idx, gi)
+                np.add.at(cal_n, b_idx, 1.0)
                 if gi.std() > 0 and ri.std() > 0:
                     rg.append(float(np.corrcoef(gi, ri)[0, 1]))
                 if gi.std() > 0 and ei.std() > 0:
@@ -613,7 +650,21 @@ def measure_trained(path: str, out: str = "") -> list[dict]:
                 sg = float(gi.sum())
                 if sg > 0:
                     neff.append(sg * sg / float((gi * gi).sum()))
+                admitted = float((gi * ci).sum())
+                if admitted > 1e-9:
+                    prec.append(float((gi * pos_i).sum() / admitted))
             med = lambda v: float(np.median(v)) if v else float("nan")  # noqa: E731
+            ok = cal_den > 0
+            share = np.where(ok, cal_num / np.maximum(cal_den, 1e-9), np.nan)
+            r_bin = np.where(cal_n > 0, cal_r / np.maximum(cal_n, 1e-9), np.nan)
+            use = ok & np.isfinite(share) & np.isfinite(r_bin)
+            if use.sum() >= 2:
+                w = cal_den[use] / cal_den[use].sum()
+                calib_err = float(np.abs(share[use] - r_bin[use]) @ w)
+                calib_slope = float(
+                    np.polyfit(r_bin[use], share[use], 1, w=np.sqrt(w))[0])
+            else:
+                calib_err = calib_slope = float("nan")
             rows.append({
                 "method": arm.replace("hewl1118_", "").replace(
                     "hewl9b7c_", ""),
@@ -624,16 +675,40 @@ def measure_trained(path: str, out: str = "") -> list[dict]:
                 "captured": med(cap),
                 "i_ratio": med(ratio),
                 "n_eff_gate": med(neff),
+                "precision": med(prec),
+                "calib_err": calib_err,
+                "calib_slope": calib_slope,
             })
+            if label == "all":
+                for k in np.flatnonzero(use):
+                    curve.append({
+                        "method": rows[-1]["method"],
+                        "band": "calibration",
+                        "bin": int(k),
+                        "gate_mean": float(r_bin[k]),
+                        "excess_share": float(share[k]),
+                        "counts": float(cal_den[k]),
+                    })
 
     width = max(len(r["method"]) for r in rows) + 2
     print(f"{'arm':<{width}}{'band':<10}{'rho(g,r*)':>11}"
-          f"{'rho(g,c-b)':>12}{'captured':>10}{'I/I*':>8}{'n_eff':>8}")
+          f"{'rho(g,c-b)':>12}{'captured':>10}{'precis':>8}"
+          f"{'I/I*':>8}{'n_eff':>8}{'calib':>8}{'slope':>7}")
     for r in rows:
         print(f"{r['method']:<{width}}{r['band']:<10}"
               f"{r['rho_gate_rstar']:>11.3f}{r['rho_gate_excess']:>12.3f}"
-              f"{r['captured']:>10.3f}{r['i_ratio']:>8.3f}"
-              f"{r['n_eff_gate']:>8.1f}")
+              f"{r['captured']:>10.3f}{r['precision']:>8.3f}"
+              f"{r['i_ratio']:>8.3f}"
+              f"{r['n_eff_gate']:>8.1f}{r['calib_err']:>8.3f}"
+              f"{r['calib_slope']:>7.2f}")
+    # the calibration curve: what share of the counts under a gate of a
+    # given size are actually excess. The diagonal is calibrated.
+    if curve:
+        print(f"\n{'arm':<{width}}{'gate':>7}{'excess share':>14}"
+              f"{'counts':>12}")
+        for c_row in curve:
+            print(f"{c_row['method']:<{width}}{c_row['gate_mean']:>7.2f}"
+                  f"{c_row['excess_share']:>14.3f}{c_row['counts']:>12.3g}")
     if out:
         import csv
         with open(out, "w", newline="") as fh:
@@ -641,6 +716,13 @@ def measure_trained(path: str, out: str = "") -> list[dict]:
             w.writeheader()
             w.writerows(rows)
         print(f"\n{out}: {len(rows)} rows")
+        if curve:
+            cpath = out.replace(".csv", "") + "_calibration.csv"
+            with open(cpath, "w", newline="") as fh:
+                w = csv.DictWriter(fh, fieldnames=list(curve[0]))
+                w.writeheader()
+                w.writerows(curve)
+            print(f"{cpath}: {len(curve)} rows")
     return rows
 
 
