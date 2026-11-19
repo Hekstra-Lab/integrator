@@ -128,6 +128,9 @@ def accumulate(model, loader, device, n_batches: int):
                 examples["profile"] = p
                 if g is not None:
                     examples["gate"] = g.detach().float().cpu().numpy()
+                d = metadata.get("d")
+                if d is not None:
+                    examples["d"] = d.detach().float().cpu().numpy()
             xs.append(metadata["xyzcal.px.0"].detach().float().cpu().numpy())
             ys.append(metadata["xyzcal.px.1"].detach().float().cpu().numpy())
     if not kept:
@@ -264,13 +267,22 @@ def main() -> int:
         if has_gate:
             blobs[f"{arm}_gate_mean"] = gate_total.astype(np.float32)
             blobs[f"{arm}_gate_cells"] = gate_grid
-        # the brightest, the dimmest and a few between, by observed counts,
-        # so the examples are not all one kind of reflection
+        # Examples spread over RESOLUTION, not over brightness. The question
+        # is whether a model draws the same shape at 1.8 A as at 4 A, and
+        # d is the axis it would vary along: the spot gets weaker and the
+        # background does not, so the gate has progressively less to work
+        # with. Sorting by counts instead would mostly reorder the same
+        # resolution shell.
+        ex_d = examples.get("d")
         ex_counts = examples.get("counts")
         if ex_counts is not None:
-            order = np.argsort(ex_counts.reshape(ex_counts.shape[0], -1).sum(1))
+            if ex_d is not None and np.ptp(ex_d) > 0:
+                order = np.argsort(-ex_d)  # low resolution first
+            else:
+                order = np.argsort(
+                    ex_counts.reshape(ex_counts.shape[0], -1).sum(1))
             pick = order[np.linspace(0, len(order) - 1, N_EXAMPLES).astype(int)]
-            for key in ("counts", "profile", "gate"):
+            for key in ("counts", "profile", "gate", "d"):
                 arr = examples.get(key)
                 if arr is not None:
                     blobs[f"{arm}_ex_{key}"] = arr[pick].astype(np.float32)
