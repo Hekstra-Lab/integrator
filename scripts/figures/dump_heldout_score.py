@@ -71,6 +71,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 DATASET = os.environ.get("DATASET", "")
+# tile size for the hold-out; 0 is the old scattered-pixel draw
+BLOCK = int(os.environ.get("HOLDOUT_BLOCK", "0"))
 N_BATCHES = int(os.environ.get("N_BATCHES", "40"))
 HOLDOUT = float(os.environ.get("HOLDOUT", "0.2"))
 MIN_KEPT = int(os.environ.get("MIN_KEPT", "40"))
@@ -90,22 +92,56 @@ def wanted_ids():
         return set(int(line) for line in fh if line.strip())
 
 
-def holdout_mask(refl_ids, n_px, frac, device):
+def holdout_mask(refl_ids, n_px, frac, device, block: int = 0):
     """A boolean hold-out mask per reflection, keyed by its OWN id.
 
     Seeding from the id rather than from the batch makes the draw a
     property of the reflection, so every arm holds out the same pixels of
     the same reflection however the loaders order them.
+
+    `block > 0` holds out contiguous `block x block` tiles instead of
+    scattered pixels, and `scored_centres` then keeps only each tile's
+    centre. Scattered pixels LEAK: the shoebox autocorrelation is 0.32 at
+    lag 1, so a held-out pixel with four kept neighbours is partly
+    predicted by them and its residual is too small, which biases every
+    variance measured from it downwards. A 5x5 tile's centre has every
+    neighbour out to lag 2 held out with it, and the correlation at lag 3
+    is 0.0155.
     """
     import numpy as np
     import torch
 
     out = np.zeros((len(refl_ids), n_px), dtype=bool)
+    side = int(round(n_px ** 0.5))
     for k, rid in enumerate(refl_ids):
         rng = np.random.default_rng(int(rid) & 0x7FFFFFFF)
-        take = rng.random(n_px) < frac
-        out[k] = take
+        if block and side * side == n_px:
+            nb = side // block
+            take = rng.random(nb * nb) < frac
+            grid = np.zeros((side, side), bool)
+            for bi in range(nb):
+                for bj in range(nb):
+                    if take[bi * nb + bj]:
+                        grid[bi * block:(bi + 1) * block,
+                             bj * block:(bj + 1) * block] = True
+            out[k] = grid.ravel()
+        else:
+            out[k] = rng.random(n_px) < frac
     return torch.from_numpy(out).to(device)
+
+
+def centre_mask(n_px: int, block: int, device):
+    """The centre pixel of every `block x block` tile."""
+    import numpy as np
+    import torch
+
+    side = int(round(n_px ** 0.5))
+    grid = np.zeros((side, side), bool)
+    half = block // 2
+    for bi in range(side // block):
+        for bj in range(side // block):
+            grid[bi * block + half, bj * block + half] = True
+    return torch.from_numpy(grid.ravel()).to(device)
 
 
 def last_checkpoint(run: str):
@@ -169,9 +205,14 @@ def score(model, loader, device, n_batches, want):
 
             m2 = mask.squeeze(-1) if mask.dim() == 3 else mask
             n_px = m2.shape[-1]
-            held = holdout_mask(rid_np, n_px, HOLDOUT, device)
+            held = holdout_mask(rid_np, n_px, HOLDOUT, device, BLOCK)
             # only pixels that were valid to begin with can be held out
             held = held & m2.bool()
+            # with tiles, only the centres are SCORED; the rest of the
+            # tile is removed so the centre has no kept neighbour, but a
+            # residual is taken from the centre alone
+            scored = (held & centre_mask(n_px, BLOCK, device).unsqueeze(0)
+                      if BLOCK else held)
             reduced = (m2.bool() & ~held).to(m2.dtype)
             if mask.dim() == 3:
                 reduced_in = reduced.unsqueeze(-1)
@@ -189,7 +230,7 @@ def score(model, loader, device, n_batches, want):
                    + b_mean).clamp_min(1e-9)
 
             c = counts.reshape(len(rid_np), -1).float()
-            h = held.reshape(len(rid_np), -1)
+            h = scored.reshape(len(rid_np), -1)
             # rows with too little left to fit from are not scored: with
             # most of a box gone, `q(I)` is the prior and the comparison
             # would be between priors
