@@ -44,6 +44,17 @@ import sys
 
 DATASET = os.environ.get("DATASET", "")
 N_BATCHES = int(os.environ.get("N_BATCHES", "4"))
+# REFL_IDS names a file of reflection ids, one per line or a .npy, and the
+# reducer then collects THOSE reflections from every arm however many
+# batches they are spread over. Naming them is what makes two arms'
+# gates comparable; see `accumulate`.
+_ids_file = os.environ.get("REFL_IDS", "")
+WANT_IDS = None
+if _ids_file:
+    import numpy as _np
+    WANT_IDS = (_np.load(_ids_file) if _ids_file.endswith(".npy")
+                else _np.loadtxt(_ids_file, dtype="int64")).ravel()
+    print(f"collecting {WANT_IDS.size} named reflections from {_ids_file}")
 N_EXAMPLES = int(os.environ.get("N_EXAMPLES", "6"))
 GRID = 3
 
@@ -87,8 +98,18 @@ def gate_of(outputs):
     return None
 
 
-def accumulate(model, loader, device, n_batches: int):
-    """Mean profile overall and per detector cell, in one pass."""
+def accumulate(model, loader, device, n_batches: int, want_ids=None):
+    """Mean profile overall and per detector cell, in one pass.
+
+    `want_ids` is a set of reflection ids to collect for the batch-level
+    arrays. The reflections are IDENTIFIED rather than taken positionally,
+    because no loader guarantees two runs see the same rows: the train
+    loader shuffles per run and the train/val SPLIT is drawn per run, so
+    two arms' first batches shared none of their reflections -- measured,
+    zero of 2048, twice. The data carries `refl_ids`, so the reflections
+    to compare can simply be named, and then it does not matter what order
+    a loader produces them in or how many batches they are spread over.
+    """
     import numpy as np
     import torch
 
@@ -97,9 +118,15 @@ def accumulate(model, loader, device, n_batches: int):
     xs, ys = [], []
     kept, gates, raws = [], [], []
     examples: dict = {}
+    # rows matching want_ids, gathered across however many batches they
+    # are spread over
+    want = None if want_ids is None else set(int(v) for v in want_ids)
+    picked: dict[str, list] = {k: [] for k in
+                              ("refl_id", "gate", "profile", "counts",
+                               "mask", "d")}
     with torch.no_grad():
         for i, batch in enumerate(loader):
-            if i >= n_batches:
+            if i >= n_batches and not want:
                 break
             counts, shoebox, mask, metadata = batch
             counts = counts.to(device)
@@ -115,7 +142,33 @@ def accumulate(model, loader, device, n_batches: int):
             if prf is None:
                 return None
             p = prf.detach().float().cpu().numpy()
-            kept.append(p)
+            if i < n_batches:
+                kept.append(p)
+
+            if want:
+                rid = metadata.get("refl_ids")
+                if rid is not None:
+                    rid_np = rid.detach().cpu().numpy().astype("int64")
+                    sel = np.flatnonzero(np.isin(rid_np, list(want)))
+                    if sel.size:
+                        gg = gate_of(out)
+                        dd = metadata.get("d")
+                        picked["refl_id"].append(rid_np[sel])
+                        picked["profile"].append(p[sel])
+                        picked["counts"].append(
+                            counts.detach().float().cpu().numpy()[sel])
+                        picked["mask"].append(
+                            mask.detach().float().cpu().numpy()[sel])
+                        if gg is not None:
+                            picked["gate"].append(
+                                gg.detach().float().cpu().numpy()[sel])
+                        if dd is not None:
+                            picked["d"].append(
+                                dd.detach().float().cpu().numpy()[sel])
+                        want -= set(rid_np[sel].tolist())
+                        if not want:
+                            print(f"    collected every named reflection "
+                                  f"by batch {i}")
             g = gate_of(out)
             gates.append(g.detach().float().cpu().numpy()
                          if g is not None else None)
@@ -184,6 +237,15 @@ def accumulate(model, loader, device, n_batches: int):
                 else None,
             )
     gate_total = gate.mean(axis=0) if gate is not None else None
+    # the reflections named by want_ids, concatenated across batches, into
+    # `examples` under `named_*` so one npz carries both the six drawn
+    # examples and the identified set the arms are compared on
+    for key, chunks in picked.items():
+        if chunks:
+            examples[f"named_{key}"] = np.concatenate(chunks, axis=0)
+    if want:
+        print(f"    {len(want)} named reflections were not in the loader")
+
     return total, cells, (x0, x1, y0, y1), gate_total, examples, p, gate, raw
 
 
@@ -335,7 +397,8 @@ def main() -> int:
             loader = (dm.predict_dataloader()
                       if hasattr(dm, "predict_dataloader")
                       else dm.train_dataloader())
-            got = accumulate(model, loader, device, N_BATCHES)
+            got = accumulate(model, loader, device, N_BATCHES,
+                             want_ids=WANT_IDS)
         except Exception as exc:
             print(f"  {arm}: {type(exc).__name__}: {str(exc)[:110]}")
             continue
@@ -382,7 +445,9 @@ def main() -> int:
                     blobs[f"{arm}_ex_{key}"] = arr[pick].astype(np.float32)
         # the whole first batch, for arm-against-arm comparison by id
         for key in ("batch_refl_id", "batch_gate", "batch_profile",
-                    "batch_counts", "batch_mask", "batch_d"):
+                    "batch_counts", "batch_mask", "batch_d",
+                    "named_refl_id", "named_gate", "named_profile",
+                    "named_counts", "named_mask", "named_d"):
             arr = examples.get(key)
             if arr is not None:
                 blobs[f"{arm}_{key}"] = (
