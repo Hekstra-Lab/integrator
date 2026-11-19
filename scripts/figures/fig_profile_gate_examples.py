@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -66,12 +67,98 @@ def parse_args():
                    default=DATA / "profile_maps_pdz2.npz")
     p.add_argument("--out-dir", type=Path, default=OUT)
     p.add_argument("--prefix", default="profile_gate")
+    p.add_argument("--rows", type=int, default=6,
+                   help="reflections drawn, spanning the resolution range "
+                        "(only for a dump of NAMED reflections)")
     return p.parse_args()
 
 
 def arms_in(blob) -> list[str]:
     return sorted({k[: -len("_ex_counts")] for k in blob
                    if k.endswith("_ex_counts")})
+
+
+def named_as_examples(blob, n_rows: int):
+    """Rows matched BY REFLECTION across arms, in the `_ex_*` names.
+
+    `dump_profile_maps.py` run with `REFL_IDS` stores `<arm>_named_*` for
+    the same named reflections in every arm. Its `_ex_*` arrays are a
+    different thing: each arm picks its own examples out of its own first
+    batch, and those are not the same reflections -- measured, the first
+    row came out at 12.36, 8.40, 12.36 and 12.36 A in four arms -- so
+    `draw_combined` refuses them, correctly, because a grid with one
+    reflection per row invites exactly the comparison they cannot bear.
+
+    This selects reflections every arm has, ordered by resolution and
+    evenly spaced across the range, and presents them under the `_ex_*`
+    names so the drawing code is unchanged.
+    """
+    arms = sorted({k[: -len("_named_refl_id")] for k in blob
+                   if k.endswith("_named_refl_id")})
+    if not arms:
+        return None, []
+    ids = {a: blob[f"{a}_named_refl_id"].tolist() for a in arms}
+    common = set.intersection(*[set(v) for v in ids.values()])
+    if len(common) < n_rows:
+        logger.warning("  only %d reflections common to all arms",
+                       len(common))
+        return None, []
+    first = arms[0]
+    order = {int(r): i for i, r in enumerate(ids[first])}
+    d_first = blob[f"{first}_named_d"]
+    # by resolution, then evenly spaced over the range so the rows span it
+    by_d = sorted(common, key=lambda r: float(d_first[order[int(r)]]),
+                  reverse=True)
+    pick = [by_d[i] for i in
+            np.unique(np.linspace(0, len(by_d) - 1, n_rows)
+                      .round().astype(int))]
+    out = {}
+    for a in arms:
+        idx = {int(r): i for i, r in enumerate(ids[a])}
+        take = np.array([idx[int(r)] for r in pick])
+        for src, dst in (("counts", "counts"), ("profile", "profile"),
+                         ("gate", "gate"), ("d", "d")):
+            key = f"{a}_named_{src}"
+            if key in blob:
+                out[f"{a}_ex_{dst}"] = blob[key][take]
+        if f"{a}_shape" in blob:
+            out[f"{a}_shape"] = blob[f"{a}_shape"]
+    logger.info("  %d arms matched on %d reflections, %d drawn (%.2f-%.2f A)",
+                len(arms), len(common), len(pick),
+                float(out[f"{first}_ex_d"][0]),
+                float(out[f"{first}_ex_d"][-1]))
+    return out, arms
+
+
+def column_labels(arms) -> dict[str, str]:
+    """Arm names short enough for one column of a nine-column grid.
+
+    The dataset prefix goes first, then whatever the arms have in common:
+    four arms of one family are `svae`, `svae_bg`, `svae_calib` and
+    `svae_conjugate`, and at a column width of about 50 pt the full names
+    collide with their neighbours and the header is unreadable. Dropping
+    the shared `svae_` leaves `svae`, `bg`, `calib`, `conjugate`, which is
+    the part that distinguishes them. The arm that IS the common prefix
+    keeps its own name rather than becoming empty.
+    """
+    base = {a: a.replace("hewl1118_", "").replace("hewl9b7c_", "")
+               .replace("pdz2_", "") for a in arms}
+    names = list(base.values())
+    if len(names) < 2:
+        return base
+    # The family name is usually one of the arms -- `svae` beside
+    # `svae_bg`, `svae_calib`, `svae_conjugate` -- so the shared part has
+    # no trailing separator of its own and `commonprefix` alone strips
+    # nothing. Take the shortest name as the candidate family.
+    root = min(names, key=len)
+    if not all(n == root or n.startswith(f"{root}_") for n in names):
+        prefix = os.path.commonprefix(names)
+        prefix = prefix[: prefix.rfind("_") + 1] if "_" in prefix else ""
+        return ({a: (n[len(prefix):] or n) for a, n in base.items()}
+                if prefix else base)
+    # the family arm keeps its own name rather than becoming empty
+    return {a: (n if n == root else n[len(root) + 1:])
+            for a, n in base.items()}
 
 
 def square(vec, shape) -> np.ndarray:
@@ -161,6 +248,7 @@ def draw_combined(blob, arms, out_dir: Path, prefix: str) -> Path | None:
         blocks.append((a, blob.get(f"{a}_ex_profile"),
                        blob.get(f"{a}_ex_gate")))
     cols = 1 + sum(1 + (1 if g is not None else 0) for _a, _p, g in blocks)
+    labels = column_labels(arms)
 
     fig, axes = plt.subplots(
         n, cols, squeeze=False, layout="constrained",
@@ -178,7 +266,7 @@ def draw_combined(blob, arms, out_dir: Path, prefix: str) -> Path | None:
         ax.set_ylabel(f"{float(ref[i]):.2f}", fontsize="x-small")
         j += 1
         for arm, prof, gate in blocks:
-            short = arm.replace("hewl1118_", "").replace("hewl9b7c_", "")
+            short = labels[arm]
             ax = axes[i][j]
             ax.imshow(square(prof[i], shape), cmap=figstyle().cmap(),
                       interpolation="nearest")
@@ -213,7 +301,13 @@ def main() -> None:
     figstyle().use()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
-    arms = arms_in(blob)
+    # a dump of NAMED reflections carries the same rows in every arm, which
+    # is what the combined grid needs; the per-arm `_ex_*` examples do not
+    matched, named_arms = named_as_examples(blob, args.rows)
+    if matched is not None:
+        blob, arms = matched, named_arms
+    else:
+        arms = arms_in(blob)
     if not arms:
         raise SystemExit(f"{args.data} holds no `<arm>_ex_counts`")
     combined = draw_combined(blob, arms, args.out_dir, args.prefix)
