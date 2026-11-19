@@ -201,6 +201,20 @@ if has pdz2; then
   done
 fi
 
+if has intensities; then
+  # Predicted intensities per reflection, for the model-against-model
+  # scatter. The parquets are gigabytes and the table is four columns, so
+  # the reduction happens on the cluster as everything else does.
+  PJ=${PDZ2_JOB:-$S/jobs/pdz2figs_1118}
+  ARMS=${INTENSITY_ARMS:-$S/gate_arch/hewl1118_svae $S/gate_arch/hewl1118_svae_bg $S/gate_arch/hewl1118_svae_calib}
+  echo "intensities <- $ARMS"
+  ssh cannon "git -C $REPO pull -q" || exit 1
+  ssh cannon "DATASET=${INTENSITY_DATASET:-hewl_1118} $P $REPO/scripts/figures/tidy_intensities.py \
+      $PJ/intensities.csv $ARMS" || exit 1
+  scp -q "cannon:$PJ/intensities.csv" \
+      "$DEST/intensities_${INTENSITY_DATASET:-hewl_1118}.csv"
+fi
+
 if has models; then
   # Parameter counts and training throughput per arm, from
   # `compare_models.py`: the svae-against-hierarchical family comparison.

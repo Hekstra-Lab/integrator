@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-289 scripts.
+291 scripts.
 
 ## Start here
 
@@ -166,6 +166,7 @@ per job, and it lives in the repo".
 | `figures/fig_careless_stats.py` | What careless reports and DIALS cannot be asked for, by resolution shell. |
 | `figures/fig_ccsym.py` | CCsym by resolution shell, one panel per pump delay, arms on one axis. |
 | `figures/fig_detector_patch.py` | One patch of one diffraction image, and the profiles drawn inside it. |
+| `figures/fig_intensity_scatter.py` | Predicted intensities, model against model. |
 | `figures/fig_model_cost.py` | What the svae and hierarchical families cost: parameters, and time per epoch. |
 | `figures/fig_pdz2_refinement.py` | R-work and R-free per PDZ2 arm, against `laue.integrate`. |
 | `figures/fig_profile_basis.py` | Every component of the learned profile basis, and how it settled. |
@@ -180,6 +181,7 @@ per job, and it lives in the repo".
 | `figures/shapes.py` | Shape statistics of a profile image, shared by the figure scripts. |
 | `figures/tables.py` | LaTeX tables in the mydesign dialect: booktabs rules and siunitx columns. |
 | `figures/tidy_hparams.py` | Hyperparameter tables for a set of runs, from their own config logs. |
+| `figures/tidy_intensities.py` | Predicted intensities from several runs into one long table. |
 | `figures/tidy_mono.py` | Reduce a monochromatic run to the long-format tables its figures draw. |
 | `figures/tidy_pdz2.py` | Reduce the PDZ2 / 1116 electric-field TR-Laue arms to plot-ready tables. |
 | `figures/tidy_poly.py` | Reduce a polychromatic arm to the same plot-ready tables the mono arm writes. |
