@@ -288,11 +288,14 @@ A short job belongs there, because the production partitions queue.
 | `gpu` | training, and anything over the `gpu_test` memory cap | 35 nodes, usually available |
 | `gpu_requeue` | last choice | 15 nodes down and 6 draining on 18 Nov; a job sat PENDING over three hours and was resubmitted to `gpu`, where it ran |
 
-Memory is what usually decides between `gpu_test` and `gpu`: the data module
-loads `counts.npy` whole, so a PDZ2-sized set needs about 1.3 GB of arrays
-before torch, and 845 needs `--mem=250G`. Ask for what the arrays need, not a
-round number -- a 120G request that only needs 50G is a job that waits for
-`gpu` when `gpu_test` would have started it immediately.
+Memory is what usually decides between `gpu_test` and `gpu`, and the number
+to size it from is NOT the file size. The data module loads `counts.npy`
+whole and converts it, so a count array stored at 2 bytes a pixel occupies
+four times that as float32 and a 1-byte mask occupies four times again:
+9b7c is 5.12 GB of counts and 2.56 GB of masks on disk, about 30 GB in
+memory, and 48G was `OUT_OF_MEMORY` after nine minutes. Multiply the
+on-disk size by 4 / bytes-per-pixel, add the model and torch, then choose
+the partition. PDZ2 fits `gpu_test`; 9b7c does not and needs `gpu`.
 Paths baked in before the storage migration are stale, including inside other people's env scripts.
 A watcher that treats a transient `squeue` failure as completion will report success on an empty result; require several consecutive empty polls.
 
