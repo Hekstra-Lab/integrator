@@ -234,6 +234,42 @@ The post-hoc export does not, which is why it is the one that works.
 The inference variance and the reported variance are different objects, and the family that makes training stable is exactly the one that cannot express the dispersion the data has.
 **Score the RB export; treat the posterior sigma as diagnostic only.**
 
+#### What the gates look like
+
+Rendered by `scripts/figures/fig_profile_gate_examples.py` from
+`dump_profile_maps.py`, six reflections per arm spanning 12.4 to 1.8 A.
+The profile is compact and plausible at every resolution in all four arms.
+The gate is not.
+
+| arm | `n_eff` of the gate, 12.4 A to 1.8 A | `n_eff` of the profile |
+|---|---|---|
+| `svae` | 88.5, 53.8, **2.3, 2.4, 1.9, 2.0** | 16-37 |
+| `svae_bg` | 32.2, 55.5, 75.2, 25.8, 23.9, 26.1 | 20-48 |
+| `svae_conjugate` | 26.9, 20.5, 23.9, 37.5, 23.8, 22.3 | 16-18 |
+| `svae_calib` | 25.9, **552.9**, 27.8, **525.7, 522.7, 623.7** | 14-26 |
+
+The computed gate collapses to **two effective pixels** from 2.57 A
+outward, against a profile spread over 32 to 37, and the share of the
+background-subtracted excess it collects there is 0.000 to 0.002.
+`svae_calib` fails the other way, 520 to 624 effective pixels out of 625 --
+the whole shoebox.
+Both predicted gates stay between 20 and 75 at every resolution and track
+the spot's shape, elongated where the spot is elongated.
+
+This closes the mechanism. At high resolution the computed gate reads
+about two pixels, so $\sum_i r_i c_i$ is a near-single-pixel measurement
+with large relative variance, while the conjugate posterior reports
+$\mathrm{var} = I/1.014$ regardless -- most over-confident exactly where
+the estimate is worst. The Rao-Blackwellized fit takes its variance from
+the profile fit instead, which is why the gap between the two exports
+grows monotonically into the outer shells and why the first shell agrees
+to 4%.
+
+Six arbitrary reflections per arm, not matched across arms: the `n_eff`
+collapse is four consecutive shells and is not noise, but the capture
+figures are indicative only, because a weak shoebox holds little excess
+for the denominator.
+
 Second cause, specific to the computed gate: it is a plug-in estimator built from the same counts it then weights, so $E[\sum_i r_i(c) c_i] \neq I$ and the reuse adds both bias and variance.
 It also sums $n_{\mathrm{eff}}$ of 23 to 28 pixels against the baseline's 4, in shoeboxes that are 96.6% background.
 
