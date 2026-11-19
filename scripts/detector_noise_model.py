@@ -108,6 +108,141 @@ def pairs(data_dir: Path, ring: int, chunk: int, max_refl: int):
     return (np.concatenate(mu), np.concatenate(va), np.concatenate(nn))
 
 
+def autocorr(data_dir: Path, chunk: int, max_refl: int, lag: int = 4,
+             weak_frac: float = 0.4):
+    """The 2D autocorrelation of background pixels, lag by lag.
+
+    `sum over lags of rho` is `1 / sum(k^2)`, the factor by which the
+    single-pixel variance understates the per-pixel variance of a SUM.
+    Measuring the whole function rather than the sum also says what the
+    kernel is: support out to lag 1 only means a two-tap kernel, and a
+    two-tap kernel with `rho(1) = 0.25` is the exact signature of bilinear
+    resampling, for which `sum(k^2) = 4/9` in 2D and the sum of rho is
+    2.25.
+
+    Mean-centring each shoebox removes the zero-frequency component and
+    biases the sum LOW -- on simulated independent pixels it returns 0.87
+    rather than 1.00, and on a 3-tap kernel 5.90 rather than 7.11. The
+    bias is reported alongside, from an independent-pixel control built
+    from the same shoeboxes by shuffling each one's background pixels,
+    which destroys the correlation and keeps everything else.
+
+    Only the weakest `weak_frac` of shoeboxes are used, where the whole
+    box is background, so no spot enters any lag.
+    """
+    counts = np.load(data_dir / "counts.npy", mmap_mode="r")
+    masks = np.load(data_dir / "masks.npy", mmap_mode="r")
+    n_refl, npx = counts.shape[0], int(np.prod(counts.shape[1:]))
+    if max_refl:
+        n_refl = min(n_refl, max_refl)
+    side = int(round(npx ** 0.5))
+    rng = np.random.default_rng(0)
+    acc = {}
+    shuf = {}
+    kept = 0
+    for start in range(0, n_refl, chunk):
+        stop = min(start + chunk, n_refl)
+        c = np.asarray(counts[start:stop]).reshape(-1, side, side).astype(
+            np.float64)
+        m = np.asarray(masks[start:stop]).reshape(-1, side, side) > 0
+        flat = c.reshape(len(c), -1)
+        med = np.median(flat, axis=1, keepdims=True)
+        excess = np.maximum(flat - med, 0).sum(1)
+        weak = excess <= np.quantile(excess, weak_frac)
+        weak &= m.reshape(len(m), -1).sum(1) > 0.9 * npx
+        if not weak.any():
+            continue
+        c, m = c[weak], m[weak]
+        kept += len(c)
+        for tag, arr in (("data", c), ("shuffled", None)):
+            if arr is None:
+                flat2 = c.reshape(len(c), -1).copy()
+                for row in flat2:
+                    rng.shuffle(row)
+                arr = flat2.reshape(-1, side, side)
+            mu = arr.mean((1, 2), keepdims=True)
+            r = arr - mu
+            c0 = (r ** 2).mean((1, 2))
+            store = acc if tag == "data" else shuf
+            for dy in range(-lag, lag + 1):
+                for dx in range(-lag, lag + 1):
+                    a = r[:, max(0, dy):side + min(0, dy),
+                          max(0, dx):side + min(0, dx)]
+                    b2 = r[:, max(0, -dy):side + min(0, -dy),
+                           max(0, -dx):side + min(0, -dx)]
+                    val = (a * b2).mean((1, 2)) / np.maximum(c0, 1e-12)
+                    store.setdefault((dy, dx), []).append(val)
+    rho = {k: float(np.median(np.concatenate(v))) for k, v in acc.items()}
+    ctrl = {k: float(np.median(np.concatenate(v))) for k, v in shuf.items()}
+    return rho, ctrl, kept
+
+
+def block_ratio(data_dir: Path, chunk: int, max_refl: int,
+                sizes=(1, 2, 3, 6)):
+    """Variance of b x b block sums per pixel, over background strips.
+
+    The single-pixel variance is NOT the per-pixel variance to use for a
+    weighted SUM when neighbouring pixels are correlated. Writing the
+    stored field as `c = c0 + G*(k conv N) + eps` with `sum k = 1`:
+
+        Var(c_i)       = G^2 * lam * sum(k^2) + sigma_r^2
+        Var(S_b) / b^2 -> G^2 * lam + sigma_r^2        as b outgrows k
+
+    because a sum over a region wider than the kernel conserves photons.
+    Their ratio rises from 1 to `sum_lags rho = 1 / sum(k^2)`, and the
+    pedestal cancels because it lives in the mean and not the variance.
+    So this separates a detector gain (ratio stays 1, pixels independent)
+    from a point spread (ratio rises), which the mean-variance slope
+    alone cannot do, and the large-block value is the quantity the Fisher
+    information needs.
+
+    Measured on hewl_1118: 1.000, 1.634, 1.910, 2.137 at b = 1, 2, 3, 6,
+    saturating near 2.14 against a lag-1 correlation of 0.25. The pixels
+    are correlated, `sum(k^2)` is about 0.47, and the per-pixel variance
+    for summing is 2.1x the marginal one.
+
+    The strips are the top and bottom six rows, full width, which clear
+    the central spot.
+    """
+    counts = np.load(data_dir / "counts.npy", mmap_mode="r")
+    masks = np.load(data_dir / "masks.npy", mmap_mode="r")
+    n_refl, npx = counts.shape[0], int(np.prod(counts.shape[1:]))
+    if max_refl:
+        n_refl = min(n_refl, max_refl)
+    side = int(round(npx ** 0.5))
+    rows = np.r_[0:6, side - 6:side]
+    acc = {b: [] for b in sizes}
+    means = []
+    for start in range(0, n_refl, chunk):
+        stop = min(start + chunk, n_refl)
+        c = np.asarray(counts[start:stop]).reshape(-1, side, side)
+        m = np.asarray(masks[start:stop]).reshape(-1, side, side) > 0
+        c, m = c[:, rows].astype(np.float64), m[:, rows]
+        means.append((c * m).sum((1, 2)) / np.maximum(m.sum((1, 2)), 1))
+        for b in sizes:
+            nr, nc = 6 // b, side // b
+            vals, good = [], []
+            for half in (0, 6):
+                for i in range(nr):
+                    for j in range(nc):
+                        sl = (slice(half + i * b, half + i * b + b),
+                              slice(j * b, j * b + b))
+                        vals.append(c[:, sl[0], sl[1]].sum((1, 2)))
+                        good.append(m[:, sl[0], sl[1]].all((1, 2)))
+            v = np.stack(vals, 1)
+            g = np.stack(good, 1)
+            n = g.sum(1)
+            ok = n >= 8
+            mu = (v * g).sum(1) / np.maximum(n, 1)
+            var = (((v - mu[:, None]) ** 2) * g).sum(1) / np.maximum(n - 1, 1)
+            acc[b].append(np.where(ok, var / (b * b), np.nan))
+    out = {}
+    for b in sizes:
+        a = np.concatenate(acc[b])
+        out[b] = float(np.nanmedian(a))
+    return out, float(np.median(np.concatenate(means)))
+
+
 def fit(mu, va, nn, n_bins: int):
     """Slope and intercept of variance against mean, on binned medians.
 
@@ -159,6 +294,36 @@ def main() -> int:
     print(f"    Poisson would be 1.0000 * mean + 0")
     print(f"\n  background mean spans {np.percentile(mu, 1):.2f} to "
           f"{np.percentile(mu, 99):.2f} over {mu.size:,} shoeboxes")
+
+    blocks, mean_px = block_ratio(a.data_dir, a.chunk, a.max_refl)
+    base = blocks[1]
+    print(f"\n  {'block':>7}{'Var(S)/b^2':>13}{'ratio to 1x1':>14}")
+    for b, v in blocks.items():
+        print(f"  {b:>3}x{b:<3}{v:>13.4f}{v / base:>14.3f}")
+    big = blocks[max(blocks)]
+    print(f"\n  sum_lags rho       {big / base:.3f}   "
+          f"(1.0 = independent pixels)")
+    print(f"  sum(k^2)           {base / big:.3f}")
+    print(f"  variance for a SUM {big / mean_px:.4f} * rate   "
+          f"<- this is what the Fisher needs")
+    print(f"  variance per PIXEL {base / mean_px:.4f} * rate   "
+          f"<- the marginal one, NOT for a sum")
+
+    rho, ctrl, kept = autocorr(a.data_dir, a.chunk, a.max_refl)
+    s_data = sum(rho.values())
+    s_ctrl = sum(ctrl.values())
+    print(f"\n  autocorrelation over {kept:,} weak shoeboxes")
+    print(f"  {'lag':>8}{'rho':>9}{'shuffled control':>19}")
+    for d in range(0, 4):
+        for key in ((0, d), (d, d)):
+            if key in rho and (d or key == (0, 0)):
+                print(f"  {str(key):>8}{rho[key]:>9.4f}{ctrl[key]:>19.4f}")
+    print(f"\n  sum rho            {s_data:.3f}  (control {s_ctrl:.3f}, "
+          f"1.000 if unbiased)")
+    corrected = s_data / max(s_ctrl, 1e-6)
+    print(f"  bias-corrected     {corrected:.3f}  -> sum(k^2) = "
+          f"{1 / max(corrected, 1e-6):.3f}")
+    print(f"\n  noise_a for a SUM  {base * corrected / mean_px:.4f}")
 
     if a.out:
         with open(a.out, "w", newline="") as fh:

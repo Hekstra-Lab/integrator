@@ -25,6 +25,11 @@ class IntegratorCfg:
             are Poisson, so an existing run exports what it always did. Fit them
             with `scripts/figures/dump_heldout_score.py`, which regresses the
             held-out squared residual on the rate.
+        rb_background_term: How the background enters the Rao-Blackwellized
+            variance. `"sample_bg"` is the existing behaviour and the default;
+            it charges for the background twice, once through the Schur
+            complement and again through the spread over samples that each
+            carry their own background draw. `"fixed_bg"` charges once.
         rb_pedestal: `"per_reflection"` subtracts an additive offset carrying no
             photons, estimated from each shoebox's own background pixels, from the
             rate before the variance is formed. Default `"none"` leaves the export
@@ -249,6 +254,7 @@ class IntegratorCfg:
     rb_noise_a: float = 1.0
     rb_noise_b: float = 0.0
     rb_pedestal: Literal["none", "per_reflection"] = "none"
+    rb_background_term: Literal["sample_bg", "fixed_bg"] = "sample_bg"
     profile_coord_channels: bool = False
     """Give the profile encoder two extra channels holding each pixel's offset
     in the beam-centred radial/tangential frame. A conv encoder is translation

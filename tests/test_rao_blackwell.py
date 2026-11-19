@@ -247,3 +247,52 @@ def test_pedestal_rejects_an_unknown_mode():
     bg = torch.full((2, 8, 1), b_true)
     with pytest.raises(ValueError, match="pedestal must be"):
         rao_blackwellized_intensity(counts, mask, prof, bg, pedestal="auto")
+
+
+def test_fixed_bg_is_smaller_because_it_stops_double_charging():
+    """`sample_bg` prices the background twice; `fixed_bg` once.
+
+    `schur` is already `[F^-1]_II`, which charges for B being unknown.
+    Each latent sample also carries its own background draw, so the
+    spread of `i_hat` across samples charges for it again. Refitting
+    every profile sample against one background leaves the spread as
+    profile uncertainty alone.
+    """
+    torch.manual_seed(3)
+    n, npx = 64, 625
+    pi = torch.zeros(n, npx)
+    centre = npx // 2
+    pi[:, centre - 20:centre + 20] = 1.0
+    pi = pi / pi.sum(-1, keepdim=True)
+    counts = torch.poisson(600.0 * pi + 12.0)
+    mask = torch.ones(n, npx)
+    prof = (pi.unsqueeze(0) * (1.0 + 0.03 * torch.randn(6, n, 1))).clamp_min(1e-8)
+    prof = prof / prof.sum(-1, keepdim=True)
+    bg = 12.0 + 0.4 * torch.randn(6, n, 1)
+
+    both = rao_blackwellized_intensity(counts, mask, prof, bg)
+    once = rao_blackwellized_intensity(counts, mask, prof, bg,
+                                       background_term="fixed_bg")
+    assert torch.equal(both["var_rb_cond"], once["var_rb_cond"])
+    assert (once["var_rb_profile"] <= both["var_rb_profile"] + 1e-6).all()
+    assert once["var_rb"].mean() < both["var_rb"].mean()
+
+
+def test_sample_bg_is_the_default_and_bit_identical():
+    counts, mask, pi, _, b_true = _shoeboxes(n=32)
+    prof = pi.expand(4, 32, -1)
+    bg = torch.full((4, 32, 1), b_true)
+    base = rao_blackwellized_intensity(counts, mask, prof, bg)
+    same = rao_blackwellized_intensity(counts, mask, prof, bg,
+                                       background_term="sample_bg")
+    for k in base:
+        assert torch.equal(base[k], same[k]), k
+
+
+def test_background_term_rejects_an_unknown_mode():
+    counts, mask, pi, _, b_true = _shoeboxes(n=8)
+    prof = pi.expand(2, 8, -1)
+    bg = torch.full((2, 8, 1), b_true)
+    with pytest.raises(ValueError, match="background_term must be"):
+        rao_blackwellized_intensity(counts, mask, prof, bg,
+                                    background_term="auto")

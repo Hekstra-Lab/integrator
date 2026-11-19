@@ -175,6 +175,7 @@ class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
         self.rb_noise_a = cfg.rb_noise_a
         self.rb_noise_b = cfg.rb_noise_b
         self.rb_pedestal = cfg.rb_pedestal
+        self.rb_background_term = cfg.rb_background_term
         self.profile_coord_channels = getattr(
             cfg, "profile_coord_channels", False
         )
@@ -546,6 +547,8 @@ class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
                 noise_a=getattr(self, "rb_noise_a", 1.0),
                 noise_b=getattr(self, "rb_noise_b", 0.0),
                 pedestal=getattr(self, "rb_pedestal", "none"),
+                background_term=getattr(self, "rb_background_term",
+                                        "sample_bg"),
             )
         )
 

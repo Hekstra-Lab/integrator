@@ -72,6 +72,7 @@ def rao_blackwellized_intensity(
     noise_b: float = 0.0,
     pedestal: str = "none",
     pedestal_frac: float = 0.5,
+    background_term: str = "sample_bg",
 ) -> dict[str, Tensor]:
     """Profile-fit intensity with the profile's own uncertainty propagated into sigma.
 
@@ -132,6 +133,13 @@ def rao_blackwellized_intensity(
             profile, used as the background sample for `c0`. Profile rather than
             geometry, because this function sees flat arrays and not the
             shoebox's shape.
+        background_term: How the background enters the variance.
+            `"sample_bg"` is what this has always done and stays the default:
+            the Schur complement plus the spread of `i_hat` over samples that
+            each carry their own background draw -- which charges for the
+            background twice, by `1 + F_IB^2/(F_II F_BB)`. `"fixed_bg"` refits
+            every profile sample against the mean background, so the spread is
+            profile uncertainty alone.
 
     Returns:
         `i_rb` and `var_rb`, plus the two variance components and the gate, each
@@ -210,6 +218,39 @@ def rao_blackwellized_intensity(
     var_cond = (1.0 / schur).mean(0)
     var_profile = i_hat.var(0, unbiased=True) if i_hat.shape[0] > 1 else torch.zeros_like(var_cond)
     i_rb = i_hat.mean(0)
+
+    # The background is otherwise charged for TWICE. `schur` is
+    # `[F^-1]_II`, which already prices B as unknown, and each latent
+    # sample carries its OWN background draw, so the spread of `i_hat`
+    # across samples prices it again. The two are not independent:
+    # `dI/dB = -F_IB/F_II`, so with a calibrated q(bg) the sample spread
+    # reproduces `F_BB/det - 1/F_II` and the sum overstates the variance
+    # by `1 + rho^2`, `rho^2 = F_IB^2 / (F_II F_BB)`. Measured on
+    # simulated shoeboxes with a calibrated background that is 3% at a
+    # spot sigma of 2 px, 30% at 4 px and 64% at 6 px.
+    #
+    # `fixed_bg` refits every profile sample against the SAME background,
+    # the mean over samples, so the spread is profile uncertainty alone
+    # and the Schur term keeps the whole background contribution. It is
+    # the conservative repair: it cannot under-count a q(bg) that is
+    # itself too narrow, which the ELBO gives no reason to trust.
+    if background_term == "fixed_bg" and pi.shape[0] > 1:
+        bg_fixed = bg.mean(0, keepdim=True).expand_as(bg)
+        resid_f = c.unsqueeze(0) - bg_fixed
+        i_f = resid_f.sum(-1).clamp_min(0.0)
+        for _ in range(n_iter):
+            rate_f = (i_f.clamp_min(0.0).unsqueeze(-1) * pi
+                      + bg_fixed).clamp_min(eps)
+            w_f = m / pixel_var(rate_f)
+            i_f = ((w_f * pi * resid_f).sum(-1)
+                   / (w_f * pi * pi).sum(-1).clamp_min(eps))
+        var_profile = (i_f.var(0, unbiased=True) if i_f.shape[0] > 1
+                       else torch.zeros_like(var_cond))
+    elif background_term != "sample_bg":
+        raise ValueError(
+            f"background_term must be 'sample_bg' or 'fixed_bg'; "
+            f"got {background_term!r}"
+        )
 
     if gate_half_signal is None:
         gate = torch.ones_like(var_cond)
