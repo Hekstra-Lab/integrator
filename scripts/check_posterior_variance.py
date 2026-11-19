@@ -40,11 +40,97 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batches", type=int, default=12)
     p.add_argument("--out-dir", type=Path, default=None)
     p.add_argument("--dpi", type=int, default=150)
+    p.add_argument("--parquet", type=Path, default=None,
+                   help="read an EXPORTED prediction parquet instead of "
+                        "running the model, and report what each estimator's "
+                        "variance carries beyond its own mean")
     return p.parse_args()
+
+
+def exported(path: Path) -> None:
+    """What the exported sigma carries, per estimator, from the parquet.
+
+    The forward pass above asks whether the conjugate variance is honest.
+    This asks a different question about the same run, on the columns that
+    actually reach careless: given the intensity a reflection reported, does
+    its sigma say anything further about it?
+
+    It is the question the gate-architecture comparison turned on. The
+    conjugate family pins `beta = beta_I + sum_i p_i = beta_I + 1` because
+    the profile is normalised, so `var = I / (1 + tau)` exactly and
+    `corr(log I, log var) = 1` by construction: the sigma is a relabelling
+    of the mean and cannot tell careless which measurement is unreliable.
+    The Rao-Blackwellized fit profiles the background out by Schur
+    complement, so its variance depends on the shoebox as well.
+
+    Reported per estimator: the correlation of the logs, and the PARTIAL
+    correlation of log(var) with log(background) holding log(I) fixed --
+    which is the part of the error bar that knows how much background the
+    measurement was dug out of, and the part a sigma head would have to
+    learn to reproduce.
+    """
+    import numpy as np
+    import polars as pl
+
+    df = pl.read_parquet(path)
+    need = ("qi_mean", "qi_var", "i_rb", "var_rb", "qbg_mean", "d")
+    missing = [c for c in need if c not in df.columns]
+    if missing:
+        raise SystemExit(f"{path} lacks {missing}; has {df.columns}")
+
+    def logs(*names):
+        cols = [df[n].to_numpy().astype(float) for n in names]
+        good = np.ones(cols[0].shape, dtype=bool)
+        for c in cols:
+            good &= np.isfinite(c) & (c > 0)
+        return [np.log(c[good]) for c in cols], good
+
+    def partial(y, x, z):
+        """corr(y, x) with z regressed out of both."""
+        def resid(v):
+            a = np.polyfit(z, v, 1)
+            return v - (a[0] * z + a[1])
+        ry, rx = resid(y), resid(x)
+        if ry.std() < 1e-12 or rx.std() < 1e-12:
+            return float("nan")
+        return float(np.corrcoef(ry, rx)[0, 1])
+
+    print(f"  {path}")
+    print(f"  {df.height:,} reflections\n")
+    print(f"  {'estimator':<10s} {'corr(logI, logvar)':>19s} "
+          f"{'partial(logvar, logbg | logI)':>31s}")
+    for name, i_col, v_col in (("posterior", "qi_mean", "qi_var"),
+                               ("rb", "i_rb", "var_rb")):
+        (li, lv, lb), _ = logs(i_col, v_col, "qbg_mean")
+        r = float(np.corrcoef(li, lv)[0, 1])
+        print(f"  {name:<10s} {r:19.5f} {partial(lv, lb, li):31.3f}")
+
+    # by resolution third, because the shells are where the two estimators
+    # diverged: the first shell agrees across arms and the last does not
+    (li_r, lv_r, lb_r, ld), good = logs("i_rb", "var_rb", "qbg_mean", "d")
+    (li_p, lv_p), _ = logs("qi_mean", "qi_var")
+    cuts = np.quantile(ld, [1 / 3, 2 / 3])
+    print(f"\n  {'d range (A)':<18s} {'n':>9s} "
+          f"{'post corr':>10s} {'rb corr':>8s} {'rb partial bg':>14s}")
+    for lo, hi, label in ((-np.inf, cuts[0], "high resolution"),
+                          (cuts[0], cuts[1], "middle"),
+                          (cuts[1], np.inf, "low resolution")):
+        sel = (ld > lo) & (ld <= hi)
+        if sel.sum() < 100:
+            continue
+        d_lo, d_hi = np.exp(ld[sel].min()), np.exp(ld[sel].max())
+        rp = float(np.corrcoef(li_p[sel], lv_p[sel])[0, 1])
+        rr = float(np.corrcoef(li_r[sel], lv_r[sel])[0, 1])
+        pb = partial(lv_r[sel], lb_r[sel], li_r[sel])
+        print(f"  {label:<18s} {int(sel.sum()):9,d} {rp:10.5f} "
+              f"{rr:8.3f} {pb:14.3f}   ({d_lo:.2f}-{d_hi:.2f})")
 
 
 def main() -> None:
     a = parse_args()
+    if a.parquet is not None:
+        exported(a.parquet)
+        return
     import yaml
 
     from integrator.cli.utils.run_layout import resolve_run
