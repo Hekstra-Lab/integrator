@@ -170,11 +170,14 @@ Three architectures trained on hewl_1118, scored through careless config 4 and t
 Each arm was exported twice from the SAME checkpoint: the posterior mean and variance (`qi_mean`, `qi_var`), and the Rao-Blackwellized profile fit (`i_rb`, `var_rb`).
 The careless merging seed is its fixed default 1234 and the flag set is the same file, so the two exports of one arm differ only in the estimator.
 
-| arm | R-free posterior | R-free RB | Rsplit posterior | Rsplit RB | CC-anom posterior | CC-anom RB |
-|---|---|---|---|---|---|---|
-| `svae` | 0.1768 | 0.1712 | 0.0177 | 0.0211 | 0.350 | 0.366 |
-| `svae_bg` | 0.1824 | 0.1710 | 0.0245 | 0.0207 | 0.341 | 0.381 |
-| `svae_conjugate` | 0.1854 | 0.1720 | 0.0296 | 0.0208 | 0.323 | 0.388 |
+| arm | R-work post | R-free post | R-work RB | R-free RB | Rsplit post | Rsplit RB | CC-anom post | CC-anom RB |
+|---|---|---|---|---|---|---|---|---|
+| `svae` | 0.1462 | 0.1768 | 0.1420 | 0.1712 | 0.0177 | 0.0211 | 0.350 | 0.366 |
+| `svae_bg` | 0.1510 | 0.1824 | 0.1430 | 0.1710 | 0.0245 | 0.0207 | 0.341 | 0.381 |
+| `svae_conjugate` | 0.1484 | 0.1854 | 0.1388 | 0.1720 | 0.0296 | 0.0208 | 0.323 | 0.388 |
+
+The RB export lowers R-work and R-free together in all three arms AND narrows the gap between them, 0.0306 to 0.0292, 0.0314 to 0.0280 and 0.0370 to 0.0332.
+A change that only moved the fit would widen the gap or leave it alone; narrowing it is what better-weighted data does.
 
 CC-anom is the Pearson form, meaned over its shells; the Spearman form is 0.320 / 0.340 / 0.325 posterior and 0.351 / 0.355 / 0.368 RB.
 Anomalous peaks, mean over the ten sulfur sites, go 8.37 / 5.92 / 5.78 posterior to 6.96 / **7.85** / 7.26 RB, and at IOD 204 20.91 / 13.82 / 14.97 to 18.84 / **19.95** / 19.11.
@@ -184,13 +187,15 @@ Anomalous peaks, mean over the ten sulfur sites, go 8.37 / 5.92 / 5.78 posterior
 
 Against the `laue.integrate` reference, refined through the SAME chain: the same pinned flag set, the same eff pair, and both cut to 1.70 A, because the reference merges to 1.60 A and refining each to its own limit would let it bring 16% more data to its own R-free.
 
-| arm | R-free | sulfur mean (10 sites) | IOD 204 | IOD 206 |
-|---|---|---|---|---|
-| `laue.integrate`, 1.70 A | 0.1840 | **8.01** | **21.01** | **20.46** |
-| `svae`, posterior | 0.1768 | 8.37 | 20.91 | 18.62 |
-| `svae`, RB | 0.1712 | 6.96 | 18.84 | 14.80 |
-| `svae_bg`, RB | **0.1710** | 7.85 | 19.95 | 18.37 |
-| `svae_conjugate`, RB | 0.1720 | 7.26 | 19.11 | 16.71 |
+| arm | R-work | R-free | R-free minus R-work | sulfur mean (10 sites) | IOD 204 | IOD 206 |
+|---|---|---|---|---|---|---|
+| `laue.integrate`, 1.70 A | 0.1514 | 0.1840 | 0.0326 | **8.01** | **21.01** | **20.46** |
+| `svae`, posterior | 0.1462 | 0.1768 | 0.0306 | 8.37 | 20.91 | 18.62 |
+| `svae`, RB | 0.1420 | 0.1712 | 0.0292 | 6.96 | 18.84 | 14.80 |
+| `svae_bg`, RB | 0.1430 | **0.1710** | **0.0280** | 7.85 | 19.95 | 18.37 |
+| `svae_conjugate`, RB | **0.1388** | 0.1720 | 0.0332 | 7.26 | 19.11 | 16.71 |
+
+R-work is lower than the reference's in every arm, and the work-to-free gap is smaller in every arm but `svae_conjugate` RB, which has the lowest R-work of all and the widest gap of the three RB arms.
 
 Every arm beats the reference on R-free, by 0.0072 (`svae` posterior) to 0.0130 (`svae_bg` RB), which clears both the 0.005 unseeded-training floor and the 0.003 refinement floor.
 The reference still leads on the two strong iodine sites by 1.1 and 2.1 sigma, and the sulfur mean is a tie within the site-to-site spread, 8.01 against 7.85.
