@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-293 scripts.
+294 scripts.
 
 ## Start here
 
@@ -287,6 +287,7 @@ per job, and it lives in the repo".
 | `conjugate_calibration_study.py` | Calibration diagnostics for the conjugate intensity integrator. |
 | `create_crystal_yaml.py` | Create crystal.yaml from a PDB file. |
 | `debug_ragged_train.py` | Reproduce the step-65 NaN locally with full instrumentation. |
+| `detector_noise_model.py` | The detector's mean-variance relation, from shoebox background alone. |
 | `diagnose_asu_mapping.py` | Diagnose asu_id -> SFcalculator HKL mapping failures. |
 | `diagnose_bijvoet.py` | Diagnose Bijvoet differences in the scaling model across training. |
 | `diagnose_data.py` | -- |
