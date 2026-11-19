@@ -171,6 +171,8 @@ class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
             else cfg.predict_keys
         )
         self.rb_gate_half_signal = cfg.rb_gate_half_signal
+        self.rb_noise_a = cfg.rb_noise_a
+        self.rb_noise_b = cfg.rb_noise_b
         self.profile_coord_channels = getattr(
             cfg, "profile_coord_channels", False
         )
@@ -539,6 +541,8 @@ class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
                 _samples_first(forward_out["zp"], batch),
                 _samples_first(forward_out["zbg"], batch),
                 gate_half_signal=self.rb_gate_half_signal,
+                noise_a=getattr(self, "rb_noise_a", 1.0),
+                noise_b=getattr(self, "rb_noise_b", 0.0),
             )
         )
 

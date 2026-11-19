@@ -134,6 +134,10 @@ def score(model, loader, device, n_batches, want):
     from dump_profile_maps import ensure_group_label
 
     logp, chi2, bias, npx, dd = [], [], [], [], []
+    # per held-out PIXEL, for the two diagnostics that need the pixel and
+    # not the reflection: the residual against the profile value it sits
+    # on, and the squared residual against the rate
+    px_p, px_lam, px_res = [], [], []
     with torch.no_grad():
         for i, batch in enumerate(loader):
             if i >= n_batches:
@@ -197,6 +201,16 @@ def score(model, loader, device, n_batches, want):
             n = h.sum(-1).clamp_min(1)
 
             sel = rows
+            # thinned to keep the arrays small: the pixel diagnostics
+            # want 10^6 points, not 10^8
+            keep = sel.detach().cpu().numpy()
+            pr = prof.reshape(len(rid_np), -1)
+            pk = (pr / pr.max(-1, keepdim=True).values.clamp_min(1e-12))
+            hb = h.detach().cpu().numpy()[keep]
+            px_p.append(pk.detach().cpu().numpy()[keep][hb][::7])
+            px_lam.append(lam.detach().cpu().numpy()[keep][hb][::7])
+            px_res.append((c - lam).detach().cpu().numpy()[keep][hb][::7])
+
             logp.append((ll.sum(-1) / n)[sel].detach().cpu().numpy())
             chi2.append((pearson.sum(-1) / n)[sel].detach().cpu().numpy())
             bias.append((resid.sum(-1) / n)[sel].detach().cpu().numpy())
@@ -207,7 +221,73 @@ def score(model, loader, device, n_batches, want):
                       else np.full(int(sel.sum().item()), np.nan))
     if not logp:
         return None
-    return tuple(np.concatenate(v) for v in (logp, chi2, bias, npx, dd))
+    return (tuple(np.concatenate(v) for v in (logp, chi2, bias, npx, dd))
+            + (np.concatenate(px_p), np.concatenate(px_lam),
+               np.concatenate(px_res)))
+
+
+def shape_of_misfit(pk, res, n_bins: int = 10) -> list[dict]:
+    """The held-out residual against the profile value it sits on.
+
+    This separates three explanations of a rate that does not fit. If the
+    model's profile is too BROAD, the peak is under-predicted and the
+    wings over-predicted, so the residual falls with `p`. If the INTENSITY
+    is simply too low the residual is positive everywhere and scales with
+    `p`. If the BACKGROUND is over-subtracted the residual is positive and
+    flat, largest where `p` is smallest. A table of the residual by
+    profile decile tells them apart; one number cannot.
+
+    `pk` is the pixel's profile value divided by the largest in its own
+    shoebox, so a decile means the same thing in a bright reflection and
+    a weak one.
+    """
+    edges = np.quantile(pk, np.linspace(0, 1, n_bins + 1))
+    edges[-1] += 1e-9
+    idx = np.clip(np.digitize(pk, edges) - 1, 0, n_bins - 1)
+    rows = []
+    for k in range(n_bins):
+        m = idx == k
+        if m.sum() < 50:
+            continue
+        rows.append({"bin": k, "p_over_pmax": float(np.median(pk[m])),
+                     "n": int(m.sum()),
+                     "resid": float(np.mean(res[m])),
+                     "resid_med": float(np.median(res[m]))})
+    return rows
+
+
+def noise_model(lam, res, n_bins: int = 12) -> dict:
+    """Fit `Var(c) = a * rate + b` from the held-out residuals.
+
+    Poisson is `a = 1, b = 0`. A detector that stores `g` units per photon
+    with read noise `sigma_r` gives `a = g` and `b = sigma_r^2`, and
+    `a < 1` is what a sub-Poisson chi-square means: the stored value is
+    not a photon count.
+
+    Fitted on the MEDIAN squared residual per rate decile rather than the
+    mean, because the bright end carries rate misfit that is not noise and
+    would otherwise set the slope. The median of a squared residual is
+    0.4549 of its variance for a normal, so the bin medians are rescaled
+    by that factor before the straight line is fitted.
+    """
+    edges = np.quantile(lam, np.linspace(0, 1, n_bins + 1))
+    edges[-1] += 1e-9
+    idx = np.clip(np.digitize(lam, edges) - 1, 0, n_bins - 1)
+    x, y, rows = [], [], []
+    for k in range(n_bins):
+        m = idx == k
+        if m.sum() < 50:
+            continue
+        lam_k = float(np.median(lam[m]))
+        var_k = float(np.median(res[m] ** 2) / 0.4549)
+        x.append(lam_k)
+        y.append(var_k)
+        rows.append({"bin": k, "rate": lam_k, "var": var_k,
+                     "n": int(m.sum())})
+    if len(x) < 3:
+        return {"a": float("nan"), "b": float("nan"), "bins": rows}
+    a, b = np.polyfit(np.asarray(x), np.asarray(y), 1)
+    return {"a": float(a), "b": float(b), "bins": rows}
 
 
 def main() -> int:
@@ -232,7 +312,7 @@ def main() -> int:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"holding out {HOLDOUT:.0%} of the valid pixels, keyed by refl_id")
 
-    rows = []
+    rows, misfit, noise, noise_bins = [], [], [], []
     for run in runs:
         arm = os.path.basename(run.rstrip("/"))
         cfg_path = os.path.join(run, "config_log.yaml")
@@ -258,7 +338,15 @@ def main() -> int:
         if got is None:
             print(f"  {arm}: nothing scored")
             continue
-        lp, c2, bi, npx, d = got
+        lp, c2, bi, npx, d, pk, lam_px, res_px = got
+        nm = noise_model(lam_px, res_px)
+        print(f"  {arm}: noise model Var = {nm['a']:.3f} rate "
+              f"+ {nm['b']:.2f}   (Poisson is 1.000 rate + 0)")
+        for r in shape_of_misfit(pk, res_px):
+            misfit.append({"method": arm, **r})
+        noise.append({"method": arm, "a": nm["a"], "b": nm["b"]})
+        for r in nm["bins"]:
+            noise_bins.append({"method": arm, **r})
         thirds = (np.digitize(d, np.nanquantile(d, [1 / 3, 2 / 3]))
                   if np.isfinite(d).all() else np.zeros(len(d), int))
         # `d` is in angstrom, so the SMALLEST d is the highest resolution
@@ -294,13 +382,42 @@ def main() -> int:
               f"{r['n_px']:>9.1f}{r['logp_px']:>10.4f}"
               f"{r['chi2_px']:>9.3f}{r['bias_px']:>9.3f}")
 
+    if misfit:
+        w2 = max(len(r["method"]) for r in misfit) + 2
+        print(f"\nheld-out residual by profile decile "
+              f"(p over the shoebox max)\n")
+        print(f"{'arm':<{w2}}{'p/pmax':>9}{'n':>10}{'mean resid':>12}"
+              f"{'median':>9}")
+        for r in misfit:
+            print(f"{r['method'].replace('hewl1118_', ''):<{w2}}"
+                  f"{r['p_over_pmax']:>9.4f}{r['n']:>10d}"
+                  f"{r['resid']:>12.3f}{r['resid_med']:>9.3f}")
+    if noise_bins:
+        w3 = max(len(r["method"]) for r in noise_bins) + 2
+        print(f"\nvariance against rate, median squared residual per "
+              f"rate decile\n")
+        print(f"{'arm':<{w3}}{'rate':>10}{'var':>12}{'var/rate':>10}"
+              f"{'n':>10}")
+        for r in noise_bins:
+            print(f"{r['method'].replace('hewl1118_', ''):<{w3}}"
+                  f"{r['rate']:>10.3f}{r['var']:>12.3f}"
+                  f"{r['var'] / max(r['rate'], 1e-9):>10.3f}{r['n']:>10d}")
+
     import csv
 
-    with open(out_path, "w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=list(rows[0]))
-        w.writeheader()
-        w.writerows(rows)
-    print(f"\n{out_path}: {len(rows)} rows")
+    def write(path, recs):
+        if not recs:
+            return
+        with open(path, "w", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=list(recs[0]))
+            w.writeheader()
+            w.writerows(recs)
+        print(f"{path}: {len(recs)} rows")
+
+    write(out_path, rows)
+    base = out_path.rsplit(".csv", 1)[0]
+    write(f"{base}_misfit.csv", misfit)
+    write(f"{base}_noise.csv", noise_bins)
     return 0
 
 

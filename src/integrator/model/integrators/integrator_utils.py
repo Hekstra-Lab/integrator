@@ -68,6 +68,8 @@ def rao_blackwellized_intensity(
     background: Tensor,
     n_iter: int = 2,
     gate_half_signal: float | None = None,
+    noise_a: float = 1.0,
+    noise_b: float = 0.0,
 ) -> dict[str, Tensor]:
     """Profile-fit intensity with the profile's own uncertainty propagated into sigma.
 
@@ -99,6 +101,14 @@ def rao_blackwellized_intensity(
             one pass is a summation estimate and two is enough in practice.
         gate_half_signal: Signal photons at which the profile-variance term is
             half-weighted. `None` applies it in full.
+        noise_a, noise_b: The per-pixel variance function, `Var(c) = a * rate + b`.
+            `(1, 0)` is Poisson and is the default, so a run that does not set them
+            exports exactly what it exported before. They are for a detector whose
+            stored value is not a photon count: with `g` units per photon and read
+            noise `sigma_r`, `Var = g * rate + sigma_r^2`, and `a < 1` is what a
+            sub-Poisson residual means. On hewl_1118 the held-out chi-square per
+            pixel is 0.24 at high resolution, so the Poisson weights there are
+            about four times too cautious.
 
     Returns:
         `i_rb` and `var_rb`, plus the two variance components and the gate, each
@@ -124,7 +134,9 @@ def rao_blackwellized_intensity(
         # intensity instead of the rate keeps the weights finite, and for a
         # genuinely null reflection w = 1/bg is the Fisher-optimal choice.
         rate = (i_hat.clamp_min(0.0).unsqueeze(-1) * pi + bg).clamp_min(eps)
-        w = m / rate
+        # the optimal weight is the inverse VARIANCE of the pixel, which is
+        # the rate only when the counts are Poisson
+        w = m / (noise_a * rate + noise_b).clamp_min(eps)
         denom = (w * pi * pi).sum(-1).clamp_min(eps)
         i_hat = (w * pi * resid).sum(-1) / denom
 
@@ -133,7 +145,7 @@ def rao_blackwellized_intensity(
     # the rate clamped they overstate it by ~1/eps, which would hand careless a
     # weak observation with sigma ~0.01 against an honest ~3.
     rate = (i_hat.clamp_min(0.0).unsqueeze(-1) * pi + bg).clamp_min(eps)
-    inv = m / rate
+    inv = m / (noise_a * rate + noise_b).clamp_min(eps)
     f_ii = (inv * pi * pi).sum(-1)
     f_ib = (inv * pi).sum(-1)
     f_bb = (inv).sum(-1).clamp_min(eps)

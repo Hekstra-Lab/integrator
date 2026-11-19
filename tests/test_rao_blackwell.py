@@ -125,3 +125,52 @@ def test_all_outputs_are_per_reflection_and_finite():
         assert v.shape == (32,), f"{k} has shape {tuple(v.shape)}"
         assert torch.isfinite(v).all(), k
     assert (out["var_rb"] > 0).all()
+
+
+def test_poisson_noise_model_is_the_default_and_is_bit_identical():
+    """`(a, b) = (1, 0)` must reproduce the Poisson path exactly.
+
+    The variance function is an added option, so every run that does not
+    set it has to export the number it exported before -- not close to it.
+    """
+    counts, mask, pi, _, b_true = _shoeboxes(n=48)
+    prof = pi.expand(5, 48, -1)
+    bg = torch.full((5, 48, 1), b_true)
+    base = rao_blackwellized_intensity(counts, mask, prof, bg)
+    same = rao_blackwellized_intensity(counts, mask, prof, bg,
+                                       noise_a=1.0, noise_b=0.0)
+    for k in base:
+        assert torch.equal(base[k], same[k]), k
+
+
+def test_sub_poisson_noise_sharpens_sigma_and_super_poisson_widens_it():
+    """`Var = a * rate + b` moves sigma the way the information says.
+
+    With `a < 1` each pixel is more informative than Poisson, so the
+    conditional variance falls; with `a > 1` it rises. This is the whole
+    point of the option: on hewl_1118 the held-out chi-square per pixel is
+    0.24 at high resolution, so Poisson weights are too cautious there.
+    """
+    counts, mask, pi, _, b_true = _shoeboxes(n=48)
+    prof = pi.expand(5, 48, -1)
+    bg = torch.full((5, 48, 1), b_true)
+    poisson = rao_blackwellized_intensity(counts, mask, prof, bg)
+    sharp = rao_blackwellized_intensity(counts, mask, prof, bg, noise_a=0.25)
+    wide = rao_blackwellized_intensity(counts, mask, prof, bg, noise_a=4.0)
+
+    assert (sharp["var_rb_cond"] < poisson["var_rb_cond"]).all()
+    assert (wide["var_rb_cond"] > poisson["var_rb_cond"]).all()
+    # a pure scale on the variance scales the conditional variance with it
+    assert torch.allclose(sharp["var_rb_cond"],
+                          0.25 * poisson["var_rb_cond"], rtol=1e-4)
+
+
+def test_read_noise_floors_the_variance_on_empty_pixels():
+    """`b > 0` is a floor: it cannot make a pixel more informative."""
+    counts, mask, pi, _, b_true = _shoeboxes(n=48)
+    prof = pi.expand(5, 48, -1)
+    bg = torch.full((5, 48, 1), b_true)
+    base = rao_blackwellized_intensity(counts, mask, prof, bg)
+    floored = rao_blackwellized_intensity(counts, mask, prof, bg,
+                                          noise_b=25.0)
+    assert (floored["var_rb_cond"] > base["var_rb_cond"]).all()

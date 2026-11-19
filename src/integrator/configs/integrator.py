@@ -20,6 +20,11 @@ class IntegratorCfg:
             the learned-model analog of foreground summation. Ragged integrators
             only; falls back to `valid` per reflection when a shoebox has no
             foreground voxel.
+        rb_noise_a, rb_noise_b: The per-pixel variance function used by the
+            Rao-Blackwellized export, `Var(c) = a * rate + b`. Defaults `(1, 0)`
+            are Poisson, so an existing run exports what it always did. Fit them
+            with `scripts/figures/dump_heldout_score.py`, which regresses the
+            held-out squared residual on the rate.
         rb_gate_half_signal: Signal photons at which the profile-uncertainty term of
             the Rao-Blackwellized sigma is half-weighted. `None` applies it in full.
             Only consulted when an `i_rb`/`var_rb` column is requested; the term is
@@ -237,6 +242,8 @@ class IntegratorCfg:
     legitimate but makes `rsample` numerically fragile -- the same reason the
     Gamma surrogates carry a `k_min`."""
     rb_gate_half_signal: float | None = None
+    rb_noise_a: float = 1.0
+    rb_noise_b: float = 0.0
     profile_coord_channels: bool = False
     """Give the profile encoder two extra channels holding each pixel's offset
     in the beam-centred radial/tangential frame. A conv encoder is translation
