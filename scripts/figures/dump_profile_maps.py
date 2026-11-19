@@ -144,6 +144,17 @@ def accumulate(model, loader, device, n_batches: int):
                     examples["batch_gate"] = (
                         g.detach().float().cpu().numpy())
                 examples["batch_profile"] = p
+                # The counts and the mask for the same batch. Without the
+                # counts a gate can only be compared with another gate,
+                # and the question that matters -- is the gate where the
+                # signal actually is -- cannot be asked at all, because
+                # the only record of where the signal is is the shoebox.
+                examples["batch_counts"] = (
+                    counts.detach().float().cpu().numpy())
+                examples["batch_mask"] = (
+                    mask.detach().float().cpu().numpy())
+                if d is not None:
+                    examples["batch_d"] = d.detach().float().cpu().numpy()
             raws.append(counts.detach().float().cpu().numpy())
             xs.append(metadata["xyzcal.px.0"].detach().float().cpu().numpy())
             ys.append(metadata["xyzcal.px.1"].detach().float().cpu().numpy())
@@ -363,7 +374,8 @@ def main() -> int:
                 if arr is not None:
                     blobs[f"{arm}_ex_{key}"] = arr[pick].astype(np.float32)
         # the whole first batch, for arm-against-arm comparison by id
-        for key in ("batch_refl_id", "batch_gate", "batch_profile"):
+        for key in ("batch_refl_id", "batch_gate", "batch_profile",
+                    "batch_counts", "batch_mask", "batch_d"):
             arr = examples.get(key)
             if arr is not None:
                 blobs[f"{arm}_{key}"] = (
