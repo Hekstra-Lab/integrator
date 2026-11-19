@@ -170,6 +170,9 @@ def draw_basis(images: np.ndarray, bias: np.ndarray, shape, arm: str,
     P.head(ax, n, "bias")
     _image_axes(ax)
     for ax in flat[n + 1:]:
+        # ticks removed as well: figTeX's clip check measures the default
+        # 0-1 tick labels of a hidden axes
+        _image_axes(ax)
         ax.set_visible(False)
     # named by a short title over the bar rather than a rotated label beside
     # it: figTeX's image geometry reserves 8 tick-sizes for the bar, which

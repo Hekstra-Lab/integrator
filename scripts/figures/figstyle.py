@@ -108,12 +108,35 @@ def _fast() -> bool:
     return os.environ.get("FIGTEX_FAST", "").strip() not in ("", "0", "false")
 
 
-def use(layout: str = LAYOUT, fast: bool | None = None):
-    """Fonts, sizes and the ink look. Call once, before plotting."""
+GRID_ALPHA = 0.3
+GRID_WIDTH = 0.4
+
+
+def use(layout: str = LAYOUT, fast: bool | None = None, grid: bool = True):
+    """Fonts, sizes and the ink look. Call once, before plotting.
+
+    `grid`: a faint major grid behind the data on every axes. The ink
+    theme turns the grid off; this turns it on in the theme's own
+    `grid_hex`, at `GRID_ALPHA` and `GRID_WIDTH` pt -- the values
+    `sizing.apply` sets for the panels path -- below every artist
+    (`axes.axisbelow`). Image panels set no ticks, so they draw no lines.
+    """
     global _ACTIVE
     out = style.use(layout, theme=THEME,
                     fast=_fast() if fast is None else fast)
     _ACTIVE = layout
+    if grid:
+        import matplotlib as mpl
+
+        mpl.rcParams.update({
+            "axes.grid": True,
+            "axes.grid.which": "major",
+            "axes.axisbelow": True,
+            "grid.color": sizing.THEME.get("grid_hex", "#B0B0B0"),
+            "grid.alpha": GRID_ALPHA,
+            "grid.linewidth": GRID_WIDTH,
+            "grid.linestyle": "-",
+        })
     return out
 
 

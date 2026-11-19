@@ -417,6 +417,10 @@ def draw(df: pl.DataFrame, out_dir: Path, dataset: str, prefix: str) -> int:
     spare = flat[n:]
     if handles and handles[0] and spare:
         cell = spare[0]
+        # no ticks at all, not only hidden ones: figTeX's clip check
+        # measures the default 0-1 tick labels of an axes that is off
+        cell.set_xticks([])
+        cell.set_yticks([])
         cell.set_axis_off()
         cell.legend(*handles, loc="center", frameon=True,
                     ncols=1 if len(handles[1]) <= 6 else 2)
