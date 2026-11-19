@@ -282,7 +282,7 @@ A short job belongs there, because the production partitions queue.
 
 | partition | for | limits |
 |---|---|---|
-| `gpu_test` | a GPU job of a few minutes: a predict pass, an export, a diagnostic | 2 jobs at once, under 65636 MB |
+| `gpu_test` | a GPU job of a few minutes: a predict pass, an export, a diagnostic. 12 h limit, so short TRAINING fits too | 2 jobs at once, under 65636 MB, and **fewer than 8 cores per GPU** -- `train.slurm` asks for 16 and is rejected without `-c 4` |
 | `test` | the same on CPU | CPU only |
 | `sapphire` | longer CPU work | CPU only |
 | `gpu` | training, and anything over the `gpu_test` memory cap | 35 nodes, usually available |
