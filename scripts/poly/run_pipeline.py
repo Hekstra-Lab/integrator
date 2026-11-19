@@ -113,6 +113,12 @@ def parse_args():
         help="careless config 1-6; overrides the pipeline config",
     )
     p.add_argument(
+        "--phenix-dmin", type=float, default=None,
+        help="refine only to this resolution, in both passes. For putting "
+             "a model and a reference whose merges reach different limits "
+             "on the same reflections. Default: whatever the MTZ carries.",
+    )
+    p.add_argument(
         "--epoch",
         type=int,
         default=None,
@@ -501,18 +507,33 @@ def step_phenix(cfg, merged: Path, work_dir: Path, dry) -> Path:
     # column live in the same data_manager block as the file they select from
     # and a command-line file= opens a fresh block instead. A 1.20 eff names
     # no files, so those still take the override form.
+    # An explicit high-resolution cutoff, applied to BOTH passes. Off by
+    # default, so every existing call refines whatever the MTZ carries.
+    #
+    # It is for comparing a model with a reference whose merge reaches a
+    # different limit: the laue.integrate reference for hewl_1118 merges
+    # 13,405 reflections to 1.60 A where the gate arms merge 11,540 to
+    # 1.70 A, and refining each to its own limit lets the reference bring
+    # 16% more data to its own R-free. The domain has to be fixed by a
+    # neutral criterion before the comparison, not chosen by whichever
+    # number is being read.
+    dmin = pcfg.get("d_min")
+    res = (f"refinement.input.xray_data.high_resolution={float(dmin)} "
+           if dmin is not None else "")
+
     subs1 = {"MTZFILE": merged, "MODELFILE": pcfg["pdb"]}
     if rfree:
         subs1["FREEFILE"] = rfree
     if not dry and phenix.eff_takes_substitution(pcfg["eff1"]):
         eff1 = phenix.render_eff(pcfg["eff1"], refine1 / "refine.eff", **subs1)
-        pass1 = f'phenix.refine "{eff1}"'
+        pass1 = f'phenix.refine "{eff1}" {res}'.rstrip()
     else:
         pass1 = (
             f'phenix.refine "{Path(pcfg["eff1"]).resolve()}" '
             f'refinement.input.xray_data.file_name="{merged.resolve()}" '
             f'refinement.input.pdb.file_name="{Path(pcfg["pdb"]).resolve()}" '
             + (f"{phenix.rfree_overrides(rfree)} " if rfree else "")
+            + res
             + f"refinement.output.prefix={prefix} --overwrite"
         )
     run(in_env(pass1, pcfg["env"]), cwd=refine1, dry=dry)
@@ -529,7 +550,7 @@ def step_phenix(cfg, merged: Path, work_dir: Path, dry) -> Path:
         subs2["FREEFILE"] = rfree
     if not dry and phenix.eff_takes_substitution(pcfg["eff2"]):
         eff2 = phenix.render_eff(pcfg["eff2"], refine2 / "refine.eff", **subs2)
-        pass2 = f'phenix.refine "{eff2}"'
+        pass2 = f'phenix.refine "{eff2}" {res}'.rstrip()
     else:
         pass2 = (
             f'phenix.refine "{Path(pcfg["eff2"]).resolve()}" '
@@ -540,6 +561,7 @@ def step_phenix(cfg, merged: Path, work_dir: Path, dry) -> Path:
                 if rfree
                 else f'refinement.input.xray_data.r_free_flags.file_name="{data}" '
             )
+            + res
             + f"refinement.output.prefix={prefix} --overwrite"
         )
     run(in_env(pass2, pcfg["env"]), cwd=refine2, dry=dry)
@@ -630,6 +652,9 @@ def main():
     for key in ("method", "dataset"):
         if getattr(args, key) is not None:
             cfg.setdefault("keys", {})[key] = getattr(args, key)
+
+    if args.phenix_dmin is not None:
+        cfg.setdefault("phenix", {})["d_min"] = args.phenix_dmin
 
     # A chain that scaled outside this pipeline has no run directory to
     # resolve, so `--out-base` names the careless output itself.
