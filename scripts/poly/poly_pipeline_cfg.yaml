@@ -74,14 +74,31 @@ phenix:
                                 #   2.0's phenix_env.sh exports the
                                 #   pre-migration prefix and leaves nothing
                                 #   on PATH (integrator/utils/phenix.py)
-  eff1: /n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/reference_data/laue_refine_pass1.eff
-  eff2: /n/holylabs/LABS/hekstra_lab/Users/laldama/integrato_refac/integrator/reference_data/laue_refine_pass2.eff
+  # The FIXEDFREE pair, and from this repository rather than the holylabs
+  # checkout. The plain `laue_refine_pass{1,2}.eff` set
+  # `r_free_flags.generate = True`, so every arm held out a different subset
+  # and two R-free values differed by the flag draw as well as by the model:
+  # about 0.008 on weak Laue data, which is the size of the effects being
+  # measured. Three gate arms compared this way spanned exactly 0.0082 and
+  # the comparison said nothing.
+  eff1: ${REPO}/reference_data/laue_refine_pass1_fixedfree.eff
+  eff2: ${REPO}/reference_data/laue_refine_pass2_fixedfree.eff
+  rfree: ${REPO}/reference_data/hewl_1118_rfree.mtz
+                                # one flag set, complete over the ASU to
+                                #   `--dmin`, so no MTZ can miss a reflection
+                                #   and no two can disagree about which are
+                                #   free. Made by scripts/make_rfree_flags.py
+                                #   at a fixed seed; see docs/reference_data.md.
                                 # the phenix 2.0 data_manager form of
                                 #   laue_analysis/custom_refinement_param_{1,2}_.eff,
                                 #   which 2.0 rejects. Same cell, strategy,
                                 #   macro-cycles, generated R-free set and map
                                 #   labels, so only the version differs.
-  pdb: /n/holylabs/hekstra_lab/Users/laldama/integrato_refac/integrator/reference_data/shaken_9b7c.pdb
+  pdb: ${REPO}/reference_data/shaken_9b7c.pdb
+                                # the starting model, perturbed from 9b7c so
+                                #   refinement has somewhere to go. In the
+                                #   repository: the holylabs path it used to
+                                #   carry does not exist from here.
   prefix: refined               # refine1 -> refined_data.mtz, refined_1.pdb
 
 peaks:

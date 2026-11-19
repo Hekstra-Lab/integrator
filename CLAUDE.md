@@ -68,6 +68,7 @@ See `docs/exporting.md` for the full account and `docs/pitfalls.md` for the rest
 ## Before believing a number
 
 A single refinement is not a measurement -- a `phenix` seed can land in a second basin twelve standard deviations from the mean.
+**Two refinements that generated their own R-free sets are not comparable at all**: holding out a different subset is worth about 0.008 in R-free on weak Laue data, which is the size of the model effects being measured. Three gate arms compared that way on 19 November spanned exactly 0.0082 and said nothing. Pin the flags -- `phenix.rfree` for the poly pipeline, `shared_free_flags.csv` for PDZ2 -- and see `docs/reference_data.md`.
 On Laue data the careless merging seed dominates the refinement seed about ninefold, so arm comparisons must average over merging seeds.
 Pick the resolution domain by a neutral criterion before comparing; never let the metric under test select its own range.
 Keep the refinement chain fixed and attached to the dataset -- phenix version, `.eff`, R-free flag source and pass count each move R-free by as much as the effects being measured.
@@ -307,3 +308,6 @@ A watcher that treats a transient `squeue` failure as completion will report suc
 `docs/merging_svae.md` -- the mono and polychromatic merging model.
 `docs/pitfalls.md` -- failures that produced plausible wrong numbers.
 `docs/session_state.md` -- what is running now.
+`docs/reference_data.md` -- the R-free flags, the starting model and the eff
+files: where they live, how they were made, and why a refinement that
+generates its own flags cannot be compared with one that does not.

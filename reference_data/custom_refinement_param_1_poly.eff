@@ -1,0 +1,65 @@
+# Poly two-stage refine, STAGE 1 (rigid body), phenix 2.0 data_manager form.
+# Built on reference_data/phenix.eff (the working mono 2.0 eff) but refining the
+# model's posterior AMPLITUDES F(+),SIGF(+),... directly (french_wilson off), with
+# a fixed R-free set and group_anomalous. Cell 78.3121 (the 9b7c reference cell).
+# $MTZFILE / $MODELFILE / $RFREE are substituted by diagnose_poly_merging.py.
+data_manager {
+  miller_array {
+    file = "$MTZFILE"
+    labels {
+      name = "F(+),SIGF(+),F(-),SIGF(-)"
+      array_type = unknown *amplitude bool complex hendrickson_lattman \
+                   integer intensity nonsense
+    }
+    user_selected_labels = "F(+),SIGF(+),F(-),SIGF(-)"
+  }
+  miller_array {
+    file = "$RFREE"
+    labels {
+      name = "R-free-flags"
+      array_type = unknown amplitude bool complex hendrickson_lattman \
+                   *integer intensity nonsense
+    }
+    user_selected_labels = "R-free-flags"
+  }
+  fmodel {
+    xray_data {
+      outliers_rejection = False
+      french_wilson_scale = False
+    }
+  }
+  model {
+    file = "$MODELFILE"
+  }
+  default_model = "$MODELFILE"
+}
+
+refinement {
+  crystal_symmetry {
+    unit_cell = 78.3121 78.3121 37.2343 90 90 90
+    space_group = P 43 21 2
+  }
+  refine {
+    strategy = individual_sites individual_sites_real_space *rigid_body \
+               individual_adp group_adp tls occupancies group_anomalous den
+    adp {
+      individual {
+        isotropic = None
+        anisotropic = None
+      }
+      group_adp_refinement_mode = *one_adp_group_per_residue \
+                                  two_adp_groups_per_residue group_selection
+      group = None
+      tls = None
+    }
+  }
+  main {
+    number_of_macro_cycles = 1
+  }
+}
+
+output {
+  prefix = """refine"""
+  serial = 1
+  overwrite = true
+}

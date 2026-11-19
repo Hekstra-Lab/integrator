@@ -113,7 +113,26 @@ def parse_args():
 
 
 def load_cfg(path: Path) -> dict:
-    return yaml.safe_load(Path(path).read_text()) or {}
+    """The pipeline config, with `${REPO}` and the environment expanded.
+
+    Reference data -- the eff files, the reference model, the R-free flag
+    set -- lives in this repository under `reference_data/`, so a config
+    names it relative to the checkout rather than by absolute path. Before
+    this, those paths pointed into a holylabs checkout that is two months
+    behind and not the one running, which is how the pipeline came to use
+    the flag-GENERATING eff files while the fixed-flag pair sat unused in
+    the repository.
+
+    `REPO` defaults to this file's own checkout, so it is right without
+    anyone setting it, and `INTEGRATOR_ROOT` overrides it.
+    """
+    import os
+
+    os.environ.setdefault(
+        "REPO", os.environ.get("INTEGRATOR_ROOT")
+        or str(Path(__file__).resolve().parents[2]))
+    raw = Path(path).read_text()
+    return yaml.safe_load(os.path.expandvars(raw)) or {}
 
 
 def run(cmd: str, cwd: Path | None = None, dry: bool = False) -> None:

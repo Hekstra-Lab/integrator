@@ -153,7 +153,12 @@ wandb/
 /finished_figs_local/
 /architecture_comparison/
 /reference_eval/
-/reference_data/
+# NOT `reference_data/`: that is the R-free flag set, the starting model and
+# the refinement eff files -- inputs that every comparable number depends on,
+# not output. Ignoring it is why the fixed-flag pair sat untracked while the
+# pipeline used the flag-generating one; see docs/reference_data.md.
+!reference_data/
+!reference_data/**
 /friedel_pairs/
 /friedel_pairs_9b7c/
 /1117_eval/
