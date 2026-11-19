@@ -789,6 +789,39 @@ def variance_rules(p_row, counts, tau=TAU, q_kappa=None, draws=4,
     }
     if q_kappa:
         rng = rng or np.random.default_rng(0)
+        # `rb_export` mirrors `integrator_utils.rao_blackwellized_intensity`
+        # as it is actually configured on these runs -- mc_samples 50 and
+        # `rb_gate_half_signal` unset, so the profile term applies in full.
+        # It is NOT the plain `fisher` rule above: the intensity comes from
+        # TWO reweighting passes with w = 1/(I p + B), which is the
+        # Fisher-optimal weighting rather than ordinary least squares, and
+        # the variance is var_cond + var_profile over profile draws. This
+        # is the rule that has to be calibrated, because it is the one
+        # whose numbers reach careless.
+        i_s, v_s = [], []
+        for _ in range(draws):
+            ps = rng.gamma(np.maximum(q_kappa * p_row, 1e-6))
+            ps = ps / np.maximum(ps.sum(axis=1, keepdims=True), 1e-30)
+            resid = counts - b0
+            ih = np.maximum(resid.sum(axis=1), 0.0)
+            for _ in range(2):
+                rt = np.maximum(np.maximum(ih, 0.0)[:, None] * ps + b0, 1e-6)
+                w = 1.0 / rt
+                ih = ((w * ps * resid).sum(axis=1)
+                      / np.maximum((w * ps * ps).sum(axis=1), 1e-6))
+            rt = np.maximum(np.maximum(ih, 0.0)[:, None] * ps + b0, 1e-6)
+            inv = 1.0 / rt
+            g_ii = (inv * ps * ps).sum(axis=1)
+            g_ib = (inv * ps).sum(axis=1)
+            g_bb = np.maximum(inv.sum(axis=1), 1e-6)
+            sch = np.maximum(g_ii - g_ib ** 2 / g_bb, 1e-6)
+            i_s.append(ih)
+            v_s.append(1.0 / sch)
+        i_s = np.asarray(i_s)
+        v_s = np.asarray(v_s)
+        out["rb_export"] = (i_s.mean(axis=0),
+                            v_s.mean(axis=0)
+                            + i_s.var(axis=0, ddof=1))
         means, vars_ = [], []
         for _ in range(draws):
             ps = rng.gamma(np.maximum(q_kappa * p_row, 1e-6))
