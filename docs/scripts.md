@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-291 scripts.
+292 scripts.
 
 ## Start here
 
@@ -81,6 +81,7 @@ per job, and it lives in the repo".
 | `poly/pdz2/refine_pdz2.sbatch` | Refine the deposited model against each arm off-state merge. Identical protocol and |
 | `poly/pdz2/split_pdz2.py` | Split pooled integrator predictions into the 16 per-sweep MTZs the reference |
 | `poly/pdz2/split_pdz2_ml.py` | Write the PRIOR-FREE maximum-likelihood intensities into the per-sweep MTZs. |
+| `poly/pdz2/stats_pdz2.sbatch` | `careless.stats` on the PDZ2 EF-X merges, one arm at a time. |
 | `poly/pdz2/swap_arm.sbatch` | One sigma-swap cell through the REFERENCE reduction: expt_concat -> careless -> CCsym. |
 | `poly/pdz2/unmerged_ccsym.py` | CCsym's own quantity, measured on UNMERGED intensities with no careless involved. |
 | `poly/pdz2/wdm_arm.sbatch` | Weighted 200ns-off difference map for an arm that is already merged, |
