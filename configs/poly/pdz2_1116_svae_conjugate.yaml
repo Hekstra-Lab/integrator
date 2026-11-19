@@ -119,12 +119,11 @@ trainer:
   gradient_clip_algorithm: norm
 
 # Optional: early stopping (omit the section to disable).
-early_stop:
-  monitor: val elbo
-  mode: min
-  patience: 3
-  min_delta: 0.0
-  strict: true
+# No early stopping: a fixed 100 epochs, which is what pdz2_svae ran (its
+# patience-3 stop never fired). With patience 3 the first runs of this
+# config stopped at epoch 69 (svae_bg) and epoch 9 (svae_conjugate), so
+# the arms would not have been compared at matched training.
+early_stop: null
 
 # Optional: checkpoint selection.
 checkpoint:
