@@ -101,8 +101,10 @@ def parse_args():
     )
     p.add_argument(
         "--steps",
-        default=",".join(ALL_STEPS),
-        help=f"Comma-separated subset of {ALL_STEPS}",
+        default=None,
+        help=f"Comma-separated subset of {ALL_STEPS}. Defaults to all of "
+             f"them with --run-dir, and to `stats` alone with --out-base, "
+             f"which is what --out-base did when it ran nothing else.",
     )
     p.add_argument(
         "--config",
@@ -630,19 +632,49 @@ def main():
             cfg.setdefault("keys", {})[key] = getattr(args, key)
 
     # A chain that scaled outside this pipeline has no run directory to
-    # resolve, so `--out-base` names the careless output itself and only the
-    # `stats` step runs. Everything upstream of the merge already happened.
+    # resolve, so `--out-base` names the careless output itself.
+    # Everything upstream of the merge already happened; `stats`, `phenix`
+    # and `peaks` all read the merge and need no run directory, so all
+    # three can run here. `stats` alone remains the default, which is what
+    # --out-base did when it ran nothing else.
+    #
+    # This is the path a reference integrator and PDZ2 take: both merge
+    # outside the pipeline, and refining them through the pipeline's own
+    # phenix step is what puts them on the SAME flag set and the same two
+    # passes as every arm they are compared with.
     if args.out_base is not None:
         out_base = args.out_base.resolve()
+        steps = [s for s in (args.steps or "stats").split(",") if s]
+        unknown = [s for s in steps if s not in ALL_STEPS]
+        if unknown:
+            raise SystemExit(f"unknown step(s) {unknown}; have {ALL_STEPS}")
+        for s in ("predict", "careless"):
+            if s in steps:
+                raise SystemExit(
+                    f"--out-base names an already-merged careless output, "
+                    f"so `{s}` cannot run from it; drop it from --steps"
+                )
         print(f"out base : {out_base}")
-        step_stats(cfg, out_base, args.epoch, args.dry_run)
+        print(f"steps    : {', '.join(steps)}")
+        merged = Path(f"{out_base}_0.mtz")
+        work_dir = out_base.parent / f"{out_base.name}_refine"
+        refine2 = None
+        if "stats" in steps:
+            step_stats(cfg, out_base, args.epoch, args.dry_run)
+        if "phenix" in steps:
+            if not args.dry_run and not merged.is_file():
+                raise SystemExit(f"no merged MTZ at {merged}")
+            refine2 = step_phenix(cfg, merged, work_dir, args.dry_run)
+        if "peaks" in steps:
+            step_peaks(cfg, refine2 or work_dir / "refine2", merged,
+                       args.dry_run)
         print("\ndone")
         return 0
 
     if args.run_dir is None:
         raise SystemExit("--run-dir is required unless --out-base is given")
     run_dir = args.run_dir.resolve()
-    steps = [s for s in args.steps.split(",") if s]
+    steps = [s for s in (args.steps or ",".join(ALL_STEPS)).split(",") if s]
     unknown = set(steps) - set(ALL_STEPS)
     if unknown:
         raise SystemExit(f"unknown steps: {sorted(unknown)}")
