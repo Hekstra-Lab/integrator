@@ -95,7 +95,7 @@ def accumulate(model, loader, device, n_batches: int):
     total = None
     cells: dict[tuple[int, int], tuple] = {}
     xs, ys = [], []
-    kept, gates = [], []
+    kept, gates, raws = [], [], []
     examples: dict = {}
     with torch.no_grad():
         for i, batch in enumerate(loader):
@@ -131,6 +131,7 @@ def accumulate(model, loader, device, n_batches: int):
                 d = metadata.get("d")
                 if d is not None:
                     examples["d"] = d.detach().float().cpu().numpy()
+            raws.append(counts.detach().float().cpu().numpy())
             xs.append(metadata["xyzcal.px.0"].detach().float().cpu().numpy())
             ys.append(metadata["xyzcal.px.1"].detach().float().cpu().numpy())
     if not kept:
@@ -138,6 +139,7 @@ def accumulate(model, loader, device, n_batches: int):
     p = np.concatenate(kept, axis=0)
     gate = (np.concatenate(gates, axis=0)
             if gates and all(g is not None for g in gates) else None)
+    raw = np.concatenate(raws, axis=0)
     x = np.concatenate(xs, axis=0)
     y = np.concatenate(ys, axis=0)
     total = p.mean(axis=0)
@@ -158,7 +160,7 @@ def accumulate(model, loader, device, n_batches: int):
                 else None,
             )
     gate_total = gate.mean(axis=0) if gate is not None else None
-    return total, cells, (x0, x1, y0, y1), gate_total, examples
+    return total, cells, (x0, x1, y0, y1), gate_total, examples, p, gate, raw
 
 
 def ensure_group_label(metadata, device):
@@ -185,6 +187,59 @@ def ensure_group_label(metadata, device):
     metadata["group_label"] = torch.zeros(
         ref.shape[0], dtype=torch.long, device=device)
     return metadata, "group_label <- zeros (prior groups collapsed)"
+
+
+def gate_fidelity(prf, gate, counts):
+    """How far the gate is from being a function of the profile.
+
+    `r_i = I p_i / (I p_i + B)` is monotone increasing in `p_i`, so a
+    correctly constructed gate ranks pixels exactly as the profile does and
+    the rank correlation is 1 BY CONSTRUCTION, not as an empirical finding.
+    Anything below 1 is a defect with no threshold to argue about.
+
+    Two more, because ordering is necessary and not sufficient:
+
+    - `pearson_weak` -- in the weak limit `I p << B` the sigmoid is in its
+      linear region and `r ~ (I/B) p`, so the gate should be the profile
+      scaled down, pixel for pixel. Measured only on the reflections that
+      are in that regime.
+    - `mae_vs_exact` -- the mean absolute gap to the responsibility built
+      from a joint (I, B) fit on the same counts, which catches a gate
+      that orders pixels correctly at the wrong level.
+    """
+    import numpy as np
+    from scipy.stats import rankdata
+
+    n_pix = prf.shape[1]
+    spp = (prf * prf).sum(1)
+    sp = prf.sum(1)
+    spc = (prf * counts).sum(1)
+    sc = counts.sum(1)
+    det = spp * n_pix - sp * sp
+    det = np.where(np.abs(det) < 1e-12, 1e-12, det)
+    i_fit = (n_pix * spc - sp * sc) / det
+    b_fit = (spp * sc - sp * spc) / det
+
+    rho, pear, mae, weak = [], [], [], []
+    for k in range(prf.shape[0]):
+        pk, gk = prf[k], gate[k]
+        if np.ptp(pk) <= 0 or np.ptp(gk) <= 0:
+            continue
+        rho.append(float(np.corrcoef(rankdata(pk), rankdata(gk))[0, 1]))
+        if i_fit[k] <= 0 or b_fit[k] <= 0:
+            continue
+        exact = i_fit[k] * pk / (i_fit[k] * pk + b_fit[k])
+        mae.append(float(np.abs(gk - exact).mean()))
+        if i_fit[k] * pk.max() / b_fit[k] < 3.0:   # linear regime
+            weak.append(float(np.corrcoef(pk, gk)[0, 1]))
+    out = {
+        "gate_profile_rho": float(np.median(rho)) if rho else float("nan"),
+        "gate_pearson_weak": float(np.median(weak)) if weak else float("nan"),
+        "gate_mae_vs_exact": float(np.median(mae)) if mae else float("nan"),
+        "n_scored": len(rho),
+    }
+    return {k: (round(v, 4) if isinstance(v, float) else v)
+            for k, v in out.items()}
 
 
 def profile_stats(p, h: int, w: int) -> tuple[float, float]:
@@ -248,7 +303,7 @@ def main() -> int:
         if got is None:
             print(f"  {arm}: the forward returned no profile")
             continue
-        total, cells, extent, gate_total, examples = got
+        total, cells, extent, gate_total, examples, all_p, all_g, all_c = got
         grid = np.zeros((GRID, GRID, total.size), dtype=np.float32)
         counts = np.zeros((GRID, GRID), dtype=np.int32)
         gate_grid = np.zeros_like(grid)
@@ -288,10 +343,15 @@ def main() -> int:
                     blobs[f"{arm}_ex_{key}"] = arr[pick].astype(np.float32)
 
         n_eff, outside = profile_stats(total, h, w)
+        # The gate's fidelity to the profile. Only an SVAE has a gate; the
+        # hierarchical family returns none and the columns stay blank.
+        fid = (gate_fidelity(all_p, all_g, all_c) if all_g is not None
+               else {"gate_profile_rho": "", "gate_pearson_weak": "",
+                     "gate_mae_vs_exact": "", "n_scored": 0})
         rows.append({"method": arm, "dataset": DATASET, "profile_model": qp,
                      "cell": "all", "row": "", "col": "",
                      "n": int(counts.sum()), "n_eff": round(n_eff, 4),
-                     "mass_outside_5x5": round(outside, 4)})
+                     "mass_outside_5x5": round(outside, 4), **fid})
         for r in range(GRID):
             for c in range(GRID):
                 if counts[r, c] == 0:
@@ -301,9 +361,14 @@ def main() -> int:
                              "profile_model": qp, "cell": f"{r}{c}",
                              "row": r, "col": c, "n": int(counts[r, c]),
                              "n_eff": round(n_eff, 4),
-                             "mass_outside_5x5": round(outside, 4)})
+                             "mass_outside_5x5": round(outside, 4),
+                             "gate_profile_rho": "", "gate_pearson_weak": "",
+                             "gate_mae_vs_exact": "", "n_scored": 0})
+        rho = fid.get("gate_profile_rho", "")
         print(f"  {arm}: {qp}, shoebox {h}x{w}, {int(counts.sum()):,} "
-              f"reflections, n_eff {rows[-1]['n_eff']:.1f}")
+              f"reflections, n_eff {n_eff:.1f}"
+              + (f", gate-profile rho {rho} (1.0 is forced by the form)"
+                 if rho != "" else ", no gate"))
 
     if not blobs:
         raise SystemExit("nothing measured")
