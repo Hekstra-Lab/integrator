@@ -226,6 +226,15 @@ def checkpoint_for(run_dir: Path, scope) -> Path | None:
     return got[0]
 
 
+# The MODULE, not the console script. `integrator.predict` is not on PATH
+# in every environment that has the package -- the pipeline died with
+# `bash: integrator.predict: command not found` -- and where it is, its
+# shebang may be the pre-migration interpreter, which is what `via_python`
+# exists to work around. `python -m` needs neither: it resolves through the
+# active environment's own interpreter and the installed package.
+PREDICT_CMD = "python -m integrator.cli.predict"
+
+
 def step_predict(cfg, run_dir, dry):
     """integrator.predict over the selected checkpoints, writing MTZs."""
     pcfg = cfg.get("predict", {})
@@ -236,14 +245,14 @@ def step_predict(cfg, run_dir, dry):
         ckpts = None  # dry run against a run that has not trained yet
     if ckpts is None:
         # no --ckpt: predict walks every checkpoint itself
-        cmd = f"integrator.predict -v --run-dir {run_dir} {' '.join(base)}"
+        cmd = f"{PREDICT_CMD} -v --run-dir {run_dir} {' '.join(base)}"
         run(in_env(cmd.strip(), pcfg.get("env")), dry=dry)
         return
     print(f"predict  : {len(ckpts)} checkpoint(s): "
           f"{', '.join(str(epoch_of(c)) for c in ckpts)}")
     for ckpt in ckpts:
         flags = base + ["--ckpt", str(ckpt)]
-        cmd = f"integrator.predict -v --run-dir {run_dir} {' '.join(flags)}"
+        cmd = f"{PREDICT_CMD} -v --run-dir {run_dir} {' '.join(flags)}"
         run(in_env(cmd.strip(), pcfg.get("env")), dry=dry)
 
 

@@ -8,7 +8,13 @@
 # /n/lab_storage/hekstra_lab; /n/holylabs and /n/hekstra_lab_tier0 did not.
 
 predict:
-  env: integrator               # micromamba env with integrator + torch
+  env: integrator-cuda-dev      # micromamba env with integrator + torch.
+                                #   NOT `integrator`: that one is the holylabs
+                                #   checkout, its console scripts carry a
+                                #   pre-migration shebang, and
+                                #   `integrator.predict` is not on its PATH at
+                                #   all -- the pipeline died with
+                                #   `command not found`.
   write_mtz: true               # -> <predictions>/epoch_XXXX/preds_epoch_XXXX.mtz
   epoch: last                   # last | all | every:<n> | <int>.
                                 #   POLYCHROMATIC DEFAULTS TO `last`: one
