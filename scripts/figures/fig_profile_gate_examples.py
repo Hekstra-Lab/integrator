@@ -183,7 +183,7 @@ def draw_combined(blob, arms, out_dir: Path, prefix: str) -> Path | None:
             ax.imshow(square(prof[i], shape), cmap=figstyle().cmap(),
                       interpolation="nearest")
             ax.set_xticks([])
-        ax.set_yticks([])
+            ax.set_yticks([])
             if i == 0:
                 ax.set_title(f"{short}\nprofile", fontsize="x-small")
             j += 1
@@ -192,7 +192,7 @@ def draw_combined(blob, arms, out_dir: Path, prefix: str) -> Path | None:
                 ax.imshow(square(gate[i], shape), cmap=figstyle().cmap(),
                           vmin=0.0, vmax=1.0, interpolation="nearest")
                 ax.set_xticks([])
-        ax.set_yticks([])
+                ax.set_yticks([])
                 if i == 0:
                     ax.set_title(f"{short}\ngate", fontsize="x-small")
                 j += 1
