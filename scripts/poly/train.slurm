@@ -76,6 +76,20 @@ echo "===== python:  $PY"
                       "$(git diff --quiet 2>/dev/null || echo '(dirty)')" ) || true
 echo "===== node:    $(hostname), -c ${SLURM_CPUS_PER_TASK:-?}"
 
+# The package that will be IMPORTED and the checkout this job was
+# submitted FROM are two different things on this cluster, and a job that
+# picks up new configs from one and an old package from the other fails on
+# `Unknown integrator name`. It has happened twice. Compare the commits and
+# say so loudly; do not stop, because a run against a deliberately pinned
+# older package is legitimate.
+SRC_DIR=$("$PY" -c 'import integrator, pathlib; print(pathlib.Path(integrator.__file__).parents[2])' 2>/dev/null)
+PKG_SHA=$(git -C "$SRC_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)
+REPO_SHA=$(git -C "$INTEGRATOR_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
+if [ "$PKG_SHA" != "$REPO_SHA" ]; then
+  echo "===== WARNING: imported package is $PKG_SHA, this checkout is $REPO_SHA"
+  echo "=====          git -C $SRC_DIR pull   if that is not intended"
+fi
+
 # Fail before the allocation is spent, not four hours in.
 "$PY" "$INTEGRATOR_ROOT/scripts/preflight.py" --config "$CONFIG"
 
