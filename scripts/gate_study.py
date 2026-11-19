@@ -729,6 +729,145 @@ def measure_trained(path: str, out: str = "") -> list[dict]:
     return rows
 
 
+# the prior rate the conjugate update adds, from the trained runs: beta'
+# comes out at 1 + TAU because the profile is normalised
+TAU = 0.0097
+
+
+def variance_rules(p_row, counts, tau=TAU):
+    """Every claim about the error bar, on one set of shoeboxes.
+
+    Each rule is `(estimate, reported variance)` for ONE estimator, so a
+    rule is only ever scored against the spread of the estimator it
+    belongs to.
+
+    - `conjugate`  what `_get_qi` reports: Gamma(alpha', beta') with
+      alpha' = alpha_I + sum_i r_i c_i and beta' = beta_I + sum_i p_i = 1 + tau.
+      Fano = 1/beta' <= 1 for every reflection.
+    - `split`      the same estimator with the signal/background split
+      marginalised rather than conditioned on. Each photon at pixel i is
+      signal with probability r_i, so S = sum_i s_i carries a binomial
+      term sum_i c_i r_i (1 - r_i) on top of the Poisson one, and the law
+      of total variance gives
+      Var = (alpha' + sum_i c_i r_i (1 - r_i)) / beta'^2 in closed form.
+      This is the term the augmented model discards.
+    - `naive`      Var[sum_i r_i c_i] = sum_i r_i^2 (I p_i + B) with r held
+      FIXED, which ignores that r was computed from the same counts.
+    - `fisher`     the Schur complement of the Poisson information for
+      (I, B): J_II = sum p^2/lam, J_IB = sum p/lam, J_BB = sum 1/lam and
+      Var = J_BB / (J_II J_BB - J_IB^2). The background is profiled out
+      rather than conditioned on. This is what the Rao-Blackwellized
+      export reports.
+    """
+    i0, b0 = plugin_estimates(p_row, counts)
+    lam = i0 * p_row
+    r = lam / (lam + np.maximum(b0, 1e-6))
+    beta = 1.0 + tau
+    alpha = (r * counts).sum(axis=1)
+    gate_sum = (r * counts).sum(axis=1)
+    split_term = (counts * r * (1.0 - r)).sum(axis=1)
+    rate = np.maximum(i0 * p_row + b0, 1e-9)
+
+    j_ii = (p_row ** 2 / rate).sum(axis=1)
+    j_ib = (p_row / rate).sum(axis=1)
+    j_bb = (1.0 / rate).sum(axis=1)
+    det = np.maximum(j_ii * j_bb - j_ib ** 2, 1e-30)
+
+    return {
+        "conjugate": (alpha / beta, alpha / beta ** 2),
+        "split": (alpha / beta, (alpha + split_term) / beta ** 2),
+        "naive": (gate_sum, (r ** 2 * rate).sum(axis=1)),
+        "fisher": (i0.ravel(), j_bb / det),
+    }
+
+
+def robust_sd(z: np.ndarray) -> float:
+    """The spread of the z scores, by the median absolute deviation.
+
+    A plain standard deviation is useless here: a weak reflection whose
+    gate collects almost nothing gets a reported variance near zero, and
+    one such z of 1e15 sets the whole column. The MAD estimator reports
+    what the bulk of the distribution does, which is the question --
+    whether the typical error bar is the typical error.
+    """
+    v = np.asarray(z).ravel()
+    v = v[np.isfinite(v)]
+    if v.size < 2:
+        return float("nan")
+    return float(1.4826 * np.median(np.abs(v - np.median(v))))
+
+
+def calibrate_variance(n_refl: int, n_rep: int, seed: int) -> list[dict]:
+    """Does the reported error bar equal the spread of the estimate?
+
+    The question merging asks is frequentist and it is not the question a
+    posterior answers. careless hands `SigI` to a Student-t likelihood as
+    the scale of the OBSERVATION around its expectation, so what it needs
+    is the sampling variance of the reported number: hold the crystal, the
+    beam and the reflection fixed, re-expose, and ask how much the
+    reported intensity bounces. A posterior credible width is a different
+    quantity -- it depends on the prior, and the Wilson prior is already
+    inside careless, so exporting a posterior applies it twice.
+
+    This measures the frequentist quantity directly, which simulation can
+    do and real data cannot: fix `(I, B, p)`, draw `n_rep` independent
+    count realisations of the SAME reflection, run each rule on each, and
+    compare the mean reported variance with the empirical spread of that
+    rule's own estimate.
+
+    Reported per rule: `ratio` = mean(reported Var) / Var(estimate) over
+    realisations, 1.0 being honest and below 1 over-confident; `z_sd` =
+    the standard deviation of (estimate - I) / sqrt(reported Var), 1.0
+    being honest; and `bias` = mean(estimate)/I - 1, because a variance is
+    only meaningful about a value that is in the right place.
+    """
+    rng = np.random.default_rng(seed)
+    p_row = streaky_profiles(n_refl, rng)
+    intensity = 10.0 ** rng.uniform(1.0, 4.0, size=n_refl)
+    background = 10.0 ** rng.uniform(-0.5, 1.5, size=n_refl)
+    rate = intensity[:, None] * p_row + background[:, None]
+
+    est = {}
+    var = {}
+    for _ in range(n_rep):
+        counts = rng.poisson(rate).astype(float)
+        for name, (e, v) in variance_rules(p_row, counts).items():
+            est.setdefault(name, []).append(e)
+            var.setdefault(name, []).append(v)
+
+    # a reflection is weak or bright by its TRUE intensity, never by the
+    # estimate: binning on the estimator's own output selects the noise
+    thirds = np.digitize(np.log10(intensity),
+                         np.quantile(np.log10(intensity), [1 / 3, 2 / 3]))
+    rows = []
+    for name in est:
+        e = np.asarray(est[name])          # (n_rep, n_refl)
+        v = np.asarray(var[name])
+        spread = e.var(axis=0, ddof=1)     # the thing a sigma should equal
+        reported = v.mean(axis=0)
+        z = (e - intensity[None, :]) / np.sqrt(np.maximum(v, 1e-30))
+        for band, label in ((slice(None), "all"), (0, "weak"),
+                            (1, "mid"), (2, "bright")):
+            sel = (np.ones(n_refl, bool) if label == "all"
+                   else thirds == band)
+            if sel.sum() < 5:
+                continue
+            rows.append({
+                "rule": name,
+                "band": label,
+                "n": int(sel.sum()),
+                "ratio": float(np.median(reported[sel]
+                                         / np.maximum(spread[sel], 1e-30))),
+                "z_sd": robust_sd(z[:, sel]),
+                "bias": float(np.median(e[:, sel].mean(axis=0)
+                                        / intensity[sel] - 1.0)),
+                "fano": float(np.median(reported[sel]
+                                        / np.maximum(
+                                            e[:, sel].mean(axis=0), 1e-30))),
+            })
+    return rows
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--n", type=int, default=3000)
@@ -737,6 +876,12 @@ def main() -> int:
     ap.add_argument("--sweep", action="store_true",
                     help="every gate across the intensity/background "
                          "regimes, with the partition diagnostic")
+    ap.add_argument("--variance", action="store_true",
+                    help="is the reported error bar the spread of the "
+                         "estimate? repeated realisations of the same "
+                         "simulated reflection")
+    ap.add_argument("--reps", type=int, default=200,
+                    help="count realisations per reflection for --variance")
     ap.add_argument("--npz", default="",
                     help="measure TRAINED gates out of a "
                          "dump_profile_maps.py npz written with REFL_IDS, "
@@ -745,6 +890,22 @@ def main() -> int:
 
     if args.npz:
         measure_trained(args.npz, args.out)
+        return 0
+
+    if args.variance:
+        rows = calibrate_variance(args.n, args.reps, args.seed)
+        width = max(len(r["rule"]) for r in rows) + 2
+        print(f"{'rule':<{width}}{'band':<8}{'reported/spread':>16}"
+              f"{'z sd':>8}{'bias':>9}{'Fano':>8}")
+        for r in rows:
+            print(f"{r['rule']:<{width}}{r['band']:<8}{r['ratio']:>16.3f}"
+                  f"{r['z_sd']:>8.2f}{r['bias']:>9.3f}{r['fano']:>8.2f}")
+        if args.out:
+            with open(args.out, "w", newline="") as fh:
+                w = csv.DictWriter(fh, fieldnames=list(rows[0]))
+                w.writeheader()
+                w.writerows(rows)
+            print(f"\n{args.out}: {len(rows)} rows")
         return 0
 
     if args.sweep:
