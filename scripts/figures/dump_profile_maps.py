@@ -131,6 +131,19 @@ def accumulate(model, loader, device, n_batches: int):
                 d = metadata.get("d")
                 if d is not None:
                     examples["d"] = d.detach().float().cpu().numpy()
+                # The reflection ids for the WHOLE first batch, with its
+                # gate, so two arms' gates can be compared on the same
+                # reflections. Without an id the arrays are two different
+                # batches in two different orders and any agreement
+                # measured between them is noise.
+                rid = metadata.get("refl_ids")
+                if rid is not None:
+                    examples["batch_refl_id"] = (
+                        rid.detach().cpu().numpy().astype("int64"))
+                if g is not None:
+                    examples["batch_gate"] = (
+                        g.detach().float().cpu().numpy())
+                examples["batch_profile"] = p
             raws.append(counts.detach().float().cpu().numpy())
             xs.append(metadata["xyzcal.px.0"].detach().float().cpu().numpy())
             ys.append(metadata["xyzcal.px.1"].detach().float().cpu().numpy())
@@ -341,6 +354,13 @@ def main() -> int:
                 arr = examples.get(key)
                 if arr is not None:
                     blobs[f"{arm}_ex_{key}"] = arr[pick].astype(np.float32)
+        # the whole first batch, for arm-against-arm comparison by id
+        for key in ("batch_refl_id", "batch_gate", "batch_profile"):
+            arr = examples.get(key)
+            if arr is not None:
+                blobs[f"{arm}_{key}"] = (
+                    arr.astype(np.int64) if key.endswith("refl_id")
+                    else arr.astype(np.float32))
 
         n_eff, outside = profile_stats(total, h, w)
         # The gate's fidelity to the profile. Only an SVAE has a gate; the
