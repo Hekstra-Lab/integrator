@@ -320,13 +320,20 @@ def main() -> int:
             model.load_state_dict(state.get("state_dict", state), strict=False)
             dm = construct_data_loader(cfg)
             dm.setup("fit")
-            # The VALIDATION loader, which does not shuffle. The training
-            # loader does, and every run shuffles differently, so two arms'
-            # first batches held no reflection in common -- measured, zero
-            # of 2048 -- and no gate could be compared with another one.
-            # Unshuffled, every arm sees the same reflections in the same
-            # order and the comparison is of models, not of batches.
-            loader = (dm.val_dataloader() if hasattr(dm, "val_dataloader")
+            # The PREDICT loader. It does not shuffle AND it covers every
+            # reflection, which the validation loader does not: the
+            # train/val split is drawn per run, so two arms' validation
+            # sets are different reflections and their first batches
+            # shared none of them -- measured twice, zero of 2048 both
+            # times, once with the training loader and once with the
+            # validation loader.
+            #
+            # The predict loader is the one the prediction parquets come
+            # from, and those join across arms on 265,856 reflections, so
+            # it is the loader under which a gate can be compared with
+            # another arm's gate and with the counts.
+            loader = (dm.predict_dataloader()
+                      if hasattr(dm, "predict_dataloader")
                       else dm.train_dataloader())
             got = accumulate(model, loader, device, N_BATCHES)
         except Exception as exc:
