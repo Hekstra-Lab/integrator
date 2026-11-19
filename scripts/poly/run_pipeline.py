@@ -517,9 +517,15 @@ def step_phenix(cfg, merged: Path, work_dir: Path, dry) -> Path:
     # 16% more data to its own R-free. The domain has to be fixed by a
     # neutral criterion before the comparison, not chosen by whichever
     # number is being read.
+    # The two eff forms put the data in different scopes, so the cutoff has
+    # a different name in each: phenix 2.0 reads the data through
+    # `data_manager.fmodel.xray_data`, and `refinement.input.xray_data` --
+    # the 1.x name -- is rejected outright as an unrecognized parameter.
     dmin = pcfg.get("d_min")
-    res = (f"refinement.input.xray_data.high_resolution={float(dmin)} "
-           if dmin is not None else "")
+    res = res_1x = ""
+    if dmin is not None:
+        res = f"data_manager.fmodel.xray_data.high_resolution={float(dmin)} "
+        res_1x = f"refinement.input.xray_data.high_resolution={float(dmin)} "
 
     subs1 = {"MTZFILE": merged, "MODELFILE": pcfg["pdb"]}
     if rfree:
@@ -533,7 +539,7 @@ def step_phenix(cfg, merged: Path, work_dir: Path, dry) -> Path:
             f'refinement.input.xray_data.file_name="{merged.resolve()}" '
             f'refinement.input.pdb.file_name="{Path(pcfg["pdb"]).resolve()}" '
             + (f"{phenix.rfree_overrides(rfree)} " if rfree else "")
-            + res
+            + res_1x
             + f"refinement.output.prefix={prefix} --overwrite"
         )
     run(in_env(pass1, pcfg["env"]), cwd=refine1, dry=dry)
@@ -561,7 +567,7 @@ def step_phenix(cfg, merged: Path, work_dir: Path, dry) -> Path:
                 if rfree
                 else f'refinement.input.xray_data.r_free_flags.file_name="{data}" '
             )
-            + res
+            + res_1x
             + f"refinement.output.prefix={prefix} --overwrite"
         )
     run(in_env(pass2, pcfg["env"]), cwd=refine2, dry=dry)

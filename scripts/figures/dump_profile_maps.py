@@ -142,8 +142,24 @@ def accumulate(model, loader, device, n_batches: int, want_ids=None):
             if prf is None:
                 return None
             p = prf.detach().float().cpu().numpy()
+            g = gate_of(out)
+            # Every per-reflection array has to be appended under the SAME
+            # condition, because they are concatenated and then indexed by
+            # one boolean mask. `want_ids` runs the loop past `n_batches`
+            # to find the named reflections, and appending the gate, the
+            # counts and the positions on those extra batches while the
+            # profile was not left `p` with 512 rows against a mask of
+            # 2,652,160 -- `IndexError: boolean index did not match`, after
+            # 55 minutes of forwards.
             if i < n_batches:
                 kept.append(p)
+                gates.append(g.detach().float().cpu().numpy()
+                             if g is not None else None)
+                raws.append(counts.detach().float().cpu().numpy())
+                xs.append(
+                    metadata["xyzcal.px.0"].detach().float().cpu().numpy())
+                ys.append(
+                    metadata["xyzcal.px.1"].detach().float().cpu().numpy())
 
             if want:
                 rid = metadata.get("refl_ids")
@@ -151,7 +167,7 @@ def accumulate(model, loader, device, n_batches: int, want_ids=None):
                     rid_np = rid.detach().cpu().numpy().astype("int64")
                     sel = np.flatnonzero(np.isin(rid_np, list(want)))
                     if sel.size:
-                        gg = gate_of(out)
+                        gg = g
                         dd = metadata.get("d")
                         picked["refl_id"].append(rid_np[sel])
                         picked["profile"].append(p[sel])
@@ -169,9 +185,6 @@ def accumulate(model, loader, device, n_batches: int, want_ids=None):
                         if not want:
                             print(f"    collected every named reflection "
                                   f"by batch {i}")
-            g = gate_of(out)
-            gates.append(g.detach().float().cpu().numpy()
-                         if g is not None else None)
             if i == 0:
                 # a few whole reflections, kept as they are: the observed
                 # counts, the profile drawn for them, and the gate. A mean
@@ -208,9 +221,6 @@ def accumulate(model, loader, device, n_batches: int, want_ids=None):
                     mask.detach().float().cpu().numpy())
                 if d is not None:
                     examples["batch_d"] = d.detach().float().cpu().numpy()
-            raws.append(counts.detach().float().cpu().numpy())
-            xs.append(metadata["xyzcal.px.0"].detach().float().cpu().numpy())
-            ys.append(metadata["xyzcal.px.1"].detach().float().cpu().numpy())
     if not kept:
         return None
     p = np.concatenate(kept, axis=0)
