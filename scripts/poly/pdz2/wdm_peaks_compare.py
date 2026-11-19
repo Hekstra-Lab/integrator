@@ -23,6 +23,11 @@ import numpy as np
 ap = argparse.ArgumentParser()
 ap.add_argument("--arm", action="append", required=True,
                 help="label=/path/to/wdm_rescut.mtz, repeatable")
+ap.add_argument("--csv", default=None,
+                help="write the per-site peaks as a long-format table; "
+                     "without it they exist only in this log")
+ap.add_argument("--dataset", default="pdz2_1116",
+                help="the `dataset` key column for the CSV")
 ap.add_argument("--pdb", default="/n/netscratch/hekstra_lab/Lab/laldama/laue_runs/pdz2_ref/5e1y.pdb")
 a = ap.parse_args()
 
@@ -93,7 +98,7 @@ for resnum, atoms in targets.items():
 rows = np.array(rows)
 hdr = "".join(f"{lab:>12s}" for lab, *_ in arms)
 print(f"\n{'residue':10s} {'conf':>4s} {'atom':>5s} {'mate':>5s}{hdr}")
-for (r, c, at, mate), vals in zip(sites, rows):
+for (r, c, at, mate), vals in zip(sites, rows, strict=False):
     print(f"{r:10s} {c:>4s} {at:>5s} {mate:>5s}" + "".join(f"{v:+12.1f}" for v in vals))
 
 print(f"\n{'summary':27s}" + "".join(f"{lab:>12s}" for lab, *_ in arms))
@@ -104,4 +109,31 @@ ref = np.sign(rows[:, 0])
 agree = [int((np.sign(rows[:, i]) == ref).sum()) for i in range(len(arms))]
 print(f"{'sign agrees with ' + arms[0][0]:27s}" + "".join(f"{v:12d}" for v in agree))
 print(f"\nsites: {len(rows)}")
+
+if a.csv:
+    # Long format, one row per (method, site), so this endpoint joins with
+    # every other PDZ2 table on `method` and `dataset`. Until now these
+    # numbers existed only in a job log: printed as a fixed-width table,
+    # never written, and so impossible to draw or to join.
+    import csv as _csv
+
+    with open(a.csv, "w", newline="") as fh:
+        w = _csv.DictWriter(fh, fieldnames=[
+            "method", "dataset", "residue", "conf", "atom", "mate",
+            "peak_sigma", "abs_peak_sigma", "sign_agrees_with_reference"])
+        w.writeheader()
+        ref_sign = np.sign(rows[:, 0])
+        for col, (label, *_rest) in enumerate(arms):
+            for k, (res, conf, at, mate) in enumerate(sites):
+                v = float(rows[k, col])
+                w.writerow({
+                    "method": label, "dataset": a.dataset,
+                    "residue": res, "conf": conf, "atom": at, "mate": mate,
+                    "peak_sigma": round(v, 3),
+                    "abs_peak_sigma": round(abs(v), 3),
+                    "sign_agrees_with_reference":
+                        int(np.sign(v) == ref_sign[k]),
+                })
+    print(f"{a.csv}: {len(sites) * len(arms)} rows "
+          f"({len(sites)} sites x {len(arms)} arms)")
 print("WDM_PEAKS_DONE")
