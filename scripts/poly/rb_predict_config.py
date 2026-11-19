@@ -17,6 +17,18 @@ import yaml
 
 RB_KEYS = ("i_rb", "var_rb", "var_rb_cond", "var_rb_profile")
 
+# Named sets, chosen with KEYS= so a predict pass can ask for something
+# other than the Rao-Blackwellized columns without a second script.
+# `gate` is the per-pixel signal probability beside the profile it should
+# be a function of: both are already in `forward_out`, so comparing two
+# models' gates is a predict pass, not a bespoke reducer, and it covers
+# every reflection rather than one batch.
+KEY_SETS = {
+    "rb": RB_KEYS,
+    "gate": ("signal_prob", "qp_mean", "d"),
+    "both": RB_KEYS + ("signal_prob", "qp_mean", "d"),
+}
+
 # Values that mean "this behaviour is off". An argument the current code no
 # longer accepts can be dropped when it holds one of these, because the code
 # that read it is gone and the run was not using it either. Any other value
@@ -64,12 +76,28 @@ def strip_unknown(name: str, args: dict) -> list[str]:
     return dropped
 
 
+import os
+
 run_dir, out = sys.argv[1], sys.argv[2]
+WANTED = KEY_SETS[os.environ.get("KEYS", "rb")]
+EXTRA = os.environ.get("INTEGRATOR_ARGS", "")
 cfg = yaml.safe_load(open(f"{run_dir}/config_log.yaml").read())
 args = cfg["integrator"]["args"]
 keys = list(args.get("predict_keys") or [])
-added = [k for k in RB_KEYS if k not in keys]
+added = [k for k in WANTED if k not in keys]
 args["predict_keys"] = keys + added
+
+# INTEGRATOR_ARGS sets keys on `integrator.args` for this export only, as
+# `key=value` pairs. It is how a re-export varies ONE thing about the
+# estimator while the checkpoint, the data and every other setting stay
+# fixed -- `rb_noise_b=-9.04` to correct the pedestal, say -- so the
+# comparison with the first export is paired. Values are parsed as YAML,
+# so `1.0` is a float and `per_reflection` a string.
+for item in filter(None, (x.strip() for x in EXTRA.split(","))):
+    key, _, raw = item.partition("=")
+    key = key.strip()
+    args[key] = yaml.safe_load(raw)
+    print(f"  integrator.args.{key} = {args[key]!r}")
 
 for slot, spec in (cfg.get("surrogates") or {}).items():
     if isinstance(spec, dict) and isinstance(spec.get("args"), dict):

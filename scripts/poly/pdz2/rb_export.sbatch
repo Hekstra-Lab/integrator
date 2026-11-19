@@ -35,7 +35,14 @@
 #      for i_rb and var_rb or the export dies on a KeyError at the end,
 #      after the whole predict pass has run.
 set -uo pipefail
-M=/n/netscratch/hekstra_lab/Lab/laldama/laue_runs/pdz2_model
+# Defaults are the PDZ2 layout this was written for, so an existing call is
+# unchanged. RB_ROOT, RB_RUNS and RB_OUT point it at another dataset --
+# hewl_1118's arms live at <root>/<arm> rather than <root>/runs/<arm> --
+# and RB_OUT names the export directory, so a second export with a
+# different estimator setting does not overwrite the first.
+M=${RB_ROOT:-/n/netscratch/hekstra_lab/Lab/laldama/laue_runs/pdz2_model}
+RUNS=${RB_RUNS:-$M/runs}
+OUT=${RB_OUT:-$M/rb_preds}
 # the checkout this job was submitted from, so what runs is what is
 # committed. SLURM copies a batch script to its spool before running
 # it, so $BASH_SOURCE is not the repository.
@@ -44,16 +51,16 @@ source /n/lab_storage/hekstra_lab/people/aldama/micromamba/etc/profile.d/mamba.s
 nvidia-smi --query-gpu=name --format=csv,noheader | head -1
 
 for arm in "${@:-pdz2_geom_both}"; do
-  run=$M/runs/$arm
+  run=$RUNS/$arm
   ckpt=$(ls -1 $run/files/checkpoints/epoch=*.ckpt 2>/dev/null | sort | tail -1)
   [ -z "$ckpt" ] && { echo "SKIP $arm: no checkpoint"; continue; }
-  cfg=$M/rb_cfg_$arm.yaml
+  cfg=$OUT/../rb_cfg_$arm.yaml
   echo "===== $arm <- $(basename $ckpt)"
   micromamba run -n integrator-cuda-dev env PYTHONPATH=$SRC \
     python $SLURM_SUBMIT_DIR/scripts/poly/rb_predict_config.py $run $cfg || { echo "CFG_FAIL $arm"; continue; }
   micromamba run -n integrator-cuda-dev env PYTHONPATH=$SRC \
     python -m integrator.cli.predict -v \
-    --config $cfg --ckpt "$ckpt" --out-dir $M/rb_preds/$arm \
+    --config $cfg --ckpt "$ckpt" --out-dir $OUT/$arm \
     --rb-export --write-mtz 2>&1 | tail -15
 done
 echo "RB_DONE"
