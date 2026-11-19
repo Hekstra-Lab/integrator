@@ -497,6 +497,153 @@ def sweep(n: int, seed: int) -> list[dict]:
     return rows
 
 
+def measure_trained(path: str, out: str = "") -> list[dict]:
+    """The same measurements, on TRAINED gates read out of a run.
+
+    The simulation above scores candidate gates against an exact `r`
+    computed from the true `(I, B)`. On real data there is no true
+    `(I, B)`, so the reference is `joint_fit` -- least squares for both
+    against `[p, 1]`, the same estimator `gate_joint` uses -- and the
+    question becomes how far a trained gate sits from the responsibility
+    its OWN profile and the observed counts imply.
+
+    Reads an npz from `scripts/figures/dump_profile_maps.py` run with
+    `REFL_IDS`, which stores `<arm>_named_*` for the SAME reflections in
+    every arm. Positional arrays will not do: the training loader shuffles
+    per run and the train/val split is drawn per run, so two arms' batches
+    share no reflections at all.
+
+    Reported per arm, over reflections and then per resolution third:
+
+    - `rho_gate_rstar`  correlation of the gate with that reference `r`,
+      within a shoebox, median over shoeboxes. 1.0 means the gate IS the
+      responsibility of its own profile.
+    - `rho_gate_excess` correlation of the gate with `c - b`, the
+      background-subtracted counts. This is the question "is the gate
+      where the signal is" asked of the data rather than of the model,
+      with `b` the median of the shoebox's outer frame, which is
+      background by construction.
+    - `captured` the share of the positive excess counts the gate
+      collects, `sum_i r_i (c_i - b)_+ / sum_i (c_i - b)_+`. A gate on the
+      spot approaches 1; a gate on four pixels of a 25-pixel spot cannot.
+    - `i_ratio` the intensity the gate implies over the one the reference
+      responsibility implies, `sum r c / sum r* c`, median.
+    - `n_eff_gate` `(sum r)^2 / sum r^2`, the number of pixels the gate
+      effectively sums, which sets how much background it admits.
+    """
+    import numpy as np
+
+    blob = np.load(path, allow_pickle=False)
+    arms = sorted({k[: -len("_named_gate")] for k in blob
+                   if k.endswith("_named_gate")})
+    if not arms:
+        raise SystemExit(
+            f"{path} holds no `<arm>_named_gate`. Run "
+            "dump_profile_maps.py with REFL_IDS set."
+        )
+
+    # every arm must have been measured on the same reflections, or the
+    # comparison is between different reflections and says nothing
+    id_sets = {a: blob[f"{a}_named_refl_id"].tolist() for a in arms}
+    common = sorted(set.intersection(*[set(v) for v in id_sets.values()]))
+    print(f"{len(arms)} arms, {len(common)} reflections common to all")
+    if len(common) < 50:
+        raise SystemExit(
+            f"only {len(common)} shared reflections; the arms were not "
+            "measured on the same ids"
+        )
+
+    rows = []
+    for arm in arms:
+        order = {int(r): i for i, r in enumerate(id_sets[arm])}
+        take = np.array([order[r] for r in common])
+        g = blob[f"{arm}_named_gate"][take]
+        prf = blob[f"{arm}_named_profile"][take]
+        c = blob[f"{arm}_named_counts"][take]
+        m = blob[f"{arm}_named_mask"][take].astype(bool)
+        d = (blob[f"{arm}_named_d"][take]
+             if f"{arm}_named_d" in blob else np.full(len(take), np.nan))
+
+        # the reference responsibility, from the arm's own profile and the
+        # observed counts
+        i0, b0 = joint_fit(prf, c)
+        lam = np.maximum(i0, 0.0) * prf
+        rstar = lam / (lam + np.maximum(b0, 1e-6))
+
+        # background from the outer frame of the box, which holds no spot
+        side = int(round(float(np.sqrt(c.shape[1]))))
+        edge = np.zeros(c.shape[1], bool)
+        if side * side == c.shape[1]:
+            img = np.arange(c.shape[1]).reshape(side, side)
+            edge[img[0]] = edge[img[-1]] = True
+            edge[img[:, 0]] = edge[img[:, -1]] = True
+        else:
+            edge[:] = True
+        bg = np.array([
+            np.median(c[i][m[i] & edge]) if (m[i] & edge).sum() else 0.0
+            for i in range(len(c))
+        ])
+        excess = c - bg[:, None]
+
+        thirds = (np.digitize(d, np.nanquantile(d, [1 / 3, 2 / 3]))
+                  if np.isfinite(d).all() else np.zeros(len(d), int))
+        for band, label in ((slice(None), "all"), (0, "low_res"),
+                            (1, "mid_res"), (2, "high_res")):
+            sel = (np.ones(len(c), bool) if label == "all"
+                   else thirds == band)
+            if sel.sum() < 10:
+                continue
+            rg, rx, cap, ratio, neff = [], [], [], [], []
+            for i in np.flatnonzero(sel):
+                mm = m[i]
+                if mm.sum() < 20:
+                    continue
+                gi, ri, ei = g[i][mm], rstar[i][mm], excess[i][mm]
+                ci = c[i][mm]
+                if gi.std() > 0 and ri.std() > 0:
+                    rg.append(float(np.corrcoef(gi, ri)[0, 1]))
+                if gi.std() > 0 and ei.std() > 0:
+                    rx.append(float(np.corrcoef(gi, ei)[0, 1]))
+                pos = np.maximum(ei, 0.0)
+                if pos.sum() > 0:
+                    cap.append(float((gi * pos).sum() / pos.sum()))
+                denom = float((ri * ci).sum())
+                if abs(denom) > 1e-9:
+                    ratio.append(float((gi * ci).sum() / denom))
+                sg = float(gi.sum())
+                if sg > 0:
+                    neff.append(sg * sg / float((gi * gi).sum()))
+            med = lambda v: float(np.median(v)) if v else float("nan")  # noqa: E731
+            rows.append({
+                "method": arm.replace("hewl1118_", "").replace(
+                    "hewl9b7c_", ""),
+                "band": label,
+                "n": int(sel.sum()),
+                "rho_gate_rstar": med(rg),
+                "rho_gate_excess": med(rx),
+                "captured": med(cap),
+                "i_ratio": med(ratio),
+                "n_eff_gate": med(neff),
+            })
+
+    width = max(len(r["method"]) for r in rows) + 2
+    print(f"{'arm':<{width}}{'band':<10}{'rho(g,r*)':>11}"
+          f"{'rho(g,c-b)':>12}{'captured':>10}{'I/I*':>8}{'n_eff':>8}")
+    for r in rows:
+        print(f"{r['method']:<{width}}{r['band']:<10}"
+              f"{r['rho_gate_rstar']:>11.3f}{r['rho_gate_excess']:>12.3f}"
+              f"{r['captured']:>10.3f}{r['i_ratio']:>8.3f}"
+              f"{r['n_eff_gate']:>8.1f}")
+    if out:
+        import csv
+        with open(out, "w", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=list(rows[0]))
+            w.writeheader()
+            w.writerows(rows)
+        print(f"\n{out}: {len(rows)} rows")
+    return rows
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--n", type=int, default=3000)
@@ -505,7 +652,15 @@ def main() -> int:
     ap.add_argument("--sweep", action="store_true",
                     help="every gate across the intensity/background "
                          "regimes, with the partition diagnostic")
+    ap.add_argument("--npz", default="",
+                    help="measure TRAINED gates out of a "
+                         "dump_profile_maps.py npz written with REFL_IDS, "
+                         "instead of simulating")
     args = ap.parse_args()
+
+    if args.npz:
+        measure_trained(args.npz, args.out)
+        return 0
 
     if args.sweep:
         rows = sweep(args.n, args.seed)
