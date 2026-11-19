@@ -69,6 +69,14 @@ MAMBA_SH = os.environ.get(
 def parse_args():
     p = argparse.ArgumentParser(description="Laue post-training pipeline")
     p.add_argument("--run-dir", type=Path, default=None)
+    p.add_argument(
+        "--pred-dir", type=Path, default=None,
+        help="scale the MTZs under this directory instead of the run's own "
+             "`predictions_dir`. For scoring a SECOND export of the same "
+             "run -- the Rao-Blackwellized columns, say -- without "
+             "overwriting the first: careless writes next to the MTZ it is "
+             "given, so the two scalings do not collide. Defaults to the "
+             "run's `predictions_dir`, which is the existing behaviour.")
     p.add_argument("--cfg", type=Path, default=DEFAULT_CFG)
     p.add_argument(
         "--out-base",
@@ -178,8 +186,17 @@ def in_env(cmd: str, env: str | None) -> str:
     return f"source {MAMBA_SH} && micromamba activate {env} && {cmd}"
 
 
-def predictions_dir(run_dir: Path) -> Path:
-    """Read predictions_dir out of the run's run_paths.yaml."""
+def predictions_dir(run_dir: Path, override: Path | None = None) -> Path:
+    """Where the MTZs to scale are.
+
+    `override` is `--pred-dir` and wins when it is given, so a second
+    export of one run can be scored without disturbing the first. The
+    default reads the run's own `run_paths.yaml`.
+    """
+    if override is not None:
+        if not override.is_dir():
+            raise SystemExit(f"--pred-dir {override} is not a directory")
+        return override
     meta = yaml.safe_load((run_dir / "run_paths.yaml").read_text())
     return Path(
         meta.get("predictions_dir")
@@ -657,7 +674,7 @@ def downstream_mtzs(cfg, run_dir: Path, args) -> list[Path]:
     selected checkpoint, and scaling only the highest would quietly report a
     single epoch as though the trajectory had been scored.
     """
-    pred_dir = predictions_dir(run_dir)
+    pred_dir = predictions_dir(run_dir, getattr(args, "pred_dir", None))
     if args.epoch is not None:
         return [find_mtz(pred_dir, args.epoch, allow_missing=args.dry_run)]
     scope = cfg.get("predict", {}).get("epoch", "last")

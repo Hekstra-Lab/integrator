@@ -13,6 +13,13 @@
 # SUBMIT:
 #   RUN_DIR=<run-dir> sbatch scripts/poly/pipeline.slurm
 #   RUN_DIR=<run-dir> STEPS=careless,phenix,peaks sbatch scripts/poly/pipeline.slurm
+#
+# PRED_DIR scales a different export of the same run -- the
+# Rao-Blackwellized MTZ, say -- without touching the first scaling, because
+# careless writes next to the MTZ it is handed:
+#
+#   RUN_DIR=<run-dir> PRED_DIR=<run-dir>/rb_preds STEPS=careless,stats,phenix,peaks \
+#       sbatch scripts/poly/pipeline.slurm
 
 set -euo pipefail
 
@@ -48,4 +55,5 @@ fi
 "$PY_BIN" "$INTEGRATOR_ROOT/scripts/poly/run_pipeline.py" \
     --run-dir "$RUN_DIR" \
     --cfg "$PIPELINE_CFG" \
-    --steps "$STEPS"
+    --steps "$STEPS" \
+    ${PRED_DIR:+--pred-dir "$PRED_DIR"}
