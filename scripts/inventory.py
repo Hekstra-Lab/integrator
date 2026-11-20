@@ -57,6 +57,7 @@ SECTIONS = (
     ("figures", "Figures and tables"),
     ("physics", "Simulation and the nanoBragg port"),
     ("sim_truth", "Laue simulation with known truth (datsimx)"),
+    ("sim_truth/paper_sims", "laue-dials on the laue-dials paper simulations (as run, Oct-Nov 2026)"),
     ("jungfrau_sim", "JUNGFRAU SFX simulation"),
     ("ablation_likelihood", "Likelihood ablation"),
     ("shrinkage_experiment", "Shrinkage experiment"),

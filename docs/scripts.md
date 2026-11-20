@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-300 scripts.
+305 scripts.
 
 ## Start here
 
@@ -210,6 +210,16 @@ per job, and it lives in the repo".
 | `sim_truth/image_stats.py` | Per-image statistics of a simulated Laue shot, by one estimator for the laue-dials paper sims and for datsimx. |
 | `sim_truth/simulate.sbatch` | Simulate Laue rows of a grid with datsimx: noiseless truth, a noisy copy, a truth table, a manifest. |
 | `sim_truth/truth_table.py` | Per-reflection truth from a datsimx `--noNoise --waveImg` run: one row per (shot, hkl). |
+
+## laue-dials on the laue-dials paper simulations (as run, Oct-Nov 2026)
+
+| script | what it does |
+|---|---|
+| `sim_truth/paper_sims/mos_laue.sh` | laue-dials on the three mosaicity levels, reproducing the settings used for |
+| `sim_truth/paper_sims/sim_add_s1.py` | Add the columns `laue.optimize_indexing` needs to a stills spot list. |
+| `sim_truth/paper_sims/sim_build_stills.py` | Attach the simulation's EXACT crystal to each imported still, and check it. |
+| `sim_truth/paper_sims/sim_laue_all.sbatch` | The permissive prediction pass, and laue.integrate on it. |
+| `sim_truth/paper_sims/sim_laue_process.sbatch` | laue-dials processing of the 180 nanoBragg sim stills, for the sigma_e comparison |
 
 ## JUNGFRAU SFX simulation
 
