@@ -1,0 +1,5 @@
+# Emulate the laue-dials paper Rayonix (88.54 um pixels at 200.5 mm, 0.44 mrad/px; PSF 0.1 mm = 1.13 px) on the datsimx Eiger:
+# --dist 169.8 gives the same angle per 75 um pixel; submit with NOISE_TOOL=nanobragg NOISE_PSF_MM=0.0847 (0.1 mm * 75/88.54).
+# Bragg at 1/10 of the paper: xtal_size 0.0067 -> 4.7e4 photons per shot.
+name	run	mos_spread	en_steps	mos_doms	xtal_size	numimg	test_shot	extra
+m010_e100_d050_x0067_d170	1	0.1	100	50	0.0067	1	1	--dist 169.8

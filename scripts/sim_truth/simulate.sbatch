@@ -2,13 +2,16 @@
 # Simulate Laue rows of a grid with datsimx: noiseless truth, a noisy copy, a truth table, a manifest.
 #
 # Each data row of GRID (tab-separated, header line, '#' comments) gives
-#   name run mos_spread en_steps mos_doms xtal_size numimg test_shot
+#   name run mos_spread en_steps mos_doms xtal_size numimg test_shot [extra]
+# where the optional `extra` column holds further datsimx arguments ('-' or absent = none).
 # and produces, under ROOT/<name>/:
 #   truth/    datsimx --noNoise --waveImg --writeMtz output (noiseless Bragg in sim_image,
 #             background_<run>.h5, per-pixel h/k/l/wavelength maps, ground_truth.mtz),
 #             truth_reflections.csv from truth_table.py
 #   noisy/    master, geometry and background copied; shots files carry sim_image only
-#             (no h/k/l/wavelength maps), then braggaddnoise writes Bragg + background + noise
+#             (no h/k/l/wavelength maps), then NOISE_TOOL writes Bragg + background + noise:
+#             braggaddnoise (default; numpy, no PSF) or nanobragg (add_noise_nanobragg.py:
+#             nanoBragg's own add_noise with PSF and ADC offset, as the laue-dials paper sims)
 #   manifest.json  every parameter, the commits of datsimx / easyBragg / integrator,
 #             package versions, GPU, wall time per stage, disk per directory
 # A row whose truth/ already has truth_reflections.csv is skipped, so a resubmission resumes.
@@ -41,6 +44,9 @@ DEG_PER_IMG="${DEG_PER_IMG:-1}"
 NOISE_GAIN="${NOISE_GAIN:-0.7}"       # laue-dials paper sims: gain 0.7, readout 3 ADU, calibration 3 %
 NOISE_READOUT="${NOISE_READOUT:-3}"
 NOISE_CALIB="${NOISE_CALIB:-0.03}"
+NOISE_TOOL="${NOISE_TOOL:-braggaddnoise}"  # braggaddnoise | nanobragg
+NOISE_PSF_MM="${NOISE_PSF_MM:-0.1}"     # nanobragg only; laue-dials paper 0.1 mm on 88.54 um pixels
+NOISE_ADC="${NOISE_ADC:-10}"            # nanobragg only; laue-dials paper 10 ADU
 NJ="${SLURM_CPUS_PER_TASK:-4}"
 
 source "$MAMBA_SH"
@@ -57,7 +63,8 @@ fi
 echo "grid $GRID -> $ROOT; ${#DATA[@]} row(s); host $(hostname); $(nvidia-smi -L | head -1)"
 
 for row in "${DATA[@]}"; do
-  IFS=$'\t' read -r NAME RUN MOS EN DOMS XTAL NUMIMG TEST <<<"$row"
+  IFS=$'\t' read -r NAME RUN MOS EN DOMS XTAL NUMIMG TEST EXTRA <<<"$row"
+  [[ -z "${EXTRA:-}" || "$EXTRA" == "-" ]] && EXTRA=""
   D="$ROOT/$NAME"; T="$D/truth"; N="$D/noisy"
   if [[ -s "$T/truth_reflections.csv" ]]; then echo "== $NAME: done, skipped"; continue; fi
   rm -rf "$T" "$N"; mkdir -p "$T" "$N"
@@ -65,7 +72,7 @@ for row in "${DATA[@]}"; do
   test_flag=(); [[ "$TEST" == 1 ]] && test_flag=(--testShot)
   cmd=(datsimx.sim "$T" --noNoise --waveImg --writeMtz --static --cuda --specFile "$SPEC"
        --Nabc $NABC --run "$RUN" --mosSpread "$MOS" --mosDoms "$DOMS" --enSteps "$EN"
-       --xtalSize "$XTAL" --numimg "$NUMIMG" --totalDeg "$TOTALDEG" "${test_flag[@]}")
+       --xtalSize "$XTAL" --numimg "$NUMIMG" --totalDeg "$TOTALDEG" "${test_flag[@]}" $EXTRA)
   echo "== $NAME: ${cmd[*]}"
   t0=$(date +%s); "${cmd[@]}" > "$D/datsimx.log" 2>&1; t1=$(date +%s)
 
@@ -80,8 +87,14 @@ for path in glob.glob(os.path.join(src, f"shots_{run}_*.h5")):
         for g in ("sim_image", "Umat", "Bmat", "delta_phi", "mos_spread"):
             fi.copy(g, fo)
 EOF
-  braggaddnoise --dirname "$N" --run "$RUN" --nj "$NJ" \
-    --gain "$NOISE_GAIN" --readout "$NOISE_READOUT" --calib "$NOISE_CALIB" > "$D/braggaddnoise.log" 2>&1
+  if [[ "$NOISE_TOOL" == nanobragg ]]; then
+    calib_pct=$(python -c "print(100 * $NOISE_CALIB)")
+    python "$HERE/add_noise_nanobragg.py" "$N" --run "$RUN" --gain "$NOISE_GAIN" --adc "$NOISE_ADC" \
+      --readout "$NOISE_READOUT" --calib-pct "$calib_pct" --psf-mm "$NOISE_PSF_MM" > "$D/add_noise.log" 2>&1
+  else
+    braggaddnoise --dirname "$N" --run "$RUN" --nj "$NJ" \
+      --gain "$NOISE_GAIN" --readout "$NOISE_READOUT" --calib "$NOISE_CALIB" > "$D/braggaddnoise.log" 2>&1
+  fi
   t2=$(date +%s)
   python "$HERE/truth_table.py" "$T" --run "$RUN" | tee "$D/truth_table.log"
   t3=$(date +%s)
@@ -97,8 +110,12 @@ m = dict(
     datsimx_command=open("$T/commandline_run$RUN.txt").read().strip(),
     params=dict(mos_spread=$MOS, en_steps=$EN, mos_doms=$DOMS, xtal_size=$XTAL, numimg=$NUMIMG,
                 total_deg=$TOTALDEG, test_shot=bool($TEST), nabc="$NABC", spec_file="$SPEC"),
-    noise=dict(tool="braggaddnoise", gain=$NOISE_GAIN, readout=$NOISE_READOUT, calib=$NOISE_CALIB,
-               seeds="shot number (braggaddnoise default)"),
+    extra_datsimx_args="$EXTRA",
+    noise=dict(tool="$NOISE_TOOL", gain=$NOISE_GAIN, readout=$NOISE_READOUT, calib=$NOISE_CALIB,
+               psf_mm=($NOISE_PSF_MM if "$NOISE_TOOL" == "nanobragg" else None),
+               adc=($NOISE_ADC if "$NOISE_TOOL" == "nanobragg" else 0),
+               seeds=("100000*run + shot; calibration 100000*run" if "$NOISE_TOOL" == "nanobragg"
+                      else "shot number (braggaddnoise default)")),
     code=dict(datsimx=git("$DATSIMX"), easyBragg=git("$EASYBRAGG"), integrator=git("$REPO"),
               nanoBragg_noise=version("nanoBragg_noise")),
     host=platform.node(), gpu=sh("nvidia-smi -L | head -1"), slurm_job="${SLURM_JOB_ID:-}",
