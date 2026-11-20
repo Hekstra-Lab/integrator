@@ -1,0 +1,110 @@
+# Simulated Laue DHFR with known truth (datsimx)
+
+Each dataset is a datsimx rotation series of still Laue exposures, rendered twice: noiseless (the truth) and with background and detector noise (the data every integrator sees).
+
+## Pipeline
+
+1. `datsimx.sim OUT --noNoise --waveImg --writeMtz --static --cuda ...` writes, per shot, the noiseless Bragg image `sim_image/` in photons, the per-pixel maps `h_data`, `k_data`, `l_data`, `wave_data`, and once per run the noiseless background `background_<run>.h5`, `ground_truth.mtz` and the geometry `geom_run<run>.expt`.
+2. The noisy copy holds the master, geometry, background and shots files with `sim_image` only; `braggaddnoise` (nanoBragg-noise 1.9) overwrites that `sim_image` with $\mathrm{gain}\cdot\mathrm{Poisson}((B+b)(1+\epsilon_\text{calib})) + \text{readout}$.
+3. `truth_table.py` reduces the truth to one row per (shot, hkl).
+4. laue-dials (`scripts/poly/laue_process.sh` with `IMG_FILE=noisy/run_1_master.h5 REF_GEOM=noisy/geom_run1.expt`) and our integrator run on the noisy copy only.
+
+All four steps for one grid row are `scripts/sim_truth/simulate.sbatch`; the grid files in `scripts/sim_truth/grids/` are the record of what was simulated, and each row's `manifest.json` records the commits of datsimx, easyBragg and this repository, the package versions, the GPU and the wall time.
+
+```bash
+cd $S/integrator_main && git pull
+GRID=scripts/sim_truth/grids/sampling_check.tsv sbatch -o logs/sim_truth/sim_truth_%j.out scripts/sim_truth/simulate.sbatch
+```
+
+Outputs go to `/n/netscratch/hekstra_lab/Lab/laldama/sims/<grid name>/<row name>/{truth,noisy,manifest.json}`.
+
+## Truth definitions
+
+A pixel $p$ belongs to reflection $hkl$ when $B_p > 0$ and $\mathrm{round}(h_p, k_p, l_p) = hkl$; the maps are NaN exactly where $B_p = 0$.
+
+| column | computed as |
+|---|---|
+| `i_true` | $\sum_p B_p$, photons before noise and gain |
+| `n_px` | number of pixels with $B_p > 0$ |
+| `n_eff` | $1 / \sum_p (B_p / I_\text{true})^2$ |
+| `lam_mean` | $\sum_p B_p \lambda_p / I_\text{true}$ |
+| `n_comp` | 8-connected components of the pixels with $B_p \ge 10^{-3} \max_p B_p$ |
+
+The truth profile is $B_p / I_\text{true}$; the truth background is `background_<run>.h5`, identical for every shot of a run.
+Where two reflections land on one pixel the map names one of them and that one receives all of $B_p$.
+
+## Fixed settings
+
+| setting | value | where it came from |
+|---|---|---|
+| structure | 7LVC (datsimx default `7lvc.pdb`), P2₁2₁2₁, 34.297 × 45.552 × 99.035 Å | datsimx package |
+| structure factors | mmtbx Fcalc to 1 Å, $k_\text{sol}$ 0.4, $B_\text{sol}$ 120 Å², Henke $f'$, $f''$ at 1.1195 Å | datsimx defaults |
+| spectrum | `from_vukica.lam`, 1.020–1.240 Å on the detector | datsimx package |
+| detector | Eiger 4148 × 4362, 0.075 mm, 200 mm, no panel mask | datsimx defaults |
+| crystal | `--Nabc 100 100 100`, orientation `Rotation.random(random_state=0)`, rotated 1° about $+x$ per shot, `--static` | datsimx |
+| divergence | 0 | 0.1 mrad is 0.23 px at 200 mm |
+| noise | gain 0.7 ADU/photon, readout 3 ADU, calibration 3 %, no PSF, no ADC offset | laue-dials paper sims, less PSF and ADC, which `braggaddnoise` lacks |
+
+## Brightness
+
+The target is 1/10 of the laue-dials paper simulations, measured from their CBFs at $4.4 \times 10^5$ and $5.0 \times 10^5$ Bragg photons per shot (`hkl_data` shots 1 and 90), so about $4.7 \times 10^4$.
+The background does not depend on `--xtalSize`; the Bragg scale is easyBragg's `determine_spot_scale` (`simtbx/nanoBragg/sim_data.py`), the illuminated volume over the mosaic-domain volume, with the datsimx beam diameter $s_b = 0.01$ mm:
+
+$$\text{spot scale} \propto \begin{cases} t\, s_b^2 & t \ge s_b \\ t^3 & t < s_b \end{cases}$$
+
+| `--xtalSize` $t$ (mm) | Bragg photons, shot 1 | regime |
+|---|---|---|
+| 10 | $1.578 \times 10^8$ | linear |
+| 1 | $1.578 \times 10^7$ | linear |
+| 0.003 | $4.3 \times 10^3$ (eight settings, $4186$–$4331$) | cubic; $1.578 \times 10^5 \cdot 0.3^3 = 4.26 \times 10^3$ |
+| 0.0067 | $4.746 \times 10^4$ (mosaic 0.1°, (100, 50), job 62469685) | cubic; predicted $4.7 \times 10^4$ |
+
+The laue-dials paper's Bragg brightness corresponds to $t \approx 0.031$ in the linear regime.
+
+## Sampling check
+
+Grid `sampling_check.tsv`: one shot at mosaic spread 0.05° and 0.5°, (enSteps, mosDoms) = (322, 100), (100, 100), (100, 50), (50, 50), `--xtalSize 0.003`, scored by `compare_sampling.py` against (322, 100) at the same mosaic spread.
+
+Job 62448785, 15.6 min on one A100-SXM4-40GB; `compare_sampling.py --min-photons 0.1`.
+Wall time per shot (datsimx only, including about 30 s of structure factors and background): 248 s at (322, 100), 78 s at (100, 100), 50 s at (100, 50), 36 s at (50, 50).
+
+**Spectrum samples are averaged.**
+Total Bragg photons vary by at most 1.0 % between 50, 100 and 322 samples at fixed domain count, so the image brightness does not depend on `--enSteps`, and the `* len(weights)` in datsimx's `fluxes` cancels datsimx's own average.
+
+| mosaic | (enSteps, mosDoms) | $\lvert\mathrm{dev}\rvert$ median, $I_R \ge 0.1$ | $\lvert\mathrm{dev}\rvert$ p95, $I_R \ge 0.1$ | $\lvert\mathrm{dev}\rvert$ median, top 100 | L1 median, top 100 | split, top 100 (reference 0.14 / 0.93) |
+|---|---|---|---|---|---|---|
+| 0.05° | (100, 100) | 0.078 | 0.30 | 0.072 | 0.78 | 0.60 |
+| 0.05° | (100, 50) | 0.086 | 0.31 | 0.071 | 0.85 | 0.68 |
+| 0.05° | (50, 50) | 0.187 | 0.62 | 0.150 | 1.33 | 0.98 |
+| 0.5° | (100, 100) | 0.049 | 0.20 | 0.024 | 0.81 | 0.96 |
+| 0.5° | (100, 50) | 0.085 | 0.39 | 0.059 | 1.53 | 0.96 |
+| 0.5° | (50, 50) | 0.135 | 0.54 | 0.081 | 1.72 | 0.97 |
+
+$\mathrm{dev} = (I_X / I_R) / (T_X / T_R) - 1$ per reflection; L1 $= \sum_p \lvert B_{X,p}/I_X - B_{R,p}/I_R \rvert$; split = fraction with `n_comp` > 1; $R$ = (322, 100) at the same mosaic spread.
+1,820 reflections at 0.05° and 2,146 at 0.5° have $I_R \ge 0.1$.
+
+No reduced setting is within 2 % of the reference.
+The crops (`docs/figures/sim/sim_sampling_mos0p05.png`, `..._mos0p5.png`, from `fig_sim_sampling.py`) show why:
+
+- at 0.05° the bright spots are 1–3 px wide streaks and look alike at (100, 100), (100, 50) and (322, 100); at 50 samples the rank-30 streak breaks into dots and its sum falls from 21.2 to 12.6 photons;
+- at 0.5° the reference itself is a set of separate lines, one per mosaic domain, from rank 30 down, and 100 spectrum samples break those lines into dots.
+
+Each (energy, domain) pair renders a spot of sub-pixel width at `--Nabc 100 100 100`, so a profile is continuous only when the samples are closer than a pixel in both detector directions.
+At 0.5° the reference (322, 100) does not meet that, which also holds for the laue-dials paper's mosaicity-0.5 run (same sampling, plus 16 divergence directions at 0.1 mrad).
+The truth sums are still exact for the image that was rendered; the sampling decides whether the profiles look like a continuous crystal.
+
+## laue-dials on one shot at $4.7 \times 10^4$ Bragg photons
+
+Row `brightness_check.tsv` (mosaic 0.1°, (100, 50), `--xtalSize 0.0067`), noisy copy, `laue_process.sh` with `IMG_FILE`, `REF_GEOM`, `TRUSTED=-1000,1000000`, SG 19, the 7LVC cell, λ 1.02–1.24 Å.
+
+- The datsimx NeXus master declares a trusted range of (0, 0); without `TRUSTED` every pixel is masked and `laue.find_spots` finds nothing. 12 % of noisy pixels are negative (readout noise, minimum −14 ADU).
+- Background pixels have variance/mean $= (0.49\lambda_b + 9)/(0.7\lambda_b)$ ADU, measured 2.72 at the median background $\lambda_b = 6.4$ photons, and 4.1 to 2.0 between 3 and 12 photons; the readout term dominates, so the dispersion gain 0.7 flags 6.2 M pixels.
+
+| dispersion gain | strong pixels | spots extracted | spots kept in `strong.refl` | kept within 3 px of a truth centroid with $I \ge 1$ | truth reflections with $I \ge 20$ found |
+|---|---|---|---|---|---|
+| 0.7 | 6,243,337 | run stops | — | — | — |
+| 2.7 | 6,600 | 6,029 | 66 | 0.20 | 0.040 of 302 |
+| 4 | 345 | 238 | 15 | 0.60 | 0.026 of 302 |
+
+`laue.index` fails on one image at either gain (12–15 centroids after its d_min 2.51 Å cut); it indexes a rotation sweep, so indexing needs a multi-shot test.
+Our earlier `laue.find_spots` run on the laue-dials paper's `reference` set (defaults, `laue_runs/dhfr_sim/reference`) kept 177–219 spots per image, at 10× this brightness, 88.6 µm pixels and a 0.1 mm PSF.
