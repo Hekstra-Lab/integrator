@@ -48,6 +48,8 @@ LAM_MAX="${LAM_MAX:-1.2}"
 DMIN="${DMIN:-1.4}"
 GAIN="${GAIN:-0.30}"
 PIXEL="${PIXEL:-}"                          # detector pixel size mm "x,y"; empty = read from header
+TRUSTED="${TRUSTED:-}"                      # detector trusted range "min,max" (ADU); empty = from header.
+                                            # datsimx masters give (0,0), which masks every pixel
 INDEX_METHOD="${INDEX_METHOD:-}"            # laue.index method; real_space_grid_search (needs CELL) holds the
                                             # known cell over many frames where fft3d shrinks it; empty = fft3d default
 NPROC="${NPROC:-8}"
@@ -79,11 +81,13 @@ inv=(); [[ "$INVERT_ROT" == "true" ]] && inv=(geometry.goniometer.invert_rotatio
 pix=(); [[ -n "$PIXEL" ]] && pix=(geometry.detector.panel.pixel="$PIXEL")
 src=(input.template="$IMG_TEMPLATE"); [[ -n "$IMG_FILE" ]] && src=("$IMG_FILE")
 ref=(); [[ -n "$REF_GEOM" ]] && ref=(input.reference_geometry="$REF_GEOM")
+tr=(); [[ -n "$TRUSTED" ]] && tr=(geometry.detector.panel.trusted_range="$TRUSTED")
 dials.import \
   geometry.scan.oscillation="$OSC" \
   geometry.goniometer.axes="$GONIO_AXES" \
   "${inv[@]}" \
   "${pix[@]}" \
+  "${tr[@]}" \
   geometry.beam.wavelength="$BEAM_WL" \
   geometry.scan.image_range="$IMAGE_RANGE" \
   "${src[@]}" \
