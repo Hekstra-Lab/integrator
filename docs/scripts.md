@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-299 scripts.
+300 scripts.
 
 ## Start here
 
@@ -205,6 +205,7 @@ per job, and it lives in the repo".
 
 | script | what it does |
 |---|---|
+| `sim_truth/add_noise_nanobragg.py` | Add background and detector noise to a datsimx noisy copy with nanoBragg's own add_noise, PSF included. |
 | `sim_truth/compare_sampling.py` | Compare datsimx sampling settings (enSteps, mosDoms) against a reference setting, shot by shot. |
 | `sim_truth/image_stats.py` | Per-image statistics of a simulated Laue shot, by one estimator for the laue-dials paper sims and for datsimx. |
 | `sim_truth/simulate.sbatch` | Simulate Laue rows of a grid with datsimx: noiseless truth, a noisy copy, a truth table, a manifest. |
