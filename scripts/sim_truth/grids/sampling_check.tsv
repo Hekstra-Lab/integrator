@@ -1,0 +1,11 @@
+# One test shot per row; compared against (en_steps, mos_doms) = (322, 100) at the same mosaic spread.
+# xtal_size 0.003 aims at ~4.7e4 Bragg photons per shot: 1/10 of the laue-dials paper hkl_data shots (4.4e5, 5.0e5).
+name	run	mos_spread	en_steps	mos_doms	xtal_size	numimg	test_shot
+m005_e322_d100	1	0.05	322	100	0.003	1	1
+m005_e100_d100	1	0.05	100	100	0.003	1	1
+m005_e100_d050	1	0.05	100	50	0.003	1	1
+m005_e050_d050	1	0.05	50	50	0.003	1	1
+m050_e322_d100	1	0.5	322	100	0.003	1	1
+m050_e100_d100	1	0.5	100	100	0.003	1	1
+m050_e100_d050	1	0.5	100	50	0.003	1	1
+m050_e050_d050	1	0.5	50	50	0.003	1	1

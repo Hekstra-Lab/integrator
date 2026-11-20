@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-294 scripts.
+297 scripts.
 
 ## Start here
 
@@ -199,6 +199,14 @@ per job, and it lives in the repo".
 | `physics/make_sim_shoeboxes.py` | Cut Laue shoeboxes from a nanoBragg simulation at the TRUE crystal orientation. |
 | `physics/profile_representation_benchmark.py` | Which parameterization represents a diffraction profile best, at matched dimension. |
 | `physics/validate_nanobragg_port.py` | Check the PyTorch nanoBragg kernel against the C program, pixel for pixel. |
+
+## Laue simulation with known truth (datsimx)
+
+| script | what it does |
+|---|---|
+| `sim_truth/compare_sampling.py` | Compare datsimx sampling settings (enSteps, mosDoms) against a reference setting, shot by shot. |
+| `sim_truth/simulate.sbatch` | Simulate Laue rows of a grid with datsimx: noiseless truth, a noisy copy, a truth table, a manifest. |
+| `sim_truth/truth_table.py` | Per-reflection truth from a datsimx `--noNoise --waveImg` run: one row per (shot, hkl). |
 
 ## JUNGFRAU SFX simulation
 

@@ -56,6 +56,7 @@ SECTIONS = (
     ("sbgrid/cannon", "SBGrid ingestion: the SLURM stages"),
     ("figures", "Figures and tables"),
     ("physics", "Simulation and the nanoBragg port"),
+    ("sim_truth", "Laue simulation with known truth (datsimx)"),
     ("jungfrau_sim", "JUNGFRAU SFX simulation"),
     ("ablation_likelihood", "Likelihood ablation"),
     ("shrinkage_experiment", "Shrinkage experiment"),

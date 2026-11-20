@@ -28,6 +28,10 @@ DATA_DIR="${DATA_DIR:-/n/lab_storage/hekstra_lab/people/aldama/integrator_data/1
 IMG_TEMPLATE="${IMG_TEMPLATE:-$DATA_DIR/images/e080_###.mccd}"
 OUT="${OUT:-/n/netscratch/hekstra_lab/Lab/laldama/laue_runs/1117}"
 TAG="${TAG:-dhfr}"                          # output basename tag (no misleading _1118)
+IMG_FILE="${IMG_FILE:-}"                    # an image file (e.g. a datsimx NeXus run_1_master.h5) imported
+                                            # by name instead of IMG_TEMPLATE; empty = use IMG_TEMPLATE
+REF_GEOM="${REF_GEOM:-}"                    # an .expt whose beam and detector replace the file header's
+                                            # (datsimx writes geom_run<N>.expt); empty = header geometry
 
 # ---- geometry (dials.import) ----
 OSC="${OSC:-0,1}"                           # scan.oscillation = start,step (deg)
@@ -73,6 +77,8 @@ if have "$OUT/imported.expt"; then echo "  [1/8] skip (imported.expt exists)"; e
 echo "===== [1/8] dials.import ====="
 inv=(); [[ "$INVERT_ROT" == "true" ]] && inv=(geometry.goniometer.invert_rotation_axis=True)
 pix=(); [[ -n "$PIXEL" ]] && pix=(geometry.detector.panel.pixel="$PIXEL")
+src=(input.template="$IMG_TEMPLATE"); [[ -n "$IMG_FILE" ]] && src=("$IMG_FILE")
+ref=(); [[ -n "$REF_GEOM" ]] && ref=(input.reference_geometry="$REF_GEOM")
 dials.import \
   geometry.scan.oscillation="$OSC" \
   geometry.goniometer.axes="$GONIO_AXES" \
@@ -80,7 +86,8 @@ dials.import \
   "${pix[@]}" \
   geometry.beam.wavelength="$BEAM_WL" \
   geometry.scan.image_range="$IMAGE_RANGE" \
-  input.template="$IMG_TEMPLATE" \
+  "${src[@]}" \
+  "${ref[@]}" \
   output.experiments="$OUT/imported.expt" \
   output.log="$OUT/dials.import.log"
 fi
