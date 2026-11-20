@@ -68,20 +68,19 @@ echo "checkpoint: $(basename $CKPT)"
 # splitter is pointed at, so the two passes never overwrite each other.
 # Unset, the predict pass is the run's own config into predictions/, as
 # before. Use a different TREE_NAME per setting.
+#
+# The copy is made by scripts/poly/rb_predict_config.py from the run's own
+# config_log.yaml. It also adds i_rb/var_rb to `predict_keys`: the default
+# list does not carry them, and without them the RB columns are never
+# computed and `split_pdz2.py --estimator rb` stops on "parquet missing".
 PRED_ARGS=()
 SPLIT_ARGS=()
 if [[ -n "${RB_BACKGROUND_TERM:-}" ]]; then
   RB_CFG=$RUN/config_rb_${RB_BACKGROUND_TERM}.yaml
   RB_PRED=$RUN/predictions_${RB_BACKGROUND_TERM}
-  micromamba run -n integrator-cuda-dev python - "$RUN/run_paths.yaml" \
-      "$RB_CFG" "$RB_BACKGROUND_TERM" <<'PY' || exit 1
-import sys, yaml
-paths, out, term = sys.argv[1:]
-cfg = yaml.safe_load(open(yaml.safe_load(open(paths))["config"]))
-cfg.setdefault("integrator", {}).setdefault("args", {})["rb_background_term"] = term
-yaml.safe_dump(cfg, open(out, "w"), sort_keys=False)
-print(f"rb_background_term = {term} -> {out}")
-PY
+  KEYS=rb INTEGRATOR_ARGS="rb_background_term=${RB_BACKGROUND_TERM}" \
+    micromamba run -n integrator-cuda-dev python "$HERE/../rb_predict_config.py" \
+      "$RUN" "$RB_CFG" || exit 1
   PRED_ARGS=(--config "$RB_CFG" --out-dir "$RB_PRED")
   SPLIT_ARGS=(--pred-dir "$RB_PRED")
 fi
