@@ -108,3 +108,36 @@ Row `brightness_check.tsv` (mosaic 0.1°, (100, 50), `--xtalSize 0.0067`), noisy
 
 `laue.index` fails on one image at either gain (12–15 centroids after its d_min 2.51 Å cut); it indexes a rotation sweep, so indexing needs a multi-shot test.
 Our earlier `laue.find_spots` run on the laue-dials paper's `reference` set (defaults, `laue_runs/dhfr_sim/reference`) kept 177–219 spots per image, at 10× this brightness, 88.6 µm pixels and a 0.1 mm PSF.
+
+## Matching the laue-dials paper images
+
+The paper's simulations (`/n/holylabs/hekstra_lab/Users/laldama/data/simdhfr`) were made by `sim_laue.py` with the arguments in each directory's `commandline*.txt`, and with nanoBragg's own `SIM.add_noise()` at `detector_psf_fwhm_mm = 0.1`, `detector_psf_kernel_radius_pixels = 5`, `quantum_gain = 0.7`, `adc_offset_adu = 10`, `readout_noise_adu = 3`, on a 3840 × 3840 detector of 88.54 µm pixels at 200.5 mm.
+`braggaddnoise` re-implements that noise in numpy without the PSF; `add_noise_nanobragg.py` calls nanoBragg's `add_noise` itself on the noisy copy.
+
+`paper_match.tsv` emulates that detector in pixel units on the datsimx Eiger: `--dist 169.8` (0.44 mrad per pixel, as the paper) and `NOISE_TOOL=nanobragg NOISE_PSF_MM=0.0847` (1.13 px FWHM, as the paper). `image_stats.py`, one estimator for both:
+
+| statistic | paper `hkl_data` shot 1 | datsimx, `paper_match`, 0.0067 mm |
+|---|---|---|
+| Var(net) = a·bg + b, photons: a, b | 0.090, 18.4 | 0.091, 18.2 |
+| background, photons / sr (median) | $6.3 \times 10^7$ | $6.8 \times 10^7$ |
+| background by 2θ, per sr | — | within 0–15 % of the paper in every 2.5° bin (200 mm run) |
+| net Bragg photons | $4.40 \times 10^5$ | $3.46 \times 10^4$ (truth $4.75 \times 10^4$) |
+| reflections on the image | 4,916 | 8,053 (the Eiger at 169.8 mm reaches higher 2θ) |
+
+`laue.find_spots` (gain 1, max separation 10, min spot size from DIALS) against brightness, `paper_match` rows, one shot each:
+
+| `--xtalSize` | Bragg photons (truth) | spots kept |
+|---|---|---|
+| 0.0067 | $4.75 \times 10^4$ | 6 |
+| 0.0145 | $2.38 \times 10^5$ | 29 |
+| 0.031 | $5.10 \times 10^5$ | 69 |
+| paper `hkl_data`, 180 shots (`sim/laue180`) | $4.4$–$5.0 \times 10^5$ | 70 per image (mean) |
+
+At the paper's brightness the emulation gives the paper's spot count.
+
+## How laue-dials was run on the paper simulations
+
+`scripts/sim_truth/paper_sims/` holds the scripts, as run in October and November 2026 from scratch.
+`laue.index` is never run: `sim_build_stills.py` attaches each shot's true crystal from the h5 `Umat`, `Bmat` (checked against the truth centroids to a median 1.07 px), `sim_add_s1.py` adds the `s1` column `laue.index` would have, and `sim_laue_process.sbatch` runs `laue.find_spots` (gain 1.0, max separation 10) → `laue.optimize_indexing` (λ 1.00–1.20 Å, $d_\text{min}$ 1.15 Å) → `laue.refine` → `laue.predict` → `laue.integrate` into `sim/laue180/integrated.mtz`.
+`sim_laue_all.sbatch` repeats the prediction with `cutoff_log_probability=-20` into `integrated_all.mtz`, because the default keeps 392 of about 3,000 excited reflections per shot.
+`mos_laue.sh` ran `laue_process.sh` on the paper's three mosaicity sets into `sim_mos/`.
