@@ -12,8 +12,11 @@ the 100 brightest by I_R. If datsimx averages over spectrum samples, total_ratio
 is 1 between enSteps values; if it sums, total_ratio = enSteps_X / enSteps_R.
 
 usage: python compare_sampling.py GRID.tsv ROOT [--ref-en 322 --ref-doms 100] [--shot shot_1_00001]
+                                   [--patches ROOT/sampling_patches.npz]
 Reads ROOT/<name>/truth for each grid row; writes ROOT/sampling_summary.csv and
-ROOT/sampling_reflections.csv.
+ROOT/sampling_reflections.csv. With --patches it also writes, per mosaic spread,
+PATCH x PATCH noiseless crops of every setting centred on the reference
+centroids of the reflections ranked RANKS by I_R (fig_sim_sampling.py draws them).
 """
 
 from __future__ import annotations
@@ -27,6 +30,9 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from truth_table import load_shot, reflections, shot_names  # noqa: E402
+
+RANKS = (1, 10, 30, 100, 300, 1000)
+PATCH = 61
 
 
 def read_grid(path):
@@ -73,6 +79,7 @@ def main():
     ap.add_argument("--ref-doms", type=int, default=100)
     ap.add_argument("--shot", default="shot_1_00001")
     ap.add_argument("--min-photons", type=float, default=1.0)
+    ap.add_argument("--patches", default=None, help="npz path for noiseless crops; off by default")
     a = ap.parse_args()
 
     grid = read_grid(a.grid)
@@ -125,6 +132,29 @@ def main():
             w.writeheader()
             w.writerows(rows)
         print(f"wrote {path}")
+
+    if a.patches:
+        dump = {}
+        for mos in dict.fromkeys(r["mos_spread"] for r in grid):
+            rows = [r for r in grid if r["mos_spread"] == mos]
+            ref = next(r for r in rows if int(r["en_steps"]) == a.ref_en and int(r["mos_doms"]) == a.ref_doms)
+            _, _, keys_r, cr = get(ref)
+            order = np.argsort(cr["i_true"])[::-1]
+            pick = order[[k - 1 for k in RANKS if k <= len(order)]]
+            tag = f"mos{mos}"
+            dump[f"{tag}_rank"] = np.array([k for k in RANKS if k <= len(order)])
+            dump[f"{tag}_i_ref"] = cr["i_true"][pick]
+            dump[f"{tag}_lam"] = cr["lam_mean"][pick]
+            dump[f"{tag}_names"] = np.array([r["name"] for r in rows])
+            dump[f"{tag}_settings"] = np.array([[int(r["en_steps"]), int(r["mos_doms"])] for r in rows])
+            h = PATCH // 2
+            for r in rows:
+                b = np.pad(get(r)[0], h)
+                dump[f"{tag}_{r['name']}"] = np.stack([
+                    b[int(round(y)):int(round(y)) + PATCH, int(round(x)):int(round(x)) + PATCH]
+                    for x, y in zip(cr["x_cen"][pick], cr["y_cen"][pick])]).astype(np.float32)
+        np.savez_compressed(a.patches, **dump)
+        print(f"wrote {a.patches}")
 
     hdr = ["name", "subset", "total_bragg", "total_ratio", "n", "dev_median_abs", "dev_p95_abs",
            "l1_median", "l1_p95", "frac_split_test", "frac_split_ref"]

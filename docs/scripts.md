@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-297 scripts.
+298 scripts.
 
 ## Start here
 
@@ -174,6 +174,7 @@ per job, and it lives in the repo".
 | `figures/fig_profile_basis.py` | Every component of the learned profile basis, and how it settled. |
 | `figures/fig_profile_gate_examples.py` | One reflection per row: the counts, the profile drawn for it, the gate. |
 | `figures/fig_profile_shape.py` | Does a profile model follow the spot shape of the reflections beside it? |
+| `figures/fig_sim_sampling.py` | Noiseless datsimx spots at each (enSteps, mosDoms) sampling, one figure per mosaic spread. |
 | `figures/fig_svae_vs_hierarchical.py` | svae against hierarchical, every metric that exists for both, side by side. |
 | `figures/fig_wilson_params.py` | The Wilson prior's learned scale and B-factor over training. |
 | `figures/figstyle.py` | The one place the figure scripts get their look: figTeX, the ink theme. |
