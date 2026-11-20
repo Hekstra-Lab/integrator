@@ -81,6 +81,18 @@ if [[ -n "${RB_BACKGROUND_TERM:-}" ]]; then
   KEYS=rb INTEGRATOR_ARGS="rb_background_term=${RB_BACKGROUND_TERM}" \
     micromamba run -n integrator-cuda-dev python "$HERE/../rb_predict_config.py" \
       "$RUN" "$RB_CFG" || exit 1
+  # PREDICT_ACCELERATOR=cpu scores on a CPU partition. predict moves the
+  # model to cuda only when cuda is present, but builds its Lightning
+  # trainer from `trainer.accelerator`, which every run records as gpu and
+  # which fails on a node without one. careless runs on CPU unchanged.
+  if [[ -n "${PREDICT_ACCELERATOR:-}" ]]; then
+    micromamba run -n integrator-cuda-dev python -c "
+import sys, yaml
+p, acc = sys.argv[1], sys.argv[2]
+c = yaml.safe_load(open(p)); c.setdefault('trainer', {})['accelerator'] = acc
+yaml.safe_dump(c, open(p, 'w'), sort_keys=False)
+print(f'  trainer.accelerator = {acc}')" "$RB_CFG" "$PREDICT_ACCELERATOR" || exit 1
+  fi
   PRED_ARGS=(--config "$RB_CFG" --out-dir "$RB_PRED")
   SPLIT_ARGS=(--pred-dir "$RB_PRED")
 fi

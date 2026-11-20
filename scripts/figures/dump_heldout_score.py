@@ -196,6 +196,81 @@ def tile_mask_at(peak, n_px: int, block: int, frac: float, refl_ids):
     return torch.from_numpy(out).to(peak.device)
 
 
+def profile_of(out):
+    """The profile from a forward's output, however it is wrapped."""
+    fo = out["forward_out"] if "forward_out" in out else out
+    prof = fo["qp_mean"] if "qp_mean" in fo else fo.get("profile")
+    if prof is None:
+        raise SystemExit("the forward returned no profile")
+    return prof
+
+
+def out_of_sample_profile(out, reduced, n_refl):
+    """The profile extended onto the pixels the forward was not shown.
+
+    `masked_softmax` fills a masked pixel's logit with -1e9, so its
+    profile comes back EXACTLY zero and `I p_i + B` collapses to `B` at
+    precisely the pixels a hold-out scores.
+    Four jobs were scored that way.
+    The per-pixel held-out log-likelihood they reported, -2.1912 /
+    -2.1917 / -2.1917 across three arms, is Poisson at the background
+    rate -- -2.08 at 10 ADU -- and agreed to five decimals because no
+    profile entered it, which was read as the arms having
+    indistinguishable profiles.
+    The same zero put every scored pixel in the bottom profile decile and
+    held the scored rate below 15.7 ADU against peak rates in the
+    thousands, which was read as a tiling defect.
+
+    The fix uses the pre-normalization logits with the SAME normalizer the
+    model used, the sum over the KEPT pixels.
+    On a kept pixel that reproduces `qp_mean` exactly; on a held-out pixel
+    it is the value that leaves the model's own fit to the kept pixels
+    untouched, so
+
+        lam_i = I exp(z_i) / sum_{j in kept} exp(z_j) + B
+
+    is the model's out-of-sample prediction with nothing rescaled.
+    The profile then sums to more than 1 over the whole box, by the
+    held-out mass, which is the point: that mass is what the prediction is
+    about.
+    """
+    import torch
+
+    qp = out.get("qp") if hasattr(out, "get") else None
+    z = getattr(qp, "mean_logits", None)
+    if z is None:
+        raise SystemExit(
+            "the profile surrogate returned no `mean_logits`, so the "
+            "profile cannot be extended onto the held-out pixels and the "
+            "hold-out would score the background alone"
+        )
+    kept = reduced.reshape(n_refl, -1).bool()
+    if not bool(kept.any(-1).all()):
+        raise SystemExit("a reflection has no kept pixel to normalize over")
+    zl = z.reshape(n_refl, -1).double()
+    lse = torch.logsumexp(zl.masked_fill(~kept, -1e30), dim=-1, keepdim=True)
+    return (zl - lse).exp().float()
+
+
+def check_out_of_sample(out, prof, reduced, n_refl, tol=2e-6):
+    """Agree with the model on the pixels it DID see, or stop."""
+    kept = reduced.reshape(n_refl, -1).bool()
+    out_px = kept.logical_not()
+    ref = profile_of(out).reshape(n_refl, -1)
+    d = float(((prof - ref).abs() * kept).max())
+    print(
+        f"    out-of-sample profile: max |p - qp_mean| on kept pixels "
+        f"{d:.2e}, qp_mean on held-out pixels "
+        f"{float((ref * out_px).max()):.2e}, held-out mass "
+        f"{float((prof * out_px).sum(-1).median()):.4f}"
+    )
+    if d > tol:
+        raise SystemExit(
+            f"the rebuilt profile disagrees with `qp_mean` by {d:.2e} on "
+            "pixels the forward saw, so the normalizer is wrong"
+        )
+
+
 def last_checkpoint(run: str):
     """The highest-epoch checkpoint under a run directory."""
     import glob
@@ -226,6 +301,11 @@ def score(model, loader, device, n_batches, want):
     # not the reflection: the residual against the profile value it sits
     # on, and the squared residual against the rate
     px_p, px_lam, px_res, px_ldec = [], [], [], []
+    # the variance of the PREDICTION at the scored pixel. With the
+    # peak tile held out, `I` is fitted from the wings alone, so the
+    # residual there carries the error in lambda on top of the
+    # detector's own variance and the two have to be separated.
+    px_lvar = []
     # the per-reflection pedestal and where on the detector it came from,
     # so its structure can be seen rather than assumed
     ped, pos_x, pos_y, img_id = [], [], [], []
@@ -257,11 +337,27 @@ def score(model, loader, device, n_batches, want):
 
             m2 = mask.squeeze(-1) if mask.dim() == 3 else mask
             n_px = m2.shape[-1]
-            pr_peak = prof.reshape(len(rid_np), -1).argmax(-1)
             if BLOCK and PEAK_ALIGNED:
+                # Aligning the tiling to the peak needs a profile, and a
+                # profile needs a mask, so the peak is located by a first
+                # forward on the FULL mask and the scoring is done by a
+                # second on the reduced one.
+                #
+                # The hole then sits where the model says the spot is,
+                # which is information about the data. It does not reach
+                # the reduced forward: the encoder is handed
+                # `shoebox * mask`, so the hole arrives as a block of
+                # ZEROS, and the masks seen in training marked dead and
+                # edge pixels, never a spot. The learned map therefore
+                # reads the hole as low counts, which pulls the profile
+                # away from it; it cannot read it as "the peak is here".
+                peak_out = model(counts, shoebox, mask, metadata)
+                pr_peak = profile_of(peak_out).reshape(
+                    len(rid_np), -1).argmax(-1)
                 held = tile_mask_at(pr_peak, n_px, BLOCK, HOLDOUT, rid_np)
                 ctr = centre_mask(n_px, BLOCK, device, peak=pr_peak)
             else:
+                pr_peak = None
                 held = holdout_mask(rid_np, n_px, HOLDOUT, device, BLOCK)
                 ctr = (centre_mask(n_px, BLOCK, device).unsqueeze(0)
                        if BLOCK else None)
@@ -279,13 +375,12 @@ def score(model, loader, device, n_batches, want):
 
             out = model(counts, shoebox, reduced_in, metadata)
             fo = out["forward_out"] if "forward_out" in out else out
-            prof = fo["qp_mean"] if "qp_mean" in fo else fo.get("profile")
-            if prof is None:
-                raise SystemExit("the forward returned no profile")
+            prof = out_of_sample_profile(out, reduced, len(rid_np))
+            if i == 0:
+                check_out_of_sample(out, prof, reduced, len(rid_np))
             i_mean = fo["qi_mean"].reshape(-1, 1)
             b_mean = fo["qbg_mean"].reshape(-1, 1)
-            lam = (i_mean * prof.reshape(len(rid_np), -1)
-                   + b_mean).clamp_min(1e-9)
+            lam = (i_mean * prof + b_mean).clamp_min(1e-9)
 
             c = counts.reshape(len(rid_np), -1).float()
             h = scored.reshape(len(rid_np), -1)
@@ -306,7 +401,7 @@ def score(model, loader, device, n_batches, want):
             # thinned to keep the arrays small: the pixel diagnostics
             # want 10^6 points, not 10^8
             keep = sel.detach().cpu().numpy()
-            pr = prof.reshape(len(rid_np), -1)
+            pr = prof
             # Binned by RANK WITHIN THE SHOEBOX, not by a global quantile.
             # A profile is peaked enough that over 90% of its pixels sit at
             # p/pmax ~ 0, so global quantile edges are all zero and every
@@ -325,6 +420,13 @@ def score(model, loader, device, n_batches, want):
             px_lam.append(lam.detach().cpu().numpy()[keep][hb][::7])
             px_ldec.append(dec_l.detach().cpu().numpy()[keep][hb][::7])
             px_res.append((c - lam).detach().cpu().numpy()[keep][hb][::7])
+            # Var[lam_i] = p_i^2 Var[I] + Var[B], the two posterior
+            # variances the forward already reports. The profile's own
+            # variance is left out, so this is a LOWER bound on how much
+            # of the residual is the fit rather than the detector.
+            lvar = (pr ** 2 * fo["qi_var"].reshape(-1, 1)
+                    + fo["qbg_var"].reshape(-1, 1))
+            px_lvar.append(lvar.detach().cpu().numpy()[keep][hb][::7])
 
             # c0 = mean - var over the half of the valid pixels with the
             # lowest profile, which is this shoebox's own background. No
@@ -358,6 +460,7 @@ def score(model, loader, device, n_batches, want):
     return (tuple(np.concatenate(v) for v in (logp, chi2, bias, npx, dd))
             + (np.concatenate(px_p), np.concatenate(px_lam),
                np.concatenate(px_res), np.concatenate(px_ldec),
+               np.concatenate(px_lvar),
                np.concatenate(ped),
                np.concatenate(pos_x), np.concatenate(pos_y),
                np.concatenate(img_id)))
@@ -429,8 +532,12 @@ def shape_of_misfit(pk, res, n_bins: int = 10) -> list[dict]:
     return rows
 
 
-def noise_model(lam, res, ldec=None, n_bins: int = 12) -> dict:
+def noise_model(lam, res, ldec=None, n_bins: int = 12, lvar=None) -> dict:
     """Fit `Var(c) = a * rate + b` from the held-out residuals.
+
+    With `lvar` given, the fit is on the residual variance MINUS the
+    variance of the prediction, so `a` and `b` describe the detector and
+    not the fit. The bins carry all three columns.
 
     Poisson is `a = 1, b = 0`. A detector that stores `g` units per photon
     with read noise `sigma_r` gives `a = g` and `b = sigma_r^2`, and
@@ -455,7 +562,8 @@ def noise_model(lam, res, ldec=None, n_bins: int = 12) -> dict:
     lo = max(float(np.nanmin(lam)), 1e-3)
     hi = float(np.nanmax(lam))
     if not np.isfinite(hi) or hi <= lo * 1.01:
-        return {"a": float("nan"), "b": float("nan"), "bins": []}
+        return {"a": float("nan"), "b": float("nan"), "bins": [],
+                "top_fit_frac": float("nan")}
     edges = np.logspace(np.log10(lo), np.log10(hi), n_bins + 1)
     edges[-1] += 1e-9
     idx = np.clip(np.digitize(lam, edges) - 1, 0, n_bins - 1)
@@ -466,12 +574,18 @@ def noise_model(lam, res, ldec=None, n_bins: int = 12) -> dict:
             continue
         lam_k = float(np.median(lam[m]))
         var_k = float(np.median(res[m] ** 2) / 0.4549)
+        # the part of the squared residual that is the error in the
+        # prediction rather than the detector, subtracted rather than
+        # ignored; with the peak tile held out it is not small
+        fit_k = float(np.median(lvar[m])) if lvar is not None else 0.0
         x.append(lam_k)
-        y.append(var_k)
+        y.append(max(var_k - fit_k, 1e-9))
         rows.append({"bin": k, "rate": lam_k, "var": var_k,
+                     "var_fit": fit_k, "var_detector": var_k - fit_k,
                      "n": int(m.sum())})
     if len(x) < 3:
-        return {"a": float("nan"), "b": float("nan"), "bins": rows}
+        return {"a": float("nan"), "b": float("nan"), "bins": rows,
+                "top_fit_frac": float("nan")}
     x, y = np.asarray(x), np.asarray(y)
     # each bin's median squared residual has relative error ~sqrt(2/n), so
     # the fit is weighted by sqrt(n); without it the sparse bright bins,
@@ -479,7 +593,11 @@ def noise_model(lam, res, ldec=None, n_bins: int = 12) -> dict:
     # background ones that carry none
     wt = np.sqrt([r["n"] for r in rows])
     a, b = np.polyfit(x, y, 1, w=wt)
-    return {"a": float(a), "b": float(b), "bins": rows}
+    top = rows[-1]
+    frac = (top["var_fit"] / top["var"]
+            if lvar is not None and top["var"] > 0 else 0.0)
+    return {"a": float(a), "b": float(b), "bins": rows,
+            "top_fit_frac": float(frac)}
 
 
 def main() -> int:
@@ -530,15 +648,17 @@ def main() -> int:
         if got is None:
             print(f"  {arm}: nothing scored")
             continue
-        (lp, c2, bi, npx, d, pk, lam_px, res_px, ldec_px,
+        (lp, c2, bi, npx, d, pk, lam_px, res_px, ldec_px, lvar_px,
          ped_r, px_x, px_y, px_img) = got
         print(f"  {arm}: pedestal c0 median {np.median(ped_r):.2f} ADU, "
               f"spread {np.std(ped_r):.2f}")
         for r in pedestal_structure(ped_r, px_x, px_y, px_img, d):
             structure.append({"method": arm, **r})
-        nm = noise_model(lam_px, res_px, ldec_px)
+        nm = noise_model(lam_px, res_px, ldec_px, lvar=lvar_px)
         print(f"  {arm}: noise model Var = {nm['a']:.3f} rate "
               f"+ {nm['b']:.2f}   (Poisson is 1.000 rate + 0)")
+        print(f"  {arm}: of the top bin's variance, "
+              f"{nm['top_fit_frac']:.0%} is the error in lambda itself")
         for r in shape_of_misfit(pk, res_px):
             misfit.append({"method": arm, **r})
         noise.append({"method": arm, "a": nm["a"], "b": nm["b"]})
