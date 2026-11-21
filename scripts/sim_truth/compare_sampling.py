@@ -95,7 +95,7 @@ def main():
         if name not in cache:
             tdir = os.path.join(a.root, name, "truth")
             path = dict((n, p) for p, n in shot_names(tdir, int(row.get("run", 1))))[a.shot]
-            bragg, key, lam = load_shot(path, a.shot)
+            bragg, key, lam, _ = load_shot(path, a.shot)
             keys, cols = reflections(bragg, key, lam)
             cache[name] = (bragg, key, keys, cols)
         return cache[name]

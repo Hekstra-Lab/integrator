@@ -11,6 +11,16 @@ B_p = 0). With that labelling
     x_cen, y_cen = B-weighted fast / slow pixel centroid
     n_comp   = connected components (8-connectivity) of the pixels with
                B_p >= REL_THR * max_p B_p of the reflection
+    mixed_0p1, mixed_0p25 = fraction of i_true on pixels whose map residual
+               r_p = max(|h-round h|, |k-round k|, |l-round l|) exceeds 0.1, 0.25
+
+The maps are NOT one reflection's index: diffBragg stores, per pixel, the
+intensity-weighted AVERAGE of the fractional (h, k, l) over every (energy,
+domain) contribution, and of the wavelength likewise. Where one reflection
+dominates a pixel the average is within the excitation error of an integer;
+where two contribute it lies between their indices, so r_p measures how mixed
+the pixel is and the mixed_* columns say how much of a truth sum rests on
+pixels whose label is not one reflection's.
 
 The maps carry one hkl per pixel, so where two reflections (or harmonics) land
 on the same pixel its whole B_p goes to the one the map names.
@@ -34,7 +44,8 @@ from scipy import ndimage
 
 REL_THR = 1e-3
 OFFSET = 512  # hkl -> one int64 key; |h|, |k|, |l| < 512
-COLUMNS = ["shot", "h", "k", "l", "i_true", "n_px", "n_eff", "lam_mean", "x_cen", "y_cen", "n_comp"]
+COLUMNS = ["shot", "h", "k", "l", "i_true", "n_px", "n_eff", "lam_mean", "x_cen", "y_cen", "n_comp",
+           "mixed_0p1", "mixed_0p25"]
 
 
 def hkl_key(h, k, l):
@@ -58,7 +69,7 @@ def shot_names(truth_dir, run):
 
 
 def load_shot(path, name):
-    """Noiseless Bragg image, per-pixel hkl key (-1 off the footprint) and wavelength."""
+    """Noiseless Bragg image, per-pixel hkl key (-1 off the footprint), wavelength, map residual."""
     with h5py.File(path, "r") as f:
         bragg = f[f"sim_image/{name}"][()].astype(np.float64)
         hkl = [f[f"{c}_data/{name}"][()] for c in "hkl"]
@@ -67,10 +78,12 @@ def load_shot(path, name):
     key = np.full(bragg.shape, -1, dtype=np.int64)
     h, k, l = (np.rint(a[foot]).astype(np.int64) for a in hkl)
     key[foot] = hkl_key(h, k, l)
-    return bragg, key, lam
+    resid = np.zeros(bragg.shape, dtype=np.float32)
+    resid[foot] = np.max([np.abs(a[foot] - np.rint(a[foot])) for a in hkl], axis=0)
+    return bragg, key, lam, resid
 
 
-def reflections(bragg, key, lam):
+def reflections(bragg, key, lam, resid=None):
     """Per-reflection truth for one image; returns (keys, dict of columns)."""
     foot = key >= 0
     keys, inv = np.unique(key[foot], return_inverse=True)
@@ -94,6 +107,10 @@ def reflections(bragg, key, lam):
 
     cols = dict(i_true=i_true, n_px=n_px, n_eff=n_eff, lam_mean=lam_mean,
                 x_cen=x_cen, y_cen=y_cen, n_comp=n_comp)
+    if resid is not None:
+        r = resid[foot]
+        cols["mixed_0p1"] = np.bincount(inv, weights=b * (r > 0.1)) / i_true
+        cols["mixed_0p25"] = np.bincount(inv, weights=b * (r > 0.25)) / i_true
     return keys, cols
 
 
@@ -114,14 +131,16 @@ def main():
 
     rows = []
     for path, name in shot_names(a.truth_dir, a.run):
-        bragg, key, lam = load_shot(path, name)
-        keys, cols = reflections(bragg, key, lam)
+        bragg, key, lam, resid = load_shot(path, name)
+        keys, cols = reflections(bragg, key, lam, resid)
         h, k, l = key_hkl(keys)
         for j in range(len(keys)):
             rows.append(dict(shot=name, h=h[j], k=k[j], l=l[j],
                              **{c: (f"{v[j]:.6g}" if v.dtype.kind == "f" else v[j]) for c, v in cols.items()}))
-        print(f"{name}: {len(keys)} reflections, {cols['i_true'].sum():.4g} Bragg photons, "
-              f"{(bragg > 0).sum()} footprint pixels")
+        tot = cols["i_true"].sum()
+        print(f"{name}: {len(keys)} reflections, {tot:.4g} Bragg photons, {(bragg > 0).sum()} footprint pixels; "
+              f"Bragg photons on pixels with residual > 0.1: {(cols['mixed_0p1'] * cols['i_true']).sum() / tot:.4f}, "
+              f"> 0.25: {(cols['mixed_0p25'] * cols['i_true']).sum() / tot:.4f}")
     write_csv(out, rows)
     print(f"wrote {out} ({len(rows)} rows)")
 
