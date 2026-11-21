@@ -24,6 +24,12 @@
 # the unrefined geometry instead.
 #
 # Resumable: each step runs only if its output is missing.
+#
+# Overrides (defaults = the hkl_data run as made): OUT (holds truth.expt),
+# LD_ENV (an env prefix), ADD_S1 (path of sim_add_s1.py), LAM_MIN, LAM_MAX,
+# DMIN, NPROC. For datsimx output: LD_ENV=.../envs/integrator-cuda-dev, which
+# reads the NeXus masters (only CBF pixels need `ld`), and
+# ADD_S1=scripts/sim_truth/paper_sims/sim_add_s1.py.
 #SBATCH -J sim_laue
 #SBATCH -c 16
 #SBATCH -p sapphire
@@ -33,8 +39,9 @@
 set -uo pipefail
 
 S=/n/netscratch/hekstra_lab/Lab/laldama
-E=/n/lab_storage/hekstra_lab/people/aldama/micromamba/envs/ld
-OUT=$S/sim/laue180
+E="${LD_ENV:-/n/lab_storage/hekstra_lab/people/aldama/micromamba/envs/ld}"
+OUT="${OUT:-$S/sim/laue180}"
+ADD_S1="${ADD_S1:-$S/sim_add_s1.py}"
 export PATH="$E/bin:$PATH"
 
 # numpy 2.x removed the binary mode of np.fromstring that dxtbx's
@@ -50,10 +57,10 @@ export VECLIB_MAXIMUM_THREADS=1 NUMEXPR_NUM_THREADS=1
 # the simulated spectrum, measured from the wave_data maps: 1.0200-1.1800 A.
 # Deliberately a little wider than that so the predictor is not the thing
 # clipping the edges -- the comparison's own cut does that, at [1.0350, 1.1650].
-LAM_MIN=1.00
-LAM_MAX=1.20
-DMIN=1.15          # detector corner reaches ~1.20 A at the short-wavelength end
-NPROC=16
+LAM_MIN="${LAM_MIN:-1.00}"
+LAM_MAX="${LAM_MAX:-1.20}"
+DMIN="${DMIN:-1.15}"          # detector corner reaches ~1.20 A at the short-wavelength end
+NPROC="${NPROC:-16}"
 
 have() { [[ -s "$1" ]]; }
 cd "$OUT" || exit 1
@@ -74,7 +81,7 @@ fi
 
 if have "$OUT/stills.refl"; then echo "  [2/5] skip (stills.refl)"; else
 echo "===== [2/5] add s1 (replaces laue.index + sequence_to_stills) ====="
-$E/bin/python "$S/sim_add_s1.py" "$OUT/truth.expt" "$OUT/strong.refl" \
+$E/bin/python "$ADD_S1" "$OUT/truth.expt" "$OUT/strong.refl" \
   --out "$OUT/stills.refl" || exit 1
 fi
 
