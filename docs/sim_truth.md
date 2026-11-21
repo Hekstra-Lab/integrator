@@ -158,3 +158,17 @@ At the paper's brightness the emulation gives the paper's spot count.
 The largest beam tilt, 0.05 mrad, moves a spot by 0.11 px at 169.8 mm, a tenth of the PSF FWHM.
 The full datasets (`paper_full.tsv`) are simulated without divergence.
 Figures: `docs/figures/sim/sim_image_paper_vs_datsimx.png`, `docs/figures/sim/sim_sampling_mos0p1_divergence.png`.
+
+## Full datasets
+
+`paper_full.tsv`, row `mos010` first (20 Nov 2026), on `gpu` with a 36 h limit because datsimx writes all 180 shots in one call and a killed row restarts from nothing:
+
+```bash
+SPEC=/n/holylabs/hekstra_lab/Users/laldama/data/spectra/e080_2.lam NOISE_TOOL=nanobragg NOISE_PSF_MM=0.0847 \
+GRID=scripts/sim_truth/grids/paper_full.tsv \
+sbatch -p gpu -t 1-12:00:00 --mem=48G -c 4 --array=0 -o logs/sim_truth/paper_full_%A_%a.out scripts/sim_truth/simulate.sbatch
+```
+
+The noiseless background is one image per run (`truth/background_1.h5`): datsimx computes water and air scatter once, independent of the crystal, so shots differ in background only through the noise.
+
+Reference results on it, chained after the simulation: `paper_sims/sim_laue_process.sbatch` with `IMG_FILE`, `REF_GEOM`, `TRUTH_SHOTS`, `BUILD_STILLS`, `ADD_S1`, `LD_ENV=.../integrator-cuda-dev` (step 0 imports the master as stills and attaches each shot's true crystal; on a one-shot test the crystals sit a median 1.22 px from the truth centroids and the chain runs through `laue.refine`, while `laue.predict` needs more than one shot), then `paper_sims/sim_laue_all.sbatch` with the same `OUT`, then `score_against_truth.py` on `integrated.mtz` and `integrated_all.mtz` into `paper_full/mos010/scores_vs_truth.csv`.
