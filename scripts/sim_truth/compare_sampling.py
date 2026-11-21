@@ -79,6 +79,9 @@ def main():
     ap.add_argument("--ref-doms", type=int, default=100)
     ap.add_argument("--shot", default="shot_1_00001")
     ap.add_argument("--min-photons", type=float, default=1.0)
+    ap.add_argument("--ref-name", default=None,
+                    help="reference row by name, for rows that differ in something other than "
+                         "(en_steps, mos_doms); default off")
     ap.add_argument("--patches", default=None, help="npz path for noiseless crops; off by default")
     a = ap.parse_args()
 
@@ -97,8 +100,11 @@ def main():
 
     summary, per_refl = [], []
     for row in grid:
-        refs = [r for r in grid if r["mos_spread"] == row["mos_spread"]
-                and int(r["en_steps"]) == a.ref_en and int(r["mos_doms"]) == a.ref_doms]
+        if a.ref_name:
+            refs = [r for r in grid if r["name"] == a.ref_name]
+        else:
+            refs = [r for r in grid if r["mos_spread"] == row["mos_spread"]
+                    and int(r["en_steps"]) == a.ref_en and int(r["mos_doms"]) == a.ref_doms]
         if not refs:
             print(f"{row['name']}: no reference row at mos_spread {row['mos_spread']}; skipped")
             continue
@@ -137,7 +143,8 @@ def main():
         dump = {}
         for mos in dict.fromkeys(r["mos_spread"] for r in grid):
             rows = [r for r in grid if r["mos_spread"] == mos]
-            ref = next(r for r in rows if int(r["en_steps"]) == a.ref_en and int(r["mos_doms"]) == a.ref_doms)
+            ref = next(r for r in rows if (r["name"] == a.ref_name if a.ref_name else
+                       int(r["en_steps"]) == a.ref_en and int(r["mos_doms"]) == a.ref_doms))
             _, _, keys_r, cr = get(ref)
             order = np.argsort(cr["i_true"])[::-1]
             pick = order[[k - 1 for k in RANKS if k <= len(order)]]
