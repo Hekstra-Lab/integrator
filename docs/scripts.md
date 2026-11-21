@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-308 scripts.
+309 scripts.
 
 ## Start here
 
@@ -176,6 +176,7 @@ per job, and it lives in the repo".
 | `figures/fig_profile_shape.py` | Does a profile model follow the spot shape of the reflections beside it? |
 | `figures/fig_sim_image.py` | Simulated Laue shots side by side: whole detector (block means) and a full-resolution crop. |
 | `figures/fig_sim_sampling.py` | Noiseless datsimx spots at each (enSteps, mosDoms) sampling, one figure per mosaic spread. |
+| `figures/fig_sim_truth_scatter.py` | Integrated intensity against the simulated truth intensity, one panel per prediction set. |
 | `figures/fig_svae_vs_hierarchical.py` | svae against hierarchical, every metric that exists for both, side by side. |
 | `figures/fig_wilson_params.py` | The Wilson prior's learned scale and B-factor over training. |
 | `figures/figstyle.py` | The one place the figure scripts get their look: figTeX, the ink theme. |

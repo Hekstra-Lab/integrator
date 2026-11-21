@@ -57,7 +57,7 @@ if [ ${#want[@]} -eq 0 ]; then
   if [ -n "$TEMPLATE" ]; then
     want=(ccsym pdz2 refine basis basiscmp cost)
   else
-    want=(shoebox loss wilson basis basiscmp cost scatter merging peaks spectrum careless ccsym pdz2 refine shape patch arms simsampling simimage)
+    want=(shoebox loss wilson basis basiscmp cost scatter merging peaks spectrum careless ccsym pdz2 refine shape patch arms simsampling simimage simtruth)
   fi
 fi
 has() { printf '%s\n' "${want[@]}" | grep -qx "$1"; }
@@ -197,6 +197,7 @@ has patch && step patch "${PY[@]}" scripts/figures/fig_detector_patch.py
 # datsimx sampling check (docs/sim_truth.md)
 has simsampling && [ -f "$DATA/sim_sampling_patches.npz" ] && step simsampling "${PY[@]}" scripts/figures/fig_sim_sampling.py
 has simimage && [ -f "$DATA/sim_image_view.npz" ] && step simimage "${PY[@]}" scripts/figures/fig_sim_image.py
+has simtruth && [ -f "$DATA/sim_truth_joined_mos010.csv" ] && step simtruth "${PY[@]}" scripts/figures/fig_sim_truth_scatter.py
 
 # a diagnostic, not a reported figure
 has arms && step arms "${PY[@]}" scripts/figures/fig_arm_metrics.py
