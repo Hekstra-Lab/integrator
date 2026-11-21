@@ -25,7 +25,12 @@ Domain, fixed before scoring and from the truth alone:
 
 usage: python score_against_truth.py TRUTH_CSV INTEGRATED_MTZ --method NAME --dataset NAME
            [--gain 0.7 --lam-lo 1.035 --lam-hi 1.165 --max-mixed 0.05 --out scores.csv]
-Appends long-format rows (method, dataset, bin, ...) to --out. Needs
+Appends long-format rows (method, dataset, bin, ...) to --out. With
+--joined-out PATH it also appends every joined row, raw MTZ values in ADU
+beside the truth columns (method, dataset, shot, h, k, l, i_true, lam_mean,
+mixed_0p25, n_eff, in_domain, gain, I, SIGI, BG), for
+`scripts/figures/fig_sim_truth_scatter.py`. BG is laue.integrate's per-pixel
+mean background of the window in ADU, ADC offset included. Needs
 reciprocalspaceship (integrator environment).
 """
 
@@ -56,6 +61,7 @@ def main():
     ap.add_argument("--lam-hi", type=float, default=1.165)
     ap.add_argument("--max-mixed", type=float, default=0.05)
     ap.add_argument("--out", default="scores.csv")
+    ap.add_argument("--joined-out", default=None, help="append the joined rows here (default: not written)")
     a = ap.parse_args()
 
     t = pd.read_csv(a.truth_csv)
@@ -84,6 +90,14 @@ def main():
     dom = ((tj["lam_mean"] >= a.lam_lo) & (tj["lam_mean"] <= a.lam_hi)
            & (tj["mixed_0p25"] <= a.max_mixed)).to_numpy() & np.isfinite(i_hat) & (s_hat > 0)
     print(f"domain: {dom.sum():,} of {len(dom):,} joined (lam in [{a.lam_lo}, {a.lam_hi}], mixed_0p25 <= {a.max_mixed})")
+
+    if a.joined_out:
+        cols = {c: mj[c].to_numpy() for c in ("I", "SIGI", "BG") if c in mj.columns}
+        j = pd.DataFrame(dict(method=a.method, dataset=a.dataset, shot=tj["shot_n"], h=tj["h"], k=tj["k"],
+                              l=tj["l"], i_true=i_true, lam_mean=tj["lam_mean"], mixed_0p25=tj["mixed_0p25"],
+                              n_eff=tj["n_eff"], in_domain=dom, gain=a.gain, **cols))
+        j.to_csv(a.joined_out, mode="a", header=not os.path.exists(a.joined_out), index=False)
+        print(f"appended {len(j):,} joined rows to {a.joined_out}")
 
     dev = i_hat - i_true
     z = dev / s_hat
