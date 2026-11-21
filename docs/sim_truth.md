@@ -187,6 +187,50 @@ The fix (`image_size[0]`) is commit `5de60e4` on branch `eiger-row-size` of a se
 Both laue sbatches take `LAUE_DIALS_SRC=<clone>/src`, which puts the clone first on `PYTHONPATH` and logs the module path and commit.
 
 After the fix, `laue.predict` ran on all 178 images (42 s), and integration and scoring finished in 11 min (jobs 62600223, 62600225, 62600227).
-Join: 88.3 % of 59,788 MTZ rows (default predictions) and 88.5 % of 144,780 (permissive), sign-flipped key 0.000; median $|\lambda_\text{mtz} - \lambda_\text{mean}|$ 0.0022 and 0.0036 Å.
-`laue.integrate`, per observation in photons, default set: dev median +39 at $I_\text{true} < 10$, $-71$ at 100–300, $-765$ at 1000–3000 (mean $(\hat I - I_\text{true}) / I_\text{true} = -0.43$), $-0.48$ above 3000.
-These are not read as laue-dials' accuracy until the PSF result in `sim_truth_protocol.md` §9 is in the reference: 14.6 % of every spot's photons are spread over the detector by nanoBragg's truncated PSF kernel, and a further 9.5 % lie 3–5 px from the source.
+The scores first written from it (`paper_full/mos010/scores_vs_truth.csv`, `joined_vs_truth.csv`) are wrong from shot 113 on and are superseded.
+laue.integrate writes BATCH = experiment id + 1, and `laue.refine` renumbers the ids when it drops an experiment (112 and 167 here), so BATCH equalled the shot only up to shot 112; later rows were joined to the neighbouring shot, which shares many indices 1° away (about 240 joined rows per shot instead of about 340, $|\Delta\lambda|$ p95 0.09 Å).
+`score_against_truth.py --expt` and `make_sim_shoeboxes.py --from-expt` now map each experiment to its frame in the image file (imageset index + 1).
+
+### mos010, laue-dials upstream `main`
+
+laue-dials is now run from a clone of upstream `main` at `d57f96e` (2026-09-20, 50 commits past our v0.5.1+35 build, last tag v0.5.1), branch `datsimx-sim` with no changes so far, at `/n/lab_storage/hekstra_lab/people/aldama/software/laue-dials-main`, through `LAUE_DIALS_SRC`.
+Upstream `predict` reshapes the mask to the image, so the row-length fix is not needed there.
+Chain into `paper_full/mos010/laue_dials_main` with `INTEGRATE_REFL=1` (jobs 62611304, 62611309): 179 of 180 experiments refined, 60,015 reflections in the default set and 145,505 in the permissive one, with `integrated.refl` and `integrated_all.refl` beside the MTZs.
+
+Scores with the frame mapping, in `paper_full/mos010/scores/` (method names `laue051_*` for the v0.5.1+35 build, `lauemain_*` for upstream): join 0.999–1.000, sign-flipped 0.000, median $|\Delta\lambda|$ 0.0013–0.0014 Å, p95 0.008 (default) and 0.018 (permissive).
+
+| $I_\text{true}$ bin (photons) | v0.5.1+35 dev median | upstream dev median | upstream mean $(\hat I - I_\text{true})/I_\text{true}$ | upstream sd($z$) |
+|---|---|---|---|---|
+| 0–1 | +36.8 | −0.4 | — | 0.98 |
+| 1–3 | +35.8 | −3.0 | — | 0.84 |
+| 10–30 | +22.3 | −8.9 | −0.46 | 0.88 |
+| 30–100 | −6.2 | −28.0 | −0.42 | 0.93 |
+| 100–300 | −74.1 | −81.1 | −0.42 | 1.59 |
+| 300–1000 | −229.6 | −230.0 | −0.44 | 3.28 |
+| 1000–3000 | −705.5 | −706.1 | −0.46 | 7.22 |
+| > 3000 | −2498 | −2507 | −0.44 | 22.5 |
+
+Default prediction set, scoring domain, n = 55,467 and 55,746.
+The weak-end offset of the v0.5.1+35 build (Sivia's prior applied to the final intensities) is absent upstream; both builds are low by a fraction 0.42–0.46 from about 30 photons up.
+nanoBragg's PSF accounts for 0.146 of that (protocol §9); the remainder is not yet attributed.
+
+### mos010 shoebox datasets
+
+`make_sim_shoeboxes.py cut` in datsimx mode on laue.integrate's own reflection tables, so both methods integrate the same reflections at the same centroids, then `finalize` (jobs 62615665, 62615670):
+
+```
+make_sim_shoeboxes.py cut --datsimx-truth truth/shots_1_rank0.h5 --datsimx-noisy noisy/shots_1_rank0.h5 \
+    --geom noisy/geom_run1.expt --from-refl laue_dials_main/<integrated|integrated_all>.refl \
+    --from-expt laue_dials_main/poly_refined.expt --out shoeboxes/<lauemain_default|lauemain_all> --dmin 1.15
+make_sim_shoeboxes.py finalize --out shoeboxes/<...> --nproc 8
+```
+
+| dataset | shoeboxes | with any neighbour overlap | Anscombe stats (mean, var) |
+|---|---|---|---|
+| `shoeboxes/lauemain_default` | 60,015 | 7.1 % | 10.01, 3.48 |
+| `shoeboxes/lauemain_all` | 145,505 | 14.4 % | 9.75, 3.20 |
+
+21 × 21 px, counts float32 ADU as recorded (gain 0.7, ADC offset 10 ADU included), every pixel valid before overlap masking, `is_test` 10 % with seed 42.
+Predicted centroids sit a median 0.50 px from the truth centroids on each axis (pixel-centre convention: DIALS index + 0.5, `truth_table.py` index), 1.1 px in radius.
+`finalize` first wrote NaN Anscombe stats, because readout noise puts some float counts below zero; `_stats_from_memmap` now clamps at zero as the data modules do (commit `702083ce`, `tests/test_shoebox_stats_negative_counts.py`).
+`PolychromaticDataModule` loads `lauemain_default`: 43,273 train, 10,818 validation, all tensors finite.
