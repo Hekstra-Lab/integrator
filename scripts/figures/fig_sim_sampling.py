@@ -13,6 +13,7 @@ Data: `compare_sampling.py --patches`, pulled to
         python scripts/figures/fig_sim_sampling.py
 """
 
+import argparse
 from pathlib import Path
 
 import matplotlib
@@ -52,7 +53,7 @@ def draw(z, tag: str):
             a.grid(visible=False)
             if i == 0:
                 en, doms = settings[j]
-                a.set_title(f"{en} energies\n{doms} domains", fontsize=6)
+                a.set_title(f"{names[j]}\n{en} energies, {doms} domains", fontsize=5)
             if j == 0:
                 a.set_ylabel(f"rank {ranks[i]}\n{i_ref[i]:.3g} ph, {lam[i]:.3f} \\AA", fontsize=6)
             a.set_xlabel(f"sum {stack[i].sum():.3g}", fontsize=5)
@@ -62,13 +63,17 @@ def draw(z, tag: str):
 
 
 def main() -> None:
-    if not SRC.exists():
-        raise SystemExit(f"{SRC} is missing; copy it from the sampling_check output directory")
-    z = np.load(SRC)
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--src", type=Path, default=SRC)
+    ap.add_argument("--suffix", default="", help="appended to the output file names")
+    a = ap.parse_args()
+    if not a.src.exists():
+        raise SystemExit(f"{a.src} is missing; copy it from the sampling_check output directory")
+    z = np.load(a.src)
     OUT.mkdir(parents=True, exist_ok=True)
     for tag in sorted({k.split("_")[0] for k in z.files}):
         fig = draw(z, tag)
-        paths = figstyle.save(fig, OUT / f"sim_sampling_{tag.replace('.', 'p')}")
+        paths = figstyle.save(fig, OUT / f"sim_sampling_{tag.replace('.', 'p')}{a.suffix}")
         plt.close(fig)
         print("\n".join(str(p) for p in paths))
 

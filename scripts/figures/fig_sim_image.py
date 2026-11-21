@@ -29,6 +29,8 @@ LABELS = {
     "paper": "laue-dials paper sim\n(hkl_data shot 1, noisy)",
     "datsimx": "datsimx, paper-matched\n(noisy)",
     "truth": "datsimx\n(noiseless Bragg)",
+    "datsimx_nodiv": "datsimx, paper-matched\nno divergence (noisy)",
+    "datsimx_div": "datsimx, paper-matched\ndiv 0.1 mrad, 4 steps (noisy)",
 }
 
 
@@ -56,7 +58,7 @@ def main() -> None:
             a.set_yticks([])
             a.grid(visible=False)
             if row == 0:
-                a.set_title(LABELS.get(n.split("_")[0], n), fontsize=6)
+                a.set_title(LABELS.get(n, LABELS.get(n.split("_")[0], n)), fontsize=6)
             fig.colorbar(im, ax=a, shrink=0.8, label="photons / px" if j == len(names) - 1 else None)
         axes[row, 0].set_ylabel(f"whole detector\n{pool}x{pool} px means" if key == "pooled"
                                 else f"{crop}x{crop} px crop\nbeam centre + (500, 500) px", fontsize=6)
