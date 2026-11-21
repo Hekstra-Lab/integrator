@@ -34,6 +34,11 @@ model and compares it to the ground-truth footprint centroid computed from
 h_data/k_data/l_data. That closes the loop the lambda test leaves open: the
 lambda test validates the crystal, this validates crystal AND detector together,
 in pixels, against an answer that was never fitted.
+
+DATSIMX. With `--datsimx-shots SHOTS_H5` (default off) the crystal of still i is
+read from the datsimx shots file instead (`Umat/shot_<run>_<i>`, `Bmat/...`,
+same flat row-major layout), and the position check reads that file's
+h/k/l/wave maps. The check is what says whether datsimx shares the convention.
 """
 
 import argparse
@@ -48,11 +53,19 @@ RESID_CUT = 0.05
 SG = "P212121"   # DHFR, space group 19
 
 
-def read_UB(h5_path):
+def read_UB(h5_path, shot=None):
+    """U, B from a paper h5 (shot=None) or from shot `shot` of a datsimx shots file."""
+    sfx = "" if shot is None else f"/{shot}"
     with h5py.File(h5_path, "r") as f:
-        U = np.asarray(f["Umat"][()]).reshape(3, 3)
-        B = np.asarray(f["Bmat"][()]).reshape(3, 3)
+        U = np.asarray(f[f"Umat{sfx}"][()]).reshape(3, 3)
+        B = np.asarray(f[f"Bmat{sfx}"][()]).reshape(3, 3)
     return U, B
+
+
+def datsimx_shot(h5_path, n):
+    with h5py.File(h5_path, "r") as f:
+        names = sorted(f["sim_image"].keys())
+    return names[n - 1]
 
 
 def crystal_from_UB(U, B):
@@ -69,11 +82,12 @@ def crystal_from_UB(U, B):
                    space_group_symbol=SG), A
 
 
-def truth_centroids(h5_path, min_pix=200):
+def truth_centroids(h5_path, min_pix=200, shot=None):
     """hkl, mean lambda and footprint centroid in DIALS (fast, slow) pixels."""
+    sfx = "" if shot is None else f"/{shot}"
     with h5py.File(h5_path, "r") as f:
-        h = f["h_data"][()]; k = f["k_data"][()]
-        l = f["l_data"][()]; w = f["wave_data"][()]
+        h = f[f"h_data{sfx}"][()]; k = f[f"k_data{sfx}"][()]
+        l = f[f"l_data{sfx}"][()]; w = f[f"wave_data{sfx}"][()]
     hi, ki, li = np.round(h), np.round(k), np.round(l)
     res = np.maximum.reduce([abs(h - hi), abs(k - ki), abs(l - li)])
     ok = (res < RESID_CUT) & np.isfinite(h) & ~((hi == 0) & (ki == 0) & (li == 0))
@@ -91,7 +105,10 @@ def truth_centroids(h5_path, min_pix=200):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data-dir", required=True)
+    ap.add_argument("--data-dir", default=None, help="paper sims: directory of shot_1_NNNNN.h5")
+    ap.add_argument("--datsimx-shots", default=None,
+                    help="datsimx TRUTH shots_<run>_rank0.h5 (Umat, Bmat and maps per shot); default off")
+    ap.add_argument("--min-pix", type=int, default=200, help="smallest footprint in the position check")
     ap.add_argument("--imported", required=True, help="stills .expt from dials.import")
     ap.add_argument("--out", required=True)
     ap.add_argument("--check-shots", type=int, nargs="*", default=[1, 90, 180])
@@ -110,9 +127,14 @@ def main():
     print(f"beam.get_unit_s0() {np.asarray(beam.get_unit_s0(), float)}")
     print(f"beam.get_s0() {s0}  -> unit {us0}")
 
+    def source(n):
+        if args.datsimx_shots:
+            return args.datsimx_shots, datsimx_shot(args.datsimx_shots, n)
+        return os.path.join(args.data_dir, f"shot_1_{n:05d}.h5"), None
+
     for i, expt in enumerate(el):
         n = i + 1
-        U, B = read_UB(os.path.join(args.data_dir, f"shot_1_{n:05d}.h5"))
+        U, B = read_UB(*source(n))
         cr, A = crystal_from_UB(U, B)
         if i == 0:
             got = np.asarray(cr.get_A(), float).reshape(3, 3)
@@ -131,8 +153,8 @@ def main():
             continue
         expt = el[n - 1]
         panel = expt.detector[0]
-        H, lam_t, cf, cs, npix = truth_centroids(
-            os.path.join(args.data_dir, f"shot_1_{n:05d}.h5"))
+        path, shot = source(n)
+        H, lam_t, cf, cs, npix = truth_centroids(path, args.min_pix, shot)
         A = np.asarray(expt.crystal.get_A(), float).reshape(3, 3)
         q = H @ A.T
         n2 = (q * q).sum(1)
