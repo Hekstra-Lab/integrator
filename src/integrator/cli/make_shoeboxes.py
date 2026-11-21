@@ -229,7 +229,9 @@ def _stats_from_memmap(
         c = counts[i : i + chunk].astype(np.float64)
         m = masks[i : i + chunk]
         c = c * m
-        a = 2.0 * np.sqrt(c + 0.375)
+        # clamped as the data modules clamp before the same transform; float
+        # counts with readout noise (datsimx) go below zero, integer counts do not
+        a = 2.0 * np.sqrt(np.maximum(c, 0.0) + 0.375)
         sum_c += c.sum()
         sumsq_c += (c * c).sum()
         sum_a += a.sum()
