@@ -1,7 +1,11 @@
-# mos010_default: sim_qc_resp (svae, gate: responsibility, quasiconformal profile) on the datsimx mos010 run,
-# the DEFAULT laue.predict set (60,015), cut at laue.integrate's own reflections and centroids (docs/sim_truth.md).
-# Differs from configs/sim_profile_ablation/sim_qc_resp.yaml only in data_dir, beam_center
-# (dataset.yaml beam_center_px) and lambda_min/max (dataset.yaml, spectrum 1.02-1.18 A +- 0.01).
+# mos010_default: svae, gate: responsibility, learned_basis_profile, 25x25, on the datsimx mos010 run,
+# the DEFAULT laue.predict set (60,015 reflections), cut at laue.integrate's own reflections and centroids (docs/sim_truth.md).
+# From configs/poly/hewl1118_svae_gate_responsibility.yaml; differs in data_dir and the dataset's own
+# beam_center (dataset.yaml beam_center_px), lambda_min/max (spectrum 1.02-1.18 A +- 0.01) and Wilson
+# init_G/init_B (those of the earlier DHFR sim configs, same structure and brightness), plus
+# profile encoder output_activation: none (a final ReLU made x = 0 absorbing: svae_profile_encoder_dead)
+# and max_epochs 60 (the DHFR sim arms). intensity_variance stays at its default; score both estimators,
+# predict config from scripts/poly/rb_predict_config.py KEYS=both.
 mode: polychromatic
 integrator:
   name: svae
@@ -26,8 +30,8 @@ integrator:
     - L
     data_dim: 2d
     d: 1
-    h: 41
-    w: 41
+    h: 25
+    w: 25
     gate: responsibility
 optimizer:
   lr: 0.001
@@ -35,19 +39,13 @@ optimizer:
   lr_schedule: null
 surrogates:
   qp:
-    name: quasiconformal_profile
+    name: learned_basis_profile
     args:
+      latent_dim: 12
+      init_std: 0.5
+      prior_scale: 3.0
+      output_dim: 625
       input_dim: 32
-      output_dim: 1681
-      profile_shape:
-      - 1
-      - 41
-      - 41
-      beam_center:
-      - 2074.5
-      - 2181.5
-      lambda_min: 1.01
-      lambda_max: 1.19
   qbg:
     name: gamma
     args:
@@ -85,7 +83,7 @@ loss:
 data_loader:
   name: polychromatic_data
   args:
-    data_dir: /n/netscratch/hekstra_lab/Lab/laldama/sims/paper_full/mos010/shoeboxes/lauemain_default_41
+    data_dir: /n/netscratch/hekstra_lab/Lab/laldama/sims/paper_full/mos010/shoeboxes/lauemain_default_25
     batch_size: 512
     validation_split: 0.2
     num_workers: 8
@@ -95,7 +93,7 @@ data_loader:
     min_valid_pixels: 10
     transform: anscombe
     shoebox_file_names:
-      data_dir: /n/netscratch/hekstra_lab/Lab/laldama/sims/paper_full/mos010/shoeboxes/lauemain_default_41
+      data_dir: /n/netscratch/hekstra_lab/Lab/laldama/sims/paper_full/mos010/shoeboxes/lauemain_default_25
       counts: counts.npy
       masks: masks.npy
       reference: metadata.npy
@@ -120,8 +118,8 @@ encoders:
     data_dim: 2d
     encoder_out: 32
     input_shape:
-    - 41
-    - 41
+    - 25
+    - 25
     output_activation: none
 - name: intensity_encoder
   args:
