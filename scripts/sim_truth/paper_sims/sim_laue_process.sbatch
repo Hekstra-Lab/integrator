@@ -148,10 +148,16 @@ laue.predict "$OUT/poly_refined.expt" "$OUT/poly_refined.refl" \
   nproc="$NPROC" || exit 1
 fi
 
-if have "$OUT/integrated.mtz"; then echo "  [5b] skip (integrated.mtz)"; else
+# INTEGRATE_REFL=1 (default off) also writes integrated.refl through
+# output.reflections, and the step reruns until that file exists. The parameter
+# is in the laue-dials `integrator` branch and its clones, not in the `ld` env's
+# release, which writes only the MTZ.
+INTEGRATE_REFL="${INTEGRATE_REFL:-0}"
+refl_arg() { [[ "$INTEGRATE_REFL" == 1 ]] && echo "output.reflections=$1"; }
+refl_done() { [[ "$INTEGRATE_REFL" != 1 ]] || have "$1"; }
+if have "$OUT/integrated.mtz" && refl_done "$OUT/integrated.refl"; then echo "  [5b] skip (integrated.mtz)"; else
 echo "===== [5b] laue.integrate (the baseline arm) ====="
-# laue.integrate writes ONLY an unmerged MTZ -- there is no output.reflections
-# parameter. The MTZ carries H K L BATCH I SIGI xcal ycal wavelength BG SIGBG,
+# The MTZ carries H K L BATCH I SIGI xcal ycal wavelength BG SIGBG,
 # with BATCH = id + 1, i.e. the shot number, which is also the BATCH of the truth-mask sum table.
 # xcal/ycal are the predicted centroids, so footprints can be shared from it.
 # isigi_cutoff is left at its default 2.0: it is the threshold the profile model
@@ -160,6 +166,7 @@ echo "===== [5b] laue.integrate (the baseline arm) ====="
 laue.integrate "$OUT/poly_refined.expt" "$OUT/predicted.refl" \
   output.filename="$OUT/integrated.mtz" \
   output.log="$OUT/laue.integrate.log" \
+  $(refl_arg "$OUT/integrated.refl") \
   nproc="$NPROC" || exit 1
 fi
 

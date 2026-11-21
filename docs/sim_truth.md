@@ -185,3 +185,8 @@ Step 0 position check, true crystal against the truth centroids: median 1.18–1
 On the square Rayonix of the paper sims the two lengths are equal.
 The fix (`image_size[0]`) is commit `5de60e4` on branch `eiger-row-size` of a separate clone, `/n/lab_storage/hekstra_lab/people/aldama/software/laue-dials-eiger`; the lab checkout is not modified.
 Both laue sbatches take `LAUE_DIALS_SRC=<clone>/src`, which puts the clone first on `PYTHONPATH` and logs the module path and commit.
+
+After the fix, `laue.predict` ran on all 178 images (42 s), and integration and scoring finished in 11 min (jobs 62600223, 62600225, 62600227).
+Join: 88.3 % of 59,788 MTZ rows (default predictions) and 88.5 % of 144,780 (permissive), sign-flipped key 0.000; median $|\lambda_\text{mtz} - \lambda_\text{mean}|$ 0.0022 and 0.0036 Å.
+`laue.integrate`, per observation in photons, default set: dev median +39 at $I_\text{true} < 10$, $-71$ at 100–300, $-765$ at 1000–3000 (mean $(\hat I - I_\text{true}) / I_\text{true} = -0.43$), $-0.48$ above 3000.
+These are not read as laue-dials' accuracy until the PSF result in `sim_truth_protocol.md` §9 is in the reference: 14.6 % of every spot's photons are spread over the detector by nanoBragg's truncated PSF kernel, and a further 9.5 % lie 3–5 px from the source.

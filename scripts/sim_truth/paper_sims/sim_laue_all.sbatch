@@ -66,11 +66,16 @@ laue.predict "$OUT/poly_refined.expt" "$OUT/poly_refined.refl" \
   nproc="$NPROC" || exit 1
 fi
 
-if have "$OUT/integrated_all.mtz"; then echo "skip integrate_all"; else
+# INTEGRATE_REFL=1 (default off): also write integrated_all.refl, as in sim_laue_process.sbatch.
+INTEGRATE_REFL="${INTEGRATE_REFL:-0}"
+refl_arg() { [[ "$INTEGRATE_REFL" == 1 ]] && echo "output.reflections=$1"; }
+refl_done() { [[ "$INTEGRATE_REFL" != 1 ]] || have "$1"; }
+if have "$OUT/integrated_all.mtz" && refl_done "$OUT/integrated_all.refl"; then echo "skip integrate_all"; else
 echo "===== laue.integrate on the permissive set ====="
 laue.integrate "$OUT/poly_refined.expt" "$OUT/predicted_all.refl" \
   output.filename="$OUT/integrated_all.mtz" \
   output.log="$OUT/laue.integrate_all.log" \
+  $(refl_arg "$OUT/integrated_all.refl") \
   nproc="$NPROC" || exit 1
 fi
 
