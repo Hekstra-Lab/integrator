@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-309 scripts.
+310 scripts.
 
 ## Start here
 
@@ -214,6 +214,7 @@ per job, and it lives in the repo".
 | `sim_truth/score_against_truth.py` | Score an unmerged integrated MTZ against the per-reflection truth of a datsimx run. |
 | `sim_truth/simulate.sbatch` | Simulate Laue rows of a grid with datsimx: noiseless truth, a noisy copy, a truth table, a manifest. |
 | `sim_truth/truth_table.py` | Per-reflection truth from a datsimx `--noNoise --waveImg` run: one row per (shot, hkl). |
+| `sim_truth/window_capture.py` | Fraction of each reflection's true photons inside a square window, per window size. |
 
 ## laue-dials on the laue-dials paper simulations (as run, Oct-Nov 2026)
 
