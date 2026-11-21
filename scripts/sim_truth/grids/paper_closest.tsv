@@ -1,0 +1,8 @@
+# Closest datsimx emulation of the laue-dials paper sims (hkl_data: sim_laue.py --div 0.1 --divSteps 4 --mosSpread 0.1 --mosDoms 100 --enSteps=322).
+# Submit with SPEC=/n/holylabs/hekstra_lab/Users/laldama/data/spectra/e080_2.lam NOISE_TOOL=nanobragg NOISE_PSF_MM=0.0847
+# (e080_2.lam is the paper spectrum, dermen/e080_laue 9f0f5c7; PSF 0.1 mm * 75/88.54; --dist 169.8 gives the paper 0.44 mrad per pixel).
+# Not matched, no datsimx option: Rayonix detector model (Eiger emulated in pixel units) and profile="square" (datsimx uses gauss).
+# One test shot with and without the paper divergence, to measure its cost and its effect before the 180-shot runs.
+name	run	mos_spread	en_steps	mos_doms	xtal_size	numimg	test_shot	extra
+ref_nodiv_test	1	0.1	322	100	0.031	1	1	--dist 169.8
+ref_div_test	1	0.1	322	100	0.031	1	1	--dist 169.8 --div 0.1 --divSteps 4
