@@ -30,17 +30,17 @@
 set -uo pipefail
 
 S=/n/netscratch/hekstra_lab/Lab/laldama
-E=/n/lab_storage/hekstra_lab/people/aldama/micromamba/envs/ld
-OUT=$S/sim/laue180
+E="${LD_ENV:-/n/lab_storage/hekstra_lab/people/aldama/micromamba/envs/ld}"   # overridable, as sim_laue_process.sbatch
+OUT="${OUT:-$S/sim/laue180}"
 export PATH="$E/bin:$PATH"
 export HDF5_USE_FILE_LOCKING=FALSE PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 export VECLIB_MAXIMUM_THREADS=1 NUMEXPR_NUM_THREADS=1
 
-LAM_MIN=1.00
-LAM_MAX=1.20
-DMIN=1.15
-NPROC=16
+LAM_MIN="${LAM_MIN:-1.00}"
+LAM_MAX="${LAM_MAX:-1.20}"
+DMIN="${DMIN:-1.15}"
+NPROC="${NPROC:-16}"
 
 have() { [[ -s "$1" ]]; }
 cd "$OUT" || exit 1

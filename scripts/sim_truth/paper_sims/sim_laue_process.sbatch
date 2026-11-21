@@ -30,6 +30,12 @@
 # DMIN, NPROC. For datsimx output: LD_ENV=.../envs/integrator-cuda-dev, which
 # reads the NeXus masters (only CBF pixels need `ld`), and
 # ADD_S1=scripts/sim_truth/paper_sims/sim_add_s1.py.
+#
+# Step 0, datsimx only (runs when IMG_FILE is set and truth.expt is missing):
+# dials.import of the NeXus master IMG_FILE as stills, with REF_GEOM's beam and
+# detector and TRUSTED as the trusted range (datsimx masters declare (0,0)),
+# then sim_build_stills.py --datsimx-shots TRUTH_SHOTS attaches each shot's
+# true crystal and prints the position check. BUILD_STILLS is its path.
 #SBATCH -J sim_laue
 #SBATCH -c 16
 #SBATCH -p sapphire
@@ -63,7 +69,23 @@ DMIN="${DMIN:-1.15}"          # detector corner reaches ~1.20 A at the short-wav
 NPROC="${NPROC:-16}"
 
 have() { [[ -s "$1" ]]; }
+IMG_FILE="${IMG_FILE:-}"
+if [[ -n "$IMG_FILE" ]]; then mkdir -p "$OUT"; fi
 cd "$OUT" || exit 1
+
+if [[ -n "$IMG_FILE" ]]; then
+if have "$OUT/truth.expt"; then echo "  [0/5] skip (truth.expt)"; else
+echo "===== [0/5] datsimx: import stills, attach the true crystals ====="
+dials.import "$IMG_FILE" \
+  input.reference_geometry="${REF_GEOM:?REF_GEOM needed with IMG_FILE}" \
+  geometry.detector.panel.trusted_range="${TRUSTED:--1000,1000000}" \
+  convert_sequences_to_stills=True \
+  output.experiments="$OUT/imported.expt" output.log="$OUT/import.log" || exit 1
+$E/bin/python "${BUILD_STILLS:?BUILD_STILLS needed with IMG_FILE}" --imported "$OUT/imported.expt" \
+  --datsimx-shots "${TRUTH_SHOTS:?TRUTH_SHOTS needed with IMG_FILE}" --out "$OUT/truth.expt" \
+  --check-shots 1 90 180 --min-pix 50 || exit 1
+fi
+fi
 echo "===== sim laue-dials: $OUT  ($(laue.version 2>/dev/null | head -1)) ====="
 echo "lam=[$LAM_MIN,$LAM_MAX] d_min=$DMIN nproc=$NPROC"
 
