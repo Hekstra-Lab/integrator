@@ -141,3 +141,20 @@ At the paper's brightness the emulation gives the paper's spot count.
 `laue.index` is never run: `sim_build_stills.py` attaches each shot's true crystal from the h5 `Umat`, `Bmat` (checked against the truth centroids to a median 1.07 px), `sim_add_s1.py` adds the `s1` column `laue.index` would have, and `sim_laue_process.sbatch` runs `laue.find_spots` (gain 1.0, max separation 10) → `laue.optimize_indexing` (λ 1.00–1.20 Å, $d_\text{min}$ 1.15 Å) → `laue.refine` → `laue.predict` → `laue.integrate` into `sim/laue180/integrated.mtz`.
 `sim_laue_all.sbatch` repeats the prediction with `cutoff_log_probability=-20` into `integrated_all.mtz`, because the default keeps 392 of about 3,000 excited reflections per shot.
 `mos_laue.sh` ran `laue_process.sh` on the paper's three mosaicity sets into `sim_mos/`.
+
+## Divergence
+
+`paper_closest.tsv`, one shot at the paper settings (`e080_2.lam`, 322 energies, 100 domains, mosaic 0.1°, `--xtalSize 0.031`, `--dist 169.8`), with and without `--div 0.1 --divSteps 4`.
+`--divSteps 4` samples a 5 × 5 grid from −0.05 to +0.05 mrad and keeps the 13 directions inside 1.1 × the half-angle (`nanoBragg_beam.py`); without `--divSteps`, `--div` has no effect.
+
+| quantity | value |
+|---|---|
+| Bragg photons, no divergence / divergence | $4.753 \times 10^5$ / $4.756 \times 10^5$ |
+| per-reflection $\lvert\mathrm{dev}\rvert$, median / p95, 3,794 reflections with $I \ge 1$ | 0.0048 / 0.030 |
+| per-reflection $\lvert\mathrm{dev}\rvert$, median / p95, top 100 | 0.0029 / 0.024 |
+| profile L1, median, top 100 | 0.034 |
+| datsimx wall time per shot | 179 s / 2,292 s |
+
+The largest beam tilt, 0.05 mrad, moves a spot by 0.11 px at 169.8 mm, a tenth of the PSF FWHM.
+The full datasets (`paper_full.tsv`) are simulated without divergence.
+Figures: `docs/figures/sim/sim_image_paper_vs_datsimx.png`, `docs/figures/sim/sim_sampling_mos0p1_divergence.png`.

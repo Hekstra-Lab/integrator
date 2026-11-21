@@ -1,0 +1,9 @@
+# Full datasets: datsimx at the laue-dials paper settings, 180 still shots at 1 deg, one row per paper mosaicity (reference 0.1; mosaicity set 0.05, 0.25, 0.5).
+# Submit with SPEC=/n/holylabs/hekstra_lab/Users/laldama/data/spectra/e080_2.lam NOISE_TOOL=nanobragg NOISE_PSF_MM=0.0847
+# Same as the paper except: no divergence (0.1 mrad, 4 steps changes per-reflection sums by 0.48 % median at 12.8x the cost, paper_closest.tsv),
+# Eiger at 169.8 mm emulating the Rayonix at 0.44 mrad per pixel, and profile gauss (datsimx has no option for square).
+name	run	mos_spread	en_steps	mos_doms	xtal_size	numimg	test_shot	extra
+mos010	1	0.1	322	100	0.031	180	0	--dist 169.8
+mos005	1	0.05	322	100	0.031	180	0	--dist 169.8
+mos025	1	0.25	322	100	0.031	180	0	--dist 169.8
+mos050	1	0.5	322	100	0.031	180	0	--dist 169.8
