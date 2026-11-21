@@ -113,11 +113,13 @@ Reported per bin beside 5.1, so that a bias can be split into the part neighbour
 
 ### 5.9 Merged structure factors
 
+Computed for every method and for the references §7.2 and §7.3.
 After merging with careless under the pipeline's fixed settings: Pearson correlation and $R = \sum \lvert F - F_\text{true} \rvert / \sum F_\text{true}$ between merged $F$ and `ground_truth.mtz`, after one least-squares scale, by resolution shell, on reflections present in both.
 [to build]; careless runs through `scripts/poly/run_pipeline.py`.
 
 ### 5.10 Refinement
 
+Computed for every method and for the references §7.2 and §7.3.
 R-work and R-free from phenix against the merged data, starting from 7LVC, with R-free flags generated once per dataset and pinned for every method (`docs/reference_data.md`), averaged over careless merging seeds.
 Parsed by `integrator.utils.metrics`.
 [to build].
@@ -138,7 +140,22 @@ A method trained on the data (our integrator) uses the reflections `laue.predict
 
 $\hat I_r = \sum_p \tilde q_{r,p}\,(y_p - \tilde b_p) / \sum_p \tilde q_{r,p}^2$ over $P_r$, with $y_p = (c_p - a)/g$ and $\tilde b_p = (\mathrm{PSF} \ast b)_p$.
 It uses the true recorded profile and the true background, so it shows how far a method is from the estimate available with that knowledge; it is not a bound on precision.
+Its standard error is $\hat\sigma_r^2 = \sum_p \tilde q_{r,p}^2 v_p / (\sum_p \tilde q_{r,p}^2)^2$ with $v_p$ the pixel variance of §1.
 [to build].
+
+### 7.3 Truth intensities
+
+$\hat I_r = I_r$ for every observation, with $\hat\sigma_r$ taken from §7.2 so that merging weights are those a measurement would carry.
+It enters only §5.9 and §5.10: merged and refined through the same chain as the methods, it gives the result of that chain without measurement noise, which is limited by the merging model and by the difference between the generating structure factors and the refinement model.
+
+### 7.4 Reading the references
+
+On the same observations, through the same careless and phenix settings, averaged over merging seeds with pinned R-free flags:
+
+- the difference between §7.3 and §7.2 is the cost of the measurement noise to a method that integrates each observation separately;
+- the difference between §7.2 and a method is the most that better profiles and backgrounds can recover for such a method.
+
+Neither is a bound for a method that pools information across observations of one reflection or across neighbouring reflections, and a prior on the intensity can move merged statistics in either direction without changing the per-observation error; per-observation metrics (§5.1–5.3) are reported beside every merged result for that reason.
 
 ## 8. Reporting
 
