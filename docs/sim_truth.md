@@ -172,3 +172,16 @@ sbatch -p gpu -t 1-12:00:00 --mem=48G -c 4 --array=0 -o logs/sim_truth/paper_ful
 The noiseless background is one image per run (`truth/background_1.h5`): datsimx computes water and air scatter once, independent of the crystal, so shots differ in background only through the noise.
 
 Reference results on it, chained after the simulation: `paper_sims/sim_laue_process.sbatch` with `IMG_FILE`, `REF_GEOM`, `TRUTH_SHOTS`, `BUILD_STILLS`, `ADD_S1`, `LD_ENV=.../integrator-cuda-dev` (step 0 imports the master as stills and attaches each shot's true crystal; on a one-shot test the crystals sit a median 1.22 px from the truth centroids and the chain runs through `laue.refine`, while `laue.predict` needs more than one shot), then `paper_sims/sim_laue_all.sbatch` with the same `OUT`, then `score_against_truth.py` on `integrated.mtz` and `integrated_all.mtz` into `paper_full/mos010/scores_vs_truth.csv`.
+
+### mos010, first pass (20–21 Nov)
+
+Simulation: 180 shots in 4 h 16 min on one A100 (job 62513336).
+Step 0 position check, true crystal against the truth centroids: median 1.18–1.31 px, median $|\Delta\lambda|$ 0.00037–0.00039 Å (shots 1, 90, 180).
+`laue.find_spots`: 45–87 spots per image, median 67.
+`laue.refine`: 178 of 180 experiments refined (112 and 167 failed).
+
+`laue.predict` (laue-dials 0.5.1, branch `integrator`) returned no predictions on any of the 178 images, then raised `Unknown column 'rlp'` on the empty table.
+`predict.py:183` takes the mask row length as `image_size[1]`; `image_size` is (fast, slow), so on a non-square panel the flat mask index $x + 4362\,y$ runs past the 4148 × 4362 mask (380 of 6611 on-detector predictions on experiment 0), and the bare `except:` around it skips the image.
+On the square Rayonix of the paper sims the two lengths are equal.
+The fix (`image_size[0]`) is commit `5de60e4` on branch `eiger-row-size` of a separate clone, `/n/lab_storage/hekstra_lab/people/aldama/software/laue-dials-eiger`; the lab checkout is not modified.
+Both laue sbatches take `LAUE_DIALS_SRC=<clone>/src`, which puts the clone first on `PYTHONPATH` and logs the module path and commit.

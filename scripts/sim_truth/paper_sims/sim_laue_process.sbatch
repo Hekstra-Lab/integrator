@@ -49,6 +49,15 @@ E="${LD_ENV:-/n/lab_storage/hekstra_lab/people/aldama/micromamba/envs/ld}"
 OUT="${OUT:-$S/sim/laue180}"
 ADD_S1="${ADD_S1:-$S/sim_add_s1.py}"
 export PATH="$E/bin:$PATH"
+# LAUE_DIALS_SRC (default unset): a laue-dials src/ placed first on PYTHONPATH,
+# ahead of the env's editable install. Used for the Eiger runs, whose
+# non-square panel the installed predict.py indexes past the mask
+# (laue-dials-eiger, branch eiger-row-size). The module path is logged.
+if [[ -n "${LAUE_DIALS_SRC:-}" ]]; then
+  export PYTHONPATH="$LAUE_DIALS_SRC${PYTHONPATH:+:$PYTHONPATH}"
+  echo "laue_dials from: $("$E/bin/python" -c 'import laue_dials; print(laue_dials.__file__)')" \
+       "commit $(git -C "$LAUE_DIALS_SRC" rev-parse --short HEAD 2>/dev/null)"
+fi
 
 # numpy 2.x removed the binary mode of np.fromstring that dxtbx's
 # FormatCBFFull.get_raw_data still calls, so only the `ld` env (numpy 1.26.4)

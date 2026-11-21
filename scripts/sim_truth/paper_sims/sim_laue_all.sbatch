@@ -33,6 +33,15 @@ S=/n/netscratch/hekstra_lab/Lab/laldama
 E="${LD_ENV:-/n/lab_storage/hekstra_lab/people/aldama/micromamba/envs/ld}"   # overridable, as sim_laue_process.sbatch
 OUT="${OUT:-$S/sim/laue180}"
 export PATH="$E/bin:$PATH"
+# LAUE_DIALS_SRC (default unset): a laue-dials src/ placed first on PYTHONPATH,
+# ahead of the env's editable install. Used for the Eiger runs, whose
+# non-square panel the installed predict.py indexes past the mask
+# (laue-dials-eiger, branch eiger-row-size). The module path is logged.
+if [[ -n "${LAUE_DIALS_SRC:-}" ]]; then
+  export PYTHONPATH="$LAUE_DIALS_SRC${PYTHONPATH:+:$PYTHONPATH}"
+  echo "laue_dials from: $("$E/bin/python" -c 'import laue_dials; print(laue_dials.__file__)')" \
+       "commit $(git -C "$LAUE_DIALS_SRC" rev-parse --short HEAD 2>/dev/null)"
+fi
 export HDF5_USE_FILE_LOCKING=FALSE PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 export VECLIB_MAXIMUM_THREADS=1 NUMEXPR_NUM_THREADS=1
