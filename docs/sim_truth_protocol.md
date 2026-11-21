@@ -15,7 +15,7 @@ Each dataset is one row of `scripts/sim_truth/grids/paper_full.tsv`, under `/n/n
 | `truth/shots_1_rank0.h5:{h,k,l,wave}_data/<shot>` | per-pixel intensity-weighted average fractional $(h, k, l)$ and wavelength | — , Å |
 | `truth/background_1.h5:background` | noiseless background $b_p$, one image for all shots | photons |
 | `noisy/run_1_master.h5` | the data every method receives | ADU |
-| `truth/ground_truth.mtz` | structure factors of the simulated crystal (7LVC) | — |
+| `truth/ground_truth.mtz` | $F(+)$, $F(-)$: the amplitude array passed to the diffBragg kernel (`mx_simulate.py` writes the same object it simulates with) | — |
 | `truth/truth_reflections.csv` | per-reflection truth, §2 | photons |
 | `noisy/geom_run1.expt`, `truth/shots_1_rank0.h5:{Umat,Bmat}/<shot>` | detector, beam, true crystal per shot | — |
 
@@ -37,6 +37,8 @@ Write $P_r$ for that pixel set.
 | mixed fraction | $m_r = \sum_{p \in P_r} B_p \mathbb{1}[\rho_p > 0.25] / I_r$ | [implemented] column `mixed_0p25` |
 | truth wavelength | $\lambda_r = \sum_{p \in P_r} B_p \lambda_p / I_r$ | [implemented] column `lam_mean` |
 
+The true amplitudes $F_\text{true}(hkl)$ are `ground_truth.mtz`: mmtbx $F_\text{calc}$ from 7LVC ($k_\text{sol}$ 0.4, $B_\text{sol}$ 120 Å², Henke $f'$, $f''$) evaluated at one wavelength, datsimx's `ave_wave`, so the Bijvoet differences are the same at every wavelength of the spectrum.
+Per observation, $I_r = K_r \lvert F_\text{true}(hkl_r) \rvert^2$, where $K_r$ collects the spectrum weight at $\lambda_r$, the Lorentz and polarization factors, the solid angle and the crystal-size scale; datsimx writes no per-observation intensity, so $I_r$ is computed from the noiseless image.
 $I_r$ is the number of Bragg photons of the observation before noise; it includes the spectrum weight, Lorentz and polarization factors and the solid angle, which is the quantity an integration method estimates per observation.
 The maps hold intensity-weighted averages over all contributions to a pixel, so where two reflections contribute to one pixel the label names one of them; $\rho_p$ is large on such pixels and on a reflection's own far tails, so $m_r$ is an upper bound on the share of $I_r$ that rests on shared pixels.
 
