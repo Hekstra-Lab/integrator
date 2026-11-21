@@ -16,7 +16,9 @@ usage: python compare_sampling.py GRID.tsv ROOT [--ref-en 322 --ref-doms 100] [-
 Reads ROOT/<name>/truth for each grid row; writes ROOT/sampling_summary.csv and
 ROOT/sampling_reflections.csv. With --patches it also writes, per mosaic spread,
 PATCH x PATCH noiseless crops of every setting centred on the reference
-centroids of the reflections ranked RANKS by I_R (fig_sim_sampling.py draws them).
+centroids of the reflections ranked RANKS by I_R (fig_sim_sampling.py draws them),
+with a mask of the pixels whose true hkl is the target's and the number of
+distinct reflections in each crop.
 """
 
 from __future__ import annotations
@@ -156,10 +158,19 @@ def main():
             dump[f"{tag}_settings"] = np.array([[int(r["en_steps"]), int(r["mos_doms"])] for r in rows])
             h = PATCH // 2
             for r in rows:
-                b = np.pad(get(r)[0], h)
-                dump[f"{tag}_{r['name']}"] = np.stack([
-                    b[int(round(y)):int(round(y)) + PATCH, int(round(x)):int(round(x)) + PATCH]
-                    for x, y in zip(cr["x_cen"][pick], cr["y_cen"][pick])]).astype(np.float32)
+                bragg, key = get(r)[0], get(r)[1]
+                b, kp = np.pad(bragg, h), np.pad(key, h, constant_values=-1)
+                crops, own, nlab = [], [], []
+                for x, y, kk in zip(cr["x_cen"][pick], cr["y_cen"][pick], keys_r[pick]):
+                    sl = (slice(int(round(y)), int(round(y)) + PATCH), slice(int(round(x)), int(round(x)) + PATCH))
+                    crops.append(b[sl])
+                    own.append(kp[sl] == kk)          # pixels whose true hkl is the target's
+                    labs = np.unique(kp[sl][kp[sl] >= 0])
+                    nlab.append(len(labs))            # distinct reflections with Bragg photons in the crop
+                dump[f"{tag}_{r['name']}"] = np.stack(crops).astype(np.float32)
+                dump[f"{tag}_{r['name']}_own"] = np.stack(own)
+                dump[f"{tag}_{r['name']}_nlabels"] = np.array(nlab)
+            dump[f"{tag}_n_comp"] = cr["n_comp"][pick]
         np.savez_compressed(a.patches, **dump)
         print(f"wrote {a.patches}")
 

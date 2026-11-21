@@ -48,6 +48,10 @@ def draw(z, tag: str):
             a = axes[i, j]
             a.imshow(stack[i], cmap=figstyle.cmap(), origin="lower", vmin=0.0, vmax=vmax,
                      interpolation="nearest")
+            own_key = f"{tag}_{names[j]}_own"
+            if own_key in z.files:   # outline the pixels whose true hkl is the target's
+                a.contour(z[own_key][i].astype(float), levels=[0.5], colors="#d62728", linewidths=0.5,
+                          origin="lower")
             a.set_xticks([])
             a.set_yticks([])
             a.grid(visible=False)
@@ -56,7 +60,9 @@ def draw(z, tag: str):
                 a.set_title(f"{names[j]}\n{en} energies, {doms} domains", fontsize=5)
             if j == 0:
                 a.set_ylabel(f"rank {ranks[i]}\n{i_ref[i]:.3g} ph, {lam[i]:.3f} \\AA", fontsize=6)
-            a.set_xlabel(f"sum {stack[i].sum():.3g}", fontsize=5)
+            nl_key = f"{tag}_{names[j]}_nlabels"
+            extra = f", {int(z[nl_key][i])} refl in crop" if nl_key in z.files else ""
+            a.set_xlabel(f"sum {stack[i].sum():.3g}{extra}", fontsize=5)
     fig.suptitle(f"mosaic spread {tag.removeprefix('mos')}$^\\circ$, noiseless Bragg, 61 px crops",
                  fontsize=7)
     return fig
