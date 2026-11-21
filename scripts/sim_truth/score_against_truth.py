@@ -1,7 +1,12 @@
 """Score an unmerged integrated MTZ against the per-reflection truth of a datsimx run.
 
-Join: (shot, H, K, L), with shot = BATCH (laue.integrate writes BATCH = image id
-+ 1) and truth shot = the number in `shot_<run>_<NNNNN>`. The indices of both
+Join: (shot, H, K, L), with truth shot = the number in `shot_<run>_<NNNNN>`.
+laue.integrate writes BATCH = experiment id + 1, and the experiment ids are
+renumbered whenever `laue.refine` drops an experiment, so BATCH is the shot only
+until the first dropped one. --expt EXPT (the experiment list the MTZ was
+integrated from) maps each experiment to its frame in the image file instead,
+shot = imageset index + 1. Without --expt, shot = BATCH (the earlier behaviour,
+correct only when no experiment was dropped). The indices of both
 sides are in the true crystal's setting when the geometry was injected, so no
 asymmetric-unit mapping is applied. Two controls are printed beside the join:
 
@@ -61,6 +66,8 @@ def main():
     ap.add_argument("--lam-hi", type=float, default=1.165)
     ap.add_argument("--max-mixed", type=float, default=0.05)
     ap.add_argument("--out", default="scores.csv")
+    ap.add_argument("--expt", default=None,
+                    help="experiment list of the MTZ; maps BATCH to the image-file frame (default: shot = BATCH)")
     ap.add_argument("--joined-out", default=None, help="append the joined rows here (default: not written)")
     a = ap.parse_args()
 
@@ -69,6 +76,15 @@ def main():
     m = rs.read_mtz(a.mtz).reset_index()
     hkl = m[["H", "K", "L"]].to_numpy().astype(np.int64)
     batch = m["BATCH"].to_numpy().astype(np.int64)
+    if a.expt:
+        from dxtbx.model.experiment_list import ExperimentListFactory
+
+        el = ExperimentListFactory.from_json_file(a.expt, check_format=False)
+        frame = np.array([e.imageset.indices()[0] for e in el], dtype=np.int64)
+        assert batch.min() >= 1 and batch.max() <= len(frame), "BATCH outside the experiment list"
+        moved = int((frame + 1 != np.arange(1, len(frame) + 1)).sum())
+        print(f"--expt: {len(frame)} experiments, {moved} with frame + 1 != id + 1")
+        batch = frame[batch - 1] + 1
 
     tk = key(t["shot_n"].to_numpy(), t["h"].to_numpy(), t["k"].to_numpy(), t["l"].to_numpy())
     mk = key(batch, hkl[:, 0], hkl[:, 1], hkl[:, 2])

@@ -27,6 +27,19 @@ runs the integrator are different (see the dhfr_nanobragg_simulation notes):
     finalize  integrator env: neighbour-overlap masking, stats, concentration.npy,
               dataset.yaml (with a top-level `physics` block copied from physics.yaml)
 
+DATSIMX (default off). `cut --datsimx-truth TRUTH_SHOTS --datsimx-noisy
+NOISY_SHOTS --geom GEOM_EXPT` reads a datsimx run instead of CBFs: shot i is
+`sim_image/shot_<run>_<i>` of the NOISY shots file (float32 ADU, ADC offset
+and gain as simulated, stored as float32 in counts.npy), the crystal is
+`Umat`, `Bmat`, `mos_spread` of the TRUTH shots file, and detector and beam
+come from GEOM_EXPT (the run's `geom_run<run>.expt`). Every pixel is valid,
+as in the laue-dials chain (trusted range -1000..1e6), since readout noise
+makes a few pixels below zero. With `--from-refl`, pass `--from-expt` too
+(the experiment list the table was integrated from): the table's `id` indexes
+that list, which `laue.refine` renumbers when it drops an experiment, so
+image_num is taken from each experiment's frame in the image file.
+`--data-dir` is then not used.
+
 Example:
     micromamba run -n ld python make_sim_shoeboxes.py cut --data-dir DATA --out OUT
     micromamba run -n integrator-cuda-dev python make_sim_shoeboxes.py finalize --out OUT
@@ -73,7 +86,7 @@ class _ReflSet:
         self.s1 = s1
 
 
-def _refl_sets_by_image(refl_path: str, cell: np.ndarray) -> dict:
+def _refl_sets_by_image(refl_path: str, cell: np.ndarray, expt_path: str | None = None) -> dict:
     """Group a DIALS reflection table into one `_ReflSet` per image.
 
     `id` is the experiment index and the shots are named 1-based, so
@@ -87,6 +100,12 @@ def _refl_sets_by_image(refl_path: str, cell: np.ndarray) -> dict:
 
     refls = flex.reflection_table.from_file(refl_path)
     ids = refls["id"].as_numpy_array()
+    image_of_id = None
+    if expt_path:  # id -> frame in the image file, + 1
+        from dxtbx.model.experiment_list import ExperimentListFactory
+
+        el = ExperimentListFactory.from_json_file(expt_path, check_format=False)
+        image_of_id = {k: int(e.imageset.indices()[0]) + 1 for k, e in enumerate(el)}
     hkl = np.asarray(refls["miller_index"], dtype=np.int64).reshape(-1, 3)
     xy = refls["xyzcal.px"].as_numpy_array()[:, :2]
     lam = (refls["wavelength"].as_numpy_array() if "wavelength" in refls
@@ -103,7 +122,7 @@ def _refl_sets_by_image(refl_path: str, cell: np.ndarray) -> dict:
     out = {}
     for i in np.unique(ids):
         m = ids == i
-        out[int(i) + 1] = _ReflSet(
+        out[image_of_id[int(i)] if image_of_id else int(i) + 1] = _ReflSet(
             hkl[m], xy[m], d[m], lam[m], nh[m], s1[m]
         )
     print(f"{len(refls):,} reflections over {len(out)} images from {refl_path}")
@@ -125,34 +144,63 @@ def cut(args):
     from numpy.lib.format import open_memmap
 
     predict_laue = None if args.from_refl else _load_predictor().predict_laue
-    data = Path(args.data_dir)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    shots = sorted(data.glob(f"{args.prefix}*.cbf"))
+    n = args.size
+    datsimx = bool(args.datsimx_truth)
+    if datsimx:
+        from dxtbx.model.experiment_list import ExperimentListFactory
+
+        assert args.datsimx_noisy and args.geom, "--datsimx-truth needs --datsimx-noisy and --geom"
+        assert not args.from_refl or args.from_expt, "--from-refl on datsimx needs --from-expt"
+        geom = ExperimentListFactory.from_json_file(args.geom, check_format=False)[0]
+        with h5py.File(args.datsimx_truth, "r") as f:
+            shots = sorted(f["sim_image"].keys())
+        data = Path(args.datsimx_noisy).parent
+    else:
+        assert args.data_dir, "--data-dir is required without --datsimx-truth"
+        data = Path(args.data_dir)
+        shots = sorted(data.glob(f"{args.prefix}*.cbf"))
     if args.max_images:
         shots = shots[: args.max_images]
-    n = args.size
+
+    def crystal(shot):
+        """(image_num, U, B, mosaic spread as stored) of one shot."""
+        if datsimx:
+            with h5py.File(args.datsimx_truth, "r") as f:
+                return (int(shot.rsplit("_", 1)[1]), f[f"Umat/{shot}"][()].reshape(3, 3),
+                        f[f"Bmat/{shot}"][()].reshape(3, 3), float(f[f"mos_spread/{shot}"][()]))
+        with h5py.File(shot.with_suffix(".h5"), "r") as f:
+            return (int(shot.stem.split("_")[-1]), f["Umat"][()].reshape(3, 3),
+                    f["Bmat"][()].reshape(3, 3), float(f["mos_spread"][()]))
+
+    def models(shot):
+        if datsimx:
+            return geom.detector, geom.beam
+        img = dxtbx.load(str(shot))
+        return img.get_detector(), img.get_beam()
+
+    def pixels(shot):
+        if datsimx:
+            with h5py.File(args.datsimx_noisy, "r") as f:
+                return f[f"sim_image/{shot}"][()].astype(np.float32)
+        return dxtbx.load(str(shot)).get_raw_data().as_numpy_array()
+
+    def label(shot):
+        return shot if datsimx else shot.name
 
     refl_sets = None
     if args.from_refl:
         # the cell is only used to recompute d, and is orthorhombic here
-        import h5py as _h5
-
-        with _h5.File(shots[0].with_suffix(".h5"), "r") as f:
-            B0 = f["Bmat"][()].reshape(3, 3)
+        B0 = crystal(shots[0])[2]
         cell0 = np.array([1.0 / B0[0, 0], 1.0 / B0[1, 1], 1.0 / B0[2, 2]])
-        refl_sets = _refl_sets_by_image(args.from_refl, cell0)
+        refl_sets = _refl_sets_by_image(args.from_refl, cell0, args.from_expt)
 
     per_image = []
-    for cbf in shots:
-        image_num = int(cbf.stem.split("_")[-1])
-        with h5py.File(cbf.with_suffix(".h5"), "r") as f:
-            U = f["Umat"][()].reshape(3, 3)
-            B = f["Bmat"][()].reshape(3, 3)
-            mos = float(f["mos_spread"][()])
-        img = dxtbx.load(str(cbf))
-        panel = img.get_detector()[0]
-        beam = img.get_beam()
+    for shot in shots:
+        image_num, U, B, mos = crystal(shot)
+        detector, beam = models(shot)
+        panel = detector[0]
         s0_hat = -np.asarray(beam.get_sample_to_source_direction())
         pix0 = np.asarray(panel.get_origin())
         fdet, sdet = np.asarray(panel.get_fast_axis()), np.asarray(panel.get_slow_axis())
@@ -160,18 +208,19 @@ def cut(args):
         if refl_sets is not None:
             ref = refl_sets.get(image_num)
             if ref is None:
-                print(f"{cbf.name}: no reflections in the table, skipped")
+                print(f"{label(shot)}: no reflections in the table, skipped")
                 continue
         else:
             ref = predict_laue(
                 U @ B, s0_hat, args.lambda_min, args.lambda_max, args.dmin,
                 pix0, fdet, sdet, panel.get_pixel_size()[0], n_fast, n_slow,
             )
-        per_image.append(dict(cbf=cbf, image_num=image_num, U=U, B=B, mos=mos, ref=ref))
-        print(f"{cbf.name}: {len(ref.hkl)} reflections")
+        per_image.append(dict(shot=shot, image_num=image_num, U=U, B=B, mos=mos, ref=ref))
+        print(f"{label(shot)}: {len(ref.hkl)} reflections")
 
     n_total = sum(len(p["ref"].hkl) for p in per_image)
-    counts_mm = open_memmap(out / "counts.npy", mode="w+", dtype=np.int32, shape=(n_total, n * n))
+    counts_dtype = np.float32 if datsimx else np.int32
+    counts_mm = open_memmap(out / "counts.npy", mode="w+", dtype=counts_dtype, shape=(n_total, n * n))
     masks_mm = open_memmap(out / "masks.npy", mode="w+", dtype=np.bool_, shape=(n_total, n * n))
     cols: dict[str, list] = {k: [] for k in (
         "refl_ids", "image_num", "H", "K", "L", "d", "wavelength", "n_harmonics",
@@ -185,13 +234,13 @@ def cut(args):
     border = np.ones((n, n), dtype=bool)
     border[2:-2, 2:-2] = False
     for p in per_image:
-        image = dxtbx.load(str(p["cbf"])).get_raw_data().as_numpy_array()
+        image = pixels(p["shot"])
         ref = p["ref"]
         for j in range(len(ref.hkl)):
             fx, sy = ref.xy[j]
             x0, x1, y0, y1 = _window(int(np.floor(fx)), int(np.floor(sy)), n, image.shape[1], image.shape[0])
             box = image[y0:y1, x0:x1]
-            valid = box >= 0
+            valid = np.isfinite(box) if datsimx else box >= 0
             counts_mm[row] = np.where(valid, box, 0).reshape(-1)
             masks_mm[row] = valid.reshape(-1)
             # A crude summation estimate, only so that columns other code expects exist.
@@ -214,7 +263,7 @@ def cut(args):
             cols["background.sum.variance"].append(max(bg * n_valid, 1.0))
             cols["panel"].append(0); cols["flags"].append(0)
             row += 1
-        print(f"cut {p['cbf'].name}: rows up to {row}")
+        print(f"cut {label(p['shot'])}: rows up to {row}")
     counts_mm.flush(); masks_mm.flush()
 
     rng = np.random.default_rng(42)
@@ -231,13 +280,15 @@ def cut(args):
         mos_spread_deg=np.array([p["mos"] for p in per_image]),
     )
 
-    img = dxtbx.load(str(per_image[0]["cbf"]))
-    panel, beam = img.get_detector()[0], img.get_beam()
+    detector, beam = models(per_image[0]["shot"])
+    panel = detector[0]
     B0 = per_image[0]["B"]
     physics = {
         "source": str(data),
         "orientation_file": "crystal_models.npz",
         "truth": "orientation and cell from the simulation .h5, not from indexing",
+        **({"datsimx": {"truth_shots": str(args.datsimx_truth), "noisy_shots": str(args.datsimx_noisy),
+                        "geom": str(args.geom), "counts": "ADU, float32, ADC offset included"}} if datsimx else {}),
         "detector": {
             "pix0_mm": [float(v) for v in panel.get_origin()],
             "fast": [float(v) for v in panel.get_fast_axis()],
@@ -321,7 +372,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("cut")
-    c.add_argument("--data-dir", required=True)
+    c.add_argument("--data-dir", default=None, help="CBF + h5 directory (not used with --datsimx-truth)")
     c.add_argument("--out", required=True)
     c.add_argument("--prefix", default="shot_1_")
     c.add_argument("--max-images", type=int, default=0)
@@ -337,6 +388,11 @@ def main():
         "DIALS reflection table instead of predicting them from the truth; "
         "use laue.integrate's integrated.refl to share footprints with it",
     )
+    c.add_argument("--from-expt", default=None,
+                   help="experiment list of --from-refl; maps its id to the image-file frame (default: id + 1)")
+    c.add_argument("--datsimx-truth", default=None, help="datsimx TRUTH shots_<run>_rank0.h5 (default off)")
+    c.add_argument("--datsimx-noisy", default=None, help="datsimx NOISY shots_<run>_rank0.h5")
+    c.add_argument("--geom", default=None, help="the datsimx run's geom_run<run>.expt")
     f = sub.add_parser("finalize")
     f.add_argument("--out", required=True)
     f.add_argument("--size", type=int, default=21)
