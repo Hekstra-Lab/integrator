@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-310 scripts.
+311 scripts.
 
 ## Start here
 
@@ -289,6 +289,7 @@ per job, and it lives in the repo".
 | `analyze_bbox_sizes.py` | Shoebox size vs clipping-loss tradeoff analysis. |
 | `analyze_detection.py` | Analyze zero-inflated model detection probabilities. |
 | `anomalous_map.py` | Compute observed anomalous difference map from a refinement model. |
+| `architecture_report.py` | Architecture of a config as training builds it: modules, parameter counts, and whether each gets gradient. |
 | `bg_prior_diagnostic.py` | Diagnostic for per-bin background priors. |
 | `bounded_k_test.py` | Test sigmoid-bounded k parameterization. |
 | `build_correlation_table.py` | Build a per-epoch table of training-time metrics + downstream metrics, |
