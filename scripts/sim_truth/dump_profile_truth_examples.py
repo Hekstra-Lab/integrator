@@ -35,6 +35,23 @@ median b_true, median and mean db, sd db, mean db / b_true and median dI_bg.
 It also prints sum(counts) / sum(sim_image + background) over all windows,
 which is 1 when the noisy images are Poisson draws of exactly those rates.
 
+With --fit-out, every method's profile p (and the truth profile, as method
+`truth_profile`: `sim_image * own` on the window, normalised) is put through
+ONE estimator, the profile fit with the true background,
+
+    I_fit = sum p (c - b_true) / sum p^2,
+
+on the stored counts c, so methods differ only in p. Against the truth rates
+lam = sim_image + background on the window it also computes the expectation
+E = sum p (lam - b_true) / sum p^2 and variance V = sum p^2 lam / (sum p^2)^2,
+the Hellinger distance sqrt(1 - sum sqrt(p p_true)) from the truth profile,
+and I_own = sum p (c - b) / sum p^2 with the method's own background b. Per
+method, per bin of i_true and per resolution shell, the long CSV holds n,
+sum_ratio = sum I_fit / sum i_true, rel_dev_mean (rows with i_true >= 1),
+dev_sd of I_fit - i_true, mean E / i_true, median sqrt(V), median of
+V_truth_profile / V (the efficiency of p relative to the truth profile), mean
+Hellinger and sum_ratio_own.
+
 Over every in-domain reflection it also writes, per arm and per bin of
 i_true, the median of n_eff = 1 / sum(p^2) of `qp_mean` beside the median
 of the truth table's own `n_eff`, as a long CSV (--stats-out).
@@ -60,6 +77,91 @@ def key(shot, h, k, l):
     return (((np.asarray(shot, np.int64) * 1024 + (h + 256)) * 1024 + (k + 256)) * 1024 + (l + 256))
 
 
+def fit_test(a, md, counts, side, rid, shot, H, K, L, i_true, dom, d_all, truth_dir, profiles) -> None:
+    """The fixed-estimator profile test of --fit-out; see the module docstring."""
+    import sys
+
+    import h5py
+    import pandas as pd
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from score_against_truth import D_EDGES
+
+    n = len(rid)
+    x0 = np.asarray(md["bbox.0"]).astype(np.int64)
+    y0 = np.asarray(md["bbox.2"]).astype(np.int64)
+    dy, dx = np.meshgrid(np.arange(side), np.arange(side), indexing="ij")
+    names = ["truth_profile"] + list(profiles)
+    res = {m: {k: np.full(n, np.nan) for k in ("fit", "E", "V", "hel", "own")} for m in names}
+    with h5py.File(truth_dir / f"background_{a.run}.h5", "r") as fb:
+        bg_img = fb["background"][()]
+    with h5py.File(truth_dir / f"shots_{a.run}_rank0.h5", "r") as f:
+        for sh in np.unique(shot):
+            sel = np.flatnonzero((shot == sh) & dom)
+            if not len(sel):
+                continue
+            nm = f"shot_{a.run}_{sh:05d}"
+            rows = (y0[sel, None, None] + dy).reshape(len(sel), -1)
+            cols = (x0[sel, None, None] + dx).reshape(len(sel), -1)
+            img = f[f"sim_image/{nm}"][()]
+            bragg = img[rows, cols].astype(np.float64)
+            with np.errstate(invalid="ignore"):
+                own = np.ones_like(bragg, dtype=bool)
+                for c, ref in zip("hkl", (H, K, L)):
+                    own &= np.rint(f[f"{c}_data/{nm}"][()][rows, cols]) == ref[sel, None]
+            bg = bg_img[rows, cols].astype(np.float64)
+            b_true = bg.mean(1, keepdims=True)
+            lam = bragg + bg
+            c = np.asarray(counts[np.sort(sel)], dtype=np.float64)[np.argsort(np.argsort(sel))]
+            pt = bragg * own
+            pt = pt / np.maximum(pt.sum(1, keepdims=True), 1e-30)
+            for m in names:
+                if m == "truth_profile":
+                    P, bm = pt, np.full(len(sel), np.nan)
+                else:
+                    P = profiles[m][0][sel].astype(np.float64)
+                    bm = profiles[m][1][sel]
+                ok = np.isfinite(P).all(1)
+                P = np.where(np.isfinite(P), P, 0.0)
+                P = P / np.maximum(P.sum(1, keepdims=True), 1e-30)
+                s2 = np.maximum((P ** 2).sum(1), 1e-30)
+                r = res[m]
+                r["fit"][sel] = np.where(ok, (P * (c - b_true)).sum(1) / s2, np.nan)
+                r["E"][sel] = np.where(ok, (P * (lam - b_true)).sum(1) / s2, np.nan)
+                r["V"][sel] = np.where(ok, (P ** 2 * lam).sum(1) / s2 ** 2, np.nan)
+                r["hel"][sel] = np.where(ok, np.sqrt(np.clip(1 - np.sqrt(P * pt).sum(1), 0, None)), np.nan)
+                r["own"][sel] = np.where(ok, (P * (c - bm[:, None])).sum(1) / s2, np.nan)
+    vt = res["truth_profile"]["V"]
+    out_rows = []
+    for m in names:
+        r = res[m]
+        bins = [("i_true", lo, hi, (i_true >= lo) & (i_true < hi)) for lo, hi in zip(EDGES[:-1], EDGES[1:])]
+        bins += [("d", d_lo, d_hi, (d_all < d_hi) & (d_all >= d_lo)) for d_hi, d_lo in zip(D_EDGES[:-1], D_EDGES[1:])]
+        bins += [("all", 0, np.inf, np.ones(n, bool))]
+        for kind, lo, hi, s in bins:
+            s = s & dom & np.isfinite(r["fit"])
+            if s.sum() < 10:
+                continue
+            pos = s & (i_true >= 1)
+            own_ok = s & np.isfinite(r["own"])
+            out_rows.append(dict(
+                method=m, dataset=a.dataset, bin_kind=kind, lo=lo, hi=hi, n=int(s.sum()),
+                sum_ratio=float(r["fit"][s].sum() / i_true[s].sum()),
+                rel_dev_mean=float(((r["fit"][pos] - i_true[pos]) / i_true[pos]).mean()) if pos.sum() >= 10 else np.nan,
+                dev_sd=float((r["fit"][s] - i_true[s]).std()),
+                expected_ratio_mean=float((r["E"][pos] / i_true[pos]).mean()) if pos.sum() >= 10 else np.nan,
+                sigma_median=float(np.median(np.sqrt(r["V"][s]))),
+                efficiency_median=float(np.median(vt[s] / r["V"][s])),
+                hellinger_mean=float(r["hel"][s].mean()),
+                sum_ratio_own=float(r["own"][own_ok].sum() / i_true[own_ok].sum()) if own_ok.sum() >= 10 else np.nan))
+        s = dom & np.isfinite(r["fit"])
+        print(f"fit {m}: n {s.sum():,}; sum I_fit / sum i_true {r['fit'][s].sum() / i_true[s].sum():.4f}; "
+              f"sd(I_fit - i_true) {(r['fit'][s] - i_true[s]).std():.1f}; median efficiency vs truth profile "
+              f"{np.median(vt[s] / r['V'][s]):.3f}; mean Hellinger {r['hel'][s].mean():.3f}")
+    pd.DataFrame(out_rows).to_csv(a.fit_out, mode="a", header=not os.path.exists(a.fit_out), index=False)
+    print(f"appended {len(out_rows)} rows to {a.fit_out}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("arms", nargs="+", help="name=parquet path or glob (the flushed parts of one export)")
@@ -70,6 +172,7 @@ def main() -> None:
     ap.add_argument("--dataset", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--stats-out", default=None)
+    ap.add_argument("--fit-out", default=None, help="append the fixed-estimator profile test here (long CSV)")
     ap.add_argument("--bg-out", default=None, help="append the background comparison here (long CSV)")
     ap.add_argument("--laue-profiles", default=None, help="laue_profiles.py npz of the same prediction set")
     ap.add_argument("--targets", default="3,10,30,100,300,1000,3000")
@@ -189,8 +292,18 @@ def main() -> None:
             print(f"{name}: background db median {np.median(db[dm]):+.3f} photons/px, mean db/b_true "
                   f"{(db[dm] / bt[dm]).mean():+.4f}, median dI_bg {np.median(dI[dm]):+.1f} photons")
 
+    fit_profiles = {}
+
     def add(name, prof_all, ids, gate_all=None, bg_all=None):
         """Store the picks' profile (and gate) and the n_eff rows of one method."""
+        if a.fit_out:
+            ix = pd.Index(rid).get_indexer(ids)
+            P = np.full((len(rid), side * side), np.nan, dtype=np.float32)
+            P[ix[ix >= 0]] = prof_all[ix >= 0]
+            B = np.full(len(rid), np.nan)
+            if bg_all is not None:
+                B[ix[ix >= 0]] = np.asarray(bg_all, float)[ix >= 0]
+            fit_profiles[name] = (P, B)
         pos = pd.Index(ids).get_indexer(rid[pick])
         if (pos < 0).any():
             raise SystemExit(f"{name}: {int((pos < 0).sum())} picked reflections missing")
@@ -246,6 +359,8 @@ def main() -> None:
     print("truth n_eff of the picks: " + ", ".join(f"{v:.1f}" for v in n_eff_true[pick]))
     np.savez_compressed(a.out, **out)
     print("->", a.out)
+    if a.fit_out:
+        fit_test(a, md, counts, side, rid, shot, H, K, L, i_true, dom, d_all, truth_dir, fit_profiles)
     if a.bg_out and bg_rows:
         pd.DataFrame(bg_rows).to_csv(a.bg_out, mode="a", header=not os.path.exists(a.bg_out), index=False)
         print(f"appended {len(bg_rows)} rows to {a.bg_out}")
