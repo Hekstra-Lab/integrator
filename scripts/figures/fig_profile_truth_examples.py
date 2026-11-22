@@ -14,7 +14,8 @@ Two figures per dataset:
 - **gates**: the counts; the true signal fraction, the expected rate of this
   reflection over the expected rate of everything on that pixel,
   `sim_image * own / (sim_image + background)`, which is the quantity
-  `signal_prob` estimates; then each arm's `signal_prob`. All on the fixed
+  `signal_prob` estimates; then each arm's `signal_prob` (laue.integrate,
+  which has no gate, is left out). All on the fixed
   range 0 to 1, with the sum over the window in the corner.
 
 A third figure draws, per bin of $I_\\text{true}$, the median $n_\\text{eff}$
@@ -86,6 +87,7 @@ def draw_profiles(b, arms, out: Path) -> None:
 
 def draw_gates(b, arms, out: Path) -> None:
     n = len(b["i_true"])
+    arms = [a for a in arms if f"{a}_gate" in b]
     cols = ["counts", "true signal fraction"] + [f"{a} gate" for a in arms]
     fig, axes = plt.subplots(n, len(cols), squeeze=False, layout="constrained",
                              figsize=figstyle.figsize("full", aspect=n / len(cols) * 1.08))

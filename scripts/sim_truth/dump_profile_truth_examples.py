@@ -17,7 +17,11 @@ model read):
   * `true_profile`, `bragg * own` divided by its sum;
   * `background`, the `background` image of the background file on the window;
   * per arm, `qp_mean` and `signal_prob` from that arm's prediction parquet
-    (`rb_predict_config.py KEYS=both`), joined on `refl_ids`.
+    (`rb_predict_config.py KEYS=both`), joined on `refl_ids`;
+  * with --laue-profiles, laue.integrate's fitted profile on the same window
+    (`profile_box` of `laue_profiles.py`), as method `laue_integrate`, joined
+    on (image_num, h, k, l); it has no gate. Its window origin (`box_x0`,
+    `box_y0`) is checked against the shoebox `bbox`.
 
 Over every in-domain reflection it also writes, per arm and per bin of
 i_true, the median of n_eff = 1 / sum(p^2) of `qp_mean` beside the median
@@ -54,6 +58,7 @@ def main() -> None:
     ap.add_argument("--dataset", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--stats-out", default=None)
+    ap.add_argument("--laue-profiles", default=None, help="laue_profiles.py npz of the same prediction set")
     ap.add_argument("--targets", default="3,10,30,100,300,1000,3000")
     ap.add_argument("--lam-lo", type=float, default=1.035)
     ap.add_argument("--lam-hi", type=float, default=1.165)
@@ -118,19 +123,16 @@ def main() -> None:
     out["true_profile"] = tp / np.maximum(tp.sum(axis=(1, 2), keepdims=True), 1e-30)
 
     rows = []
-    for spec in a.arms:
-        name, path = spec.split("=", 1)
-        df = pl.read_parquet(path, columns=["refl_ids", "qp_mean", "signal_prob"])
-        ids = df["refl_ids"].to_numpy().astype(np.int64)
+
+    def add(name, prof_all, ids, gate_all=None):
+        """Store the picks' profile (and gate) and the n_eff rows of one method."""
         pos = pd.Index(ids).get_indexer(rid[pick])
         if (pos < 0).any():
-            raise SystemExit(f"{name}: {int((pos < 0).sum())} picked reflections missing from {path}")
-        qp = np.stack(df["qp_mean"].to_numpy()) if df["qp_mean"].dtype != pl.Array else df["qp_mean"].to_numpy()
-        qp = np.asarray(qp, dtype=np.float64).reshape(len(ids), -1)
-        gate = np.asarray(np.stack(df["signal_prob"].to_numpy()), dtype=np.float64).reshape(len(ids), -1)
-        out[f"{name}_profile"] = qp[pos].reshape(-1, side, side)
-        out[f"{name}_gate"] = gate[pos].reshape(-1, side, side)
-        neff = 1.0 / np.sum(qp ** 2, axis=1)
+            raise SystemExit(f"{name}: {int((pos < 0).sum())} picked reflections missing")
+        out[f"{name}_profile"] = prof_all[pos].reshape(-1, side, side)
+        if gate_all is not None:
+            out[f"{name}_gate"] = gate_all[pos].reshape(-1, side, side)
+        neff = 1.0 / np.sum(prof_all ** 2, axis=1)
         at = pd.Index(rid).get_indexer(ids)
         sel = (at >= 0)
         it, nt, dm = i_true[at[sel]], n_eff_true[at[sel]], dom[at[sel]]
@@ -141,7 +143,34 @@ def main() -> None:
                 continue
             rows.append(dict(method=name, dataset=a.dataset, i_true_lo=lo, i_true_hi=hi, n=int(s.sum()),
                              n_eff_model_median=float(np.median(nm[s])), n_eff_true_median=float(np.median(nt[s]))))
-        print(f"{name}: {len(ids):,} predictions; picked n_eff " + ", ".join(f"{v:.1f}" for v in neff[pos]))
+        print(f"{name}: {len(ids):,} profiles; picked n_eff " + ", ".join(f"{v:.1f}" for v in neff[pos]))
+
+    if a.laue_profiles:
+        lp = np.load(a.laue_profiles)
+        lk = key(lp["image_num"], lp["h"].astype(np.int64), lp["k"].astype(np.int64), lp["l"].astype(np.int64))
+        at = pd.Index(key(shot, H, K, L)).get_indexer(lk)
+        m = at >= 0
+        print(f"laue_integrate: {m.sum():,} of {len(lk):,} fitted profiles match a shoebox")
+        bx0 = np.asarray(md["bbox.0"]).astype(np.int64)[at[m]]
+        by0 = np.asarray(md["bbox.2"]).astype(np.int64)[at[m]]
+        moved = int(((lp["box_x0"][m] != bx0) | (lp["box_y0"][m] != by0)).sum())
+        if moved:
+            raise SystemExit(f"laue_integrate: {moved} windows placed differently from the shoeboxes")
+        add("laue_integrate", np.asarray(lp["profile_box"][m], dtype=np.float64), rid[at[m]])
+        arm_names = ["laue_integrate"]
+    else:
+        arm_names = []
+
+    for spec in a.arms:
+        name, path = spec.split("=", 1)
+        df = pl.read_parquet(path, columns=["refl_ids", "qp_mean", "signal_prob"])
+        ids = df["refl_ids"].to_numpy().astype(np.int64)
+        qp = np.stack(df["qp_mean"].to_numpy()) if df["qp_mean"].dtype != pl.Array else df["qp_mean"].to_numpy()
+        qp = np.asarray(qp, dtype=np.float64).reshape(len(ids), -1)
+        gate = np.asarray(np.stack(df["signal_prob"].to_numpy()), dtype=np.float64).reshape(len(ids), -1)
+        add(name, qp, ids, gate)
+        arm_names.append(name)
+    out["arms"] = np.array(arm_names)
     print("truth n_eff of the picks: " + ", ".join(f"{v:.1f}" for v in n_eff_true[pick]))
     np.savez_compressed(a.out, **out)
     print("->", a.out)
