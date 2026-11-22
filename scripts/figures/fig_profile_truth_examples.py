@@ -18,6 +18,15 @@ Two figures per dataset:
   which has no gate, is left out). All on the fixed
   range 0 to 1, with the sum over the window in the corner.
 
+With `background_vs_truth_<dataset>.csv` beside the npz (the dumper's
+--bg-out), a figure `background_vs_truth_<dataset>` draws each method's
+background error against the truth: the median of db = b - b_true (photons
+per pixel) per bin of $I_\\text{true}$, the mean of db / b_true per resolution
+shell, and the median of dI_bg = -db n_eff, the intensity error that
+background error causes through the method's own profile, per bin of
+$I_\\text{true}$. In the example grid each profile panel then also carries
+the method's b, and the expected-rate panel b_true.
+
 A third figure draws, per bin of $I_\\text{true}$, the median $n_\\text{eff}$
 of each arm's `qp_mean` over every in-domain reflection beside the median
 $n_\\text{eff}$ of the truth table, which is computed over the whole detector
@@ -67,8 +76,10 @@ def draw_profiles(b, arms, out: Path) -> None:
         rate = b["bragg"][i] + b["background"][i]
         imgs = [(b["counts"][i], None, None, ""), (rate, None, None, ""),
                 (tp, 0, vmax, f"$n_\\mathrm{{eff}}$ {neff(tp):.0f}")]
-        imgs += [(b[f"{a}_profile"][i], 0, vmax, f"$n_\\mathrm{{eff}}$ {neff(b[f'{a}_profile'][i]):.0f}")
-                 for a in arms]
+        imgs += [(b[f"{a}_profile"][i], 0, vmax, f"$n_\\mathrm{{eff}}$ {neff(b[f'{a}_profile'][i]):.0f}"
+                  + (f"\n$b$ {b[f'{a}_bg'][i]:.1f}" if f"{a}_bg" in b else "")) for a in arms]
+        if "b_true" in b:
+            imgs[1] = (rate, None, None, f"$b_\\mathrm{{true}}$ {b['b_true'][i]:.1f}")
         for j, (img, lo, hi, note) in enumerate(imgs):
             ax = axes[i][j]
             ax.imshow(img, cmap=cm, vmin=lo, vmax=hi, interpolation="nearest")
@@ -138,6 +149,42 @@ def draw_neff(csv: Path, dataset: str, out: Path) -> None:
     plt.close(fig)
 
 
+def draw_background(csv: Path, dataset: str, out: Path) -> None:
+    import polars as pl
+
+    df = pl.read_csv(csv)
+    methods = df["method"].unique(maintain_order=True).to_list()
+    colour = figstyle.arm_colors(methods)
+    fig, axes = plt.subplots(1, 3, figsize=figstyle.figsize("full", aspect=0.45), layout="constrained")
+    ref = figstyle.reference_style()
+    for m in methods:
+        g = df.filter(pl.col("method") == m)
+        it = g.filter(pl.col("bin_kind") == "i_true").sort("lo")
+        x = np.sqrt(it["lo"].to_numpy().clip(min=0.3) * it["hi"].to_numpy().clip(max=1e4))
+        st = dict(color=colour[m], marker="o", ms=2, lw=1, label=m)
+        axes[0].plot(x, it["db_median"].to_numpy(), **st)
+        axes[2].plot(x, it["dI_bg_median"].to_numpy(), **st)
+        dd = g.filter(pl.col("bin_kind") == "d").sort("hi", descending=True)
+        dmid = np.where(np.isfinite(dd["hi"].to_numpy()) & (dd["hi"].to_numpy() < 100),
+                        0.5 * (dd["lo"].to_numpy() + dd["hi"].to_numpy()), dd["lo"].to_numpy() + 0.5)
+        dmid = np.where(dd["lo"].to_numpy() == 0, dd["hi"].to_numpy() - 0.05, dmid)
+        axes[1].plot(1 / dmid ** 2, dd["rel_db_mean"].to_numpy(), **st)
+    for ax in axes:
+        ax.axhline(0, **ref)
+    for ax in (axes[0], axes[2]):
+        ax.set_xscale("log")
+        ax.set_xlabel("$I_\\mathrm{true}$ bin (photons)")
+    axes[1].set_xlabel("$1/d^2$ (\\AA$^{-2}$), shell centre")
+    axes[0].set_ylabel("median $b - b_\\mathrm{true}$ (photons/pixel)")
+    axes[1].set_ylabel("mean $(b - b_\\mathrm{true}) / b_\\mathrm{true}$")
+    axes[2].set_ylabel("median $-(b - b_\\mathrm{true})\\,n_\\mathrm{eff}$ (photons)")
+    axes[0].legend(fontsize=5)
+    fig.suptitle(f"{dataset}: background estimate against the true background on the window", fontsize=7)
+    for p in figstyle.save(fig, out):
+        print(p)
+    plt.close(fig)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--data", type=Path, nargs="+",
@@ -156,6 +203,9 @@ def main() -> None:
         csv = path.with_name(f"profile_neff_vs_truth_{b['dataset']}.csv")
         if csv.is_file():
             draw_neff(csv, b["dataset"], OUT / f"profile_neff_vs_truth_{b['dataset']}")
+        bcsv = path.with_name(f"background_vs_truth_{b['dataset']}.csv")
+        if bcsv.is_file():
+            draw_background(bcsv, b["dataset"], OUT / f"background_vs_truth_{b['dataset']}")
 
 
 if __name__ == "__main__":
