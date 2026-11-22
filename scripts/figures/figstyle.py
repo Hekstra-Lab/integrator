@@ -104,6 +104,14 @@ __all__ = [
 SCHEME = THEME
 
 
+# FIG_SCALE (default 1, which changes nothing): draw for a screen rather than
+# the page. The canvas is FIG_SCALE times the template's size, every text and
+# line is enlarged by FIG_SCALE ** 0.75 at save time (so panels gain more room
+# than labels), markers by FIG_SCALE ** 0.5, and the files go to a `screen/`
+# directory beside the article-sized ones instead of replacing them.
+SCALE = float(os.environ.get("FIG_SCALE", "1") or 1)
+
+
 def _fast() -> bool:
     return os.environ.get("FIGTEX_FAST", "").strip() not in ("", "0", "false")
 
@@ -161,7 +169,7 @@ def figsize(width="full", aspect: float = 0.618, column: bool = False):
         base = t.column
     else:
         base = t.text_width
-    w = base * frac / 72.27
+    w = base * frac / 72.27 * SCALE
     return (w, w * aspect)
 
 
@@ -291,7 +299,33 @@ def on_slides() -> bool:
 
 
 def save(fig, path):
-    """Write `path.pdf` and `path.png` at the size the figure was drawn."""
+    """Write `path.pdf` and `path.png` at the size the figure was drawn.
+
+    With FIG_SCALE != 1 the text, lines and markers are enlarged first and
+    the files go to `<dir>/screen/<name>`.
+    """
+    if SCALE != 1:
+        from pathlib import Path
+
+        from matplotlib.lines import Line2D
+        from matplotlib.text import Text
+
+        f, fm = SCALE ** 0.75, SCALE ** 0.5
+        for t in fig.findobj(Text):
+            t.set_fontsize(t.get_fontsize() * f)
+        for ln in fig.findobj(Line2D):
+            ln.set_linewidth(ln.get_linewidth() * f)
+            ln.set_markersize(ln.get_markersize() * fm)
+        for ax in fig.axes:
+            ax.tick_params(width=f * 0.5, length=f * 3)
+            for coll in ax.collections:
+                try:
+                    coll.set_sizes(coll.get_sizes() * SCALE)
+                except AttributeError:
+                    pass
+        path = Path(path)
+        (path.parent / "screen").mkdir(parents=True, exist_ok=True)
+        path = path.parent / "screen" / path.name
     return style.save(fig, path)
 
 

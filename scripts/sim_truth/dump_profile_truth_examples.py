@@ -20,8 +20,9 @@ model read):
     (`rb_predict_config.py KEYS=both`), joined on `refl_ids`;
   * with --laue-profiles, laue.integrate's fitted profile on the same window
     (`profile_box` of `laue_profiles.py`), as method `laue_integrate`, joined
-    on (image_num, h, k, l); it has no gate. Its window origin (`box_x0`,
-    `box_y0`) is checked against the shoebox `bbox`.
+    on (image_num, h, k, l); it has no gate. Rows whose window origin
+    (`box_x0`, `box_y0`) differs from the shoebox `bbox` are dropped (24 of
+    162,117 and 81 of 462,541 on mos010_pc).
 
 Over every in-domain reflection it also writes, per arm and per bin of
 i_true, the median of n_eff = 1 / sum(p^2) of `qp_mean` beside the median
@@ -153,10 +154,12 @@ def main() -> None:
         print(f"laue_integrate: {m.sum():,} of {len(lk):,} fitted profiles match a shoebox")
         bx0 = np.asarray(md["bbox.0"]).astype(np.int64)[at[m]]
         by0 = np.asarray(md["bbox.2"]).astype(np.int64)[at[m]]
-        moved = int(((lp["box_x0"][m] != bx0) | (lp["box_y0"][m] != by0)).sum())
-        if moved:
-            raise SystemExit(f"laue_integrate: {moved} windows placed differently from the shoeboxes")
-        add("laue_integrate", np.asarray(lp["profile_box"][m], dtype=np.float64), rid[at[m]])
+        same = (lp["box_x0"][m] == bx0) & (lp["box_y0"][m] == by0)
+        # laue floors a float32 centroid, the cutter a float64 one, so a centroid
+        # on a pixel boundary can land one pixel apart; those rows are dropped
+        print(f"laue_integrate: {int((~same).sum())} windows placed differently from the shoeboxes, dropped")
+        idx = np.flatnonzero(m)[same]
+        add("laue_integrate", np.asarray(lp["profile_box"][idx], dtype=np.float64), rid[at[m]][same])
         arm_names = ["laue_integrate"]
     else:
         arm_names = []
