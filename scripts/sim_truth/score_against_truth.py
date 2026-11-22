@@ -6,7 +6,10 @@ renumbered whenever `laue.refine` drops an experiment, so BATCH is the shot only
 until the first dropped one. --expt EXPT (the experiment list the MTZ was
 integrated from) maps each experiment to its frame in the image file instead,
 shot = imageset index + 1. Without --expt, shot = BATCH (the earlier behaviour,
-correct only when no experiment was dropped). The indices of both
+correct only when no experiment was dropped). An MTZ written by
+`integrator.predict` has BATCH = image_num + 1, where the shoeboxes of
+`make_sim_shoeboxes.py` already store image_num = shot; --batch-convention
+image_num then takes shot = BATCH - 1. The indices of both
 sides are in the true crystal's setting when the geometry was injected, so no
 asymmetric-unit mapping is applied. Two controls are printed beside the join:
 
@@ -68,6 +71,9 @@ def main():
     ap.add_argument("--out", default="scores.csv")
     ap.add_argument("--expt", default=None,
                     help="experiment list of the MTZ; maps BATCH to the image-file frame (default: shot = BATCH)")
+    ap.add_argument("--batch-convention", choices=("laue", "image_num"), default="laue",
+                    help="laue: BATCH from laue.integrate (default); image_num: BATCH = shot + 1, "
+                         "as integrator.predict writes it")
     ap.add_argument("--joined-out", default=None, help="append the joined rows here (default: not written)")
     a = ap.parse_args()
 
@@ -76,6 +82,10 @@ def main():
     m = rs.read_mtz(a.mtz).reset_index()
     hkl = m[["H", "K", "L"]].to_numpy().astype(np.int64)
     batch = m["BATCH"].to_numpy().astype(np.int64)
+    if a.batch_convention == "image_num":
+        if a.expt:
+            raise SystemExit("--expt maps the laue BATCH convention; it does not apply to image_num")
+        batch = batch - 1
     if a.expt:
         from dxtbx.model.experiment_list import ExperimentListFactory
 

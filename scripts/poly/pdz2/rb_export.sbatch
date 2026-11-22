@@ -43,6 +43,15 @@ set -uo pipefail
 M=${RB_ROOT:-/n/netscratch/hekstra_lab/Lab/laldama/laue_runs/pdz2_model}
 RUNS=${RB_RUNS:-$M/runs}
 OUT=${RB_OUT:-$M/rb_preds}
+# EXPORT=posterior writes the posterior mean and variance (qi_mean/qi_var)
+# into the MTZ instead of i_rb/var_rb, from the same checkpoint, so both
+# estimators of one run can be scored. Default rb, the existing behaviour.
+EXPORT=${EXPORT:-rb}
+case $EXPORT in
+  rb) EXPORT_FLAG=--rb-export ;;
+  posterior) EXPORT_FLAG= ;;
+  *) echo "EXPORT must be rb or posterior, got $EXPORT"; exit 1 ;;
+esac
 # the derived config goes next to the ROOT, which exists; writing it under
 # $OUT fails before predict has had a chance to create $OUT
 mkdir -p "$OUT" || { echo "cannot create $OUT"; exit 1; }
@@ -57,13 +66,13 @@ for arm in "${@:-pdz2_geom_both}"; do
   run=$RUNS/$arm
   ckpt=$(ls -1 $run/files/checkpoints/epoch=*.ckpt 2>/dev/null | sort | tail -1)
   [ -z "$ckpt" ] && { echo "SKIP $arm: no checkpoint"; continue; }
-  cfg=$M/rb_cfg_$arm.yaml
+  cfg=$M/${EXPORT}_cfg_$arm.yaml
   echo "===== $arm <- $(basename $ckpt)"
   micromamba run -n integrator-cuda-dev env PYTHONPATH=$SRC \
     python $SLURM_SUBMIT_DIR/scripts/poly/rb_predict_config.py $run $cfg || { echo "CFG_FAIL $arm"; continue; }
   micromamba run -n integrator-cuda-dev env PYTHONPATH=$SRC \
     python -m integrator.cli.predict -v \
     --config $cfg --ckpt "$ckpt" --out-dir $OUT/$arm \
-    --rb-export --write-mtz 2>&1 | tail -15
+    $EXPORT_FLAG --write-mtz 2>&1 | tail -15
 done
 echo "RB_DONE"
