@@ -36,9 +36,10 @@ usage: python score_against_truth.py TRUTH_CSV INTEGRATED_MTZ --method NAME --da
 Appends long-format rows (method, dataset, bin, ...) to --out. With
 --joined-out PATH it also appends every joined row, raw MTZ values in ADU
 beside the truth columns (method, dataset, shot, h, k, l, i_true, lam_mean,
-mixed_0p25, n_eff, in_domain, gain, I, SIGI, BG), for
+mixed_0p25, n_eff, in_domain, gain, I, SIGI, BG, d), for
 `scripts/figures/fig_sim_truth_scatter.py`. BG is laue.integrate's per-pixel
-mean background of the window in ADU, ADC offset included. Needs
+mean background of the window in ADU, ADC offset included; d is the resolution
+from the MTZ's cell. Needs
 reciprocalspaceship (integrator environment).
 """
 
@@ -119,6 +120,7 @@ def main():
 
     if a.joined_out:
         cols = {c: mj[c].to_numpy() for c in ("I", "SIGI", "BG") if c in mj.columns}
+        cols["d"] = rs.read_mtz(a.mtz).compute_dHKL().reset_index()["dHKL"].to_numpy()[ok]
         j = pd.DataFrame(dict(method=a.method, dataset=a.dataset, shot=tj["shot_n"], h=tj["h"], k=tj["k"],
                               l=tj["l"], i_true=i_true, lam_mean=tj["lam_mean"], mixed_0p25=tj["mixed_0p25"],
                               n_eff=tj["n_eff"], in_domain=dom, gain=a.gain, **cols))
