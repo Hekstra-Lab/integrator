@@ -24,6 +24,17 @@ model read):
     (`box_x0`, `box_y0`) differs from the shoebox `bbox` are dropped (24 of
     162,117 and 81 of 462,541 on mos010_pc).
 
+With --bg-out, over every in-domain reflection, each method's background is
+compared with the truth: b_true is the mean of the `background` image over
+the reflection's window (photons per pixel), the method's b is laue's `bg` or
+the arm's `qbg_mean`, db = b - b_true, and dI_bg = -db * n_eff of the method's
+own profile on the window, the intensity error a background error of db
+causes in a profile fit. Per method, per bin of i_true and per resolution
+shell (D_EDGES of score_against_truth.py), the long CSV holds n and the
+median b_true, median and mean db, sd db, mean db / b_true and median dI_bg.
+It also prints sum(counts) / sum(sim_image + background) over all windows,
+which is 1 when the noisy images are Poisson draws of exactly those rates.
+
 Over every in-domain reflection it also writes, per arm and per bin of
 i_true, the median of n_eff = 1 / sum(p^2) of `qp_mean` beside the median
 of the truth table's own `n_eff`, as a long CSV (--stats-out).
@@ -59,6 +70,7 @@ def main() -> None:
     ap.add_argument("--dataset", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--stats-out", default=None)
+    ap.add_argument("--bg-out", default=None, help="append the background comparison here (long CSV)")
     ap.add_argument("--laue-profiles", default=None, help="laue_profiles.py npz of the same prediction set")
     ap.add_argument("--targets", default="3,10,30,100,300,1000,3000")
     ap.add_argument("--lam-lo", type=float, default=1.035)
@@ -123,9 +135,61 @@ def main() -> None:
     tp = out["bragg"] * out["own"]
     out["true_profile"] = tp / np.maximum(tp.sum(axis=(1, 2), keepdims=True), 1e-30)
 
-    rows = []
+    rows, bg_rows = [], []
+    d_all = np.asarray(md["d"], float)
+    b_true = None
+    if a.bg_out:
+        import sys
 
-    def add(name, prof_all, ids, gate_all=None):
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from score_against_truth import D_EDGES
+
+        x0a = np.asarray(md["bbox.0"]).astype(np.int64)
+        y0a = np.asarray(md["bbox.2"]).astype(np.int64)
+
+        def window_sums(img, sel):
+            ii = np.zeros((img.shape[0] + 1, img.shape[1] + 1))
+            ii[1:, 1:] = np.cumsum(np.cumsum(img, 0, dtype=np.float64), 1)
+            x, y = x0a[sel], y0a[sel]
+            return ii[y + side, x + side] - ii[y, x + side] - ii[y + side, x] + ii[y, x]
+
+        with h5py.File(truth_dir / f"background_{a.run}.h5", "r") as fb:
+            bg_img = fb["background"][()].astype(np.float64)
+        b_true = window_sums(bg_img, slice(None)) / side ** 2
+        bragg_sum = np.zeros(len(rid))
+        with h5py.File(truth_dir / f"shots_{a.run}_rank0.h5", "r") as f:
+            for sh in np.unique(shot):
+                sel = np.flatnonzero(shot == sh)
+                bragg_sum[sel] = window_sums(f[f"sim_image/shot_{a.run}_{sh:05d}"][()].astype(np.float64), sel)
+        csum = np.concatenate([np.asarray(counts[i:i + 20000], dtype=np.float64).sum(1)
+                               for i in range(0, counts.shape[0], 20000)])
+        ratio = csum / (bragg_sum + b_true * side ** 2)
+        print(f"sum(counts) / sum(sim_image + background) per window: median {np.median(ratio):.4f}, "
+              f"p5 {np.percentile(ratio, 5):.4f}, p95 {np.percentile(ratio, 95):.4f}; over all windows "
+              f"{csum.sum() / (bragg_sum + b_true * side ** 2).sum():.5f}")
+        print(f"b_true per pixel over windows: median {np.median(b_true):.2f}, p5 {np.percentile(b_true, 5):.2f}, "
+              f"p95 {np.percentile(b_true, 95):.2f}")
+        out["b_true"] = b_true[pick]
+
+        def bg_compare(name, b_hat, at, neff):
+            """Background of one method against b_true, binned by i_true and by d."""
+            bt, it, dd, dm = b_true[at], i_true[at], d_all[at], dom[at]
+            db = b_hat - bt
+            dI = -db * neff
+            bins = [("i_true", lo, hi, dm & (it >= lo) & (it < hi)) for lo, hi in zip(EDGES[:-1], EDGES[1:])]
+            bins += [("d", d_lo, d_hi, dm & (dd < d_hi) & (dd >= d_lo)) for d_hi, d_lo in zip(D_EDGES[:-1], D_EDGES[1:])]
+            bins += [("all", 0, np.inf, dm)]
+            for kind, lo, hi, s in bins:
+                if s.sum() < 10:
+                    continue
+                bg_rows.append(dict(method=name, dataset=a.dataset, bin_kind=kind, lo=lo, hi=hi, n=int(s.sum()),
+                                    b_true_median=float(np.median(bt[s])), db_median=float(np.median(db[s])),
+                                    db_mean=float(db[s].mean()), db_sd=float(db[s].std()),
+                                    rel_db_mean=float((db[s] / bt[s]).mean()), dI_bg_median=float(np.median(dI[s]))))
+            print(f"{name}: background db median {np.median(db[dm]):+.3f} photons/px, mean db/b_true "
+                  f"{(db[dm] / bt[dm]).mean():+.4f}, median dI_bg {np.median(dI[dm]):+.1f} photons")
+
+    def add(name, prof_all, ids, gate_all=None, bg_all=None):
         """Store the picks' profile (and gate) and the n_eff rows of one method."""
         pos = pd.Index(ids).get_indexer(rid[pick])
         if (pos < 0).any():
@@ -145,6 +209,10 @@ def main() -> None:
             rows.append(dict(method=name, dataset=a.dataset, i_true_lo=lo, i_true_hi=hi, n=int(s.sum()),
                              n_eff_model_median=float(np.median(nm[s])), n_eff_true_median=float(np.median(nt[s]))))
         print(f"{name}: {len(ids):,} profiles; picked n_eff " + ", ".join(f"{v:.1f}" for v in neff[pos]))
+        if bg_all is not None:
+            out[f"{name}_bg"] = np.asarray(bg_all, float)[pos]
+            if b_true is not None:
+                bg_compare(name, np.asarray(bg_all, float)[sel], at[sel], neff[sel])
 
     if a.laue_profiles:
         lp = np.load(a.laue_profiles)
@@ -159,24 +227,28 @@ def main() -> None:
         # on a pixel boundary can land one pixel apart; those rows are dropped
         print(f"laue_integrate: {int((~same).sum())} windows placed differently from the shoeboxes, dropped")
         idx = np.flatnonzero(m)[same]
-        add("laue_integrate", np.asarray(lp["profile_box"][idx], dtype=np.float64), rid[at[m]][same])
+        add("laue_integrate", np.asarray(lp["profile_box"][idx], dtype=np.float64), rid[at[m]][same],
+            bg_all=np.asarray(lp["bg"][idx], dtype=np.float64).reshape(len(idx), -1).mean(1))
         arm_names = ["laue_integrate"]
     else:
         arm_names = []
 
     for spec in a.arms:
         name, path = spec.split("=", 1)
-        df = pl.read_parquet(path, columns=["refl_ids", "qp_mean", "signal_prob"])
+        df = pl.read_parquet(path, columns=["refl_ids", "qp_mean", "signal_prob", "qbg_mean"])
         ids = df["refl_ids"].to_numpy().astype(np.int64)
         qp = np.stack(df["qp_mean"].to_numpy()) if df["qp_mean"].dtype != pl.Array else df["qp_mean"].to_numpy()
         qp = np.asarray(qp, dtype=np.float64).reshape(len(ids), -1)
         gate = np.asarray(np.stack(df["signal_prob"].to_numpy()), dtype=np.float64).reshape(len(ids), -1)
-        add(name, qp, ids, gate)
+        add(name, qp, ids, gate, bg_all=df["qbg_mean"].to_numpy().astype(np.float64))
         arm_names.append(name)
     out["arms"] = np.array(arm_names)
     print("truth n_eff of the picks: " + ", ".join(f"{v:.1f}" for v in n_eff_true[pick]))
     np.savez_compressed(a.out, **out)
     print("->", a.out)
+    if a.bg_out and bg_rows:
+        pd.DataFrame(bg_rows).to_csv(a.bg_out, mode="a", header=not os.path.exists(a.bg_out), index=False)
+        print(f"appended {len(bg_rows)} rows to {a.bg_out}")
     if a.stats_out:
         pd.DataFrame(rows).to_csv(a.stats_out, mode="a", header=not os.path.exists(a.stats_out), index=False)
         print(f"appended {len(rows)} rows to {a.stats_out}")
