@@ -15,6 +15,12 @@
 #   manifest.json  every parameter, the commits of datsimx / easyBragg / integrator,
 #             package versions, GPU, wall time per stage, disk per directory
 # A row whose truth/ already has truth_reflections.csv is skipped, so a resubmission resumes.
+# RENOISE=1 (default 0) instead reuses that truth/: datsimx and truth_table.py are not run,
+# the noisy copy is written to NOISY_NAME (default noisy; refused if it exists) and the
+# manifest to manifest_<NOISY_NAME>.json. Photon-counting, integer-valued counts:
+#   RENOISE=1 NOISY_NAME=noisy_pc NOISE_GAIN=1 NOISE_READOUT=0 NOISE_CALIB=0 GRID=... sbatch ...
+# (braggaddnoise applies calibration after the Poisson draw, so any NOISE_CALIB > 0 or
+# gain != 1 or readout > 0 makes the stored float32 values non-integer.)
 #
 #   GRID=scripts/sim_truth/grids/sampling_check.tsv sbatch scripts/sim_truth/simulate.sbatch
 #   GRID=... sbatch --array=0-2 scripts/sim_truth/simulate.sbatch     # one row per task
@@ -48,6 +54,8 @@ NOISE_TOOL="${NOISE_TOOL:-braggaddnoise}"  # braggaddnoise | nanobragg
 NOISE_PSF_MM="${NOISE_PSF_MM:-0.1}"     # nanobragg only; laue-dials paper 0.1 mm on 88.54 um pixels
 NOISE_ADC="${NOISE_ADC:-10}"            # nanobragg only; laue-dials paper 10 ADU
 NJ="${SLURM_CPUS_PER_TASK:-4}"
+RENOISE="${RENOISE:-0}"
+NOISY_NAME="${NOISY_NAME:-noisy}"
 
 source "$MAMBA_SH"
 micromamba activate "$ENV_SIM"
@@ -65,16 +73,24 @@ echo "grid $GRID -> $ROOT; ${#DATA[@]} row(s); host $(hostname); $(nvidia-smi -L
 for row in "${DATA[@]}"; do
   IFS=$'\t' read -r NAME RUN MOS EN DOMS XTAL NUMIMG TEST EXTRA <<<"$row"
   [[ -z "${EXTRA:-}" || "$EXTRA" == "-" ]] && EXTRA=""
-  D="$ROOT/$NAME"; T="$D/truth"; N="$D/noisy"
+  D="$ROOT/$NAME"; T="$D/truth"; N="$D/$NOISY_NAME"
+  TOTALDEG=$(python -c "print($NUMIMG * $DEG_PER_IMG)")
+  if [[ "$RENOISE" == 1 ]]; then
+    [[ -s "$T/truth_reflections.csv" ]] || { echo "== $NAME: RENOISE=1 but no finished truth/"; exit 1; }
+    [[ -e "$N" ]] && { echo "== $NAME: $N exists; RENOISE never overwrites"; exit 1; }
+    mkdir -p "$N"; echo "== $NAME: RENOISE into $N (truth/ reused)"
+    t0=$(date +%s); t1=$t0
+  else
   if [[ -s "$T/truth_reflections.csv" ]]; then echo "== $NAME: done, skipped"; continue; fi
   rm -rf "$T" "$N"; mkdir -p "$T" "$N"
-  TOTALDEG=$(python -c "print($NUMIMG * $DEG_PER_IMG)")
   test_flag=(); [[ "$TEST" == 1 ]] && test_flag=(--testShot)
   cmd=(datsimx.sim "$T" --noNoise --waveImg --writeMtz --static --cuda --specFile "$SPEC"
        --Nabc $NABC --run "$RUN" --mosSpread "$MOS" --mosDoms "$DOMS" --enSteps "$EN"
        --xtalSize "$XTAL" --numimg "$NUMIMG" --totalDeg "$TOTALDEG" "${test_flag[@]}" $EXTRA)
   echo "== $NAME: ${cmd[*]}"
   t0=$(date +%s); "${cmd[@]}" > "$D/datsimx.log" 2>&1; t1=$(date +%s)
+  fi
+  SFX=""; [[ "$RENOISE" == 1 ]] && SFX="_$NOISY_NAME"
 
   python - "$T" "$N" "$RUN" <<'EOF'
 import glob, os, shutil, sys
@@ -90,13 +106,15 @@ EOF
   if [[ "$NOISE_TOOL" == nanobragg ]]; then
     calib_pct=$(python -c "print(100 * $NOISE_CALIB)")
     python "$HERE/add_noise_nanobragg.py" "$N" --run "$RUN" --gain "$NOISE_GAIN" --adc "$NOISE_ADC" \
-      --readout "$NOISE_READOUT" --calib-pct "$calib_pct" --psf-mm "$NOISE_PSF_MM" > "$D/add_noise.log" 2>&1
+      --readout "$NOISE_READOUT" --calib-pct "$calib_pct" --psf-mm "$NOISE_PSF_MM" > "$D/add_noise$SFX.log" 2>&1
   else
     braggaddnoise --dirname "$N" --run "$RUN" --nj "$NJ" \
-      --gain "$NOISE_GAIN" --readout "$NOISE_READOUT" --calib "$NOISE_CALIB" > "$D/braggaddnoise.log" 2>&1
+      --gain "$NOISE_GAIN" --readout "$NOISE_READOUT" --calib "$NOISE_CALIB" > "$D/braggaddnoise$SFX.log" 2>&1
   fi
   t2=$(date +%s)
-  python "$HERE/truth_table.py" "$T" --run "$RUN" | tee "$D/truth_table.log"
+  if [[ "$RENOISE" != 1 ]]; then
+    python "$HERE/truth_table.py" "$T" --run "$RUN" | tee "$D/truth_table.log"
+  fi
   t3=$(date +%s)
 
   python - "$D" <<EOF
@@ -122,7 +140,9 @@ m = dict(
     seconds=dict(datsimx=$t1 - $t0, noise=$t2 - $t1, truth_table=$t3 - $t2),
     disk=dict(truth=sh("du -sh $T | cut -f1"), noisy=sh("du -sh $N | cut -f1")),
 )
-json.dump(m, open("$D/manifest.json", "w"), indent=1)
+if "$RENOISE" == "1":
+    m["renoise"] = dict(noisy_dir="$NOISY_NAME", truth_reused="$T")
+json.dump(m, open("$D/manifest$SFX.json", "w"), indent=1)
 print(json.dumps(m["seconds"]), m["disk"])
 EOF
 done
