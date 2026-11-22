@@ -42,7 +42,7 @@ def main() -> None:
     names = [str(n) for n in z["names"]]
     ncol = len(z["targets"])
     figstyle.use()
-    fig, axes = plt.subplots(len(names), ncol, figsize=figstyle.figsize("full", aspect=len(names) / ncol * 1.25),
+    fig, axes = plt.subplots(len(names), ncol, figsize=figstyle.figsize("full", aspect=len(names) / ncol * 1.32),
                              layout="constrained", squeeze=False)
     for i, n in enumerate(names):
         cs, ms = z[f"{n}_counts"], z[f"{n}_mask"]
