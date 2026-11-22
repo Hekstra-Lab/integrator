@@ -637,6 +637,59 @@ def _columns_for(rows: list[dict]) -> list[str]:
     return chosen
 
 
+SIM_TRUTH_SCORES = ROOT / "docs" / "figures" / "data" / "sim_truth_scores_mos010_pc.csv"
+# truth-intensity bins reported in the table, (lo, hi) in photons, as cut by
+# `score_against_truth.py` (EDGES there)
+SIM_TRUTH_BINS = ((10, 30), (100, 300), (1000, 3000))
+
+
+def table_sim_truth_scores() -> None:
+    """laue.integrate and every trained arm against the simulated truth.
+
+    Rows are (dataset, method); per bin of the truth intensity, the mean
+    relative deviation and the standard deviation of z, from the long table
+    of `score_against_truth.py --out`. The whole-domain row of that file
+    gives N and sd z overall.
+    """
+    if not SIM_TRUTH_SCORES.is_file():
+        return
+    import polars as pl
+
+    df = pl.read_csv(SIM_TRUTH_SCORES, infer_schema_length=None)
+    rows = []
+    for (dataset, method), g in df.group_by(["dataset", "method"], maintain_order=True):
+        row = {"dataset": dataset, "method": method}
+        tot = g.filter(pl.col("i_true_hi") == float("inf"))
+        row["n"] = int(tot["n"][0]) if tot.height else None
+        for lo, hi in SIM_TRUTH_BINS:
+            b = g.filter((pl.col("i_true_lo") == lo) & (pl.col("i_true_hi") == hi))
+            row[f"rel_dev_{lo}"] = float(b["rel_dev_mean"][0]) if b.height else None
+        for lo, hi in SIM_TRUTH_BINS:
+            b = g.filter((pl.col("i_true_lo") == lo) & (pl.col("i_true_hi") == hi))
+            row[f"z_sd_{lo}"] = float(b["z_sd"][0]) if b.height else None
+        row["z_sd_all"] = float(tot["z_sd"][0]) if tot.height else None
+        rows.append(row)
+    t = Table(rows, group_by="dataset")
+    t.column("method", label="method")
+    t.column("n", label="$N$", fmt="{:.0f}")
+    for lo, hi in SIM_TRUTH_BINS:
+        t.column(f"rel_dev_{lo}", label=rf"$\langle\Delta I/I_\mathrm{{true}}\rangle_{{[{lo},{hi})}}$", fmt="{:+.3f}")
+    for lo, hi in SIM_TRUTH_BINS:
+        t.column(f"z_sd_{lo}", label=rf"$\mathrm{{sd}}\,z_{{[{lo},{hi})}}$", fmt="{:.2f}")
+    t.column("z_sd_all", label=r"$\mathrm{sd}\,z$, all", fmt="{:.2f}")
+    write(
+        t, "sim_truth_scores",
+        "Integrated intensities of the datsimx mos010 photon-counting images "
+        "scored against the per-reflection truth, inside the domain of "
+        "\\texttt{score\\_against\\_truth.py}. "
+        "$\\Delta I = \\hat I - I_\\mathrm{true}$ in photons and "
+        "$z = \\Delta I/\\hat\\sigma$; the subscript is the bin of "
+        "$I_\\mathrm{true}$ in photons. Each trained arm is shown with both "
+        "estimators: \\texttt{\\_rb}, the profile fit at export, and "
+        "\\texttt{\\_posterior}, the posterior mean.",
+    )
+
+
 def table_hyperparameters() -> None:
     """One row per model, columns the settings that tell them apart.
 
@@ -715,6 +768,7 @@ def main() -> int:
     table_shells()
     table_anomalous_differences()
     table_hyperparameters()
+    table_sim_truth_scores()
     write_long_format()
     write_statistic_labels()
     return 0

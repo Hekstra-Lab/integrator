@@ -26,7 +26,13 @@ result: two models can disagree about every intensity and merge to the
 same structure factors.
 
 Reads the long table from `scripts/figures/tidy_intensities.py`, one row
-per (method, refl_id) with `qi_mean`, `qi_var` and `d`.
+per (method, refl_id) with `qi_mean`, `qi_var` and `d`. Any long table with
+a `method` column, a reflection identity and `d` will do: `--id shot,h,k,l
+--value i_hat` reads the joined file of `score_against_truth.py --joined-out`,
+where i_hat = I / gain, so laue.integrate and every trained arm are compared on
+the observations each joined to the truth. `--dataset` keeps one dataset of a
+file that holds several, `--methods` names the arms to pair, and
+`--in-domain` keeps the rows inside the truth scoring domain.
 
 Run:
     uv run --with-editable /Users/luis/master/software/figtex \\
@@ -75,6 +81,13 @@ def parse_args():
                    default=DATA / "intensities_1118.csv")
     p.add_argument("--out-dir", type=Path, default=OUT)
     p.add_argument("--prefix", default="intensity")
+    p.add_argument("--id", default="refl_id",
+                   help="comma-separated columns that identify a reflection")
+    p.add_argument("--value", default="qi_mean",
+                   help="column compared; i_hat is computed as I / gain")
+    p.add_argument("--dataset", default=None)
+    p.add_argument("--methods", default=None, help="comma-separated; default every method")
+    p.add_argument("--in-domain", action="store_true")
     p.add_argument("--max-points", type=int, default=20000,
                    help="points drawn in the scatter; the statistics use "
                         "every reflection regardless")
@@ -89,17 +102,20 @@ def shells(d: np.ndarray, n: int = N_SHELLS) -> np.ndarray:
     return np.clip(np.digitize(s, edges) - 1, 0, n - 1)
 
 
-def paired(df: pl.DataFrame, a: str, b: str) -> pl.DataFrame:
+def paired(df: pl.DataFrame, a: str, b: str, ids=("refl_id",),
+           value: str = "qi_mean") -> pl.DataFrame:
     """The reflections both arms predicted, joined on the reflection id."""
+    ids = list(ids)
     left = df.filter(pl.col("method") == a).select(
-        "refl_id", "d", pl.col("qi_mean").alias("x"))
+        *ids, "d", pl.col(value).alias("x"))
     right = df.filter(pl.col("method") == b).select(
-        "refl_id", pl.col("qi_mean").alias("y"))
-    return left.join(right, on="refl_id", how="inner")
+        *ids, pl.col(value).alias("y"))
+    return left.join(right, on=ids, how="inner")
 
 
-def draw_pair(df, a, b, out_dir, prefix, max_points) -> Path | None:
-    j = paired(df, a, b).drop_nulls(["x", "y", "d"])
+def draw_pair(df, a, b, out_dir, prefix, max_points, ids=("refl_id",),
+              value="qi_mean") -> Path | None:
+    j = paired(df, a, b, ids, value).drop_nulls(["x", "y", "d"])
     # both positive, so the log axes and the ratio are defined
     j = j.filter((pl.col("x") > 0) & (pl.col("y") > 0))
     if j.height < 100:
@@ -189,19 +205,27 @@ def main() -> None:
             "scripts/figures/tidy_intensities.py"
         )
     df = pl.read_csv(args.data, infer_schema_length=None)
-    missing = {"method", "refl_id", "qi_mean", "d"} - set(df.columns)
+    ids = args.id.split(",")
+    if args.value == "i_hat" and "i_hat" not in df.columns:
+        df = df.with_columns((pl.col("I") / pl.col("gain")).alias("i_hat"))
+    if args.dataset:
+        df = df.filter(pl.col("dataset") == args.dataset)
+    if args.in_domain:
+        df = df.filter(pl.col("in_domain"))
+    missing = {"method", args.value, "d", *ids} - set(df.columns)
     if missing:
         raise SystemExit(f"{args.data} has no {sorted(missing)}")
     figstyle().use()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
-    arms = sorted(df["method"].unique().to_list())
+    arms = (args.methods.split(",") if args.methods
+            else sorted(df["method"].unique().to_list()))
     if len(arms) < 2:
         raise SystemExit(f"need two arms to compare, found {arms}")
     n = 0
     for a, b in itertools.combinations(arms, 2):
         if draw_pair(df, a, b, args.out_dir, args.prefix,
-                     args.max_points) is not None:
+                     args.max_points, ids, args.value) is not None:
             n += 1
     logger.info("%d figures from %d arms", n, len(arms))
 

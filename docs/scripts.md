@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-316 scripts.
+319 scripts.
 
 ## Start here
 
@@ -174,10 +174,12 @@ per job, and it lives in the repo".
 | `figures/fig_profile_basis.py` | Every component of the learned profile basis, and how it settled. |
 | `figures/fig_profile_gate_examples.py` | One reflection per row: the counts, the profile drawn for it, the gate. |
 | `figures/fig_profile_shape.py` | Does a profile model follow the spot shape of the reflections beside it? |
+| `figures/fig_profile_truth_examples.py` | Shoeboxes of the datsimx sims beside their true profile and each arm's predicted profile and gate. |
 | `figures/fig_sim_image.py` | Simulated Laue shots side by side: whole detector (block means) and a full-resolution crop. |
 | `figures/fig_sim_sampling.py` | Noiseless datsimx spots at each (enSteps, mosDoms) sampling, one figure per mosaic spread. |
 | `figures/fig_sim_shoeboxes.py` | Example shoeboxes of several simulated datasets, one row per dataset, columns at the same laue I/sigma. |
 | `figures/fig_sim_truth_scatter.py` | Integrated intensity against the simulated truth intensity, one panel per prediction set. |
+| `figures/fig_sim_truth_scores.py` | Integrated intensity scored against the simulated truth, per bin of truth intensity, every method on one set of axes. |
 | `figures/fig_svae_vs_hierarchical.py` | svae against hierarchical, every metric that exists for both, side by side. |
 | `figures/fig_wilson_params.py` | The Wilson prior's learned scale and B-factor over training. |
 | `figures/figstyle.py` | The one place the figure scripts get their look: figTeX, the ink theme. |
@@ -211,6 +213,7 @@ per job, and it lives in the repo".
 | `sim_truth/add_noise_nanobragg.py` | Add background and detector noise to a datsimx noisy copy with nanoBragg's own add_noise, PSF included. |
 | `sim_truth/compare_sampling.py` | Compare datsimx sampling settings (enSteps, mosDoms) against a reference setting, shot by shot. |
 | `sim_truth/dump_image_view.py` | Dump a whole-detector view and a full-resolution crop of simulated Laue shots, for fig_sim_image.py. |
+| `sim_truth/dump_profile_truth_examples.py` | Shoeboxes beside their true profile and each arm's predicted profile and gate, for fig_profile_truth_examples.py. |
 | `sim_truth/dump_shoebox_examples.py` | Example shoeboxes from several shoebox datasets, chosen at the same laue I/sigma, for fig_sim_shoeboxes.py. |
 | `sim_truth/image_stats.py` | Per-image statistics of a simulated Laue shot, by one estimator for the laue-dials paper sims and for datsimx. |
 | `sim_truth/laue_profiles.py` | laue.integrate's fitted per-reflection profiles, laid on our shoebox windows. |

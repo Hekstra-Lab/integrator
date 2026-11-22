@@ -57,7 +57,7 @@ if [ ${#want[@]} -eq 0 ]; then
   if [ -n "$TEMPLATE" ]; then
     want=(ccsym pdz2 refine basis basiscmp cost)
   else
-    want=(shoebox loss wilson basis basiscmp cost scatter merging peaks spectrum careless ccsym pdz2 refine shape patch arms simsampling simimage simtruth simshoebox)
+    want=(shoebox loss wilson basis basiscmp cost scatter merging peaks spectrum careless ccsym pdz2 refine shape patch arms simsampling simimage simtruth simshoebox simtruthpc simprofile simcmp)
   fi
 fi
 has() { printf '%s\n' "${want[@]}" | grep -qx "$1"; }
@@ -199,6 +199,18 @@ has simsampling && [ -f "$DATA/sim_sampling_patches.npz" ] && step simsampling "
 has simimage && [ -f "$DATA/sim_image_view.npz" ] && step simimage "${PY[@]}" scripts/figures/fig_sim_image.py
 has simtruth && [ -f "$DATA/sim_truth_joined_mos010.csv" ] && step simtruth "${PY[@]}" scripts/figures/fig_sim_truth_scatter.py
 has simshoebox && [ -f "$DATA/shoebox_examples.npz" ] && step simshoebox "${PY[@]}" scripts/figures/fig_sim_shoeboxes.py
+# mos010 photon-counting: laue.integrate and the svae arms, both estimators, against truth
+SIMPC="$DATA/sim_truth_joined_mos010_pc.csv.gz"
+has simtruthpc && [ -f "$SIMPC" ] && step simtruthpc "${PY[@]}" scripts/figures/fig_sim_truth_scatter.py --src "$SIMPC" --psf-fraction 0
+has simtruthpc && [ -f "$DATA/sim_truth_scores_mos010_pc.csv" ] && step simtruthpc "${PY[@]}" scripts/figures/fig_sim_truth_scores.py
+has simprofile && ls "$DATA"/profile_truth_examples_*.npz >/dev/null 2>&1 && step simprofile "${PY[@]}" scripts/figures/fig_profile_truth_examples.py
+if has simcmp && [ -f "$SIMPC" ]; then
+  for ds in mos010_pc_default mos010_pc_permissive; do for est in rb posterior; do
+    step simcmp "${PY[@]}" scripts/figures/fig_intensity_scatter.py --data "$SIMPC" --id shot,h,k,l --value i_hat \
+      --in-domain --dataset $ds --methods laue_integrate,svae_$est,svae_bg_$est,svae_conjugate_$est \
+      --out-dir docs/figures/sim/cmp --prefix ${ds}_$est
+  done; done
+fi
 
 # a diagnostic, not a reported figure
 has arms && step arms "${PY[@]}" scripts/figures/fig_arm_metrics.py
