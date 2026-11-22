@@ -1,0 +1,70 @@
+# Shoebox datasets: one entry per directory that training reads.
+# Only what no file on disk records goes here (name, kind, where the images came from).
+# Everything else (reflections, box, dtype, statistics, cell, the configs that use it) is read from the
+# dataset's own dataset.yaml and counts.npy by scripts/dataset_table.py, which writes docs/datasets.md and .csv.
+datasets:
+  - name: mos010_pc_default_25
+    path: /n/netscratch/hekstra_lab/Lab/laldama/sims/paper_full/mos010/shoeboxes/pc_default_25
+    kind: simulated
+    images: datsimx mos010 (Eiger geometry, e080_2.lam, 0.1 deg mosaic) + nanoBragg-noise photon-counting (gain 1, readout 0, calib 0)
+    reflections_from: laue-dials upstream d57f96e, default laue.predict (laue_dials_pc/integrated.refl)
+  - name: mos010_pc_all_25
+    path: /n/netscratch/hekstra_lab/Lab/laldama/sims/paper_full/mos010/shoeboxes/pc_all_25
+    kind: simulated
+    images: as mos010_pc_default_25
+    reflections_from: laue-dials upstream d57f96e, permissive laue.predict, cutoff_log_probability -20 (laue_dials_pc/integrated_all.refl)
+  - name: simdhfr_41
+    path: /n/netscratch/hekstra_lab/Lab/laldama/sim/pytorch_41
+    kind: simulated
+    images: laue-dials paper sim (Mendez, hkl_data reference condition; Rayonix geometry, gain 0.7, readout 3, PSF), int32 CBF
+    reflections_from: laue-dials
+  - name: simdhfr_full180
+    path: /n/netscratch/hekstra_lab/Lab/laldama/laue_runs/dhfr_sim/nanobragg_prior/full180
+    kind: simulated
+    images: laue-dials paper sim, as simdhfr_41
+    reflections_from: make_sim_shoeboxes.py at the true orientation
+  - name: hewl_1118
+    path: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_1118/pytorch_data
+    kind: real
+    images: HEWL Laue, BioCARS, 1118
+    reflections_from: laue-dials
+  - name: hewl_1118_360
+    path: /n/netscratch/hekstra_lab/Lab/laldama/laue_runs/1118_hewl360/shoeboxes
+    kind: real
+    images: HEWL Laue, BioCARS, 1118, 360-image subset
+    reflections_from: laue-dials
+  - name: hewl_1118_3
+    path: /n/netscratch/hekstra_lab/Lab/laldama/laue_runs/1118_hewl3/shoeboxes
+    kind: real
+    images: HEWL Laue, BioCARS, 1118
+    reflections_from: laue-dials
+  - name: dhfr_1117
+    path: /n/netscratch/hekstra_lab/Lab/laldama/laue_runs/1117_ldint/shoeboxes
+    kind: real
+    images: DHFR Laue, BioCARS, 1117
+    reflections_from: laue-dials
+  - name: pdz2_1116_pooled
+    path: /n/netscratch/hekstra_lab/Lab/laldama/laue_runs/pdz2_model/pooled
+    kind: real
+    images: PDZ2 E-field TR-Laue, 1116, sweeps pooled
+    reflections_from: laue-dials (deposited pipeline)
+  - name: pdz2_1116_pooled35
+    path: /n/netscratch/hekstra_lab/Lab/laldama/laue_runs/pdz2_model/pooled35
+    kind: real
+    images: PDZ2 E-field TR-Laue, 1116, sweeps pooled
+    reflections_from: laue-dials (deposited pipeline)
+  - name: hewl_9b7c
+    path: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/pytorch_data
+    kind: real
+    images: HEWL monochromatic rotation, 9b7c
+    reflections_from: DIALS
+  - name: hewl_9b7c_scaling
+    path: /n/lab_storage/hekstra_lab/people/aldama/integrator_data/hewl_9b7c/scaling_dataset
+    kind: real
+    images: HEWL monochromatic rotation, 9b7c
+    reflections_from: DIALS
+  - name: sbgrid_821
+    path: /n/netscratch/hekstra_lab/Lab/laldama/sbgrid/821/integrator/dataset
+    kind: real
+    images: SBGrid 821, monochromatic
+    reflections_from: DIALS

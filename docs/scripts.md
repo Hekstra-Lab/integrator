@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-314 scripts.
+315 scripts.
 
 ## Start here
 
@@ -316,6 +316,7 @@ per job, and it lives in the repo".
 | `compute_log1p_stats.py` | Streaming log1p (mean, var) over valid voxels of an existing chunks dir. |
 | `conjugate_calibration_study.py` | Calibration diagnostics for the conjugate intensity integrator. |
 | `create_crystal_yaml.py` | Create crystal.yaml from a PDB file. |
+| `dataset_table.py` | Table of the shoebox datasets in docs/datasets.yaml, with the metadata each dataset's own files record. |
 | `debug_ragged_train.py` | Reproduce the step-65 NaN locally with full instrumentation. |
 | `detector_noise_model.py` | The detector's mean-variance relation, from shoebox background alone. |
 | `diagnose_asu_mapping.py` | Diagnose asu_id -> SFcalculator HKL mapping failures. |
