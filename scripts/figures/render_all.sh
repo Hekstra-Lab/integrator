@@ -203,6 +203,7 @@ has simshoebox && [ -f "$DATA/shoebox_examples.npz" ] && step simshoebox "${PY[@
 SIMPC="$DATA/sim_truth_joined_mos010_pc.csv.gz"
 has simtruthpc && [ -f "$SIMPC" ] && step simtruthpc "${PY[@]}" scripts/figures/fig_sim_truth_scatter.py --src "$SIMPC" --psf-fraction 0
 has simtruthpc && [ -f "$DATA/sim_truth_scores_mos010_pc.csv" ] && step simtruthpc "${PY[@]}" scripts/figures/fig_sim_truth_scores.py
+has simtruthpc && [ -f "$DATA/sim_truth_scores_by_d_mos010_pc.csv" ] && step simtruthpc "${PY[@]}" scripts/figures/fig_sim_truth_scores.py --by-d "$DATA/sim_truth_scores_by_d_mos010_pc.csv"
 has simprofile && ls "$DATA"/profile_truth_examples_*.npz >/dev/null 2>&1 && step simprofile "${PY[@]}" scripts/figures/fig_profile_truth_examples.py
 if has simcmp && [ -f "$SIMPC" ]; then
   for ds in mos010_pc_default mos010_pc_permissive; do for est in rb posterior; do

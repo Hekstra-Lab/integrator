@@ -22,6 +22,16 @@ the ink colour; the line style is the estimator (solid: profile fit at export,
     uv run --with-editable /Users/luis/master/software/figtex \\
         python scripts/figures/fig_sim_truth_scores.py \\
             --src docs/figures/data/sim_truth_scores_mos010_pc.csv
+
+With --by-d (the long table of `score_against_truth.py --by-d-out`) it draws
+the same comparison per resolution shell instead, against $1/d^2$ at the
+shell's median $d$. Figure `sim_truth_scores_by_d_<dataset>`: every truth
+intensity together, six panels: `sum_ratio` $= \\sum \\hat I / \\sum
+I_\\text{true}$, `rel_dev_mean` (rows with $I_\\text{true} \\ge 1$), `cc_log`,
+the correlation of $\\log \\hat I$ with $\\log I_\\text{true}$, `z_mean`, `z_sd`
+and the count. Figure `sim_truth_rel_dev_by_d_<dataset>`: `rel_dev_mean` per
+shell, one panel per bin of $I_\\text{true}$, which separates resolution from
+the fall of intensity with resolution.
 """
 
 import argparse
@@ -56,10 +66,79 @@ def split(method: str) -> tuple[str, str | None]:
     return method, None
 
 
+D_PANELS = (("sum_ratio", "$\\sum \\hat I / \\sum I_\\mathrm{true}$", 1.0),
+            ("rel_dev_mean", "mean $(\\hat I - I_\\mathrm{true}) / I_\\mathrm{true}$", 0.0),
+            ("cc_log", "corr$(\\log \\hat I, \\log I_\\mathrm{true})$", None),
+            ("z_mean", "mean $z$", 0.0),
+            ("z_sd", "sd $z$", 1.0),
+            ("n", "reflections", None))
+
+
+def by_d(src: Path) -> None:
+    full = pl.read_csv(src, infer_schema_length=None)
+    colour = figstyle.arm_colors(ARCH)
+    ink = figstyle.roles()["ink"]
+    ref = figstyle.reference_style()
+
+    def style(method):
+        arch, est = split(method)
+        return dict(color=colour.get(arch, ink), ls=EST.get(est, ":"), lw=1.0, marker="o", ms=2, label=method)
+
+    for dataset in full["dataset"].unique(maintain_order=True).to_list():
+        df = full.filter(pl.col("dataset") == dataset)
+        allI = df.filter(pl.col("i_true_hi") == float("inf"))
+        fig, axes = plt.subplots(2, 3, figsize=figstyle.figsize("full", aspect=0.62), layout="constrained",
+                                 sharex=True)
+        axes = axes.ravel()
+        for method in allI["method"].unique(maintain_order=True).to_list():
+            d = allI.filter(pl.col("method") == method).sort("d_median", descending=True)
+            x = 1.0 / d["d_median"].to_numpy() ** 2
+            for ax, (col, _, _) in zip(axes, D_PANELS):
+                ax.plot(x, d[col].to_numpy(), **style(method))
+        for ax, (col, label, r) in zip(axes, D_PANELS):
+            if r is not None:
+                ax.axhline(r, **ref)
+            ax.set_ylabel(label)
+        for ax in axes[3:]:
+            ax.set_xlabel("$1/d^2$ (\\AA$^{-2}$)")
+        axes[0].legend(fontsize=5, loc="best")
+        fig.suptitle(f"{dataset}: integrated against truth, by resolution shell, all intensities", fontsize=7)
+        for p in figstyle.save(fig, OUT / f"sim_truth_scores_by_d_{dataset}"):
+            print(p)
+        plt.close(fig)
+
+        bins = (df.filter(pl.col("i_true_hi") != float("inf")).select("i_true_lo", "i_true_hi").unique()
+                .sort("i_true_lo").rows())
+        fig, axes = plt.subplots(1, len(bins), figsize=figstyle.figsize("full", aspect=0.3), layout="constrained",
+                                 sharex=True, squeeze=False)
+        for ax, (lo, hi) in zip(axes[0], bins):
+            g = df.filter((pl.col("i_true_lo") == lo) & (pl.col("i_true_hi") == hi))
+            for method in g["method"].unique(maintain_order=True).to_list():
+                d = g.filter(pl.col("method") == method).sort("d_median", descending=True)
+                ax.plot(1.0 / d["d_median"].to_numpy() ** 2, d["rel_dev_mean"].to_numpy(), **style(method))
+            ax.axhline(0, **ref)
+            ax.set_title(f"$I_\\mathrm{{true}} \\in [{lo:g}, {hi:g})$" if hi < 1e8 else f"$I_\\mathrm{{true}} \\ge {lo:g}$",
+                         fontsize=6)
+            ax.set_xlabel("$1/d^2$ (\\AA$^{-2}$)")
+        axes[0][0].set_ylabel("mean $(\\hat I - I_\\mathrm{true}) / I_\\mathrm{true}$")
+        axes[0][0].legend(fontsize=4.5, loc="best")
+        fig.suptitle(f"{dataset}: relative deviation by resolution shell, per bin of truth intensity", fontsize=7)
+        for p in figstyle.save(fig, OUT / f"sim_truth_rel_dev_by_d_{dataset}"):
+            print(p)
+        plt.close(fig)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--src", type=Path, default=SRC)
+    ap.add_argument("--by-d", type=Path, default=None,
+                    help="score_against_truth.py --by-d-out table; draws the per-shell figures instead")
     a = ap.parse_args()
+    if a.by_d is not None:
+        figstyle.use()
+        OUT.mkdir(parents=True, exist_ok=True)
+        by_d(a.by_d)
+        return
     if not a.src.exists():
         raise SystemExit(f"{a.src} is missing; it is score_against_truth.py --out, pulled from the cluster")
     full = pl.read_csv(a.src, infer_schema_length=None).filter(pl.col("i_true_hi") != float("inf"))
