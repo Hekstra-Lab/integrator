@@ -33,7 +33,11 @@ Domain, fixed before scoring and from the truth alone:
 
 usage: python score_against_truth.py TRUTH_CSV INTEGRATED_MTZ --method NAME --dataset NAME
            [--gain 0.7 --lam-lo 1.035 --lam-hi 1.165 --max-mixed 0.05 --out scores.csv]
-Appends long-format rows (method, dataset, bin, ...) to --out. With
+Appends long-format rows (method, dataset, bin, ...) to --out. With --by-d-out
+PATH it appends the same statistics per resolution shell, overall and crossed
+with bins of i_true, plus sum_ratio = sum(I_hat) / sum(i_true) and cc_log, the
+correlation of log I_hat with log i_true on rows with i_true >= 1 (rel_dev_mean
+there too, since below 1 photon the ratio is meaningless). With
 --joined-out PATH it also appends every joined row, raw MTZ values in ADU
 beside the truth columns (method, dataset, shot, h, k, l, i_true, lam_mean,
 mixed_0p25, n_eff, in_domain, gain, I, SIGI, BG, d), for
@@ -53,6 +57,12 @@ import pandas as pd
 import reciprocalspaceship as rs
 
 EDGES = [0, 1, 3, 10, 30, 100, 300, 1000, 3000, 1e9]
+# resolution shells for --by-d-out, in A, high d first; fixed from the range of
+# the mos010 sets (1.53-49.5 A) before any scoring, the same for every method
+D_EDGES = [1e9, 4.0, 3.2, 2.8, 2.5, 2.3, 2.15, 2.0, 1.9, 1.8, 1.7, 1.6, 0.0]
+# truth-intensity bins crossed with the shells: high-resolution reflections
+# are fainter, so a shell alone mixes resolution with intensity
+D_I_EDGES = [0, 10, 100, 1000, 1e9]
 
 
 def key(shot, h, k, l):
@@ -75,6 +85,9 @@ def main():
     ap.add_argument("--batch-convention", choices=("laue", "image_num"), default="laue",
                     help="laue: BATCH from laue.integrate (default); image_num: BATCH = shot + 1, "
                          "as integrator.predict writes it")
+    ap.add_argument("--by-d-out", default=None,
+                    help="append the same statistics per resolution shell (D_EDGES), overall and crossed "
+                         "with bins of i_true (D_I_EDGES), here (default: not written)")
     ap.add_argument("--joined-out", default=None, help="append the joined rows here (default: not written)")
     a = ap.parse_args()
 
@@ -144,6 +157,27 @@ def main():
                      i_true_median=float(np.median(i_true[s])), dev_median=float(np.median(dev[s])),
                      dev_mean=float(dev[s].mean()), rel_dev_mean=np.nan, dev_sd=float(dev[s].std()),
                      z_mean=float(z[s].mean()), z_sd=float(z[s].std())))
+    if a.by_d_out:
+        dd = rs.read_mtz(a.mtz).compute_dHKL().reset_index()["dHKL"].to_numpy()[ok]
+        drows = []
+        i_bins = [(0.0, np.inf)] + list(zip(D_I_EDGES[:-1], D_I_EDGES[1:]))
+        for d_hi, d_lo in zip(D_EDGES[:-1], D_EDGES[1:]):
+            for lo, hi in i_bins:
+                s = dom & (dd < d_hi) & (dd >= d_lo) & (i_true >= lo) & (i_true < hi)
+                if s.sum() < 10:
+                    continue
+                pos = s & (i_true >= 1)
+                drows.append(dict(method=a.method, dataset=a.dataset, d_max=d_hi, d_min=d_lo,
+                                  i_true_lo=lo, i_true_hi=hi, n=int(s.sum()),
+                                  d_median=float(np.median(dd[s])), i_true_median=float(np.median(i_true[s])),
+                                  dev_median=float(np.median(dev[s])), dev_mean=float(dev[s].mean()),
+                                  rel_dev_mean=float((dev[pos] / i_true[pos]).mean()) if pos.sum() >= 10 else np.nan,
+                                  sum_ratio=float(i_hat[s].sum() / i_true[s].sum()),
+                                  dev_sd=float(dev[s].std()), z_mean=float(z[s].mean()), z_sd=float(z[s].std()),
+                                  cc_log=float(np.corrcoef(np.log(np.maximum(i_hat[pos], 1e-3)),
+                                                           np.log(i_true[pos]))[0, 1]) if pos.sum() >= 10 else np.nan))
+        pd.DataFrame(drows).to_csv(a.by_d_out, mode="a", header=not os.path.exists(a.by_d_out), index=False)
+        print(f"appended {len(drows)} rows to {a.by_d_out}")
     out = pd.DataFrame(rows)
     out.to_csv(a.out, mode="a", header=not os.path.exists(a.out), index=False)
     with pd.option_context("display.width", 200, "display.max_columns", 20):
