@@ -1,8 +1,8 @@
 # mos010_default: svae, gate: responsibility, learned_basis_profile, 25x25, on the datsimx mos010 run,
-# the DEFAULT laue.predict set (60,015 reflections), cut at laue.integrate's own reflections and centroids (docs/sim_truth.md).
+# the DEFAULT laue.predict set (162,117 reflections), nanoBragg-noise photon-counting (gain 1, readout 0, calib 0), cut at laue.integrate's own reflections and centroids (docs/sim_truth.md).
 # From configs/poly/hewl1118_svae_gate_responsibility.yaml; differs in data_dir and the dataset's own
 # beam_center (dataset.yaml beam_center_px), lambda_min/max (spectrum 1.02-1.18 A +- 0.01) and Wilson
-# init_G/init_B (those of the earlier DHFR sim configs, same structure and brightness), plus
+# init_G/init_B (this dataset's own, scripts/poly/estimate_wilson_init.py, photons), plus
 # profile encoder output_activation: none (a final ReLU made x = 0 absorbing: svae_profile_encoder_dead)
 # and max_epochs 60 (the DHFR sim arms). intensity_variance stays at its default; score both estimators,
 # predict config from scripts/poly/rb_predict_config.py KEYS=both.
@@ -66,8 +66,8 @@ loss:
     degree: 5
     lambda_min: 1.01
     lambda_max: 1.19
-    init_G: 1265.8
-    init_B: 10.2
+    init_G: 1910.4
+    init_B: 19.0
     b_min: 1.0
     polarization: false
     lorentz: false
@@ -83,7 +83,7 @@ loss:
 data_loader:
   name: polychromatic_data
   args:
-    data_dir: /n/netscratch/hekstra_lab/Lab/laldama/sims/paper_full/mos010/shoeboxes/lauemain_default_25
+    data_dir: /n/netscratch/hekstra_lab/Lab/laldama/sims/paper_full/mos010/shoeboxes/pc_default_25
     batch_size: 512
     validation_split: 0.2
     num_workers: 8
@@ -93,7 +93,7 @@ data_loader:
     min_valid_pixels: 10
     transform: anscombe
     shoebox_file_names:
-      data_dir: /n/netscratch/hekstra_lab/Lab/laldama/sims/paper_full/mos010/shoeboxes/lauemain_default_25
+      data_dir: /n/netscratch/hekstra_lab/Lab/laldama/sims/paper_full/mos010/shoeboxes/pc_default_25
       counts: counts.npy
       masks: masks.npy
       reference: metadata.npy
