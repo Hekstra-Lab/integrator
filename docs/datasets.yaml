@@ -40,13 +40,13 @@ datasets:
     kind: simulated
     integration_run: mos010_pc_laue_default
     images: datsimx mos010 + nanoBragg-noise photon-counting (gain 1, readout 0, calib 0)
-    cut_by: scripts/physics/make_sim_shoeboxes.py cut --datsimx-* --size 25
+    cut_by: scripts/physics/make_sim_shoeboxes.py cut --datsimx-* --size 25, then finalize with its default nearest-centroid overlap mask (2.4% of pixels masked, 17% of boxes touched)
   - name: mos010_pc_all_25
     path: /n/netscratch/hekstra_lab/Lab/laldama/sims/paper_full/mos010/shoeboxes/pc_all_25
     kind: simulated
     integration_run: mos010_pc_laue_permissive
     images: datsimx mos010 + nanoBragg-noise photon-counting (gain 1, readout 0, calib 0)
-    cut_by: scripts/physics/make_sim_shoeboxes.py cut --datsimx-* --size 25
+    cut_by: scripts/physics/make_sim_shoeboxes.py cut --datsimx-* --size 25, then finalize with its default nearest-centroid overlap mask (5.4% of pixels masked, 34% of boxes touched)
   - name: simdhfr_41
     path: /n/netscratch/hekstra_lab/Lab/laldama/sim/pytorch_41
     kind: simulated
