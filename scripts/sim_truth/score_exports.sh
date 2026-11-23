@@ -24,6 +24,9 @@ ESTIMATORS=${ESTIMATORS:-"rb posterior"}
 SETS=${SETS:-"default:mos010_pc_default:integrated.mtz all:mos010_pc_permissive:integrated_all.mtz"}
 LAUE=${LAUE:-$ROW/laue_dials_pc}
 GAIN=${GAIN:-1}
+# SCORE_LAUE=0 scores only the arms' exports: the laue row needs dxtbx (--expt) and
+# does not change between arm sets, so a run without dxtbx can reuse an earlier one.
+SCORE_LAUE=${SCORE_LAUE:-1}
 PY=${PY:-/n/lab_storage/hekstra_lab/people/aldama/micromamba/envs/integrator-cuda-dev/bin/python}
 SC=${SLURM_SUBMIT_DIR:-$(pwd)}/scripts/sim_truth/score_against_truth.py
 T=$ROW/truth/truth_reflections.csv
@@ -33,8 +36,10 @@ mkdir -p "$OUT"
 common=(--gain "$GAIN" --out "$OUT/scores.csv" --by-d-out "$OUT/scores_by_d.csv" --joined-out "$OUT/joined.csv")
 for spec in $SETS; do
   IFS=: read -r set name mtz <<< "$spec"
-  $PY -u "$SC" "$T" "$LAUE/$mtz" --method laue_integrate --dataset "$name" \
-    --expt "$LAUE/poly_refined.expt" "${common[@]}"
+  if [ "$SCORE_LAUE" = 1 ]; then
+    $PY -u "$SC" "$T" "$LAUE/$mtz" --method laue_integrate --dataset "$name" \
+      --expt "$LAUE/poly_refined.expt" "${common[@]}"
+  fi
   for arm in $ARMS; do for est in $ESTIMATORS; do
     $PY -u "$SC" "$T" "$EXPORTS/$est/${RUN_PREFIX}_${set}_$arm/epoch_$EPOCH/preds_epoch_$EPOCH.mtz" \
       --method "${arm}_$est" --dataset "$name" --batch-convention image_num "${common[@]}"
