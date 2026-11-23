@@ -1,6 +1,6 @@
 # The datsimx DHFR simulations (7LVC): laue_refine_pass1_fixedfree.eff with the 7LVC cell and
 # space group (reference_data/7lvc.pdb CRYST1) and the rigid body over DHFR residues 1-159.
-# Flags: reference_data/sim_7lvc_rfree.mtz. Start: reference_data/shaken_7lvc.pdb.
+# Flags: reference_data/sim_7lvc_rfree.mtz. Start: reference_data/shaken_7lvc_noh.pdb (shaken_7lvc.pdb, phenix.pdbtools remove="element H").
 # Laue two-pass refine, STAGE 1 (rigid body), phenix 2.0, FIXED R-free set.
 #
 # `laue_refine_pass1.eff` with the R-free set read from a file instead of

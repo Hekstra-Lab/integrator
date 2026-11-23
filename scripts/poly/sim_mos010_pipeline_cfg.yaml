@@ -100,7 +100,7 @@ phenix:
                                 #   which 2.0 rejects. Same cell, strategy,
                                 #   macro-cycles, generated R-free set and map
                                 #   labels, so only the version differs.
-  pdb: ${REPO}/reference_data/shaken_7lvc.pdb
+  pdb: ${REPO}/reference_data/shaken_7lvc_noh.pdb   # shaken_7lvc.pdb without H: phenix has no nonbonded type for FOL H31
                                 # the starting model, perturbed from 9b7c so
                                 #   refinement has somewhere to go. In the
                                 #   repository: the holylabs path it used to
