@@ -7,3 +7,6 @@
 name	run	mos_spread	en_steps	mos_doms	xtal_size	numimg	test_shot	extra
 rot_t10	1	0.150	1	100	0.05	10	0	--dist 149.5 --div 2.2 --divSteps 4 --numPhiSteps 10 --pdbFile /n/netscratch/hekstra_lab/Lab/laldama/integrator_main/reference_data/9b7c.pdb
 rot_t10_nodiv	1	0.150	1	100	0.05	10	0	--dist 149.5 --numPhiSteps 10 --pdbFile /n/netscratch/hekstra_lab/Lab/laldama/integrator_main/reference_data/9b7c.pdb
+# Calibration 2 (from rot_t10): background was 7-14x 9b7c's Ibg and I/sigma ~4x low at 2.97 A -> waterThick 2.5 -> 0.25 mm, xtal_size 0.05 -> 0.2 mm.
+rot_t10_cal	1	0.150	1	100	0.2	10	0	--dist 149.5 --div 2.2 --divSteps 4 --numPhiSteps 10 --waterThick 0.25 --pdbFile /n/netscratch/hekstra_lab/Lab/laldama/integrator_main/reference_data/9b7c.pdb
+rot_t10_cal_nodiv	1	0.150	1	100	0.2	10	0	--dist 149.5 --numPhiSteps 10 --waterThick 0.25 --pdbFile /n/netscratch/hekstra_lab/Lab/laldama/integrator_main/reference_data/9b7c.pdb
