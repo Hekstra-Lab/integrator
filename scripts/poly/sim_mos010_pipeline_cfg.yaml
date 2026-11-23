@@ -1,0 +1,130 @@
+# The datsimx DHFR simulations (7LVC, P2(1)2(1)2(1)): poly_pipeline_cfg.yaml with the 7LVC reference
+# files (reference_data/{shaken_7lvc,7lvc}.pdb, sim_7lvc_rfree.mtz complete to 1.70 A, sim_7lvc_refine_pass{1,2}_fixedfree.eff),
+# careless config 4 merged to 1.70 A with seed 1, and S and Mn (7LVC carries five Mn) for the peaks.
+# Run a reference integrator's MTZ with run_pipeline.py --mtz, or MTZ=... in pipeline.slurm.
+#
+# Laue pipeline: predict -> careless -> phenix.refine (2 passes) -> peaks.
+#
+# The careless flags reproduce hewl_1118/laue-dials-careless/config{1..6}.sh,
+# which the unified ~/refltorch/scripts/laue_output/careless_scale.sh also
+# encodes. `config: 4` is the anomalous + positional-encoding recipe.
+#
+# Paths verified live 2026-08. Note only /n/hekstra_lab moved to
+# /n/lab_storage/hekstra_lab; /n/holylabs and /n/hekstra_lab_tier0 did not.
+
+predict:
+  env: integrator-cuda-dev      # micromamba env with integrator + torch.
+                                #   NOT `integrator`: that one is the holylabs
+                                #   checkout, its console scripts carry a
+                                #   pre-migration shebang, and
+                                #   `integrator.predict` is not on its PATH at
+                                #   all -- the pipeline died with
+                                #   `command not found`.
+  write_mtz: true               # -> <predictions>/epoch_XXXX/preds_epoch_XXXX.mtz
+  epoch: last                   # last | all | every:<n> | <int>.
+                                #   POLYCHROMATIC DEFAULTS TO `last`: one
+                                #   careless scale is tens of GPU-minutes, so
+                                #   a 20-checkpoint run is a day of it. Set
+                                #   every:<n> only once the data to test is
+                                #   settled. (Monochromatic is CPU DIALS and
+                                #   phenix and can afford every:<n> freely.)
+
+careless:
+  env: crls
+  config: 4                     # 1, 4, 5, 6 here; 2 and 3 are Friedel-split
+  dmin: 1.70                    # below the 1.78 A data limit: merge everything, then
+                                #   fix the resolution cut from this merge's statistics
+  out_dir: scaling              # created next to the unmerged MTZ
+  merging_stats: true           # emit the canonical merging_stats.csv, the
+                                #   table the monochromatic arm also writes
+  seed: 1                       # one merging seed per arm for now; set, so each is reproducible
+  extra_args: []                # appended verbatim, after the config's flags
+
+stats:                          # careless.stats -> one CSV per tool, plus a
+                                #   long-format careless_stats.csv the figures
+                                #   read. Runs after careless, before phenix.
+  env: crls
+  out_dir: stats                # created next to the careless output
+  bins: 10                      # overrides every tool's own default
+  method: null                  # null | pearson | spearman | weighted;
+                                #   applies to cchalf, ccanom and ccpred only.
+                                #   Superseded by `methods` below; kept so an
+                                #   older config still resolves.
+  methods: [spearman, pearson]  # run each correlation tool once per entry and
+                                #   record which in the `correlation` column.
+                                #   Pearson follows the bright end and Spearman
+                                #   is insensitive to the scale, so they do not
+                                #   rank arms the same way and one alone is a
+                                #   choice that has to be declared. Remove the
+                                #   key to go back to a single run.
+  intensity_key: "I(+)"         # isigi reads the MERGED mtz and has no
+  uncertainty_key: "SigI(+)"    #   default key: an anomalous merge carries
+                                #   I(+)/I(-), never a plain I, and leaving
+                                #   these unset raises `KeyError: None`.
+  tools:                        # drop any that a given run cannot answer
+    - cchalf                    #   <base>_xval_0.mtz  (needs repeat/half)
+    - ccanom                    #   <base>_xval_0.mtz
+    - rsplit                    #   <base>_xval_0.mtz
+    - ccpred                    #   <base>_predictions_0.mtz (Iobs/Ipred)
+    - isigi                     #   <base>_0.mtz  (merged)
+    - completeness              #   <base>_0.mtz
+  extra_args: []                # appended verbatim to every tool
+
+keys:                           # the key columns written into the tidy CSVs
+  method: integrator
+  dataset: mos010_pc_default
+
+phenix:
+  env: /n/lab_storage/hekstra_lab/garden_2/phenix-2.0-5729
+                                # a phenix INSTALL dir, not an env script:
+                                #   2.0's phenix_env.sh exports the
+                                #   pre-migration prefix and leaves nothing
+                                #   on PATH (integrator/utils/phenix.py)
+  # The FIXEDFREE pair, and from this repository rather than the holylabs
+  # checkout. The plain `laue_refine_pass{1,2}.eff` set
+  # `r_free_flags.generate = True`, so every arm held out a different subset
+  # and two R-free values differed by the flag draw as well as by the model:
+  # about 0.008 on weak Laue data, which is the size of the effects being
+  # measured. Three gate arms compared this way spanned exactly 0.0082 and
+  # the comparison said nothing.
+  eff1: ${REPO}/reference_data/sim_7lvc_refine_pass1_fixedfree.eff
+  eff2: ${REPO}/reference_data/sim_7lvc_refine_pass2_fixedfree.eff
+  rfree: ${REPO}/reference_data/sim_7lvc_rfree.mtz
+                                # one flag set, complete over the ASU to
+                                #   `--dmin`, so no MTZ can miss a reflection
+                                #   and no two can disagree about which are
+                                #   free. Made by scripts/make_rfree_flags.py
+                                #   at a fixed seed; see docs/reference_data.md.
+                                # the phenix 2.0 data_manager form of
+                                #   laue_analysis/custom_refinement_param_{1,2}_.eff,
+                                #   which 2.0 rejects. Same cell, strategy,
+                                #   macro-cycles, generated R-free set and map
+                                #   labels, so only the version differs.
+  pdb: ${REPO}/reference_data/shaken_7lvc.pdb
+                                # the starting model, perturbed from 9b7c so
+                                #   refinement has somewhere to go. In the
+                                #   repository: the holylabs path it used to
+                                #   carry does not exist from here.
+  prefix: refined               # refine1 -> refined_data.mtz, refined_1.pdb
+
+peaks:
+  env: integrator-cuda-dev      # holds rs.find_peaks and gemmi
+  method: both                  # find_peaks | peak_heights | both
+  # rs.find_peaks -> peaks.csv, the schema plot_peaks.py reads
+  f: ANOM
+  phi: null                     # null -> read the label off the MTZ. phenix 2.0
+                                #   writes PANOM where 1.20 wrote PHANOM, and the
+                                #   effs above ask for PHANOM explicitly, so
+                                #   naming one here would be wrong half the time
+  z: 5.0
+  # anomalous_peak_heights.py -> peak_heights.csv, matching the earlier
+  # laue-dials runs (two-row transposed CSV, not readable by plot_peaks.py)
+  script: /n/lab_storage/hekstra_lab/people/aldama/refltorch/scripts/laue_output/anomalous_peak_heights.py
+  pdb: ${REPO}/reference_data/7lvc.pdb
+  elements: "[S,Mn]"
+  ccanom: true                  # careless.ccanom on the cross-validation MTZ
+  ccanom_env: crls
+
+reference:                      # optional, for comparison plots only
+  peaks: null
+  refine_log: null

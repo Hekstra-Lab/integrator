@@ -1,0 +1,101 @@
+# The datsimx DHFR simulations (7LVC): laue_refine_pass1_fixedfree.eff with the 7LVC cell and
+# space group (reference_data/7lvc.pdb CRYST1) and the rigid body over DHFR residues 1-159.
+# Flags: reference_data/sim_7lvc_rfree.mtz. Start: reference_data/shaken_7lvc.pdb.
+# Laue two-pass refine, STAGE 1 (rigid body), phenix 2.0, FIXED R-free set.
+#
+# `laue_refine_pass1.eff` with the R-free set read from a file instead of
+# generated. The generating form draws a different test set for every MTZ it is
+# handed, and `refinement.main.random_seed` changes that draw as well, so two
+# refinements differ by which reflections were held out on top of whatever the
+# data differ by -- about 0.008 in R-free on weak Laue data, the size of the
+# effects being measured. $FREEFILE is a complete ASU flag set from
+# `scripts/make_rfree_flags.py`; being complete, it cannot leave a reflection
+# unflagged whatever MTZ it is paired with.
+#
+# $MTZFILE, $FREEFILE and $MODELFILE are substituted at run time.
+data_manager {
+  miller_array {
+    file = "$MTZFILE"
+    labels {
+      name = "F(+),SigF(+),F(-),SigF(-)"
+      array_type = unknown *amplitude bool complex hendrickson_lattman \
+                   integer intensity nonsense
+    }
+    user_selected_labels = "F(+),SigF(+),F(-),SigF(-)"
+  }
+  miller_array {
+    file = "$FREEFILE"
+    labels {
+      name = "R-free-flags"
+      array_type = unknown amplitude bool complex hendrickson_lattman \
+                   *integer intensity nonsense
+    }
+    user_selected_labels = "R-free-flags"
+  }
+  fmodel {
+    xray_data {
+      r_free_flags {
+        generate = False
+        test_flag_value = 1
+      }
+    }
+  }
+  model {
+    file = "$MODELFILE"
+  }
+  default_model = "$MODELFILE"
+}
+refinement {
+  crystal_symmetry {
+    unit_cell = 34.297 45.552 99.035 90 90 90
+    space_group = "P 21 21 21"
+  }
+  input {
+    symmetry_safety_check = error *warning
+  }
+  electron_density_maps {
+    map_coefficients {
+      map_type = "2mFo-DFc"
+      mtz_label_amplitudes = "2FOFCWT"
+      mtz_label_phases = "PH2FOFCWT"
+      fill_missing_f_obs = True
+    }
+    map_coefficients {
+      map_type = "2mFo-DFc"
+      mtz_label_amplitudes = "2FOFCWT_no_fill"
+      mtz_label_phases = "PH2FOFCWT_no_fill"
+    }
+    map_coefficients {
+      map_type = "mFo-DFc"
+      mtz_label_amplitudes = "FOFCWT"
+      mtz_label_phases = "PHFOFCWT"
+    }
+    map_coefficients {
+      map_type = "anomalous"
+      mtz_label_amplitudes = "ANOM"
+      mtz_label_phases = "PHANOM"
+    }
+  }
+  refine {
+    strategy = individual_sites individual_sites_real_space *rigid_body \
+               individual_adp group_adp tls occupancies group_anomalous
+    sites {
+      rigid_body = (chain 'A' and resid 1 through 159)
+    }
+  }
+  main {
+    number_of_macro_cycles = 1
+  }
+  hydrogens {
+    refine = individual *riding Auto
+  }
+  pdb_interpretation {
+    c_beta_restraints = False
+  }
+}
+output {
+  prefix = "refined"
+  serial = 1
+  serial_format = "%d"
+  overwrite = true
+}

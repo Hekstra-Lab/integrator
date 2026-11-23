@@ -124,6 +124,13 @@ def parse_args():
         default=None,
         help="Epoch to process (default: the highest one predicted)",
     )
+    p.add_argument(
+        "--mtz", type=Path, default=None,
+        help="run careless, stats, phenix and peaks on this unmerged MTZ "
+             "instead of one resolved from --run-dir: a reference integrator's "
+             "output, such as laue.integrate's integrated.mtz, which does not "
+             "follow the epoch_*/preds_epoch_*.mtz layout. careless writes "
+             "next to it, as for a run's own MTZ.")
     p.add_argument("--dry-run", action="store_true")
     return p.parse_args()
 
@@ -702,8 +709,25 @@ def main():
         print("\ndone")
         return 0
 
+    if args.mtz is not None:
+        steps = [s for s in (args.steps or "careless,stats,phenix,peaks").split(",") if s]
+        unknown = set(steps) - set(ALL_STEPS)
+        if unknown:
+            raise SystemExit(f"unknown steps: {sorted(unknown)}")
+        if "predict" in steps:
+            raise SystemExit("--mtz names an existing unmerged MTZ; drop predict from --steps")
+        mtz = args.mtz.resolve()
+        if not args.dry_run and not mtz.is_file():
+            raise SystemExit(f"no MTZ at {mtz}")
+        print(f"mtz      : {mtz}")
+        print(f"steps    : {', '.join(steps)}")
+        print(f"careless : config {cfg.get('careless', {}).get('config', 4)}")
+        process_one(cfg, mtz, steps, args)
+        print("\ndone")
+        return 0
+
     if args.run_dir is None:
-        raise SystemExit("--run-dir is required unless --out-base is given")
+        raise SystemExit("--run-dir is required unless --out-base or --mtz is given")
     run_dir = args.run_dir.resolve()
     steps = [s for s in (args.steps or ",".join(ALL_STEPS)).split(",") if s]
     unknown = set(steps) - set(ALL_STEPS)

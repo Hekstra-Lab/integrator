@@ -35,7 +35,15 @@ set -euo pipefail
 
 INTEGRATOR_ROOT="${INTEGRATOR_ROOT:?INTEGRATOR_ROOT must be set (add to ~/.bashrc).}"
 OUT_BASE="${OUT_BASE:-}"
-if [ -z "$OUT_BASE" ]; then
+# MTZ names an unmerged MTZ to scale, merge, refine and peak-pick directly -- a
+# reference integrator's output such as laue.integrate's integrated.mtz. It
+# replaces RUN_DIR; careless writes next to it:
+#   MTZ=<.../laue_dials_pc/integrated.mtz> STEPS=careless,stats,phenix,peaks \
+#       PIPELINE_CFG=<cfg> sbatch -p gpu --gres=gpu:1 scripts/poly/pipeline.slurm
+MTZ="${MTZ:-}"
+if [ -n "$MTZ" ]; then
+  RUN_DIR=""
+elif [ -z "$OUT_BASE" ]; then
   RUN_DIR="${RUN_DIR:?set RUN_DIR to the trained run directory, or OUT_BASE to a merge base.}"
 else
   RUN_DIR=""
@@ -70,6 +78,7 @@ fi
 "$PY_BIN" "$INTEGRATOR_ROOT/scripts/poly/run_pipeline.py" \
     ${RUN_DIR:+--run-dir "$RUN_DIR"} \
     ${OUT_BASE:+--out-base "$OUT_BASE"} \
+    ${MTZ:+--mtz "$MTZ"} \
     --cfg "$PIPELINE_CFG" \
     --steps "$STEPS" \
     ${PRED_DIR:+--pred-dir "$PRED_DIR"} \
