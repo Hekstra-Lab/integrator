@@ -66,6 +66,17 @@ def split(method: str) -> tuple[str, str | None]:
     return method, None
 
 
+def colours(methods) -> dict[str, str]:
+    """A colour per architecture: `ARCH` first, in its order, then any other architecture in the file,
+    in file order; laue.integrate (no estimator suffix) stays in ink."""
+    extra = []
+    for m in methods:
+        arch, est = split(m)
+        if est is not None and arch not in ARCH and arch not in extra:
+            extra.append(arch)
+    return figstyle.arm_colors(list(ARCH) + extra)
+
+
 D_PANELS = (("sum_ratio", "$\\sum \\hat I / \\sum I_\\mathrm{true}$", 1.0),
             ("rel_dev_mean", "mean $(\\hat I - I_\\mathrm{true}) / I_\\mathrm{true}$", 0.0),
             ("cc_log", "corr$(\\log \\hat I, \\log I_\\mathrm{true})$", None),
@@ -76,7 +87,7 @@ D_PANELS = (("sum_ratio", "$\\sum \\hat I / \\sum I_\\mathrm{true}$", 1.0),
 
 def by_d(src: Path) -> None:
     full = pl.read_csv(src, infer_schema_length=None)
-    colour = figstyle.arm_colors(ARCH)
+    colour = colours(full["method"].unique(maintain_order=True).to_list())
     ink = figstyle.roles()["ink"]
     ref = figstyle.reference_style()
 
@@ -103,7 +114,7 @@ def by_d(src: Path) -> None:
             ax.set_xlabel("$1/d^2$ (\\AA$^{-2}$)")
         axes[0].legend(fontsize=5, loc="best")
         fig.suptitle(f"{dataset}: integrated against truth, by resolution shell, all intensities", fontsize=7)
-        for p in figstyle.save(fig, OUT / f"sim_truth_scores_by_d_{dataset}"):
+        for p in figstyle.save(fig, OUT / f"sim_truth_scores_by_d_{dataset}{TAG}"):
             print(p)
         plt.close(fig)
 
@@ -123,9 +134,12 @@ def by_d(src: Path) -> None:
         axes[0][0].set_ylabel("mean $(\\hat I - I_\\mathrm{true}) / I_\\mathrm{true}$")
         axes[0][0].legend(fontsize=4.5, loc="best")
         fig.suptitle(f"{dataset}: relative deviation by resolution shell, per bin of truth intensity", fontsize=7)
-        for p in figstyle.save(fig, OUT / f"sim_truth_rel_dev_by_d_{dataset}"):
+        for p in figstyle.save(fig, OUT / f"sim_truth_rel_dev_by_d_{dataset}{TAG}"):
             print(p)
         plt.close(fig)
+
+
+TAG = ""
 
 
 def main() -> None:
@@ -133,7 +147,11 @@ def main() -> None:
     ap.add_argument("--src", type=Path, default=SRC)
     ap.add_argument("--by-d", type=Path, default=None,
                     help="score_against_truth.py --by-d-out table; draws the per-shell figures instead")
+    ap.add_argument("--tag", default="",
+                    help="appended to every output name, so a second set of methods does not replace the first")
     a = ap.parse_args()
+    global TAG
+    TAG = f"_{a.tag}" if a.tag else ""
     if a.by_d is not None:
         figstyle.use()
         OUT.mkdir(parents=True, exist_ok=True)
@@ -144,7 +162,7 @@ def main() -> None:
     full = pl.read_csv(a.src, infer_schema_length=None).filter(pl.col("i_true_hi") != float("inf"))
     figstyle.use()
     ink = figstyle.roles()["ink"]
-    colour = figstyle.arm_colors(ARCH)
+    colour = colours(full["method"].unique(maintain_order=True).to_list())
     for dataset in full["dataset"].unique(maintain_order=True).to_list():
         df = full.filter(pl.col("dataset") == dataset)
         fig, axes = plt.subplots(2, 2, figsize=figstyle.figsize("full", aspect=0.62), layout="constrained",
@@ -176,7 +194,7 @@ def main() -> None:
         axes[0].legend(fontsize=5, loc="best")
         fig.suptitle(f"{dataset}: integrated against truth, by bin of truth intensity", fontsize=7)
         OUT.mkdir(parents=True, exist_ok=True)
-        for p in figstyle.save(fig, OUT / f"sim_truth_scores_{dataset}"):
+        for p in figstyle.save(fig, OUT / f"sim_truth_scores_{dataset}{TAG}"):
             print(p)
         plt.close(fig)
 

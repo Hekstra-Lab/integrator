@@ -56,6 +56,8 @@ def main() -> None:
     ap.add_argument("--psf-fraction", type=float, default=PSF_LOCAL,
                     help="draw I_hat = f I_true; 0 omits the line (default %(default)s)")
     ap.add_argument("--ncols", type=int, default=3)
+    ap.add_argument("--tag", default="",
+                    help="appended to the output name, so a second set of methods does not replace the first")
     a = ap.parse_args()
     if not a.src.exists():
         raise SystemExit(f"{a.src} is missing; copy it from the sims/<grid>/<row>/joined_vs_truth.csv")
@@ -104,7 +106,7 @@ def main() -> None:
         axes[0, 0].legend(loc="upper left", fontsize=6)
         fig.suptitle(f"{dataset}: integrated against truth intensity, per observation", fontsize=7)
         OUT.mkdir(parents=True, exist_ok=True)
-        for p in figstyle.save(fig, OUT / f"sim_truth_scatter_{dataset}"):
+        for p in figstyle.save(fig, OUT / (f"sim_truth_scatter_{dataset}" + (f"_{a.tag}" if a.tag else ""))):
             print(p)
         plt.close(fig)
 
