@@ -176,6 +176,7 @@ class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
         self.rb_noise_b = cfg.rb_noise_b
         self.rb_pedestal = cfg.rb_pedestal
         self.rb_background_term = cfg.rb_background_term
+        self.rb_profile = getattr(cfg, "rb_profile", "samples")
         self.profile_coord_channels = getattr(
             cfg, "profile_coord_channels", False
         )
@@ -537,20 +538,24 @@ class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
         if not (set(_RAO_BLACKWELL_KEYS) & set(self.predict_keys)):
             return
         batch = forward_out["qp_mean"].shape[0]
-        forward_out.update(
-            rao_blackwellized_intensity(
-                forward_out["counts"],
-                forward_out["mask"],
-                _samples_first(forward_out["zp"], batch),
-                _samples_first(forward_out["zbg"], batch),
-                gate_half_signal=self.rb_gate_half_signal,
-                noise_a=getattr(self, "rb_noise_a", 1.0),
-                noise_b=getattr(self, "rb_noise_b", 0.0),
-                pedestal=getattr(self, "rb_pedestal", "none"),
-                background_term=getattr(self, "rb_background_term",
-                                        "sample_bg"),
-            )
+        zp = _samples_first(forward_out["zp"], batch)
+        zbg = _samples_first(forward_out["zbg"], batch)
+        kw = dict(
+            gate_half_signal=self.rb_gate_half_signal,
+            noise_a=getattr(self, "rb_noise_a", 1.0),
+            noise_b=getattr(self, "rb_noise_b", 0.0),
+            pedestal=getattr(self, "rb_pedestal", "none"),
+            background_term=getattr(self, "rb_background_term", "sample_bg"),
         )
+        rb = rao_blackwellized_intensity(forward_out["counts"], forward_out["mask"], zp, zbg, **kw)
+        if getattr(self, "rb_profile", "samples") == "mean":
+            pm = forward_out["qp_mean"].reshape(batch, -1).unsqueeze(0)
+            pm = pm.expand(zbg.shape[0], -1, -1)
+            rm = rao_blackwellized_intensity(forward_out["counts"], forward_out["mask"], pm, zbg, **kw)
+            rb["i_rb"] = rm["i_rb"]
+            rb["var_rb_cond"] = rm["var_rb_cond"]
+            rb["var_rb"] = rm["var_rb_cond"] + rb["rb_gate"] * rb["var_rb_profile"]
+        forward_out.update(rb)
 
     def _warn_unknown_predict_keys(self, forward_out: dict) -> None:
         """Warn once if `predict_keys` requests columns the model never produces."""

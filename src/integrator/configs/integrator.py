@@ -255,6 +255,14 @@ class IntegratorCfg:
     rb_noise_b: float = 0.0
     rb_pedestal: Literal["none", "per_reflection"] = "none"
     rb_background_term: Literal["sample_bg", "fixed_bg"] = "sample_bg"
+    rb_profile: Literal["samples", "mean"] = "samples"
+    """Which profile the Rao-Blackwellized intensity `i_rb` is fitted with.
+    `"samples"` (default, unchanged) averages the profile fit over the profile
+    samples. `"mean"` fits `i_rb` and the conditional variance with
+    `qp_mean`, each paired with the background samples; the profile term of
+    `var_rb` still comes from the spread over profile samples. A posterior over
+    shape whose samples each overlap the data less than its mean (B2's fixed
+    shape sd) lowers every sample's fit, which `"mean"` avoids."""
     profile_coord_channels: bool = False
     """Give the profile encoder two extra channels holding each pixel's offset
     in the beam-centred radial/tangential frame. A conv encoder is translation

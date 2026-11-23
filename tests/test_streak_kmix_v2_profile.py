@@ -156,3 +156,32 @@ def test_split_seed_draw_is_reproducible_and_none_is_unchanged():
     a = torch.randperm(1000)[:200]
     torch.manual_seed(5)
     assert torch.equal(a, draw(None))
+
+
+def test_rb_profile_mean_fits_i_rb_with_the_mean_profile(batch):
+    from integrator.model.integrators.integrator_utils import _samples_first, rao_blackwellized_intensity
+
+    cfg = _load("mos010_default_kmixv2_post_fixed")
+    cfg["integrator"]["args"]["predict_keys"] = ["i_rb", "var_rb", "var_rb_cond", "var_rb_profile", "rb_gate"]
+    torch.manual_seed(0)
+    base = construct_integrator(cfg).eval()
+    assert base.rb_profile == "samples"
+    cfg["integrator"]["args"]["rb_profile"] = "mean"
+    model = construct_integrator(cfg).eval()
+    assert model.rb_profile == "mean"
+    model.load_state_dict(base.state_dict())
+
+    counts, shoebox, mask, metadata = batch
+    torch.manual_seed(1)
+    out_s = base.predict_step(batch, 0)
+    torch.manual_seed(1)
+    out_m = model.predict_step(batch, 0)
+    torch.manual_seed(1)
+    fo = model(counts, shoebox, mask, metadata)["forward_out"]
+    zbg = _samples_first(fo["zbg"], counts.shape[0])
+    pm = fo["qp_mean"].reshape(counts.shape[0], -1).unsqueeze(0).expand(zbg.shape[0], -1, -1)
+    ref = rao_blackwellized_intensity(fo["counts"], fo["mask"], pm, zbg)
+    assert torch.allclose(out_m["i_rb"], ref["i_rb"], rtol=1e-5, atol=1e-4)
+    assert torch.allclose(out_m["var_rb_profile"], out_s["var_rb_profile"])
+    assert torch.allclose(out_m["var_rb"], ref["var_rb_cond"] + out_s["rb_gate"] * out_s["var_rb_profile"], rtol=1e-5)
+    assert not torch.allclose(out_m["i_rb"], out_s["i_rb"])
