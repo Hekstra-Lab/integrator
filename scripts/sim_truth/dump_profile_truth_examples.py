@@ -207,6 +207,9 @@ def main() -> None:
     ap.add_argument("--bg-out", default=None, help="append the background comparison here (long CSV)")
     ap.add_argument("--laue-profiles", default=None, help="laue_profiles.py npz of the same prediction set")
     ap.add_argument("--targets", default="3,10,30,100,300,1000,3000")
+    ap.add_argument("--pick", default=None,
+                    help="draw these reflections instead of one per --targets value: comma-separated "
+                         "shot:h:k:l (shot = image_num), in that order; outside the domain is allowed")
     ap.add_argument("--lam-lo", type=float, default=1.035)
     ap.add_argument("--lam-hi", type=float, default=1.165)
     ap.add_argument("--max-mixed", type=float, default=0.05)
@@ -244,9 +247,19 @@ def main() -> None:
     rng = np.random.default_rng(a.seed)
     targets = np.array([float(x) for x in a.targets.split(",")])
     pick = []
-    for tv in targets:
-        cand = np.flatnonzero(dom & (np.abs(i_true - tv) <= 0.2 * tv))
-        pick.append(int(rng.choice(cand)) if len(cand) else int(np.nanargmin(np.where(dom, np.abs(i_true - tv), np.inf))))
+    if a.pick:
+        mk = pd.Index(key(shot, H, K, L))
+        for spec in a.pick.split(","):
+            sh, h, k, l_ = (int(v) for v in spec.split(":"))
+            i = mk.get_indexer(key(np.array([sh]), np.array([h]), np.array([k]), np.array([l_])))[0]
+            if i < 0:
+                raise SystemExit(f"--pick {spec}: no shoebox with that shot and hkl")
+            pick.append(int(i))
+        targets = np.array([i_true[i] for i in pick])
+    else:
+        for tv in targets:
+            cand = np.flatnonzero(dom & (np.abs(i_true - tv) <= 0.2 * tv))
+            pick.append(int(rng.choice(cand)) if len(cand) else int(np.nanargmin(np.where(dom, np.abs(i_true - tv), np.inf))))
     pick = np.array(pick)
 
     out = dict(dataset=a.dataset, targets=targets, side=side, arms=np.array([s.split("=", 1)[0] for s in a.arms]),
