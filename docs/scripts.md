@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-320 scripts.
+323 scripts.
 
 ## Start here
 
@@ -176,6 +176,8 @@ per job, and it lives in the repo".
 | `figures/fig_profile_shape.py` | Does a profile model follow the spot shape of the reflections beside it? |
 | `figures/fig_profile_truth_examples.py` | Shoeboxes of the datsimx sims beside their true profile and each arm's predicted profile and gate. |
 | `figures/fig_sim_image.py` | Simulated Laue shots side by side: whole detector (block means) and a full-resolution crop. |
+| `figures/fig_sim_learned_spectrum.py` | Learned Wilson spectrum G(lambda) of trained runs against the simulation's spectrum and its truth table. |
+| `figures/fig_sim_profile_params.py` | Learned profile parameters of trained runs: the K-component widths and weights against geometry, and residual bases. |
 | `figures/fig_sim_sampling.py` | Noiseless datsimx spots at each (enSteps, mosDoms) sampling, one figure per mosaic spread. |
 | `figures/fig_sim_shoeboxes.py` | Example shoeboxes of several simulated datasets, one row per dataset, columns at the same laue I/sigma. |
 | `figures/fig_sim_truth_scatter.py` | Integrated intensity against the simulated truth intensity, one panel per prediction set. |
@@ -217,9 +219,10 @@ per job, and it lives in the repo".
 | `sim_truth/dump_shoebox_examples.py` | Example shoeboxes from several shoebox datasets, chosen at the same laue I/sigma, for fig_sim_shoeboxes.py. |
 | `sim_truth/image_stats.py` | Per-image statistics of a simulated Laue shot, by one estimator for the laue-dials paper sims and for datsimx. |
 | `sim_truth/laue_profiles.py` | laue.integrate's fitted per-reflection profiles, laid on our shoebox windows. |
+| `sim_truth/learned_params_vs_truth.py` | Learned Wilson spectrum G(lambda) and learned profile parameters of trained runs, against the simulation's truth. |
 | `sim_truth/score_against_truth.py` | Score an unmerged integrated MTZ against the per-reflection truth of a datsimx run. |
 | `sim_truth/score_exports.sh` | Score laue.integrate and every exported arm of one datsimx row against its truth, into one directory. |
-| `sim_truth/simulate.sbatch` | Simulate Laue rows of a grid with datsimx: noiseless truth, a noisy copy, a truth table, a manifest. |
+| `sim_truth/simulate.sbatch` | Simulate the rows of a grid with datsimx (Laue stills by default, or MODE=rotation): noiseless truth, a noisy copy, a truth table, a manifest. |
 | `sim_truth/truth_table.py` | Per-reflection truth from a datsimx `--noNoise --waveImg` run: one row per (shot, hkl). |
 | `sim_truth/window_capture.py` | Fraction of each reflection's true photons inside a square window, per window size. |
 
