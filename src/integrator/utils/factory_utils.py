@@ -1031,6 +1031,7 @@ def _inject_profile_geometry(cfg: dict) -> None:
         "geometric_basis_profile",
         "streak_base_profile",
         "streak_mixture_profile",
+        "streak_kmix_profile",
         "quasiconformal_profile",
         "shapelet_profile",
         "physical_profile",

@@ -1975,6 +1975,186 @@ class StreakMixtureProfileSurrogate(ProfileSurrogate):
         return ProfileSurrogateOutput(zp=zp, mean_profile=mean_profile, loc=loc, scale=scale, prior_scale=self.prior_scale, kl=kl)
 
 
+class StreakKMixProfileSurrogate(ProfileSurrogate):
+    """K aligned Gaussian components along the detector azimuth, every setting from the window or learned.
+
+        logits_j = log(g_j + floor / K_pix) + r_j(h),    p = softmax over valid pixels
+        g_j = sum_k w_k G_k(u_j, v_j)
+
+    G_k is an aligned Gaussian with variances a_k^2 + 1/12 along and c_k^2 + 1/12
+    across the streak (u, v rotated by the analytic azimuth phi), normalised on
+    the valid pixels before mixing, so w_k is component k's share exactly.
+
+        a_k = cap tanh(softplus(rho_k) / cap),  c_k likewise,  cap = side / 2
+        (rho, logit w, centre) = theta0 + f(m)
+
+    with theta0 a trainable vector and f an MLP of the nine geometry features
+    (last layer initialised at sd 1e-3). A width is an excess over the pixel
+    under one absolute cap, the window half-side: there is no tanh window about
+    a trainable centre (in `streak_base_profile` that centre drifted and 65 % of
+    across extents sat on the bound) and no ratio tying one component to another
+    (in `streak_mixture_profile` the across ratio sat on its bound for 98 % of
+    reflections). theta0 starts on a geometric grid set by the window, along sd
+    1 px to side/4 and across sd 0.3 px to side/8, times `init_grid_scale`, with
+    equal weights; the counts decide which components carry weight. No number
+    in the class comes from a true profile.
+
+    `residual`: `none` (the profile is the base; the profile encoder is cut out)
+    or `detector` (W h in the detector frame, ungated, as in `streak_base_profile`).
+    `shape_posterior: amortized`: theta = theta0 + f(m) + sigma (delta(x) + s(x) eps),
+    KL = 1/2 sum(delta^2 + s^2 - 1 - 2 log s), sigma = softplus(raw) trainable.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        latent_dim: int | None = None,
+        output_dim: int = 625,
+        init_std: float = 0.5,
+        prior_scale: float = 3.0,
+        beam_center=None,
+        profile_shape=None,
+        lambda_min: float | None = None,
+        lambda_max: float | None = None,
+        n_components: int = 3,
+        init_grid_scale: float = 1.0,
+        max_shift: float = 2.0,
+        shape_posterior: str = "none",
+        max_delta: float = 3.0,
+        shape_samples: int = 8,
+        init_shape_sd: float = 0.3,
+        residual: str = "detector",
+        base_floor: float = 1e-3,
+        geom_hidden: int = 32,
+        **kwargs,
+    ) -> None:
+        super().__init__(input_dim=input_dim, latent_dim=latent_dim, output_dim=output_dim,
+                         init_std=init_std, prior_scale=prior_scale)
+        if beam_center is None:
+            raise ValueError("streak_kmix_profile needs beam_center")
+        if profile_shape is None:
+            side = int(round(math.sqrt(output_dim)))
+            profile_shape = (1, side, side)
+        d, h, w = (int(v) for v in profile_shape)
+        if d != 1 or h * w != output_dim:
+            raise ValueError("streak_kmix_profile is 2-D")
+        if shape_posterior not in ("none", "amortized"):
+            raise ValueError(shape_posterior)
+        if residual not in ("none", "detector"):
+            raise ValueError(residual)
+        self.profile_shape = (d, h, w)
+        self.beam_center = tuple(float(v) for v in beam_center)
+        self.lambda_min, self.lambda_max = lambda_min, lambda_max
+        self.K = K = int(n_components)
+        self.cap = min(h, w) / 2
+        self.max_shift = float(max_shift)
+        self.shape_posterior, self.residual = shape_posterior, residual
+        self.max_delta, self.shape_samples, self.base_floor = float(max_delta), int(shape_samples), float(base_floor)
+        self.NZ = 3 * K + 2
+        side = min(h, w)
+        gs = float(init_grid_scale)
+        along = np.minimum(np.geomspace(1.0, side / 4, K) * gs, 0.9 * self.cap)
+        across = np.minimum(np.geomspace(0.3, side / 8, K) * gs, 0.9 * self.cap)
+
+        def inv(y):  # inverse of a = cap tanh(softplus(rho) / cap)
+            return np.log(np.expm1(self.cap * np.arctanh(y / self.cap)))
+
+        th0 = np.concatenate([inv(along), inv(across), np.zeros(K), np.zeros(2)])
+        self.theta0 = nn.Parameter(torch.tensor(th0, dtype=torch.float32))
+        self.shape_head = nn.Sequential(
+            nn.Linear(N_GEOM_FEATURES, geom_hidden), nn.SiLU(),
+            nn.Linear(geom_hidden, geom_hidden), nn.SiLU(),
+            nn.Linear(geom_hidden, self.NZ),
+        )
+        nn.init.normal_(self.shape_head[-1].weight, std=1e-3)
+        nn.init.zeros_(self.shape_head[-1].bias)
+        if shape_posterior == "amortized":
+            self.delta_head = nn.Linear(input_dim, self.NZ)
+            nn.init.normal_(self.delta_head.weight, std=1e-3)
+            nn.init.zeros_(self.delta_head.bias)
+            self.zscale_head = nn.Linear(input_dim, self.NZ)
+            nn.init.normal_(self.zscale_head.weight, std=1e-3)
+            nn.init.constant_(self.zscale_head.bias, math.log(math.expm1(1.0)))
+            self.shape_sd_raw = nn.Parameter(torch.full((self.NZ,), math.log(math.expm1(float(init_shape_sd)))))
+        nn.init.zeros_(self.decoder.bias)
+        self.decoder.bias.requires_grad_(False)
+        if residual == "none":
+            for p in (*self.loc_head.parameters(), *self.scale_head.parameters(), self.decoder.weight):
+                p.requires_grad_(False)
+        yy, xx = torch.meshgrid(torch.arange(h, dtype=torch.float32) - (h - 1) / 2,
+                                torch.arange(w, dtype=torch.float32) - (w - 1) / 2, indexing="ij")
+        self.register_buffer("_px", xx.reshape(-1).contiguous(), persistent=False)
+        self.register_buffer("_py", yy.reshape(-1).contiguous(), persistent=False)
+
+    def prior_mean(self, metadata: dict, dtype, device):
+        """phi (B,), theta0 + f(m) (B, NZ), the xyzcal centroid in the streak frame (B, 2)."""
+        feats, phi = geometry_features(metadata, self.beam_center, self.lambda_min, self.lambda_max)
+        feats, phi = feats.to(dtype).to(device), phi.to(dtype).to(device)
+        _, h, w = self.profile_shape
+        fx = (metadata["xyzcal.px.0"].reshape(-1) - metadata["bbox.0"].reshape(-1)).to(dtype).to(device) - 0.5 - (w - 1) / 2
+        fy = (metadata["xyzcal.px.1"].reshape(-1) - metadata["bbox.2"].reshape(-1)).to(dtype).to(device) - 0.5 - (h - 1) / 2
+        c, s = torch.cos(phi), torch.sin(phi)
+        return phi, self.theta0 + self.shape_head(feats), torch.stack([c * fx + s * fy, -s * fx + c * fy], -1)
+
+    def unpack(self, th: Tensor):
+        """theta -> along sds (..., K), across sds (..., K), weights (..., K), centre shift (..., 2)."""
+        K = self.K
+
+        def sc(r):
+            return self.cap * torch.tanh(F.softplus(r) / self.cap)
+
+        return (sc(th[..., :K]), sc(th[..., K:2 * K]), torch.softmax(th[..., 2 * K:3 * K], -1),
+                self.max_shift * torch.tanh(th[..., 3 * K:] / self.max_shift))
+
+    def base(self, phi: Tensor, th: Tensor, centroid: Tensor, mask: Tensor | None) -> Tensor:
+        """theta (..., B, NZ) -> (..., B, K_pix), rows summing to 1 on the valid pixels."""
+        a, c, w, sh = self.unpack(th)
+        cs, sn = torch.cos(phi)[:, None], torch.sin(phi)[:, None]
+        cen = centroid + sh
+        u = (cs * self._px[None] + sn * self._py[None]) - cen[..., 0, None]
+        v = (-sn * self._px[None] + cs * self._py[None]) - cen[..., 1, None]
+        e = torch.exp(-0.5 * (u[..., None] ** 2 / (a[..., None, :] ** 2 + 1 / 12)
+                              + v[..., None] ** 2 / (c[..., None, :] ** 2 + 1 / 12)))
+        if mask is not None:
+            e = e * mask.reshape(u.shape[-2:]).to(e.dtype)[..., None]
+        e = e / e.sum(-2, keepdim=True).clamp_min(1e-30)
+        return (e * w[..., None, :]).sum(-1)
+
+    def forward(self, x: Tensor, mc_samples: int = 1, metadata: dict | None = None, **kwargs) -> ProfileSurrogateOutput:
+        if metadata is None:
+            raise ValueError("streak_kmix_profile needs metadata")
+        mask = kwargs.get("mask")
+        phi, mu, centroid = self.prior_mean(metadata, x.dtype, x.device)
+        B = x.shape[0]
+        kl = x.new_zeros(B)
+        if self.shape_posterior == "amortized":
+            sig = F.softplus(self.shape_sd_raw)
+            delta = self.max_delta * torch.tanh(self.delta_head(x) / self.max_delta)
+            s = F.softplus(self.zscale_head(x)) + 1e-4
+            th_mean = mu + sig * delta
+            n_z = max(1, min(self.shape_samples, mc_samples))
+            th_s = th_mean[None] + sig * s[None] * torch.randn(n_z, B, self.NZ, device=x.device, dtype=x.dtype)
+            kl = kl + 0.5 * (delta.pow(2) + s.pow(2) - 1 - 2 * s.log()).sum(-1)
+        else:
+            th_mean, th_s = mu, mu[None]
+        floor = self.base_floor / self.decoder.weight.shape[0]
+        base_mean = torch.log(self.base(phi, th_mean, centroid, mask) + floor)
+        base_s = torch.log(self.base(phi, th_s, centroid, mask) + floor)
+        base_s = base_s.repeat(-(-mc_samples // base_s.shape[0]), 1, 1)[:mc_samples]
+        if self.residual == "none":
+            zeros = x.new_zeros(B, self.d)
+            return ProfileSurrogateOutput(zp=masked_softmax(base_s, mask), mean_profile=masked_softmax(base_mean, mask),
+                                          loc=zeros, scale=torch.ones_like(zeros), prior_scale=self.prior_scale, kl=kl)
+        loc = self.loc_head(x)
+        scale = F.softplus(self.scale_head(x)) + 1e-6
+        hs = Normal(loc, scale).rsample([mc_samples])
+        W = self.decoder.weight
+        kl = kl + (torch.log(self.prior_scale / scale) + (scale.pow(2) + loc.pow(2)) / (2 * self.prior_scale**2) - 0.5).sum(-1)
+        return ProfileSurrogateOutput(zp=masked_softmax(base_s + hs @ W.T, mask),
+                                      mean_profile=masked_softmax(base_mean + loc @ W.T, mask),
+                                      loc=loc, scale=scale, prior_scale=self.prior_scale, kl=kl)
+
+
 class HellingerBasisProfileSurrogate(nn.Module):
     """Learned-basis profile in the square-root chart, orthonormal in Fisher-Rao.
 
