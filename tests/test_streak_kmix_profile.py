@@ -75,7 +75,7 @@ def test_is_registered():
 
 
 @pytest.mark.parametrize("name", ["mos010_default_kmix_base", "mos010_default_kmix_base_grid05",
-                                  "mos010_default_kmix_base_grid2"])
+                                  "mos010_default_kmix_base_grid2", "mos010_default_kmix_base_cheb40"])
 def test_t0_trains_the_shape_and_cuts_out_the_encoder(name, batch):
     model = construct_integrator(_load(name)).train()
     qp = model.surrogates["qp"]
@@ -146,3 +146,10 @@ def test_base_matches_the_pixel_integral(phi, offset):
     cos = float((g * exact).sum() / (g.norm() * exact.norm()))
     assert cos >= 0.999, cos
     torch.testing.assert_close(g.sum(), torch.tensor(1.0), atol=1e-5, rtol=0)
+
+
+def test_cheb40_spectrum_degree_and_domain():
+    model = construct_integrator(_load("mos010_default_kmix_base_cheb40"))
+    sp = model.loss.spectrum
+    assert sp.c.shape == (41,)
+    assert abs(float(sp.lam_mid - sp.lam_scale) - 1.014) < 1e-6 and abs(float(sp.lam_mid + sp.lam_scale) - 1.188) < 1e-6
