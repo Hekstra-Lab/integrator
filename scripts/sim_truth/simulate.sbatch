@@ -1,5 +1,5 @@
 #!/bin/bash
-# Simulate Laue rows of a grid with datsimx: noiseless truth, a noisy copy, a truth table, a manifest.
+# Simulate the rows of a grid with datsimx (Laue stills by default, or MODE=rotation): noiseless truth, a noisy copy, a truth table, a manifest.
 #
 # Each data row of GRID (tab-separated, header line, '#' comments) gives
 #   name run mos_spread en_steps mos_doms xtal_size numimg test_shot [extra]
@@ -45,6 +45,17 @@ GRID="${GRID:?set GRID to a grid .tsv}"
 ROOT="${ROOT:-/n/netscratch/hekstra_lab/Lab/laldama/sims/$(basename "$GRID" .tsv)}"
 ROWS="${ROWS:-}"                      # comma-separated names; empty = all rows (or the array task's row)
 SPEC="${SPEC:-$DATSIMX/datsimx/from_vukica.lam}"
+# MODE=laue (default): a still Laue exposure per shot, --static --specFile SPEC.
+# MODE=rotation: a monochromatic rotation series, --monoEnergy MONO_ENERGY (eV) and no --static,
+# so each image is a DEG_PER_IMG oscillation sampled by datsimx's --numPhiSteps (pass it in the
+# grid's extra column, with --dist, --div, --divSteps, --pdbFile). SPEC and en_steps are unused.
+MODE="${MODE:-laue}"
+MONO_ENERGY="${MONO_ENERGY:-}"
+case "$MODE" in
+  laue) MODE_ARGS=(--static --specFile "$SPEC") ;;
+  rotation) MODE_ARGS=(--monoEnergy "${MONO_ENERGY:?MODE=rotation needs MONO_ENERGY in eV}") ;;
+  *) echo "MODE must be laue or rotation, got $MODE"; exit 1 ;;
+esac
 NABC="${NABC:-100 100 100}"
 DEG_PER_IMG="${DEG_PER_IMG:-1}"
 NOISE_GAIN="${NOISE_GAIN:-0.7}"       # laue-dials paper sims: gain 0.7, readout 3 ADU, calibration 3 %
@@ -84,7 +95,7 @@ for row in "${DATA[@]}"; do
   if [[ -s "$T/truth_reflections.csv" ]]; then echo "== $NAME: done, skipped"; continue; fi
   rm -rf "$T" "$N"; mkdir -p "$T" "$N"
   test_flag=(); [[ "$TEST" == 1 ]] && test_flag=(--testShot)
-  cmd=(datsimx.sim "$T" --noNoise --waveImg --writeMtz --static --cuda --specFile "$SPEC"
+  cmd=(datsimx.sim "$T" --noNoise --waveImg --writeMtz --cuda "${MODE_ARGS[@]}"
        --Nabc $NABC --run "$RUN" --mosSpread "$MOS" --mosDoms "$DOMS" --enSteps "$EN"
        --xtalSize "$XTAL" --numimg "$NUMIMG" --totalDeg "$TOTALDEG" "${test_flag[@]}" $EXTRA)
   echo "== $NAME: ${cmd[*]}"
@@ -127,7 +138,8 @@ m = dict(
     name="$NAME", grid="$GRID", run=$RUN,
     datsimx_command=open("$T/commandline_run$RUN.txt").read().strip(),
     params=dict(mos_spread=$MOS, en_steps=$EN, mos_doms=$DOMS, xtal_size=$XTAL, numimg=$NUMIMG,
-                total_deg=$TOTALDEG, test_shot=bool($TEST), nabc="$NABC", spec_file="$SPEC"),
+                total_deg=$TOTALDEG, test_shot=bool($TEST), nabc="$NABC", spec_file="$SPEC",
+                mode="$MODE", mono_energy_ev="$MONO_ENERGY"),
     extra_datsimx_args="$EXTRA",
     noise=dict(tool="$NOISE_TOOL", gain=$NOISE_GAIN, readout=$NOISE_READOUT, calib=$NOISE_CALIB,
                psf_mm=($NOISE_PSF_MM if "$NOISE_TOOL" == "nanobragg" else None),

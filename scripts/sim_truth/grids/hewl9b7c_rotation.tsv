@@ -1,0 +1,9 @@
+# Monochromatic rotation series emulating HEWL 9b7c (APS 24-ID-C, RT_I_82): Eiger 16M at 149.5 mm, 11,950 eV (1.03752 A), 0.5 deg per image,
+# rotation axis (1,0,0) (datsimx's fixed axis, as in 9b7c). Settings from dials_2026-05-14/integrated.expt and dials.integrate.log:
+# sigma_m 0.0639 deg (sd) -> mos_spread 0.150 deg FWHM; sigma_b 0.0316 deg = 0.55 mrad (sd) -> --div 2.2 mrad full cone (uniform disc, sd = width/4).
+# Structure: the deposited 9b7c.pdb (3 iodides; anomalous at the beam energy). Crystal orientation is datsimx's (seeded random), not 9b7c's.
+# xtal_size is a placeholder until brightness is matched to the 9b7c integrated intensities.
+# Submit with MODE=rotation MONO_ENERGY=11950 DEG_PER_IMG=0.5 NOISE_GAIN=1 NOISE_READOUT=0 NOISE_CALIB=0 (photon-counting Eiger).
+name	run	mos_spread	en_steps	mos_doms	xtal_size	numimg	test_shot	extra
+rot_t10	1	0.150	1	100	0.05	10	0	--dist 149.5 --div 2.2 --divSteps 4 --numPhiSteps 10 --pdbFile /n/netscratch/hekstra_lab/Lab/laldama/integrator_main/reference_data/9b7c.pdb
+rot_t10_nodiv	1	0.150	1	100	0.05	10	0	--dist 149.5 --numPhiSteps 10 --pdbFile /n/netscratch/hekstra_lab/Lab/laldama/integrator_main/reference_data/9b7c.pdb
