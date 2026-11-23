@@ -75,7 +75,8 @@ def test_is_registered():
 
 
 @pytest.mark.parametrize("name", ["mos010_default_kmix_base", "mos010_default_kmix_base_grid05",
-                                  "mos010_default_kmix_base_grid2", "mos010_default_kmix_base_cheb40"])
+                                  "mos010_default_kmix_base_grid2", "mos010_default_kmix_base_cheb40",
+                                  "mos010_default_kmix_base_cheb40_cos", "mos010_default_kmix_base_cheb40_cos_lr3e3_b1024"])
 def test_t0_trains_the_shape_and_cuts_out_the_encoder(name, batch):
     model = construct_integrator(_load(name)).train()
     qp = model.surrogates["qp"]
@@ -153,3 +154,13 @@ def test_cheb40_spectrum_degree_and_domain():
     sp = model.loss.spectrum
     assert sp.c.shape == (41,)
     assert abs(float(sp.lam_mid - sp.lam_scale) - 1.014) < 1e-6 and abs(float(sp.lam_mid + sp.lam_scale) - 1.188) < 1e-6
+
+
+@pytest.mark.parametrize("name,lr", [("mos010_default_kmix_base_cheb40_cos", 1e-3),
+                                     ("mos010_default_kmix_base_cheb40_cos_lr3e3_b1024", 3e-3)])
+def test_cheb40_cosine_schedule(name, lr):
+    cfg = _load(name)
+    cfg.setdefault("trainer", {}).setdefault("args", {})
+    model = construct_integrator(cfg)
+    assert model.lr_schedule == "cosine_warmup"
+    assert abs(float(model.lr) - lr) < 1e-12
