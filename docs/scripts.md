@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-323 scripts.
+324 scripts.
 
 ## Start here
 
@@ -222,6 +222,7 @@ per job, and it lives in the repo".
 | `sim_truth/learned_params_vs_truth.py` | Learned Wilson spectrum G(lambda) and learned profile parameters of trained runs, against the simulation's truth. |
 | `sim_truth/score_against_truth.py` | Score an unmerged integrated MTZ against the per-reflection truth of a datsimx run. |
 | `sim_truth/score_exports.sh` | Score laue.integrate and every exported arm of one datsimx row against its truth, into one directory. |
+| `sim_truth/score_merged_vs_truth.py` | Merged structure factors scored against the simulation's true F(+) and F(-), per resolution shell. |
 | `sim_truth/simulate.sbatch` | Simulate the rows of a grid with datsimx (Laue stills by default, or MODE=rotation): noiseless truth, a noisy copy, a truth table, a manifest. |
 | `sim_truth/truth_table.py` | Per-reflection truth from a datsimx `--noNoise --waveImg` run: one row per (shot, hkl). |
 | `sim_truth/window_capture.py` | Fraction of each reflection's true photons inside a square window, per window size. |
