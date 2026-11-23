@@ -26,8 +26,20 @@ The pre-activation is read with a forward hook on the encoder's final
 linear layer, so nothing in the model is modified and the measurement is of
 the model as trained.
 
+With GEOM_OUT=<csv> and a `geometric_basis_profile` surrogate, the last
+checkpoint of each run is also taken apart on the same shoeboxes, through a
+forward hook on the surrogate (so the inputs are the model's own): the norm
+of the pixel latent `h` (`latent_gain * loc_head(x)`) against the geometry
+shift `m(s)` (`shift_head`), the posterior width `scale`, the learned prior
+width `sigma(s)`, the geometric log extents (along, across the streak), the
+extent gate `s / (s + k)` from the shoebox's signal estimate, the gated pixel
+residual on the extents, and the profile's `n_eff = 1 / sum p^2`. Rows are
+quartiles of the signal estimate, plus `all`, so the question "does the
+profile depart from geometry as the shoebox gets brighter" is read directly.
+
 Usage:
     DATASET=pdz2_1116 python dump_encoder_health.py <out.csv> <run-dir>...
+    GEOM_OUT=geom.csv ...  # the geometric-surrogate breakdown above
     N_SHOEBOXES=4096 ... # sample size, default 2048
     STRIDE=5 ...         # every 5th checkpoint, default every one
 """
@@ -165,6 +177,75 @@ def measure(model, batch, device) -> dict | None:
     }
 
 
+GEOM_OUT = os.environ.get("GEOM_OUT", "")
+
+
+def geometric_breakdown(model, batch, device, arm: str) -> list[dict]:
+    """Internals of a `geometric_basis_profile` surrogate on real shoeboxes."""
+    import torch
+
+    from integrator.model.distributions.profile_geometry import geometry_features
+
+    qp = model.surrogates["qp"] if hasattr(model, "surrogates") else None
+    if qp is None or not hasattr(qp, "extent_head"):
+        return []
+    seen: dict = {}
+
+    def hook(mod, args, kwargs, out):
+        x = args[0]
+        md = kwargs.get("metadata")
+        loc = mod.latent_gain * mod.loc_head(x)
+        scale = mod.latent_gain * torch.nn.functional.softplus(mod.scale_head(x)) + 1e-6
+        feats, _ = geometry_features(md, mod.beam_center, mod.lambda_min, mod.lambda_max)
+        feats = feats.to(x.dtype).to(x.device)
+        seen["h"] = loc.norm(dim=-1)
+        seen["scale"] = scale.mean(dim=-1)
+        seen["m"] = (mod.shift_head(feats).norm(dim=-1) if mod.shift_head is not None
+                     else torch.zeros_like(seen["h"]))
+        if mod.prior_scale_head is not None:
+            ls = mod.prior_scale_head(feats).clamp(-mod.max_log_prior_scale, mod.max_log_prior_scale)
+            seen["sigma"] = (math.log(mod.prior_scale) + ls).exp().mean(dim=-1)
+        if mod.extent_head is not None:
+            le = mod.extent_head(feats)
+            seen["ext_par"], seen["ext_perp"] = le[:, 0], le[:, 1]
+            sig = kwargs.get("shape_signal")
+            if mod.extent_residual_head is not None:
+                g = mod._extent_gate(sig, loc).reshape(-1)
+                r = mod.extent_residual_head(x)
+                seen["gate"] = g
+                seen["res_par"], seen["res_perp"] = g * r[:, 0], g * r[:, 1]
+            if sig is not None:
+                seen["signal"] = sig.reshape(-1).to(x.dtype)
+        seen["n_eff"] = 1.0 / (out.mean_profile.reshape(out.mean_profile.shape[0], -1) ** 2).sum(-1)
+
+    import math
+
+    h = qp.register_forward_hook(hook, with_kwargs=True)
+    try:
+        with torch.no_grad():
+            counts, shoebox, mask, metadata = batch
+            metadata, _ = ensure_group_label(dict(metadata), device)
+            model(counts, shoebox, mask, metadata)
+    finally:
+        h.remove()
+    if not seen:
+        return []
+    n = seen["h"].shape[0]
+    sig = seen.get("signal")
+    groups = [("all", torch.ones(n, dtype=torch.bool, device=seen["h"].device))]
+    if sig is not None:
+        q = torch.quantile(sig.float(), torch.tensor([0.25, 0.5, 0.75], device=sig.device))
+        edges = [-float("inf"), *q.tolist(), float("inf")]
+        groups += [(f"signal_q{i + 1}", (sig > edges[i]) & (sig <= edges[i + 1])) for i in range(4)]
+    rows = []
+    for name, sel in groups:
+        row = {"method": arm, "dataset": DATASET, "group": name, "n": int(sel.sum())}
+        for k, v in seen.items():
+            row[f"{k}_median"] = round(float(v[sel].float().median()), 5)
+        rows.append(row)
+    return rows
+
+
 def one_batch(cfg, device):
     """One real batch, in whatever shape the data module yields it.
 
@@ -238,6 +319,17 @@ def main() -> int:
                 break
             rows.append({"method": arm, "dataset": DATASET, "epoch": epoch,
                          **got})
+        if GEOM_OUT and ckpts:
+            got = geometric_breakdown(model, batch, device, arm)
+            for r in got:
+                print("    " + ", ".join(f"{k} {v}" for k, v in r.items() if k not in ("method", "dataset")))
+            if got:
+                new = not os.path.exists(GEOM_OUT)
+                with open(GEOM_OUT, "a", newline="") as fh:
+                    w = csv.DictWriter(fh, fieldnames=list(got[0]))
+                    if new:
+                        w.writeheader()
+                    w.writerows(got)
         if rows and rows[-1]["method"] == arm:
             last = rows[-1]
             print(f"  {arm}: activation {last['activation']}, "
