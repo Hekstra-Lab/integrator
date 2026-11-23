@@ -1029,6 +1029,7 @@ def _inject_profile_geometry(cfg: dict) -> None:
     qp = cfg.get("surrogates", {}).get("qp", {})
     if qp.get("name") not in (
         "geometric_basis_profile",
+        "streak_base_profile",
         "quasiconformal_profile",
         "shapelet_profile",
         "physical_profile",

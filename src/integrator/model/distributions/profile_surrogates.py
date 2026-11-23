@@ -1493,6 +1493,259 @@ class GeometricProfileSurrogate(ProfileSurrogate):
         )
 
 
+class StreakBaseProfileSurrogate(ProfileSurrogate):
+    """Learned detector-frame basis whose fallback is a geometry-computed streak.
+
+        logits_j = log(g_j(s) + floor / K) + gamma * (W h)_j,    p = softmax over valid pixels
+
+    `g` is a separable generalised Gaussian in the radial frame at the analytic
+    azimuth `phi` about the beam centre, integrated over each pixel by a
+    `quad x quad` sub-grid:
+
+        u =  cos(phi) dx + sin(phi) dy - c_u,    v = -sin(phi) dx + cos(phi) dy - c_v
+        g ~ exp(-|u / (alpha_u s_u)|^beta_u - |v / (alpha_v s_v)|^beta_v)
+
+    with `alpha(beta) = sqrt(Gamma(1/beta) / Gamma(3/beta))`, so `s_u` and `s_v`
+    are the base's second-moment standard deviations in pixels and nothing else
+    carries its size. This replaces `geometric_basis_profile`'s canonical grid
+    and affine warp, in which the canonical shape's width and the warp extents
+    trade freely (on mos010 the canonical softmax went one-hot and the stretch
+    sat on its clamp); here there is no canonical grid and no resampling.
+
+    - Extents: `log s = log s0 + m tanh(f / m)`, `f` a small MLP of the radius
+      features (`extent_features: radius`) or all nine geometry features
+      (`all`); smooth and bounded, so no gradient is lost at a bound.
+    - Centre: the predicted sub-pixel centroid (`xyzcal.px - bbox`) rotated into
+      the radial frame, plus a geometry head bounded at `max_shift` pixels.
+    - Shape exponents `beta` (one along, one across), global, in (0.5, 4).
+    - Residual: the parent's raw detector-frame `W h`, `h ~ N(loc(x), scale(x))`
+      against the fixed prior `N(0, prior_scale^2)`. The decoder bias is frozen at
+      zero, since the streak takes its place. It enters after the base in the
+      detector frame, so no resampling smooths pixel-level detail.
+    - Gate: `gamma = z^k / (z^k + z0^k)`, `z = S / sqrt(b / sum g^2 + S)` from a
+      profile fit of the base to the shoebox's own counts with the mean of the
+      `border`-pixel frame as background, computed without gradient. Faint
+      shoeboxes get the streak; the residual opens as the signal can pay for it.
+
+    `residual: false` removes the residual (the base alone; the profile encoder
+    then gets no gradient). `residual_gate: false` sets `gamma = 1`.
+
+    Args:
+        input_dim: Encoder output width.
+        latent_dim: Width of the residual latent `h`. Default 8 (parent).
+        output_dim: Profile pixels `D*H*W`.
+        init_std: Initial posterior std of `h`.
+        prior_scale: Std of the fixed prior on `h`.
+        beam_center: Beam centre in pixels.
+        profile_shape: `(D, H, W)`; `D` must be 1.
+        lambda_min, lambda_max: Spectrum band, for the wavelength features.
+        init_extent: Starting `(s_u, s_v)` in pixels.
+        max_log_extent: Half-range `m` of the tanh bound on `log s - log s0`.
+        extent_features: `radius` or `all`.
+        init_beta: Starting `(beta_u, beta_v)`.
+        max_shift: Bound on the learned centre offset, in pixels.
+        use_centroid: Start the centre at the predicted sub-pixel centroid.
+        residual: Include the pixel residual `W h`.
+        residual_gate: Gate the residual by the signal-to-noise; else `gamma = 1`.
+        residual_half_snr: `z0`, the signal-to-noise at which `gamma = 1/2`.
+        gate_power: `k`.
+        base_floor: Mass spread evenly under the base before the log, over `K`.
+        quad: Sub-pixel samples per axis for the pixel integral.
+        geom_hidden: Width of the geometry heads.
+        border: Width of the frame whose mean is the gate's background.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        latent_dim: int | None = None,
+        output_dim: int = 625,
+        init_std: float = 0.5,
+        prior_scale: float = 3.0,
+        beam_center: tuple[float, float] | list[float] | None = None,
+        profile_shape: tuple[int, int, int] | list[int] | None = None,
+        lambda_min: float | None = None,
+        lambda_max: float | None = None,
+        init_extent: tuple[float, float] | list[float] = (4.0, 1.0),
+        max_log_extent: float = 1.2,
+        extent_features: str = "radius",
+        init_beta: tuple[float, float] | list[float] = (2.0, 2.0),
+        max_shift: float = 2.0,
+        use_centroid: bool = True,
+        residual: bool = True,
+        residual_gate: bool = True,
+        residual_half_snr: float = 12.0,
+        gate_power: float = 2.0,
+        base_floor: float = 1e-3,
+        quad: int = 3,
+        geom_hidden: int = 16,
+        border: int = 4,
+        **kwargs,
+    ) -> None:
+        super().__init__(
+            input_dim=input_dim,
+            latent_dim=latent_dim,
+            output_dim=output_dim,
+            init_std=init_std,
+            prior_scale=prior_scale,
+        )
+        if beam_center is None:
+            raise ValueError("streak_base_profile needs beam_center")
+        if profile_shape is None:
+            side = int(round(math.sqrt(output_dim)))
+            profile_shape = (1, side, side)
+        d, h, w = (int(v) for v in profile_shape)
+        if d != 1 or h * w != output_dim:
+            raise ValueError(
+                f"streak_base_profile is 2-D: profile_shape {profile_shape} "
+                f"against output_dim {output_dim}"
+            )
+        if extent_features not in ("radius", "all"):
+            raise ValueError(f"extent_features must be radius or all, got {extent_features!r}")
+        self.profile_shape = (d, h, w)
+        self.beam_center = tuple(float(v) for v in beam_center)
+        self.lambda_min, self.lambda_max = lambda_min, lambda_max
+        self.max_log_extent = float(max_log_extent)
+        self.max_shift = float(max_shift)
+        self.use_centroid = bool(use_centroid)
+        self.residual = bool(residual)
+        self.residual_gate = bool(residual_gate)
+        self.residual_half_snr = float(residual_half_snr)
+        self.gate_power = float(gate_power)
+        self.base_floor = float(base_floor)
+        self.extent_features = extent_features
+
+        n_in = 2 if extent_features == "radius" else N_GEOM_FEATURES
+        self.extent_head = nn.Sequential(
+            nn.Linear(n_in, geom_hidden), nn.SiLU(), nn.Linear(geom_hidden, 2)
+        )
+        self.shift_head = nn.Sequential(
+            nn.Linear(N_GEOM_FEATURES, geom_hidden), nn.SiLU(), nn.Linear(geom_hidden, 2)
+        )
+        for head in (self.extent_head, self.shift_head):
+            # small, not zero: with an exactly zero last layer the first layer
+            # has no gradient at step 0
+            nn.init.normal_(head[-1].weight, std=1e-3)
+            nn.init.zeros_(head[-1].bias)
+        self.log_extent0 = nn.Parameter(
+            torch.tensor([math.log(float(init_extent[0])), math.log(float(init_extent[1]))])
+        )
+        self._beta_lo, self._beta_hi = 0.5, 4.0
+        self.beta_raw = nn.Parameter(
+            torch.tensor(
+                [math.log((float(b) - self._beta_lo) / (self._beta_hi - float(b))) for b in init_beta]
+            )
+        )
+        # the streak replaces the decoder bias
+        nn.init.zeros_(self.decoder.bias)
+        self.decoder.bias.requires_grad_(False)
+        if not self.residual:
+            for p in (*self.loc_head.parameters(), *self.scale_head.parameters(), self.decoder.weight):
+                p.requires_grad_(False)
+
+        yy, xx = torch.meshgrid(
+            torch.arange(h, dtype=torch.float32) - (h - 1) / 2,
+            torch.arange(w, dtype=torch.float32) - (w - 1) / 2,
+            indexing="ij",
+        )
+        sub = (torch.arange(quad, dtype=torch.float32) + 0.5) / quad - 0.5
+        oy, ox = torch.meshgrid(sub, sub, indexing="ij")
+        self.register_buffer("_gx", (xx.reshape(-1, 1) + ox.reshape(1, -1)).contiguous(), persistent=False)
+        self.register_buffer("_gy", (yy.reshape(-1, 1) + oy.reshape(1, -1)).contiguous(), persistent=False)
+        frame = torch.ones(h, w, dtype=torch.bool)
+        frame[border:-border, border:-border] = False
+        self.register_buffer("_frame", frame.reshape(-1).float(), persistent=False)
+
+    @property
+    def beta(self) -> Tensor:
+        return self._beta_lo + (self._beta_hi - self._beta_lo) * torch.sigmoid(self.beta_raw)
+
+    def geometry(self, metadata: dict, dtype, device) -> tuple[Tensor, Tensor, Tensor]:
+        """Azimuth `phi` (B,), log extents (B, 2) and centre `(c_u, c_v)` (B, 2)."""
+        feats, phi = geometry_features(metadata, self.beam_center, self.lambda_min, self.lambda_max)
+        feats = feats.to(dtype).to(device)
+        phi = phi.to(dtype).to(device)
+        ext_in = feats[:, :2] if self.extent_features == "radius" else feats
+        m = self.max_log_extent
+        log_s = self.log_extent0 + m * torch.tanh(self.extent_head(ext_in) / m)
+        shift = self.max_shift * torch.tanh(self.shift_head(feats) / self.max_shift)
+        if self.use_centroid and "bbox.0" in metadata and "bbox.2" in metadata:
+            _, h, w = self.profile_shape
+            fx = (metadata["xyzcal.px.0"].reshape(-1) - metadata["bbox.0"].reshape(-1)).to(dtype).to(device)
+            fy = (metadata["xyzcal.px.1"].reshape(-1) - metadata["bbox.2"].reshape(-1)).to(dtype).to(device)
+            fx = fx - 0.5 - (w - 1) / 2
+            fy = fy - 0.5 - (h - 1) / 2
+            c, s = torch.cos(phi), torch.sin(phi)
+            shift = shift + torch.stack([c * fx + s * fy, -s * fx + c * fy], dim=-1)
+        return phi, log_s, shift
+
+    def base(self, phi: Tensor, log_s: Tensor, shift: Tensor, mask: Tensor | None) -> Tensor:
+        """The pixel-integrated streak on the valid pixels, (B, K), rows summing to 1."""
+        c, s = torch.cos(phi)[:, None, None], torch.sin(phi)[:, None, None]
+        u = c * self._gx[None] + s * self._gy[None] - shift[:, 0, None, None]
+        v = -s * self._gx[None] + c * self._gy[None] - shift[:, 1, None, None]
+        beta = self.beta
+        alpha = torch.exp(0.5 * (torch.lgamma(1 / beta) - torch.lgamma(3 / beta)))
+        su = log_s[:, 0].exp()[:, None, None]
+        sv = log_s[:, 1].exp()[:, None, None]
+        e = (u.abs() / (alpha[0] * su) + 1e-6) ** beta[0] + (v.abs() / (alpha[1] * sv) + 1e-6) ** beta[1]
+        g = torch.exp(-e).mean(-1)
+        if mask is not None:
+            g = g * mask.reshape(g.shape).to(g.dtype)
+        return g / g.sum(-1, keepdim=True).clamp_min(1e-12)
+
+    def gate(self, g: Tensor, counts: Tensor | None, mask: Tensor | None) -> tuple[Tensor, Tensor]:
+        """Residual gate `gamma` and the base profile-fit signal-to-noise `z`; no gradient."""
+        with torch.no_grad():
+            if not self.residual_gate or counts is None:
+                one = torch.ones(g.shape[0], device=g.device, dtype=g.dtype)
+                return one, torch.full_like(one, float("nan"))
+            c = counts.reshape(g.shape).to(g.dtype)
+            m = torch.ones_like(g) if mask is None else mask.reshape(g.shape).to(g.dtype)
+            fm = m * self._frame
+            bg = (c * fm).sum(-1) / fm.sum(-1).clamp_min(1.0)
+            s2 = (g.pow(2) * m).sum(-1).clamp_min(1e-12)
+            s_fit = ((g * (c - bg[:, None]) * m).sum(-1) / s2).clamp_min(0.0)
+            z = s_fit / (bg.clamp_min(1e-3) / s2 + s_fit).sqrt().clamp_min(1e-6)
+            k = self.gate_power
+            return z.pow(k) / (z.pow(k) + self.residual_half_snr**k), z
+
+    def forward(
+        self,
+        x: Tensor,
+        mc_samples: int = 1,
+        metadata: dict | None = None,
+        **kwargs,
+    ) -> ProfileSurrogateOutput:
+        if metadata is None:
+            raise ValueError("streak_base_profile needs metadata")
+        mask = kwargs.get("mask")
+        phi, log_s, shift = self.geometry(metadata, x.dtype, x.device)
+        g = self.base(phi, log_s, shift, mask)
+        base_logits = torch.log(g + self.base_floor / g.shape[-1])
+        if not self.residual:
+            prof = masked_softmax(base_logits, mask)
+            zeros = prof.new_zeros(prof.shape[0], self.d)
+            return ProfileSurrogateOutput(
+                zp=prof.unsqueeze(0).expand(mc_samples, -1, -1),
+                mean_profile=prof,
+                loc=zeros,
+                scale=torch.ones_like(zeros),
+                prior_scale=self.prior_scale,
+                kl=prof.new_zeros(prof.shape[0]),
+            )
+        gamma, _ = self.gate(g, kwargs.get("counts"), mask)
+        loc = self.loc_head(x)
+        scale = F.softplus(self.scale_head(x)) + 1e-6
+        h = Normal(loc, scale).rsample([mc_samples])
+        W = self.decoder.weight
+        zp = masked_softmax(base_logits[None] + gamma[None, :, None] * (h @ W.T), mask)
+        mean_profile = masked_softmax(base_logits + gamma[:, None] * (loc @ W.T), mask)
+        return ProfileSurrogateOutput(
+            zp=zp, mean_profile=mean_profile, loc=loc, scale=scale, prior_scale=self.prior_scale
+        )
+
+
 class HellingerBasisProfileSurrogate(nn.Module):
     """Learned-basis profile in the square-root chart, orthonormal in Fisher-Rao.
 

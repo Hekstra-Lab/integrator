@@ -14,6 +14,7 @@ from .background_plane import (
 from .profile_surrogates import (
     FixedBasisProfileSurrogate,
     GeometricProfileSurrogate,
+    StreakBaseProfileSurrogate,
     HellingerBasisProfileSurrogate,
     PhysicalProfileSurrogate,
     ProfileSurrogate,
@@ -38,6 +39,7 @@ __all__ = [
     "FixedBasisProfileSurrogate",
     "GammaDistributionRepamE",
     "GeometricProfileSurrogate",
+    "StreakBaseProfileSurrogate",
     "HellingerBasisProfileSurrogate",
     "NanoBraggProfileSurrogate",
     "PhysicalProfileSurrogate",
