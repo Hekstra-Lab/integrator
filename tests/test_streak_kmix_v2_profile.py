@@ -69,7 +69,7 @@ def test_is_registered():
     ("mos010_default_kmix_h128", False), ("mos010_default_kmix_h128_grid05", False),
     ("mos010_default_kmixv2_post", True), ("mos010_default_kmixv2_post_fixed", True),
     ("mos010_default_kmixv2_post_det", True), ("mos010_default_kmixv2_tilt", False),
-    ("mos010_default_kmixv2_post_grid05", True)])
+    ("mos010_default_kmixv2_post_grid05", True), ("mos010_default_kmixv2_post_grid05_k7", True)])
 def test_arm_builds_and_trains(name, encoder_trains, batch):
     model = construct_integrator(_load(name)).train()
     counts, shoebox, mask, metadata = batch
