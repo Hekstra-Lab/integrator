@@ -189,6 +189,10 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--data", type=Path, nargs="+",
                     default=sorted(DATA.glob("profile_truth_examples_*.npz")))
+    ap.add_argument("--arms", nargs="+", default=None,
+                    help="draw only these methods, in this order (default: every method in the npz)")
+    ap.add_argument("--tag", default="",
+                    help="appended to every output name, so a second set of arms does not replace the first")
     a = ap.parse_args()
     if not a.data:
         raise SystemExit(f"no profile_truth_examples_*.npz under {DATA}; run dump_profile_truth_examples.py")
@@ -198,14 +202,20 @@ def main() -> None:
         b = dict(np.load(path, allow_pickle=False))
         b["dataset"] = str(b["dataset"])
         arms = [str(x) for x in b["arms"]]
-        draw_profiles(b, arms, OUT / f"profile_truth_examples_{b['dataset']}")
-        draw_gates(b, arms, OUT / f"gate_truth_examples_{b['dataset']}")
+        if a.arms:
+            missing = [m for m in a.arms if m not in arms]
+            if missing:
+                raise SystemExit(f"{path}: no {missing}; it has {arms}")
+            arms = a.arms
+        t = f"_{a.tag}" if a.tag else ""
+        draw_profiles(b, arms, OUT / f"profile_truth_examples_{b['dataset']}{t}")
+        draw_gates(b, arms, OUT / f"gate_truth_examples_{b['dataset']}{t}")
         csv = path.with_name(f"profile_neff_vs_truth_{b['dataset']}.csv")
         if csv.is_file():
-            draw_neff(csv, b["dataset"], OUT / f"profile_neff_vs_truth_{b['dataset']}")
+            draw_neff(csv, b["dataset"], OUT / f"profile_neff_vs_truth_{b['dataset']}{t}")
         bcsv = path.with_name(f"background_vs_truth_{b['dataset']}.csv")
         if bcsv.is_file():
-            draw_background(bcsv, b["dataset"], OUT / f"background_vs_truth_{b['dataset']}")
+            draw_background(bcsv, b["dataset"], OUT / f"background_vs_truth_{b['dataset']}{t}")
 
 
 if __name__ == "__main__":
