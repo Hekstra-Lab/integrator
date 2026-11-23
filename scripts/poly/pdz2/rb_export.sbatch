@@ -47,6 +47,10 @@ OUT=${RB_OUT:-$M/rb_preds}
 # into the MTZ instead of i_rb/var_rb, from the same checkpoint, so both
 # estimators of one run can be scored. Default rb, the existing behaviour.
 EXPORT=${EXPORT:-rb}
+# CKPT_EPOCH=<n> exports the checkpoint of that epoch (files/checkpoints/epoch=<n>.ckpt)
+# instead of the last one, to score a training trajectory. Unset: the last, as before.
+# Give each epoch its own RB_OUT: the per-run test_preds_all.parquet is rewritten per export.
+CKPT_EPOCH=${CKPT_EPOCH:-}
 case $EXPORT in
   rb) EXPORT_FLAG=--rb-export ;;
   posterior) EXPORT_FLAG= ;;
@@ -64,8 +68,13 @@ nvidia-smi --query-gpu=name --format=csv,noheader | head -1
 
 for arm in "${@:-pdz2_geom_both}"; do
   run=$RUNS/$arm
-  ckpt=$(ls -1 $run/files/checkpoints/epoch=*.ckpt 2>/dev/null | sort | tail -1)
-  [ -z "$ckpt" ] && { echo "SKIP $arm: no checkpoint"; continue; }
+  if [ -n "$CKPT_EPOCH" ]; then
+    ckpt=$run/files/checkpoints/epoch=$(printf %04d "$((10#$CKPT_EPOCH))").ckpt
+    [ -f "$ckpt" ] || ckpt=
+  else
+    ckpt=$(ls -1 $run/files/checkpoints/epoch=*.ckpt 2>/dev/null | sort | tail -1)
+  fi
+  [ -z "$ckpt" ] && { echo "SKIP $arm: no checkpoint${CKPT_EPOCH:+ at epoch $CKPT_EPOCH}"; continue; }
   cfg=$M/${EXPORT}_cfg_$arm.yaml
   echo "===== $arm <- $(basename $ckpt)"
   micromamba run -n integrator-cuda-dev env PYTHONPATH=$SRC \
