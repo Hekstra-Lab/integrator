@@ -1030,6 +1030,7 @@ def _inject_profile_geometry(cfg: dict) -> None:
     if qp.get("name") not in (
         "geometric_basis_profile",
         "streak_base_profile",
+        "streak_mixture_profile",
         "quasiconformal_profile",
         "shapelet_profile",
         "physical_profile",

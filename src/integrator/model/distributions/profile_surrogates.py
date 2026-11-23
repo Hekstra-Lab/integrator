@@ -1746,6 +1746,235 @@ class StreakBaseProfileSurrogate(ProfileSurrogate):
         )
 
 
+def _inv_softplus(y: float) -> float:
+    return math.log(math.expm1(y))
+
+
+class StreakMixtureProfileSurrogate(ProfileSurrogate):
+    """Core-and-halo streak base from metadata, with an optional learned shape posterior and residual.
+
+        logits_j = log(g_j(z) + floor / K) + r_j(h),    p = softmax over valid pixels
+
+    The base is a core and a halo, both Gaussian, centred at one point and
+    aligned with the analytic detector azimuth phi:
+
+        g_j = w N(u_j; a1^2 + 1/12) N(v_j; c1^2 + 1/12)
+              + (1 - w) N(u_j; a2^2 + 1/12) N(v_j; c2^2 + 1/12)
+
+    at pixel centres, each component normalised on the valid pixels so that w
+    is the core's share exactly; adding 1/12 to each variance is the second
+    moment of the pixel integral (exact for a component wider than a pixel). The shape vector z has seven components: log a1, the
+    halo-to-core ratio along (a2 = a1 (1 + softplus)), log c1, the ratio across,
+    the logit of the core weight w in [0.02, 0.98], and a centre offset (u, v)
+    in pixels from `xyzcal`.
+
+        prior      p(z | m)    = N(mu(m), diag(sigma^2)),  mu(m) = z0 + b tanh(f(m) / b)
+        posterior  q(z | x, m) = N(mu(m) + sigma delta(x), diag((sigma s(x))^2))
+
+    with f an MLP on the nine geometry features and z0, b, sigma fixed buffers
+    (a trainable bound centre drifted onto its own bound in
+    `streak_base_profile`). delta = 0, s = 1 is the metadata base at zero KL.
+
+    `shape_posterior`: `none` (z = mu(m)), `amortized` (above, KL added to the
+    profile KL), `deterministic` (z = mu + sigma delta without KL; the control).
+    `residual`: `none`, `detector` (W h in the detector frame, not gated),
+    `streak` (a fixed dictionary of 45 Gaussian bumps in streak coordinates
+    mixed by a learned matrix from h).
+
+    Designed from fits to the true mos010 profiles: a one-scale generalised
+    Gaussian recovers 0.85-0.88 of I_true below 300 photons under the expected
+    Poisson NLL, two aligned Gaussians 0.96-1.00. `init_shape` and
+    `shape_prior_sd` are the median and the post-metadata spread of those fits.
+    """
+
+    NZ = 7
+
+    def __init__(
+        self,
+        input_dim: int,
+        latent_dim: int | None = None,
+        output_dim: int = 625,
+        init_std: float = 0.5,
+        prior_scale: float = 3.0,
+        beam_center=None,
+        profile_shape=None,
+        lambda_min: float | None = None,
+        lambda_max: float | None = None,
+        # core sd along, halo sd along, core sd across, halo sd across, core weight, centre u, centre v
+        init_shape=(1.9, 5.7, 0.20, 1.05, 0.38, -0.15, 0.0),
+        # half-range of the tanh bound on mu(m) - z0, per component of z
+        mean_bound=(1.2, 2.5, 1.2, 2.5, 2.5, 2.0, 0.5),
+        # prior sd of z about mu(m): the remainder of the per-reflection fits after metadata
+        shape_prior_sd=(0.35, 1.27, 0.36, 1.48, 0.46, 0.65, 0.05),
+        shape_posterior: str = "amortized",
+        max_delta: float = 3.0,
+        shape_samples: int = 8,
+        residual: str = "detector",
+        base_floor: float = 1e-3,
+        geom_hidden: int = 32,
+        **kwargs,
+    ) -> None:
+        super().__init__(input_dim=input_dim, latent_dim=latent_dim, output_dim=output_dim,
+                         init_std=init_std, prior_scale=prior_scale)
+        if beam_center is None:
+            raise ValueError("streak_mixture_profile needs beam_center")
+        if profile_shape is None:
+            side = int(round(math.sqrt(output_dim)))
+            profile_shape = (1, side, side)
+        d, h, w = (int(v) for v in profile_shape)
+        if d != 1 or h * w != output_dim:
+            raise ValueError("streak_mixture_profile is 2-D")
+        if shape_posterior not in ("none", "amortized", "deterministic"):
+            raise ValueError(shape_posterior)
+        if residual not in ("none", "detector", "streak"):
+            raise ValueError(residual)
+        self.profile_shape = (d, h, w)
+        self.beam_center = tuple(float(v) for v in beam_center)
+        self.lambda_min, self.lambda_max = lambda_min, lambda_max
+        self.shape_posterior, self.residual = shape_posterior, residual
+        self.max_delta, self.shape_samples, self.base_floor = float(max_delta), int(shape_samples), float(base_floor)
+
+        a1, a2, c1, c2, w0, du, dv = (float(v) for v in init_shape)
+        z0 = [math.log(a1), _inv_softplus(a2 / a1 - 1), math.log(c1), _inv_softplus(c2 / c1 - 1),
+              math.log((w0 - 0.02) / (0.98 - w0)), du, dv]
+        self.register_buffer("z0", torch.tensor(z0))
+        self.register_buffer("mean_bound", torch.tensor([float(v) for v in mean_bound]))
+        self.register_buffer("shape_prior_sd", torch.tensor([float(v) for v in shape_prior_sd]))
+
+        self.shape_head = nn.Sequential(
+            nn.Linear(N_GEOM_FEATURES, geom_hidden), nn.SiLU(),
+            nn.Linear(geom_hidden, geom_hidden), nn.SiLU(),
+            nn.Linear(geom_hidden, self.NZ),
+        )
+        nn.init.normal_(self.shape_head[-1].weight, std=1e-3)
+        nn.init.zeros_(self.shape_head[-1].bias)
+        if shape_posterior != "none":
+            self.delta_head = nn.Linear(input_dim, self.NZ)
+            nn.init.normal_(self.delta_head.weight, std=1e-3)
+            nn.init.zeros_(self.delta_head.bias)
+        if shape_posterior == "amortized":
+            self.zscale_head = nn.Linear(input_dim, self.NZ)
+            nn.init.normal_(self.zscale_head.weight, std=1e-3)
+            nn.init.constant_(self.zscale_head.bias, _inv_softplus(1.0))
+
+        nn.init.zeros_(self.decoder.bias)
+        self.decoder.bias.requires_grad_(False)
+        if residual != "detector":
+            self.decoder.weight.requires_grad_(False)
+        if residual == "none":
+            for p in (*self.loc_head.parameters(), *self.scale_head.parameters()):
+                p.requires_grad_(False)
+        if residual == "streak":
+            cu = torch.tensor([0.0, 1.5, -1.5, 3.5, -3.5, 6.5, -6.5, 10.5, -10.5])
+            wu = torch.tensor([0.9, 0.9, 0.9, 1.3, 1.3, 2.0, 2.0, 2.6, 2.6])
+            cv = torch.tensor([0.0, 1.0, -1.0, 2.5, -2.5])
+            wv = torch.tensor([0.6, 0.6, 0.6, 1.1, 1.1])
+            for n, t in (("_cu", cu), ("_wu", wu), ("_cv", cv), ("_wv", wv)):
+                self.register_buffer(n, t, persistent=False)
+            self.streak_mix = nn.Parameter(torch.randn(len(cu) * len(cv), self.d) * 0.05)
+
+        yy, xx = torch.meshgrid(torch.arange(h, dtype=torch.float32) - (h - 1) / 2,
+                                torch.arange(w, dtype=torch.float32) - (w - 1) / 2, indexing="ij")
+        self.register_buffer("_px", xx.reshape(-1).contiguous(), persistent=False)
+        self.register_buffer("_py", yy.reshape(-1).contiguous(), persistent=False)
+
+    # ---- pieces -----------------------------------------------------------------------
+    def prior_mean(self, metadata: dict, dtype, device):
+        """phi (B,), mu(m) (B, 7), predicted centroid in the streak frame (B, 2)."""
+        feats, phi = geometry_features(metadata, self.beam_center, self.lambda_min, self.lambda_max)
+        feats, phi = feats.to(dtype).to(device), phi.to(dtype).to(device)
+        mu = self.z0 + self.mean_bound * torch.tanh(self.shape_head(feats) / self.mean_bound)
+        _, h, w = self.profile_shape
+        fx = (metadata["xyzcal.px.0"].reshape(-1) - metadata["bbox.0"].reshape(-1)).to(dtype).to(device) - 0.5 - (w - 1) / 2
+        fy = (metadata["xyzcal.px.1"].reshape(-1) - metadata["bbox.2"].reshape(-1)).to(dtype).to(device) - 0.5 - (h - 1) / 2
+        c, s = torch.cos(phi), torch.sin(phi)
+        return phi, mu, torch.stack([c * fx + s * fy, -s * fx + c * fy], dim=-1)
+
+    @staticmethod
+    def unpack(z: Tensor):
+        a1 = z[..., 0].exp()
+        a2 = a1 * (1 + F.softplus(z[..., 1]))
+        c1 = z[..., 2].exp()
+        c2 = c1 * (1 + F.softplus(z[..., 3]))
+        w = 0.02 + 0.96 * torch.sigmoid(z[..., 4])
+        return a1, a2, c1, c2, w
+
+    def streak_coords(self, phi: Tensor, centre: Tensor):
+        """Pixel-centre coordinates (u along, v across) about `centre`; centre (..., B, 2) -> (..., B, K)."""
+        c, s = torch.cos(phi)[:, None], torch.sin(phi)[:, None]
+        u0 = c * self._px[None] + s * self._py[None]
+        v0 = -s * self._px[None] + c * self._py[None]
+        return u0 - centre[..., 0, None], v0 - centre[..., 1, None]
+
+    def base(self, phi: Tensor, z: Tensor, centroid: Tensor, mask: Tensor | None) -> Tensor:
+        """Core + halo on the valid pixels; z (..., B, 7) -> (..., B, K), rows summing to 1."""
+        a1, a2, c1, c2, w = (t[..., None] for t in self.unpack(z))
+        u, v = self.streak_coords(phi, centroid + z[..., 5:7])
+        m = None if mask is None else mask.reshape(u.shape[-2:]).to(u.dtype)
+
+        # each component is normalised on the valid pixels before mixing, so w is
+        # the core's share of the photons exactly: a 0.35 px core sampled at pixel
+        # centres sums to more than 1 under its continuous constant, by an amount
+        # that moves with its sub-pixel position
+        def comp(a, c):
+            va, vc = a * a + 1.0 / 12, c * c + 1.0 / 12
+            e = torch.exp(-0.5 * (u * u / va + v * v / vc))
+            if m is not None:
+                e = e * m
+            return e / e.sum(-1, keepdim=True).clamp_min(1e-30)
+
+        return w * comp(a1, c1) + (1 - w) * comp(a2, c2)
+
+    def residual_logits(self, h: Tensor, phi: Tensor, centre: Tensor) -> Tensor:
+        """h (..., B, d) -> (..., B, K)."""
+        if self.residual == "detector":
+            return h @ self.decoder.weight.T
+        u, v = self.streak_coords(phi, centre)                      # (B, K)
+        bu = torch.exp(-0.5 * ((u[..., None] - self._cu) / self._wu) ** 2)   # (B, K, 9)
+        bv = torch.exp(-0.5 * ((v[..., None] - self._cv) / self._wv) ** 2)   # (B, K, 5)
+        phi_b = (bu[..., :, None] * bv[..., None, :]).flatten(-2)             # (B, K, 45)
+        return torch.einsum("bkm,...bm->...bk", phi_b, h @ self.streak_mix.T)
+
+    # ---- forward ----------------------------------------------------------------------
+    def forward(self, x: Tensor, mc_samples: int = 1, metadata: dict | None = None, **kwargs) -> ProfileSurrogateOutput:
+        if metadata is None:
+            raise ValueError("streak_mixture_profile needs metadata")
+        mask = kwargs.get("mask")
+        phi, mu, centroid = self.prior_mean(metadata, x.dtype, x.device)
+        B = x.shape[0]
+        kl = x.new_zeros(B)
+        sig = self.shape_prior_sd
+        if self.shape_posterior == "none":
+            z_mean, z_s = mu, mu[None]
+        else:
+            delta = self.max_delta * torch.tanh(self.delta_head(x) / self.max_delta)
+            z_mean = mu + sig * delta
+            if self.shape_posterior == "amortized":
+                s = F.softplus(self.zscale_head(x)) + 1e-4
+                n_z = max(1, min(self.shape_samples, mc_samples))
+                z_s = z_mean[None] + sig * s[None] * torch.randn(n_z, B, self.NZ, device=x.device, dtype=x.dtype)
+                kl = kl + 0.5 * (delta.pow(2) + s.pow(2) - 1 - 2 * s.log()).sum(-1)
+            else:
+                z_s = z_mean[None]
+        floor = self.base_floor / self.decoder.weight.shape[0]
+        base_mean = torch.log(self.base(phi, z_mean, centroid, mask) + floor)             # (B, K)
+        base_s = torch.log(self.base(phi, z_s, centroid, mask) + floor)                   # (n_z, B, K)
+        reps = -(-mc_samples // base_s.shape[0])
+        base_s = base_s.repeat(reps, 1, 1)[:mc_samples]                                   # (S, B, K)
+        if self.residual == "none":
+            zeros = x.new_zeros(B, self.d)
+            return ProfileSurrogateOutput(zp=masked_softmax(base_s, mask), mean_profile=masked_softmax(base_mean, mask),
+                                          loc=zeros, scale=torch.ones_like(zeros), prior_scale=self.prior_scale, kl=kl)
+        loc = self.loc_head(x)
+        scale = F.softplus(self.scale_head(x)) + 1e-6
+        h = Normal(loc, scale).rsample([mc_samples])
+        centre = centroid + z_mean[:, 5:7]
+        kl = kl + (torch.log(self.prior_scale / scale) + (scale.pow(2) + loc.pow(2)) / (2 * self.prior_scale**2) - 0.5).sum(-1)
+        zp = masked_softmax(base_s + self.residual_logits(h, phi, centre), mask)
+        mean_profile = masked_softmax(base_mean + self.residual_logits(loc, phi, centre), mask)
+        return ProfileSurrogateOutput(zp=zp, mean_profile=mean_profile, loc=loc, scale=scale, prior_scale=self.prior_scale, kl=kl)
+
+
 class HellingerBasisProfileSurrogate(nn.Module):
     """Learned-basis profile in the square-root chart, orthonormal in Fisher-Rao.
 
