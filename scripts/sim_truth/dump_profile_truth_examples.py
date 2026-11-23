@@ -36,7 +36,7 @@ It also prints sum(counts) / sum(sim_image + background) over all windows,
 which is 1 when the noisy images are Poisson draws of exactly those rates.
 
 With --fit-out, every method's profile p (and the truth profile, as method
-`truth_profile`: `sim_image * own` on the window, normalised) is put through
+`truth_mask_profile`: `sim_image * own` on the window, normalised) is put through
 ONE estimator, the profile fit with the true background,
 
     I_fit = sum p (c - b_true) / sum p^2,
@@ -49,8 +49,19 @@ and I_own = sum p (c - b) / sum p^2 with the method's own background b. Per
 method, per bin of i_true and per resolution shell, the long CSV holds n,
 sum_ratio = sum I_fit / sum i_true, rel_dev_mean (rows with i_true >= 1),
 dev_sd of I_fit - i_true, mean E / i_true, median sqrt(V), median of
-V_truth_profile / V (the efficiency of p relative to the truth profile), mean
-Hellinger and sum_ratio_own.
+V_truth_mask_profile / V (the efficiency of p relative to the truth-mask profile), mean
+Hellinger and sum_ratio_own; also the median and interquartile range of
+I_fit - i_true (the residual is heavy-tailed, so the sd alone misleads), the
+p5 / median / p95 of kappa = sum p p_true / sum p^2 (the scale a profile fit
+puts on this reflection's own signal), the median of cos(p, p_true), and the
+median and p95 of the neighbour pickup sum p s_other / sum p^2, with s_other
+the noiseless signal of every other reflection on the window (`sim_image` on
+pixels not owned), which is additive and does not scale with this
+reflection's intensity. The reference is named `truth_mask_profile`: the
+noiseless owned-pixel shape put through this profile fit. With --fit-mask the
+shoebox mask (the overlap mask of make_sim_shoeboxes.py finalize) is applied
+to every profile, the truth-mask profile included, and renormalised, so all
+methods see the same pixels; it is printed per set.
 
 Over every in-domain reflection it also writes, per arm and per bin of
 i_true, the median of n_eff = 1 / sum(p^2) of `qp_mean` beside the median
@@ -91,8 +102,13 @@ def fit_test(a, md, counts, side, rid, shot, H, K, L, i_true, dom, d_all, truth_
     x0 = np.asarray(md["bbox.0"]).astype(np.int64)
     y0 = np.asarray(md["bbox.2"]).astype(np.int64)
     dy, dx = np.meshgrid(np.arange(side), np.arange(side), indexing="ij")
-    names = ["truth_profile"] + list(profiles)
-    res = {m: {k: np.full(n, np.nan) for k in ("fit", "E", "V", "hel", "own")} for m in names}
+    names = ["truth_mask_profile"] + list(profiles)
+    keys = ("fit", "E", "V", "hel", "own", "kappa", "cos", "pick")
+    res = {m: {k: np.full(n, np.nan) for k in keys} for m in names}
+    masks = np.load(f"{a.data}/masks.npy", mmap_mode="r") if a.fit_mask else None
+    if masks is not None:
+        sub = np.sort(np.random.default_rng(0).choice(n, min(n, 20000), replace=False))
+        print(f"--fit-mask: masked pixel fraction {1 - np.asarray(masks[sub]).astype(bool).mean():.4f}")
     with h5py.File(truth_dir / f"background_{a.run}.h5", "r") as fb:
         bg_img = fb["background"][()]
     with h5py.File(truth_dir / f"shots_{a.run}_rank0.h5", "r") as f:
@@ -113,16 +129,20 @@ def fit_test(a, md, counts, side, rid, shot, H, K, L, i_true, dom, d_all, truth_
             b_true = bg.mean(1, keepdims=True)
             lam = bragg + bg
             c = np.asarray(counts[np.sort(sel)], dtype=np.float64)[np.argsort(np.argsort(sel))]
-            pt = bragg * own
+            order = np.argsort(np.argsort(sel))
+            mk = (np.asarray(masks[np.sort(sel)]).astype(bool)[order] if masks is not None
+                  else np.ones_like(bragg, dtype=bool))
+            other = bragg * (~own)
+            pt = bragg * own * mk
             pt = pt / np.maximum(pt.sum(1, keepdims=True), 1e-30)
             for m in names:
-                if m == "truth_profile":
+                if m == "truth_mask_profile":
                     P, bm = pt, np.full(len(sel), np.nan)
                 else:
                     P = profiles[m][0][sel].astype(np.float64)
                     bm = profiles[m][1][sel]
                 ok = np.isfinite(P).all(1)
-                P = np.where(np.isfinite(P), P, 0.0)
+                P = np.where(np.isfinite(P), P, 0.0) * mk
                 P = P / np.maximum(P.sum(1, keepdims=True), 1e-30)
                 s2 = np.maximum((P ** 2).sum(1), 1e-30)
                 r = res[m]
@@ -131,7 +151,10 @@ def fit_test(a, md, counts, side, rid, shot, H, K, L, i_true, dom, d_all, truth_
                 r["V"][sel] = np.where(ok, (P ** 2 * lam).sum(1) / s2 ** 2, np.nan)
                 r["hel"][sel] = np.where(ok, np.sqrt(np.clip(1 - np.sqrt(P * pt).sum(1), 0, None)), np.nan)
                 r["own"][sel] = np.where(ok, (P * (c - bm[:, None])).sum(1) / s2, np.nan)
-    vt = res["truth_profile"]["V"]
+                r["kappa"][sel] = np.where(ok, (P * pt).sum(1) / s2, np.nan)
+                r["cos"][sel] = np.where(ok, (P * pt).sum(1) / np.sqrt(s2 * np.maximum((pt ** 2).sum(1), 1e-30)), np.nan)
+                r["pick"][sel] = np.where(ok, (P * other).sum(1) / s2, np.nan)
+    vt = res["truth_mask_profile"]["V"]
     out_rows = []
     for m in names:
         r = res[m]
@@ -153,7 +176,13 @@ def fit_test(a, md, counts, side, rid, shot, H, K, L, i_true, dom, d_all, truth_
                 sigma_median=float(np.median(np.sqrt(r["V"][s]))),
                 efficiency_median=float(np.median(vt[s] / r["V"][s])),
                 hellinger_mean=float(r["hel"][s].mean()),
-                sum_ratio_own=float(r["own"][own_ok].sum() / i_true[own_ok].sum()) if own_ok.sum() >= 10 else np.nan))
+                sum_ratio_own=float(r["own"][own_ok].sum() / i_true[own_ok].sum()) if own_ok.sum() >= 10 else np.nan,
+                dev_median=float(np.median(r["fit"][s] - i_true[s])),
+                dev_iqr=float(np.subtract(*np.percentile(r["fit"][s] - i_true[s], [75, 25]))),
+                kappa_p5=float(np.percentile(r["kappa"][s], 5)), kappa_median=float(np.median(r["kappa"][s])),
+                kappa_p95=float(np.percentile(r["kappa"][s], 95)), cos_median=float(np.median(r["cos"][s])),
+                pickup_median=float(np.median(r["pick"][s])), pickup_p95=float(np.percentile(r["pick"][s], 95)),
+                masked=bool(a.fit_mask)))
         s = dom & np.isfinite(r["fit"])
         print(f"fit {m}: n {s.sum():,}; sum I_fit / sum i_true {r['fit'][s].sum() / i_true[s].sum():.4f}; "
               f"sd(I_fit - i_true) {(r['fit'][s] - i_true[s]).std():.1f}; median efficiency vs truth profile "
@@ -172,6 +201,8 @@ def main() -> None:
     ap.add_argument("--dataset", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--stats-out", default=None)
+    ap.add_argument("--fit-mask", action="store_true",
+                    help="apply the shoebox mask to every profile in the --fit-out test (default: not)")
     ap.add_argument("--fit-out", default=None, help="append the fixed-estimator profile test here (long CSV)")
     ap.add_argument("--bg-out", default=None, help="append the background comparison here (long CSV)")
     ap.add_argument("--laue-profiles", default=None, help="laue_profiles.py npz of the same prediction set")
