@@ -98,8 +98,13 @@ class PolychromaticDataModule(pl.LightningDataModule):
         # xval files. Alternating images keeps both halves spanning the whole
         # rotation, which contiguous halves do not.
         image_parity: int | None = None,
+        # Seed of the train/validation permutation (and of the subset draw).
+        # None keeps the unseeded draw, so every run validates on different
+        # shoeboxes and validation losses of two runs are not comparable.
+        split_seed: int | None = None,
     ):
         super().__init__()
+        self.split_seed = split_seed
         self.min_image_num = min_image_num
         self.max_image_num = max_image_num
         if image_parity not in (None, 0, 1):
@@ -311,11 +316,14 @@ class PolychromaticDataModule(pl.LightningDataModule):
         is_test = reference.get("is_test")
         all_indices = torch.arange(len(self.full_dataset))
 
+        gen = None
+        if self.split_seed is not None:
+            gen = torch.Generator().manual_seed(int(self.split_seed))
         if self.subset_size is not None and self.subset_size < len(
             self.full_dataset
         ):
             all_indices = all_indices[
-                torch.randperm(len(all_indices))[: self.subset_size]
+                torch.randperm(len(all_indices), generator=gen)[: self.subset_size]
             ]
 
         if is_test is not None and is_test.any():
@@ -328,7 +336,7 @@ class PolychromaticDataModule(pl.LightningDataModule):
 
         self.test_dataset = Subset(self.full_dataset, test_idx.tolist())
 
-        perm = torch.randperm(len(train_val_idx))
+        perm = torch.randperm(len(train_val_idx), generator=gen)
         val_size = int(len(train_val_idx) * self.validation_split)
         val_idx = train_val_idx[perm[:val_size]]
         train_idx = train_val_idx[perm[val_size:]]

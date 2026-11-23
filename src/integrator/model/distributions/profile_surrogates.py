@@ -2155,6 +2155,182 @@ class StreakKMixProfileSurrogate(ProfileSurrogate):
                                       loc=loc, scale=scale, prior_scale=self.prior_scale, kl=kl)
 
 
+class StreakKMixV2ProfileSurrogate(StreakKMixProfileSurrogate):
+    """`streak_kmix_profile` plus a learned tilt and a per-reflection shape posterior, both off by default.
+
+    With every new key at its default the forward is the parent's exactly, so a
+    `streak_kmix_profile` checkpoint loads and gives the same profile.
+
+    `tilt: metadata`: the streak frame is rotated by psi(m) = (pi/4) tanh(t(m))
+    about the component centre, t a 9-16-1 SiLU MLP of the geometry features
+    whose last layer starts at sd 1e-3, so psi starts at 0. Beyond pi/4 a tilt
+    is a relabelling of along and across.
+
+    `shape_posterior: amortized`: the shape vector and a per-reflection tilt
+    offset, eta = (theta, dpsi) in R^(3K+3), are drawn per reflection as
+
+        eta = (theta0 + f(m), psi(m)) + sigma * (delta(x) + s(x) eps)
+        KL  = 1/2 sum_k (delta_k^2 + s_k^2 - 1 - 2 log s_k)
+
+    with delta = 3 tanh(Linear(x)/3) and s = softplus(Linear(x)) read from the
+    profile encoder output x (weights at sd 1e-3, s = 1 at start, so the KL is 0
+    and the profile is the metadata base at initialisation). The KL is added to
+    the profile KL. sigma = sigma_max sigmoid(r) is trainable and bounded above
+    (`shape_sd_max` in theta units, pi/16 for the tilt), started at
+    `init_shape_sd` and `init_tilt_sd_deg`; the KL does not contain sigma, so
+    the bound is what stops it growing. `shape_sd: fixed` freezes it.
+    `shape_posterior: deterministic` uses eta = prior mean + sigma delta with no
+    sampling and no KL: the control for the KL.
+
+    A faint reflection's encoder output carries little shape information, so
+    its q(eta) stays on the prior and its profile is the metadata base; a
+    bright one moves. `residual: detector` adds the parent's W h on top.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        latent_dim: int | None = None,
+        output_dim: int = 625,
+        init_std: float = 0.5,
+        prior_scale: float = 3.0,
+        beam_center=None,
+        profile_shape=None,
+        lambda_min: float | None = None,
+        lambda_max: float | None = None,
+        n_components: int = 3,
+        init_grid_scale: float = 1.0,
+        max_shift: float = 2.0,
+        max_delta: float = 3.0,
+        shape_samples: int = 8,
+        base_floor: float = 1e-3,
+        geom_hidden: int = 32,
+        tilt: str = "none",
+        shape_posterior: str = "none",
+        shape_sd: str = "learned",
+        init_shape_sd: float = 0.3,
+        shape_sd_max: float = 1.0,
+        init_tilt_sd_deg: float = 2.0,
+        residual: str = "none",
+        **kwargs,
+    ) -> None:
+        if tilt not in ("none", "metadata"):
+            raise ValueError(tilt)
+        if shape_posterior not in ("none", "amortized", "deterministic"):
+            raise ValueError(shape_posterior)
+        if shape_sd not in ("learned", "fixed"):
+            raise ValueError(shape_sd)
+        super().__init__(input_dim, latent_dim=latent_dim, output_dim=output_dim, init_std=init_std,
+                         prior_scale=prior_scale, beam_center=beam_center, profile_shape=profile_shape,
+                         lambda_min=lambda_min, lambda_max=lambda_max, n_components=n_components,
+                         init_grid_scale=init_grid_scale, max_shift=max_shift, shape_posterior="none",
+                         max_delta=max_delta, shape_samples=shape_samples, residual=residual,
+                         base_floor=base_floor, geom_hidden=geom_hidden)
+        self.tilt, self.post = tilt, shape_posterior
+        self.NE = self.NZ + 1
+        if tilt == "metadata":
+            self.tilt_head = nn.Sequential(nn.Linear(N_GEOM_FEATURES, 16), nn.SiLU(), nn.Linear(16, 1))
+            nn.init.normal_(self.tilt_head[-1].weight, std=1e-3)
+            nn.init.zeros_(self.tilt_head[-1].bias)
+        if shape_posterior != "none":
+            # the shape posterior reads the encoder output, so the encoder trains
+            # even with residual: none; the parent froze only the residual heads
+            self.eta_delta = nn.Linear(input_dim, self.NE)
+            nn.init.normal_(self.eta_delta.weight, std=1e-3)
+            nn.init.zeros_(self.eta_delta.bias)
+            smax = torch.full((self.NE,), float(shape_sd_max))
+            smax[-1] = math.pi / 16
+            s0 = torch.full((self.NE,), float(init_shape_sd))
+            s0[-1] = math.radians(init_tilt_sd_deg)
+            if torch.any(s0 >= smax):
+                raise ValueError("init_shape_sd and init_tilt_sd_deg must be below their bounds")
+            self.register_buffer("eta_sd_max", smax)
+            self.eta_sd_raw = nn.Parameter(torch.logit(s0 / smax), requires_grad=(shape_sd == "learned"))
+            if shape_posterior == "amortized":
+                self.eta_scale = nn.Linear(input_dim, self.NE)
+                nn.init.normal_(self.eta_scale.weight, std=1e-3)
+                nn.init.constant_(self.eta_scale.bias, math.log(math.expm1(1.0)))
+
+    @property
+    def eta_sd(self) -> Tensor:
+        return self.eta_sd_max * torch.sigmoid(self.eta_sd_raw)
+
+    def frame(self, phi: Tensor, psi: Tensor, th: Tensor, fxy: Tensor):
+        """Pixel-centre (u, v) in the frame at phi + psi about the component centre.
+
+        The centre shift is in the untilted frame at phi; psi and th may carry a
+        leading sample axis. Returns (..., B, K_pix) each."""
+        sh = self.max_shift * torch.tanh(th[..., 3 * self.K:] / self.max_shift)
+        c0, s0 = torch.cos(phi), torch.sin(phi)
+        cx = fxy[:, 0] + c0 * sh[..., 0] - s0 * sh[..., 1]
+        cy = fxy[:, 1] + s0 * sh[..., 0] + c0 * sh[..., 1]
+        ct, st = torch.cos(phi + psi), torch.sin(phi + psi)
+        X = self._px - cx[..., None]
+        Y = self._py - cy[..., None]
+        return ct[..., None] * X + st[..., None] * Y, -st[..., None] * X + ct[..., None] * Y
+
+    def base_uv(self, u: Tensor, v: Tensor, th: Tensor, mask: Tensor | None) -> Tensor:
+        a, c, w, _ = self.unpack(th)
+        e = torch.exp(-0.5 * (u[..., None] ** 2 / (a[..., None, :] ** 2 + 1 / 12)
+                              + v[..., None] ** 2 / (c[..., None, :] ** 2 + 1 / 12)))
+        if mask is not None:
+            e = e * mask.reshape(u.shape[-2:]).to(e.dtype)[..., None]
+        e = e / e.sum(-2, keepdim=True).clamp_min(1e-30)
+        return (e * w[..., None, :]).sum(-1)
+
+    def forward(self, x: Tensor, mc_samples: int = 1, metadata: dict | None = None, **kwargs) -> ProfileSurrogateOutput:
+        if self.tilt == "none" and self.post == "none":
+            return super().forward(x, mc_samples=mc_samples, metadata=metadata, **kwargs)
+        if metadata is None:
+            raise ValueError("streak_kmix_v2_profile needs metadata")
+        mask = kwargs.get("mask")
+        phi, mu, _ = self.prior_mean(metadata, x.dtype, x.device)
+        feats, _ = geometry_features(metadata, self.beam_center, self.lambda_min, self.lambda_max)
+        feats = feats.to(x.dtype).to(x.device)
+        _, hh, ww = self.profile_shape
+        fxy = torch.stack([
+            (metadata["xyzcal.px.0"].reshape(-1) - metadata["bbox.0"].reshape(-1)).to(x) - 0.5 - (ww - 1) / 2,
+            (metadata["xyzcal.px.1"].reshape(-1) - metadata["bbox.2"].reshape(-1)).to(x) - 0.5 - (hh - 1) / 2,
+        ], -1)
+        B = x.shape[0]
+        psi_m = (math.pi / 4) * torch.tanh(self.tilt_head(feats)[:, 0]) if self.tilt == "metadata" else x.new_zeros(B)
+        eta_mean = torch.cat([mu, psi_m[:, None]], -1)
+        kl = x.new_zeros(B)
+        if self.post == "none":
+            eta_s = eta_mean[None]
+        else:
+            sig = self.eta_sd
+            delta = self.max_delta * torch.tanh(self.eta_delta(x) / self.max_delta)
+            eta_mean = eta_mean + sig * delta
+            if self.post == "amortized":
+                s = F.softplus(self.eta_scale(x)) + 1e-4
+                n_z = max(1, min(self.shape_samples, mc_samples))
+                eta_s = eta_mean[None] + sig * s[None] * torch.randn(n_z, B, self.NE, device=x.device, dtype=x.dtype)
+                kl = kl + 0.5 * (delta.pow(2) + s.pow(2) - 1 - 2 * s.log()).sum(-1)
+            else:
+                eta_s = eta_mean[None]
+        um, vm = self.frame(phi, eta_mean[:, -1], eta_mean[:, :-1], fxy)
+        g_mean = self.base_uv(um, vm, eta_mean[:, :-1], mask)
+        us, vs = self.frame(phi, eta_s[..., -1], eta_s[..., :-1], fxy)
+        g_s = self.base_uv(us, vs, eta_s[..., :-1], mask)
+        floor = self.base_floor / self.decoder.weight.shape[0]
+        base_mean = torch.log(g_mean + floor)
+        base_s = torch.log(g_s + floor)
+        base_s = base_s.repeat(-(-mc_samples // base_s.shape[0]), 1, 1)[:mc_samples]
+        if self.residual == "none":
+            zeros = x.new_zeros(B, self.d)
+            return ProfileSurrogateOutput(zp=masked_softmax(base_s, mask), mean_profile=masked_softmax(base_mean, mask),
+                                          loc=zeros, scale=torch.ones_like(zeros), prior_scale=self.prior_scale, kl=kl)
+        loc = self.loc_head(x)
+        scale = F.softplus(self.scale_head(x)) + 1e-6
+        hs = Normal(loc, scale).rsample([mc_samples])
+        W = self.decoder.weight
+        kl = kl + (torch.log(self.prior_scale / scale) + (scale.pow(2) + loc.pow(2)) / (2 * self.prior_scale**2) - 0.5).sum(-1)
+        return ProfileSurrogateOutput(zp=masked_softmax(base_s + hs @ W.T, mask),
+                                      mean_profile=masked_softmax(base_mean + loc @ W.T, mask),
+                                      loc=loc, scale=scale, prior_scale=self.prior_scale, kl=kl)
+
+
 class HellingerBasisProfileSurrogate(nn.Module):
     """Learned-basis profile in the square-root chart, orthonormal in Fisher-Rao.
 
