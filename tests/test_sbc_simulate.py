@@ -91,3 +91,33 @@ def test_ranks_are_uniform_under_an_exact_posterior():
     # a posterior twice too narrow is flagged
     s = r.summarise(r.gamma_pit(I, pa / pr, pa / pr**2 / 4))
     assert s["var12"] > 1.3 and s["ks"] > 1.36
+
+
+def test_q_eta_reproduces_the_forwards_mean_profile():
+    m = _model()
+    qp = m.surrogates["qp"]
+    counts, shoebox, mask, md = _batch()
+    with torch.no_grad():
+        qp.eta_delta.weight.normal_(0, 0.05)
+        qp.eta_scale.weight.normal_(0, 0.05)
+        x = torch.randn(counts.shape[0], qp.eta_delta.in_features)
+        qp._refine_capture = []
+        ref = qp(x, mc_samples=1, metadata=md, mask=mask.squeeze(-1)).mean_profile
+        raw_delta, raw_scale = qp._refine_capture
+        qp._refine_capture = None
+        phi, fxy, eta_mean = sbc.eta_prior_mean(qp, md, counts)
+        loc, sd = sbc.q_eta(qp, eta_mean, raw_delta, raw_scale)
+        p = sbc.profile_at(qp, phi, fxy, loc, mask)
+    torch.testing.assert_close(p, ref)
+    assert torch.all(sd > 0)
+
+
+def test_rank_pit_is_uniform_when_the_truth_is_one_more_draw():
+    spec = importlib.util.spec_from_file_location("sbc_ranks", ROOT / "scripts" / "sim_truth" / "sbc_ranks.py")
+    r = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(r)
+    g = torch.Generator().manual_seed(0)
+    draws = torch.randn(64, 100000, generator=g)
+    truth = torch.randn(100000, generator=g)
+    s = r.summarise(r.rank_pit(truth, draws, g).numpy())
+    assert abs(s["mean_minus_half"]) < 0.005 and abs(s["var12"] - 1) < 0.01 and s["ks"] < 1.36

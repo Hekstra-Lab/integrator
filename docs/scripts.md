@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-327 scripts.
+328 scripts.
 
 ## Start here
 
@@ -180,6 +180,7 @@ per job, and it lives in the repo".
 | `figures/fig_sim_merged_vs_truth.py` | Merged structure factors and careless's per-observation scale against the simulation's truth. |
 | `figures/fig_sim_profile_params.py` | Learned profile parameters of trained runs: the K-component widths and weights against geometry, and residual bases. |
 | `figures/fig_sim_sampling.py` | Noiseless datsimx spots at each (enSteps, mosDoms) sampling, one figure per mosaic spread. |
+| `figures/fig_sim_sbc.py` | Simulation-based calibration of trained runs: ECDF of the PIT values minus the uniform, with simultaneous 95 % bands. |
 | `figures/fig_sim_shoeboxes.py` | Example shoeboxes of several simulated datasets, one row per dataset, columns at the same laue I/sigma. |
 | `figures/fig_sim_truth_scatter.py` | Integrated intensity against the simulated truth intensity, one panel per prediction set. |
 | `figures/fig_sim_truth_scores.py` | Integrated intensity scored against the simulated truth, per bin of truth intensity, every method on one set of axes. |

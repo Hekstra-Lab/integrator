@@ -195,6 +195,13 @@ Colour comes from the witch scheme, one colour per arm, assigned in
   Long format rather than a column per metric, because the metrics have
   different units and are drawn in different panels.
 
+`sbc/<run>/sbc_ecdf.csv`, `sbc/<run>/sbc_summary.csv`
+: Simulation-based calibration of one trained run, from `scripts/sim_truth/sbc_ranks.py` on a dataset drawn by `scripts/sim_truth/sbc_simulate.py`.
+  One row per (`method`, `dataset`, `quantity`, `binning`, `lo`, `hi`) and, in `sbc_ecdf.csv`, per grid point `z`.
+  `quantity` is `I`, `b`, `loglik`, `n_eff`, `i_rb` or `eta_<k>`; `binning` is `all`, `i_true` or `d`, with the bin edges in `lo`, `hi`.
+  `ecdf_minus_z` is ECDF(z) - z of the PIT values; `fig_sim_sbc.py` computes the simultaneous band from `n`.
+  `sbc_summary.csv` carries `n`, `mean_minus_half`, `var12` (12 var(u)) and `ks` (the Kolmogorov statistic).
+
 ## Rebuilding
 
 ```bash
