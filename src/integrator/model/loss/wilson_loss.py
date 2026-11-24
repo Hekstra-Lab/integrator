@@ -838,6 +838,17 @@ class WilsonLoss(nn.Module):
             prior_rate = torch.where(centric, tau * 0.5, tau)
         return concentration, self._apply_scale_free(prior_rate)
 
+    def _background_prior(self, group_labels, metadata, device) -> tuple[Tensor, Tensor]:
+        """Concentration and rate of the background prior: shared Gamma, or per-resolution-bin."""
+        if self.bg_concentration.ndim == 1:
+            if group_labels is None:
+                raise ValueError(
+                    "per-bin background prior requires group_labels"
+                )
+            groups = group_labels.to(device).long()
+            return self.bg_concentration[groups], self.bg_rate[groups]
+        return self.bg_concentration, self.bg_rate
+
     def forward(
         self,
         rate: Tensor,
@@ -961,18 +972,7 @@ class WilsonLoss(nn.Module):
         if self.intensity_kl_calibrate and self.training:
             self._accumulate_intensity_kl(qi, group_labels, centric, device)
 
-        # background prior: shared Gamma, or per-resolution-bin
-        if self.bg_concentration.ndim == 1:
-            if group_labels is None:
-                raise ValueError(
-                    "per-bin background prior requires group_labels"
-                )
-            groups = group_labels.to(device).long()
-            bg_conc = self.bg_concentration[groups]
-            bg_rate = self.bg_rate[groups]
-        else:
-            bg_conc = self.bg_concentration
-            bg_rate = self.bg_rate
+        bg_conc, bg_rate = self._background_prior(group_labels, metadata, device)
         p_bg = Gamma(concentration=bg_conc, rate=bg_rate)
         kl_bg = kl_divergence(qbg, p_bg) * self.background_kl_weight
         kl = kl + kl_bg
