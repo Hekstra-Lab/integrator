@@ -12,7 +12,7 @@ The parameters a config cannot reach, and why:
 - `surrogates.qi`, `surrogates.qbg`: the `svae` family builds q(I) and q(b) by a
   conjugate update, so the amortized heads are built and never called; q(I)
   uses its head only under `intensity_posterior: amortized`.
-- `encoders.signal`, `gate_head`: plain `svae` with a computed gate
+- `encoders.signal`, `gate_head`: plain `svae` (and `svae_per_sample`) with a computed gate
   (`responsibility`, `joint`) never reads them (svae_profile_encoder_dead,
   CLAUDE.md "Testing an architecture"). `svae_bg` and `svae_conjugate` give the
   encoder a job.
@@ -44,7 +44,7 @@ B, SIDE = 6, 25
 P = SIDE * SIDE
 STEPS = 4
 
-SVAE_FAMILY = {"svae", "svae_bg", "svae_conjugate", "svae_calib"}
+SVAE_FAMILY = {"svae", "svae_bg", "svae_conjugate", "svae_calib", "svae_per_sample"}
 
 
 def _batch():
@@ -83,7 +83,7 @@ def expected_unreached(cfg: dict) -> set[str]:
         out.add("surrogates.qbg")
         if ia.get("intensity_posterior", "conjugate") != "amortized":
             out.add("surrogates.qi")
-    if integ == "svae" and ia.get("gate", "learned") in ("responsibility", "joint"):
+    if integ in ("svae", "svae_per_sample") and ia.get("gate", "learned") in ("responsibility", "joint"):
         out |= {"encoders.signal", "gate_head"}
 
     qp = cfg.get("surrogates", {}).get("qp", {})
