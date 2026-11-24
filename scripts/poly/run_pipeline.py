@@ -33,7 +33,13 @@ ALL_STEPS = ("predict", "careless", "stats", "phenix", "peaks")
 # `repeat` and `half`, `<base>_predictions_0.mtz` carries `test`, `Iobs` and
 # `Ipred`, and `<base>_0.mtz` is the merged result with `I(+)/SigI(+)`;
 # handing a tool the wrong one raises a KeyError on the column it wanted.
-# Verified against careless 0.4's own parsers, not inferred from the names.
+# Verified against careless 0.4's own parsers, not inferred from the names;
+# re-read against careless 0.5.4 (the crls env, 2026-11-23): every tool's CSV
+# was recomputed from the three MTZs and matched to the printed digit. Each
+# tool sets its shell edges by percentile of dHKL over all crossvalidation
+# repeats pooled. cchalf and rsplit stack Friedel mates, so a centric
+# reflection enters twice; ccanom keeps centrics, whose F(+) - F(-) careless
+# writes as exactly 0; rsplit is computed on F, not I.
 CARELESS_STATS = {
     "cchalf": {"input": "xval", "bins": 10, "method": True},
     "ccanom": {"input": "xval", "bins": 10, "method": True},
