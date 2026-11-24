@@ -34,7 +34,7 @@ ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "docs" / "figures" / "sim"
 LABEL = {"svae": "svae", "svae_streak": "N1", "svae_kmix_base": "T0",
          "svae_kmix_h128_grid05": "P2", "svae_kmixv2_post": "B1",
-         "svae_kmix_base_cheb40": "T0, G degree 40", "svae_kmix_base_cheb40_cos": "T0-40, cosine",
+         "svae_kmix_base_cheb40": "T0, G degree 40", "svae_kmix_base_cheb20": "T0, G degree 20", "svae_kmix_base_cheb40_cos": "T0-40, cosine",
          "svae_kmix_base_cheb40_cos_lr3e3_b1024": "T0-40, cosine, lr 3e-3", "svae_kmix_base_cheb40_bgmap": "T0-40, background map"}
 
 
