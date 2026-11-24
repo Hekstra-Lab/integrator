@@ -112,6 +112,9 @@ def _load(path: pathlib.Path) -> dict:
     la = cfg.get("loss", {}).get("args", {}) or {}
     if la.get("spectrum_init_from") and not pathlib.Path(la["spectrum_init_from"]).exists():
         la["spectrum_init_from"] = None
+    ia = cfg.get("integrator", {}).get("args", {}) or {}
+    if ia.get("init_from_checkpoint") and not pathlib.Path(ia["init_from_checkpoint"]).exists():
+        ia["init_from_checkpoint"] = None
     return cfg
 
 
