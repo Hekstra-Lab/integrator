@@ -39,9 +39,20 @@ qi_mean (`qi_mean`), of I_true (`i_true`) or of d (`d`), plus the whole set (`al
                      with simultaneous 95 % bands computed there from n
     sbc_pit.parquet  the per-reflection u values
 
+`--posterior` scores a `sbc_simulate.py --mode posterior` dataset: the truth was
+drawn from q(. | y_obs) of the real shoebox, so the reference is the posterior
+given both shoeboxes. For I and b the conjugate update is repeated with
+q(. | y_obs) in place of the prior (the integrator's `_intensity_prior` and
+`_background_prior` return the saved q(. | y_obs) parameters of each
+reflection), which is exact for the conjugate q given the gate. For eta,
+whose amortized q is not conjugate, the two Gaussian posteriors are combined
+and the shared prior N(eta_mean, sigma^2) divided out once:
+precision 1/s_obs^2 + 1/s_sim^2 - 1/sigma^2 (floored at 1/s_sim^2 where it is
+not positive; the count is printed).
+
 usage: python sbc_ranks.py --ckpt CKPT --config CONFIG_LOG --data SBC_DIR
            --method NAME --dataset NAME --out DIR [--draws 64] [--device cuda]
-           [--integrator-args rb_profile=mean]
+           [--integrator-args rb_profile=mean] [--posterior]
 """
 
 from __future__ import annotations
@@ -58,7 +69,7 @@ import yaml
 from scipy import special, stats
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from sbc_simulate import eta_prior_mean, profile_at, q_eta  # noqa: E402
+from sbc_simulate import eta_prior_mean, predict_batches, profile_at, q_eta  # noqa: E402
 
 I_EDGES = [0, 10, 30, 100, 300, 1000, 3000, math.inf]
 D_EDGES = [1.7, 1.8, 1.9, 2.0, 2.2, 2.5, 3.0, 4.0, math.inf]
@@ -107,10 +118,11 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--integrator-args", default="", help="k=v,k=v added to integrator.args (e.g. rb_profile=mean)")
+    ap.add_argument("--posterior", action="store_true", help="score a --mode posterior dataset")
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
 
-    from integrator.utils import construct_data_loader, construct_integrator, inject_binning_labels
+    from integrator.utils import construct_integrator
 
     cfg = yaml.safe_load(a.config.read_text())
     cfg["data_loader"]["args"]["data_dir"] = str(a.data)
@@ -119,9 +131,6 @@ def main() -> None:
         k, v = kv.split("=", 1)
         cfg["integrator"]["args"][k] = yaml.safe_load(v)
     cfg["integrator"]["args"]["predict_keys"] = KEYS
-    dl = construct_data_loader(cfg)
-    dl.setup()
-    inject_binning_labels(dl, cfg)
     model = construct_integrator(cfg)
     model.load_state_dict(torch.load(a.ckpt, map_location="cpu", weights_only=False)["state_dict"], strict=True)
     model = model.eval().to(a.device)
@@ -130,20 +139,20 @@ def main() -> None:
     t = np.load(a.data / "sbc_truth.npz")
     row_of = {int(r): i for i, r in enumerate(t["refl_ids"])}
     tI, tb, teta = (torch.as_tensor(t[k]) for k in ("I", "b", "eta"))
+    n_floor = 0
+    if a.posterior:
+        obs = {k: torch.as_tensor(t[k]).to(a.device) for k in ("qI_conc", "qI_rate", "qb_conc", "qb_rate", "eta_loc", "eta_sdq")}
+
+        def lookup(md):
+            return torch.as_tensor([row_of[int(r)] for r in md["refl_ids"].reshape(-1).cpu()], device=a.device)
+
+        model._intensity_prior = lambda md, dev: (obs["qI_conc"][lookup(md)], obs["qI_rate"][lookup(md)])
+        model._background_prior = lambda md, dev: (obs["qb_conc"][lookup(md)], obs["qb_rate"][lookup(md)])
 
     gen = torch.Generator(device=a.device).manual_seed(a.seed)
     cols: dict[str, list] = {}
     with torch.no_grad():
-        for bi, batch in enumerate(dl.predict_dataloader()):
-            counts, shoebox, mask, md = batch
-            counts, shoebox, mask = counts.to(a.device), shoebox.to(a.device), mask.to(a.device)
-            md = {k: v.to(a.device) if torch.is_tensor(v) else v for k, v in md.items()}
-            qp._refine_capture = []
-            try:
-                out = model.predict_step((counts, shoebox, mask, md), bi)
-                raw_delta, raw_scale = qp._refine_capture
-            finally:
-                qp._refine_capture = None
+        for counts, mask, md, out, raw_delta, raw_scale in predict_batches(model, cfg, a.device):
             rows = torch.as_tensor([row_of[int(r)] for r in out["refl_ids"].cpu()])
             I0, b0, eta0 = (x[rows].to(a.device) for x in (tI, tb, teta))
             c = counts.reshape(counts.shape[0], -1).float()
@@ -151,6 +160,15 @@ def main() -> None:
 
             phi, fxy, eta_mean = eta_prior_mean(qp, md, c)
             loc, sd = q_eta(qp, eta_mean, raw_delta, raw_scale)
+            if a.posterior:
+                r = rows.to(a.device)
+                lo, so, sig = obs["eta_loc"][r], obs["eta_sdq"][r], qp.eta_sd.to(loc)
+                prec = 1 / sd**2 + 1 / so**2 - 1 / sig**2
+                bad = prec <= 1 / sd**2 * 1e-3
+                n_floor += int(bad.any(-1).sum())
+                prec = torch.where(bad, 1 / sd**2, prec)
+                loc = torch.where(bad, loc, (loc / sd**2 + lo / so**2 - eta_mean / sig**2) / prec)
+                sd = prec.rsqrt()
             u_eta = 0.5 * (1 + torch.erf((eta0 - loc) / (sd * math.sqrt(2))))
 
             S = a.draws
@@ -178,6 +196,8 @@ def main() -> None:
             for k, v in add.items():
                 cols.setdefault(k, []).append(torch.as_tensor(v).reshape(-1).double().cpu().numpy())
 
+    if a.posterior:
+        print(f"eta: combined precision floored for {n_floor} reflections")
     pit = pl.DataFrame({k: np.concatenate(v) for k, v in cols.items()})
     pit.write_parquet(a.out / "sbc_pit.parquet")
     I, d, qm = pit["I_true"].to_numpy(), pit["d"].to_numpy(), pit["qi_mean"].to_numpy()

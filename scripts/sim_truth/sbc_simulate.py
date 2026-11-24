@@ -30,8 +30,22 @@ except counts; dataset.yaml with the stats recomputed from the new counts; and
 sbc_truth.npz holding, per reflection, I, b, eta, the prior mean of eta, sigma,
 the prior parameters of I and b, and the profile's n_eff = 1 / sum p^2.
 
+Posterior SBC (`--mode posterior`, Saeilynoja et al. 2025): the latents are
+drawn instead from the run's posterior given each REAL shoebox y_obs,
+
+    I'_j ~ q(I | y_obs,j),  b'_j ~ q(b | y_obs,j),  eta'_j ~ q(eta | y_obs,j)
+
+(the Gamma q(I), q(b) moment-matched from qi_mean/qi_var, qbg_mean/qbg_var, and
+the amortized Normal q(eta)), and a second shoebox y_sim,j ~ Poisson(I' p(eta') + b')
+is simulated from them. The run's own config and priors are kept; no background
+prior is fitted. The reference posterior for the rank is the one given BOTH
+shoeboxes, q(theta | y_obs, y_sim), which `sbc_ranks.py --posterior` builds
+from the parameters of q(. | y_obs) saved here (`qI_conc`, `qI_rate`, `qb_conc`,
+`qb_rate`, `eta_loc`, `eta_sdq`). Rows the data module drops (dead or
+under-filled windows) keep zero counts and are dropped again at scoring.
+
 usage: python sbc_simulate.py --ckpt CKPT --config CONFIG_LOG --data DIR --out DIR
-           [--n-bins 30] [--seed 0] [--batch 8192] [--device cpu]
+           [--mode prior|posterior] [--n-bins 30] [--seed 0] [--batch 8192] [--device cpu]
 """
 
 from __future__ import annotations
@@ -104,6 +118,27 @@ def q_eta(qp, eta_mean: torch.Tensor, raw_delta: torch.Tensor, raw_scale: torch.
     return loc, sig * (torch.nn.functional.softplus(raw_scale) + 1e-4)
 
 
+def predict_batches(model, cfg: dict, device):
+    """(counts, mask, metadata, predict outputs, raw_delta, raw_scale) per batch of the config's data,
+    loaded as `integrator.cli.predict` loads it; the raw q(eta) head outputs are captured from the forward."""
+    from integrator.utils import construct_data_loader, inject_binning_labels
+    dl = construct_data_loader(cfg)
+    dl.setup()
+    inject_binning_labels(dl, cfg)
+    qp = model.surrogates["qp"]
+    with torch.no_grad():
+        for bi, (counts, shoebox, mask, md) in enumerate(dl.predict_dataloader()):
+            counts, shoebox, mask = counts.to(device), shoebox.to(device), mask.to(device)
+            md = {k: v.to(device) if torch.is_tensor(v) else v for k, v in md.items()}
+            qp._refine_capture = []
+            try:
+                out = model.predict_step((counts, shoebox, mask, md), bi)
+                raw_delta, raw_scale = qp._refine_capture
+            finally:
+                qp._refine_capture = None
+            yield counts, mask, md, out, raw_delta, raw_scale
+
+
 def prior_profile(qp, md: dict, mask: torch.Tensor, gen: torch.Generator):
     """eta ~ N(eta_mean, sigma^2) and its profile."""
     phi, fxy, eta_mean = eta_prior_mean(qp, md, mask)
@@ -122,6 +157,7 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--batch", type=int, default=8192)
     ap.add_argument("--device", default="cpu")
+    ap.add_argument("--mode", choices=("prior", "posterior"), default="prior")
     a = ap.parse_args()
     if a.out.exists():
         raise SystemExit(f"{a.out} exists; choose a new directory")
@@ -142,11 +178,12 @@ def main() -> None:
     groups = np.asarray(load_data(a.data / f"group_labels_{a.n_bins}.npy")).astype(np.int64)
     meta = load_data(a.data / "metadata.npy")
     N, P = counts_real.shape
-    alpha, beta, mu_bg = empirical_bg_prior(counts_real, masks, groups, a.n_bins)
-
     gen = torch.Generator(device=a.device).manual_seed(a.seed)
     out_counts = np.zeros((N, P), dtype=np.float32)
     sig = qp.eta_sd
+    if a.mode == "posterior":
+        return simulate_posterior(a, cfg, model, meta, masks, out_counts, gen)
+    alpha, beta, mu_bg = empirical_bg_prior(counts_real, masks, groups, a.n_bins)
     tr = {k: [] for k in ("I", "b", "eta", "eta_mean", "i_conc", "i_rate", "n_eff")}
     alpha_t = torch.as_tensor(alpha, dtype=torch.float32, device=a.device)
     beta_t = torch.as_tensor(beta, dtype=torch.float32, device=a.device)
@@ -167,17 +204,7 @@ def main() -> None:
                          ("i_rate", rate), ("n_eff", 1.0 / p.pow(2).sum(-1))):
                 tr[k].append(v.cpu().numpy())
 
-    a.out.mkdir(parents=True)
-    np.save(a.out / "counts.npy", out_counts)
-    for f in a.data.iterdir():
-        if f.name not in ("counts.npy", "dataset.yaml") and f.is_file():
-            shutil.copy2(f, a.out / f.name)
-    from integrator.cli.make_shoeboxes import _stats_from_memmap
-    spec = yaml.safe_load((a.data / "dataset.yaml").read_text())
-    spec["stats"] = _stats_from_memmap(a.out / "counts.npy", a.out / "masks.npy")
-    spec["sbc"] = {"source_data": str(a.data), "ckpt": str(a.ckpt), "config": str(a.config),
-                   "seed": a.seed, "mode": "prior"}
-    (a.out / "dataset.yaml").write_text(yaml.safe_dump(spec, sort_keys=False))
+    write_dataset(a, out_counts)
     (a.out / "bg_prior.yaml").write_text(yaml.safe_dump({
         "n_bins": a.n_bins, "bg_concentration": [float(x) for x in alpha],
         "bg_rate": [float(x) for x in beta], "bg_mean": [float(x) for x in mu_bg]}, sort_keys=False))
@@ -187,6 +214,54 @@ def main() -> None:
     print(f"wrote {N} shoeboxes to {a.out}; bg mean {mu_bg.min():.1f}-{mu_bg.max():.1f} /px, "
           f"alpha {alpha.min():.1f}-{alpha.max():.1f}; median I {np.median(cat['I']):.1f}, "
           f"median n_eff {np.median(cat['n_eff']):.1f}")
+
+
+def write_dataset(a, out_counts: np.ndarray) -> None:
+    """counts.npy, the source directory's other files, and dataset.yaml with the stats of the new counts."""
+    a.out.mkdir(parents=True)
+    np.save(a.out / "counts.npy", out_counts)
+    for f in a.data.iterdir():
+        if f.name not in ("counts.npy", "dataset.yaml") and f.is_file():
+            shutil.copy2(f, a.out / f.name)
+    from integrator.cli.make_shoeboxes import _stats_from_memmap
+    spec = yaml.safe_load((a.data / "dataset.yaml").read_text())
+    spec["stats"] = _stats_from_memmap(a.out / "counts.npy", a.out / "masks.npy")
+    spec["sbc"] = {"source_data": str(a.data), "ckpt": str(a.ckpt), "config": str(a.config),
+                   "seed": a.seed, "mode": a.mode}
+    (a.out / "dataset.yaml").write_text(yaml.safe_dump(spec, sort_keys=False))
+
+
+def simulate_posterior(a, cfg, model, meta, masks, out_counts, gen) -> None:
+    """Latents from q(. | y_obs) of every real shoebox; a second shoebox simulated from them."""
+    qp = model.surrogates["qp"]
+    model.predict_keys = ["refl_ids", "qi_mean", "qi_var", "qbg_mean", "qbg_var"]
+    for k in ("data_dir",):
+        cfg["data_loader"]["args"][k] = str(a.data)
+        cfg["data_loader"]["args"]["shoebox_file_names"][k] = str(a.data)
+    row_of = {int(r): i for i, r in enumerate(np.asarray(meta["refl_ids"]))}
+    keys = ("rows", "I", "b", "eta", "qI_conc", "qI_rate", "qb_conc", "qb_rate", "eta_loc", "eta_sdq", "eta_mean", "n_eff")
+    tr = {k: [] for k in keys}
+    for counts, mask, md, out, raw_delta, raw_scale in predict_batches(model, cfg, a.device):
+        rows = torch.as_tensor([row_of[int(r)] for r in out["refl_ids"].cpu()])
+        m = mask.reshape(mask.shape[0], -1).float()
+        qIc, qIr = out["qi_mean"] ** 2 / out["qi_var"], out["qi_mean"] / out["qi_var"]
+        qbc, qbr = out["qbg_mean"] ** 2 / out["qbg_var"], out["qbg_mean"] / out["qbg_var"]
+        I = torch._standard_gamma(qIc.double(), generator=gen).float() / qIr
+        b = torch._standard_gamma(qbc.double(), generator=gen).float() / qbr
+        phi, fxy, eta_mean = eta_prior_mean(qp, md, m)
+        loc, sdq = q_eta(qp, eta_mean, raw_delta, raw_scale)
+        eta = loc + sdq * torch.randn(loc.shape, generator=gen, device=loc.device, dtype=loc.dtype)
+        p = profile_at(qp, phi, fxy, eta, m)
+        out_counts[rows.numpy()] = torch.poisson((I[:, None] * p + b[:, None]) * m, generator=gen).cpu().numpy()
+        for k, v in zip(keys, (rows, I, b, eta, qIc, qIr, qbc, qbr, loc, sdq, eta_mean, 1.0 / p.pow(2).sum(-1))):
+            tr[k].append(v.cpu().numpy())
+    write_dataset(a, out_counts)
+    cat = {k: np.concatenate(v) for k, v in tr.items()}
+    rows = cat.pop("rows")
+    np.savez(a.out / "sbc_truth.npz", **cat, eta_sd=qp.eta_sd.detach().cpu().numpy(),
+             refl_ids=np.asarray(meta["refl_ids"])[rows])
+    print(f"posterior mode: wrote {len(rows)} simulated shoeboxes to {a.out}; "
+          f"median I' {np.median(cat['I']):.1f}, median b' {np.median(cat['b']):.2f}")
 
 
 if __name__ == "__main__":
