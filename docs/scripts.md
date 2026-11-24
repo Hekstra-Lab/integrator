@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-325 scripts.
+327 scripts.
 
 ## Start here
 
@@ -221,6 +221,8 @@ per job, and it lives in the repo".
 | `sim_truth/image_stats.py` | Per-image statistics of a simulated Laue shot, by one estimator for the laue-dials paper sims and for datsimx. |
 | `sim_truth/laue_profiles.py` | laue.integrate's fitted per-reflection profiles, laid on our shoebox windows. |
 | `sim_truth/learned_params_vs_truth.py` | Learned Wilson spectrum G(lambda) and learned profile parameters of trained runs, against the simulation's truth. |
+| `sim_truth/sbc_ranks.py` | PIT values of the true latents of an `sbc_simulate.py` dataset under a trained run's posteriors. |
+| `sim_truth/sbc_simulate.py` | Shoeboxes drawn from a trained run's own generative model, for simulation-based calibration (SBC). |
 | `sim_truth/score_against_truth.py` | Score an unmerged integrated MTZ against the per-reflection truth of a datsimx run. |
 | `sim_truth/score_exports.sh` | Score laue.integrate and every exported arm of one datsimx row against its truth, into one directory. |
 | `sim_truth/score_merged_vs_truth.py` | Merged structure factors scored against the simulation's true F(+) and F(-), per resolution shell. |
