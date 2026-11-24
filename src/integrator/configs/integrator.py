@@ -263,6 +263,19 @@ class IntegratorCfg:
     `var_rb` still comes from the spread over profile samples. A posterior over
     shape whose samples each overlap the data less than its mean (B2's fixed
     shape sd) lowers every sample's fit, which `"mean"` avoids."""
+    export_refine_steps: int = 0
+    """Prediction only. With n > 0, before predicting each batch the profile
+    surrogate's per-reflection variational parameters (for
+    `streak_kmix_v2_profile` with `shape_posterior: amortized`, the raw
+    outputs of `eta_delta` and `eta_scale`) start at the encoder's values and
+    take n Adam steps on the batch's own loss, every trained parameter
+    frozen; the prediction then uses the refined values. Each reflection's
+    terms in the loss depend only on its own parameters, so this is n steps
+    of per-reflection variational inference started from the amortized
+    guess (semi-amortized VI). 0 (default) predicts from the encoder as
+    before. Training never reads it."""
+    export_refine_lr: float = 0.05
+    """Adam step size for `export_refine_steps`."""
     profile_coord_channels: bool = False
     """Give the profile encoder two extra channels holding each pixel's offset
     in the beam-centred radial/tangential frame. A conv encoder is translation

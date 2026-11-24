@@ -2255,6 +2255,24 @@ class StreakKMixV2ProfileSurrogate(StreakKMixProfileSurrogate):
     def eta_sd(self) -> Tensor:
         return self.eta_sd_max * torch.sigmoid(self.eta_sd_raw)
 
+    # `export_refine_steps` (prediction only): when set, these replace the raw
+    # outputs of `eta_delta` and `eta_scale` for the batch being predicted.
+    # None, the default, leaves the forward exactly as trained.
+    refine_override: list[Tensor] | None = None
+    _refine_capture: list[Tensor] | None = None
+
+    def refine_init(self, run_forward) -> list[Tensor]:
+        """The encoder's raw (eta_delta(x), eta_scale(x)) for a batch, read off one forward."""
+        if self.post != "amortized":
+            raise RuntimeError("export refinement needs shape_posterior: amortized")
+        self._refine_capture = []
+        try:
+            with torch.no_grad():
+                run_forward()
+            return list(self._refine_capture)
+        finally:
+            self._refine_capture = None
+
     def frame(self, phi: Tensor, psi: Tensor, th: Tensor, fxy: Tensor):
         """Pixel-centre (u, v) in the frame at phi + psi about the component centre.
 
@@ -2300,10 +2318,17 @@ class StreakKMixV2ProfileSurrogate(StreakKMixProfileSurrogate):
             eta_s = eta_mean[None]
         else:
             sig = self.eta_sd
-            delta = self.max_delta * torch.tanh(self.eta_delta(x) / self.max_delta)
+            if self.refine_override is not None:
+                raw_delta, raw_scale = self.refine_override
+            else:
+                raw_delta = self.eta_delta(x)
+                raw_scale = self.eta_scale(x) if self.post == "amortized" else None
+                if self._refine_capture is not None:
+                    self._refine_capture[:] = [raw_delta, raw_scale]
+            delta = self.max_delta * torch.tanh(raw_delta / self.max_delta)
             eta_mean = eta_mean + sig * delta
             if self.post == "amortized":
-                s = F.softplus(self.eta_scale(x)) + 1e-4
+                s = F.softplus(raw_scale) + 1e-4
                 n_z = max(1, min(self.shape_samples, mc_samples))
                 eta_s = eta_mean[None] + sig * s[None] * torch.randn(n_z, B, self.NE, device=x.device, dtype=x.dtype)
                 kl = kl + 0.5 * (delta.pow(2) + s.pow(2) - 1 - 2 * s.log()).sum(-1)

@@ -177,6 +177,8 @@ class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
         self.rb_pedestal = cfg.rb_pedestal
         self.rb_background_term = cfg.rb_background_term
         self.rb_profile = getattr(cfg, "rb_profile", "samples")
+        self.export_refine_steps = int(getattr(cfg, "export_refine_steps", 0))
+        self.export_refine_lr = float(getattr(cfg, "export_refine_lr", 0.05))
         self.profile_coord_channels = getattr(
             cfg, "profile_coord_channels", False
         )
@@ -467,8 +469,13 @@ class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
 
     def predict_step(self, batch, _batch_idx):
         """Run inference and return the `predict_keys` subset of the forward outputs."""
+        if self.export_refine_steps > 0:
+            return self._refined_predict_step(batch)
         counts, shoebox, mask, metadata = batch
         outputs = self(counts, shoebox, mask, metadata)
+        return self._predict_outputs(outputs, metadata)
+
+    def _predict_outputs(self, outputs, metadata):
         forward_out = outputs["forward_out"]
         self._add_rao_blackwell(forward_out)
         if "qi" not in forward_out:
@@ -477,6 +484,66 @@ class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
         self._warn_unknown_predict_keys(forward_out)
         return {k: v for k, v in forward_out.items() if k in self.predict_keys}
 
+
+    def _batch_loss(self, outputs, metadata) -> torch.Tensor:
+        """The training loss of one batch, as `_step` computes it, without logging."""
+        forward_out = outputs["forward_out"]
+        return self.loss(
+            rate=forward_out["rates"],
+            counts=forward_out["counts"],
+            qp=outputs["qp"],
+            qi=outputs["qi"],
+            qbg=outputs["qbg"],
+            mask=forward_out["mask"],
+            group_labels=metadata["group_label"].long(),
+            metadata=metadata,
+            qbg_plane=outputs.get("qbg_plane"),
+            coset_mode=self.coset_mode,
+        )["loss"]
+
+    def _refined_predict_step(self, batch):
+        """`export_refine_steps` Adam steps on the profile's per-reflection variational parameters, then predict.
+
+        Prediction runs under `torch.inference_mode`, whose tensors cannot enter
+        autograd, so the batch is cloned with inference mode off. Gradients are
+        taken with `torch.autograd.grad` with respect to the free tensors only,
+        so no trained parameter accumulates a gradient or changes. The batch
+        loss is a mean over reflections and each reflection's terms depend only
+        on its own free parameters, so the loss is multiplied by the batch size
+        to give each reflection the gradient of its own objective.
+        """
+        qp = self.surrogates["qp"]
+        if not hasattr(qp, "refine_init"):
+            raise RuntimeError(
+                f"export_refine_steps needs a profile surrogate with per-reflection "
+                f"variational parameters; {type(qp).__name__} has none"
+            )
+
+        def clone(v):
+            return v.clone() if isinstance(v, torch.Tensor) else v
+
+        with torch.inference_mode(False), torch.enable_grad():
+            counts, shoebox, mask, metadata = batch
+            counts, shoebox, mask = clone(counts), clone(shoebox), clone(mask)
+            metadata = {k: clone(v) for k, v in metadata.items()}
+            free = qp.refine_init(lambda: self(counts, shoebox, mask, metadata))
+            free = [t.detach().clone().requires_grad_(True) for t in free]
+            opt = torch.optim.Adam(free, lr=self.export_refine_lr)
+            n = counts.shape[0]
+            try:
+                qp.refine_override = free
+                for _ in range(self.export_refine_steps):
+                    loss = self._batch_loss(self(counts, shoebox, mask, metadata), metadata) * n
+                    grads = torch.autograd.grad(loss, free)
+                    opt.zero_grad()
+                    for t, g in zip(free, grads):
+                        t.grad = g
+                    opt.step()
+                with torch.no_grad():
+                    outputs = self(counts, shoebox, mask, metadata)
+                    return self._predict_outputs(outputs, metadata)
+            finally:
+                qp.refine_override = None
 
     def _add_deconvolved(self, forward_out: dict, metadata: dict) -> None:
         """Add the intensity with our own Wilson prior divided back out.
