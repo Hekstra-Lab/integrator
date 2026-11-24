@@ -203,6 +203,11 @@ Colour comes from the witch scheme, one colour per arm, assigned in
   `ecdf_minus_z` is ECDF(z) - z of the PIT values; `fig_sim_sbc.py` computes the simultaneous band from `n`.
   `sbc_summary.csv` carries `n`, `mean_minus_half`, `var12` (12 var(u)) and `ks` (the Kolmogorov statistic).
 
+`prior_check/prior_check_summary.csv`, `prior_check/prior_check_ecdf.csv`, `prior_check/prior_predictive.csv`
+: Prior checks of trained runs' Wilson intensity prior, from `scripts/sim_truth/prior_check.py`.
+  The summary has one row per (`method`, `dataset`, `binning` in `all`, `d`, `wavelength`; `group` in `all`, `acentric`, `centric`; `lo`, `hi`), with `ratio` (mean true I over mean prior mean), `n`, `mean_minus_half`, `var12` and `ks` of u = F_prior(I_true).
+  `prior_predictive.csv` holds per (`method` = the prior draw, `statistic` in `total`, `max`, `median`, d bin `lo`, `hi`, quantile `q`) the `real` and `sim` quantiles of that shoebox statistic.
+
 ## Rebuilding
 
 ```bash

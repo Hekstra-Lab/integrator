@@ -57,7 +57,7 @@ if [ ${#want[@]} -eq 0 ]; then
   if [ -n "$TEMPLATE" ]; then
     want=(ccsym pdz2 refine basis basiscmp cost)
   else
-    want=(shoebox loss wilson basis basiscmp cost scatter merging peaks spectrum careless ccsym pdz2 refine shape patch arms simsampling simimage simtruth simshoebox simtruthpc simprofile simcmp simsbc)
+    want=(shoebox loss wilson basis basiscmp cost scatter merging peaks spectrum careless ccsym pdz2 refine shape patch arms simsampling simimage simtruth simshoebox simtruthpc simprofile simcmp simsbc simprior)
   fi
 fi
 has() { printf '%s\n' "${want[@]}" | grep -qx "$1"; }
@@ -207,6 +207,8 @@ has simtruthpc && [ -f "$DATA/sim_truth_scores_by_d_mos010_pc.csv" ] && step sim
 has simprofile && ls "$DATA"/profile_truth_examples_*.npz >/dev/null 2>&1 && step simprofile "${PY[@]}" scripts/figures/fig_profile_truth_examples.py
 # simulation-based calibration, one directory per scored run (scripts/sim_truth/sbc_ranks.py)
 has simsbc && ls "$DATA"/sbc/*/sbc_ecdf.csv >/dev/null 2>&1 && step simsbc "${PY[@]}" scripts/figures/fig_sim_sbc.py --src "$DATA"/sbc/*/
+# prior checks of the Wilson intensity prior (scripts/sim_truth/prior_check.py)
+has simprior && [ -f "$DATA/prior_check/prior_check_summary.csv" ] && step simprior "${PY[@]}" scripts/figures/fig_sim_prior_check.py --src "$DATA/prior_check"
 if has simcmp && [ -f "$SIMPC" ]; then
   for ds in mos010_pc_default mos010_pc_permissive; do for est in rb posterior; do
     step simcmp "${PY[@]}" scripts/figures/fig_intensity_scatter.py --data "$SIMPC" --id shot,h,k,l --value i_hat \
