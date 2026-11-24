@@ -33,7 +33,12 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 def _load(path: pathlib.Path) -> dict:
     yaml = pytest.importorskip("yaml")
-    return yaml.safe_load(path.read_text())
+    cfg = yaml.safe_load(path.read_text())
+    # a warm-start file on the cluster is not here; the architecture does not depend on it
+    la = cfg.get("loss", {}).get("args", {}) or {}
+    if la.get("spectrum_init_from") and not pathlib.Path(la["spectrum_init_from"]).exists():
+        la["spectrum_init_from"] = None
+    return cfg
 
 
 CONFIGS = [
