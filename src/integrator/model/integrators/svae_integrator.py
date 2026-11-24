@@ -91,6 +91,16 @@ class SVAEIntegrator(BaseIntegrator):
         return self.loss.intensity_prior_params(metadata, device)
 
     def _background_prior(self, metadata, device):
+        # Delegating to the loss keeps q(b)'s conjugate prior and the KL's
+        # prior identical, as for the intensity prior above. For a loss whose
+        # prior is the fixed Gamma(bg_concentration, bg_rate) it returns the
+        # same tensors as the inline lookup below; a loss that learns the
+        # prior (`polychromatic_wilson_bgmap`) then reaches q(b) as well as
+        # the KL. Losses without the method keep the inline lookup.
+        loss_prior = getattr(self.loss, "_background_prior", None)
+        if loss_prior is not None:
+            g = metadata.get("group_label")
+            return loss_prior(g, metadata, device)
         conc = self.loss.bg_concentration  # () or (n_bins,)
         rate = self.loss.bg_rate
         if conc.ndim == 1:

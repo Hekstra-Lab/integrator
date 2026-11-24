@@ -77,3 +77,41 @@ def test_the_parent_prior_is_unchanged():
     conc, rate = loss._background_prior(None, {}, "cpu")
     assert float(conc) == 1.0 and float(rate) == 1.0
     assert math.isclose(float(conc / rate), 1.0)
+
+
+def _inline_lookup(loss, metadata):
+    """svae's background prior as it was read before it delegated to the loss."""
+    conc, rate = loss.bg_concentration, loss.bg_rate
+    if conc.ndim == 1:
+        g = metadata["group_label"].long()
+        conc, rate = conc[g], rate[g]
+    return conc, rate
+
+
+@pytest.mark.parametrize("per_bin", [False, True])
+def test_svae_q_bg_prior_is_unchanged_for_a_fixed_prior(batch, per_bin):
+    model = construct_integrator(_load("mos010_default_kmix_base_cheb40"))
+    metadata = dict(batch[3])
+    if per_bin:
+        n = 4
+        model.loss.bg_concentration = torch.linspace(1.0, 2.5, n)
+        model.loss.bg_rate = torch.linspace(0.5, 2.0, n)
+        metadata["group_label"] = torch.tensor([0, 1, 2, 3, 0, 2])
+    got = model._background_prior(metadata, "cpu")
+    want = _inline_lookup(model.loss, metadata)
+    for a, b in zip(got, want):
+        assert torch.equal(torch.as_tensor(a), torch.as_tensor(b))
+
+
+def test_svae_q_bg_uses_the_learned_map(batch):
+    model = construct_integrator(_load("mos010_default_kmix_base_cheb40_bgmap")).eval()
+    counts, shoebox, mask, metadata = batch
+    conc, rate = model._background_prior(metadata, "cpu")
+    assert torch.allclose(conc / rate, torch.full((B,), 19.0), rtol=1e-5)
+    with torch.no_grad():
+        a = model(counts, shoebox, mask, metadata)["qbg"].mean
+        model.loss.bg_kappa_raw.fill_(1e4)  # a prior strong enough to dominate the pixels
+        model.loss.bg_coef[0, 0] = math.log(50.0)
+        b = model(counts, shoebox, mask, metadata)["qbg"].mean
+    assert not torch.allclose(a, b)
+    assert torch.all((b - 50.0).abs() < (a - 50.0).abs())
