@@ -35,7 +35,9 @@ import figstyle  # noqa: E402
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "docs" / "figures" / "sim"
 LABEL = {"svae": "svae", "svae_streak": "N1", "svae_kmix_base": "T0",
-         "svae_kmix_h128_grid05": "P2", "svae_kmixv2_post": "B1"}
+         "svae_kmix_h128_grid05": "P2", "svae_kmixv2_post": "B1",
+         "svae_kmix_base_cheb40": "T0, G degree 40", "svae_kmix_base_cheb40_cos": "T0-40, cosine",
+         "svae_kmix_base_cheb40_cos_lr3e3_b1024": "T0-40, cosine, lr 3e-3", "svae_kmix_base_cheb40_bgmap": "T0-40, background map"}
 LS = ("-", "--", ":", "-.")
 ROWS = (("along_sd", "along sd $a_k$ (px)"), ("across_sd", "across sd $c_k$ (px)"), ("weight", "weight $w_k$"))
 COLS = (("radius_px", "detector radius (px)"), ("wavelength", "wavelength (\\AA)"))
