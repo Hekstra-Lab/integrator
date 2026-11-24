@@ -58,6 +58,7 @@ from integrator.model.loss import (
     GlobalPriorLoss,
     MonochromaticWilsonLoss,
     PolychromaticWilsonBgMapLoss,
+    PolychromaticWilsonEBLoss,
     PolychromaticWilsonLoss,
     RefinementLoss,
 )
@@ -92,6 +93,7 @@ REGISTRY = {
         "amplitude_wilson": AmplitudeWilsonLoss,
         "polychromatic_wilson": PolychromaticWilsonLoss,
         "polychromatic_wilson_bgmap": PolychromaticWilsonBgMapLoss,
+        "polychromatic_wilson_eb": PolychromaticWilsonEBLoss,
         "refinement": RefinementLoss,
     },
     "integrator": {

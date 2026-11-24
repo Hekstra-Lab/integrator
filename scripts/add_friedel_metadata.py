@@ -39,6 +39,8 @@ import torch
 
 import reciprocalspaceship as rs
 
+from integrator.io import load_data, save_data
+
 
 def main():
     ap = argparse.ArgumentParser(description="Add Friedel-pair metadata.")
@@ -68,7 +70,8 @@ def main():
     sg = gemmi.SpaceGroup(args.space_group)
     ref_path = args.data_dir / args.ref
     out_path = args.data_dir / (args.out or args.ref)
-    reference = torch.load(ref_path, weights_only=False)
+    # load_data/save_data read and write .pt as torch.load/torch.save did, and .npy too
+    reference = load_data(ref_path)
 
     H = reference["H"].long().numpy()
     K = reference["K"].long().numpy()
@@ -102,7 +105,7 @@ def main():
     reference["nonanom_id"] = torch.from_numpy(nonanom_id)
     reference["friedel_plus"] = torch.from_numpy(friedel_plus.astype(bool))
     reference["centric"] = torch.from_numpy(centric)
-    torch.save(reference, out_path)
+    out_path = save_data(reference, out_path)
 
     n_pooled = len(pooled_to_id)
     print(f"Wrote {out_path}")
