@@ -42,7 +42,8 @@ usage: python score_merged_vs_truth.py --merged config4_0.mtz --truth ground_tru
            --method laue_integrate --dataset mos010_pc_default --dmin 1.78 --out scores_merged.csv
            [--predictions config4_predictions_0.mtz --unmerged integrated.mtz
             --truth-table truth_reflections.csv --scale-out scores_scale.csv]
-Appends to --out (and --scale-out) when they exist.
+Appends to --out (and --scale-out) when they exist. `--joined-out` writes the
+per-reflection F, F' and F_true of this one method as parquet (overwritten).
 """
 
 from __future__ import annotations
@@ -194,6 +195,7 @@ def main() -> None:
     ap.add_argument("--truth-table", type=Path)
     ap.add_argument("--unmerged", type=Path, help="the unmerged MTZ careless read (BATCH, wavelength, I)")
     ap.add_argument("--scale-out", type=Path)
+    ap.add_argument("--joined-out", type=Path, help="per-reflection F, F after the (k, b) fit and F_true (parquet)")
     a = ap.parse_args()
 
     tr = rs.read_mtz(str(a.truth))
@@ -234,6 +236,12 @@ def main() -> None:
     edges[0], edges[-1] = np.inf, 0
     edges = edges[::-1]  # increasing for digitize: shell 1 is the highest resolution
     rows = list(shell_rows(j, edges, has_I))
+    if a.joined_out is not None:
+        (j.filter(pl.col("F").is_not_nan())
+         .select("H", "K", "L", "plus", "centric", "d", "F", "F_kB", "F_true")
+         .with_columns(method=pl.lit(a.method), dataset=pl.lit(a.dataset))
+         .write_parquet(a.joined_out))
+        print(f"wrote {a.joined_out}")
     out = pl.DataFrame(rows, infer_schema_length=None).with_columns(
         method=pl.lit(a.method), dataset=pl.lit(a.dataset), k=pl.lit(k), dB_I=pl.lit(2 * b), merged=pl.lit(str(a.merged)))
     if a.out.exists():

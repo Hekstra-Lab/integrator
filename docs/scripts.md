@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-324 scripts.
+325 scripts.
 
 ## Start here
 
@@ -177,6 +177,7 @@ per job, and it lives in the repo".
 | `figures/fig_profile_truth_examples.py` | Shoeboxes of the datsimx sims beside their true profile and each arm's predicted profile and gate. |
 | `figures/fig_sim_image.py` | Simulated Laue shots side by side: whole detector (block means) and a full-resolution crop. |
 | `figures/fig_sim_learned_spectrum.py` | Learned Wilson spectrum G(lambda) of trained runs against the simulation's spectrum and its truth table. |
+| `figures/fig_sim_merged_vs_truth.py` | Merged structure factors and careless's per-observation scale against the simulation's truth. |
 | `figures/fig_sim_profile_params.py` | Learned profile parameters of trained runs: the K-component widths and weights against geometry, and residual bases. |
 | `figures/fig_sim_sampling.py` | Noiseless datsimx spots at each (enSteps, mosDoms) sampling, one figure per mosaic spread. |
 | `figures/fig_sim_shoeboxes.py` | Example shoeboxes of several simulated datasets, one row per dataset, columns at the same laue I/sigma. |
