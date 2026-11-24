@@ -159,6 +159,7 @@ class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
         self.warmup_epochs = opt.warmup_epochs
         self.warmup_steps = opt.warmup_steps
         self.lr_min = opt.lr_min
+        self.loss_lr = getattr(opt, "loss_lr", None)
         self.mc_samples = cfg.mc_samples
         self.coset_mode = cfg.coset_mode
         if cfg.data_dim == "2d":
@@ -716,10 +717,13 @@ class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
         decoder_params: list[nn.Parameter] = []
         prior_params: list[nn.Parameter] = []
         other_params: list[nn.Parameter] = []
+        loss_params: list[nn.Parameter] = []
         for name, param in self.named_parameters():
             if not param.requires_grad:
                 continue
-            if self._is_prior_scalar(name):
+            if self.loss_lr is not None and name.startswith("loss."):
+                loss_params.append(param)
+            elif self._is_prior_scalar(name):
                 prior_params.append(param)
             # any surrogate decoder weight (e.g. surrogates.qp.decoder.weight)
             elif name.startswith("surrogates.") and name.endswith(
@@ -746,6 +750,8 @@ class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
                 else self.decoder_weight_decay
             )
             groups.append({"params": decoder_params, "weight_decay": decay})
+        if loss_params:
+            groups.append({"params": loss_params, "weight_decay": 0.0, "lr": self.loss_lr})
         return torch.optim.Adam(groups, lr=self.lr)
 
     def _cosine_warmup_lambda(self, max_epochs: int):

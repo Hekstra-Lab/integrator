@@ -14,6 +14,13 @@ class OptimizerConfig:
         warmup_epochs: Number of linear-warmup epochs used by `cosine_warmup`.
         warmup_steps: Number of linear-warmup steps used by `step_linear_warmup`.
         lr_min: Floor learning rate for the schedule; must be non-negative and `<= lr`.
+        loss_lr: Learning rate for every `loss.*` parameter (the Wilson B and G(lambda)
+            coefficients, a learned background map), in a group of its own with no weight
+            decay; a schedule scales it by the same factor as `lr`. `None` (default) keeps
+            them in the groups and at the rate they have always had. Under Adam a parameter
+            whose gradient keeps one sign moves about `lr` per step whatever the gradient's
+            size, so at lr 1e-3 the Wilson B rose a constant 0.18/epoch for 60 epochs and
+            never converged.
     """
 
     lr: float = 0.001
@@ -23,6 +30,7 @@ class OptimizerConfig:
     warmup_epochs: int = 5
     warmup_steps: int = 0
     lr_min: float = 1.0e-5
+    loss_lr: float | None = None
 
     def __post_init__(self):
         if self.lr <= 0:
@@ -46,6 +54,8 @@ class OptimizerConfig:
             raise ValueError(
                 f"warmup_epochs must be non-negative, got {self.warmup_epochs}"
             )
+        if self.loss_lr is not None and self.loss_lr <= 0:
+            raise ValueError(f"loss_lr must be positive, got {self.loss_lr}")
         if self.lr_min < 0:
             raise ValueError(f"lr_min must be non-negative, got {self.lr_min}")
         if self.lr_min > self.lr:

@@ -157,7 +157,7 @@ def main() -> None:
             shutil.copy2(f, a.out / f.name)
     from integrator.cli.make_shoeboxes import _stats_from_memmap
     spec = yaml.safe_load((a.data / "dataset.yaml").read_text())
-    spec["stats"] = _stats_from_memmap(np.load(a.out / "counts.npy", mmap_mode="r"), masks)
+    spec["stats"] = _stats_from_memmap(a.out / "counts.npy", a.out / "masks.npy")
     spec["sbc"] = {"source_data": str(a.data), "ckpt": str(a.ckpt), "config": str(a.config),
                    "seed": a.seed, "mode": "prior"}
     (a.out / "dataset.yaml").write_text(yaml.safe_dump(spec, sort_keys=False))
