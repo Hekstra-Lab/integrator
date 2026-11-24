@@ -15,8 +15,14 @@ reflection j and test quantity T, with the truth from `sbc_truth.npz`:
     i_rb      u = Phi((I_true - i_rb) / sqrt(var_rb)); a point estimate and its variance,
               not a posterior, scored on the same footing
 
-If inference were exact, every u would be Uniform(0, 1) in any subset selected
-by the truth or by what the inference conditions on. The joint log-likelihood
+If inference were exact, every u of a posterior quantity would be Uniform(0, 1)
+over all reflections and in any subset selected by the data or by covariates the
+inference conditions on (d, the metadata) -- NOT in a subset selected by the
+true value: an exact posterior shrinks towards the prior, so within a bin of
+I_true the faint truths sit low and the bright ones high. Posterior quantities
+are therefore binned by the posterior mean of I (`qi_mean`, a function of the
+counts); `i_rb`, a point estimate whose calibration given the truth is the
+question, is binned by I_true. The joint log-likelihood
 is the quantity that detects a posterior ignoring the data (Modrak et al. 2023;
 Saeilynoja et al. 2025, arXiv:2502.03279).
 
@@ -26,7 +32,7 @@ product of the run's marginals, whatever dependence the integrator builds
 between them.
 
 Outputs, in --out, each row keyed by method, dataset, quantity and a bin of
-I_true (`i_true`) or d (`d`), plus the whole set (`all`):
+qi_mean (`qi_mean`), of I_true (`i_true`) or of d (`d`), plus the whole set (`all`):
     sbc_summary.csv  n, mean(u) - 1/2, 12 var(u) (1 if calibrated, > 1 posterior
                      too narrow), sqrt(n) max|ECDF - u| (Kolmogorov)
     sbc_ecdf.csv     ECDF(z) - z on z = 0, 0.01, ..., 1, which fig_sim_sbc.py draws
@@ -160,7 +166,7 @@ def main() -> None:
             p0 = profile_at(qp, phi, fxy, eta0, m)
 
             add = {
-                "refl_ids": out["refl_ids"], "I_true": I0, "d": out["d"],
+                "refl_ids": out["refl_ids"], "I_true": I0, "d": out["d"], "qi_mean": out["qi_mean"],
                 "u_I": torch.as_tensor(gamma_pit(I0.cpu().numpy(), out["qi_mean"].cpu().numpy(), out["qi_var"].cpu().numpy())),
                 "u_b": torch.as_tensor(gamma_pit(b0.cpu().numpy(), out["qbg_mean"].cpu().numpy(), out["qbg_var"].cpu().numpy())),
                 "u_loglik": rank_pit(loglik(c, m, I0, b0, p0), torch.stack(T_ll), gen),
@@ -174,11 +180,12 @@ def main() -> None:
 
     pit = pl.DataFrame({k: np.concatenate(v) for k, v in cols.items()})
     pit.write_parquet(a.out / "sbc_pit.parquet")
-    I, d = pit["I_true"].to_numpy(), pit["d"].to_numpy()
+    I, d, qm = pit["I_true"].to_numpy(), pit["d"].to_numpy(), pit["qi_mean"].to_numpy()
     summ, ecdf = [], []
     for q in [c for c in pit.columns if c.startswith("u_")]:
         u = pit[q].to_numpy()
-        for binning, x, edges in (("all", np.zeros_like(I), [-1, 1]), ("i_true", I, I_EDGES), ("d", d, D_EDGES)):
+        for binning, x, edges in (("all", np.zeros_like(I), [-1, 1]), ("qi_mean", qm, I_EDGES), ("i_true", I, I_EDGES),
+                                  ("d", d, D_EDGES)):
             idx = np.digitize(x, edges) - 1
             for k in range(len(edges) - 1):
                 s = idx == k
@@ -190,7 +197,7 @@ def main() -> None:
     pl.DataFrame(summ).write_csv(a.out / "sbc_summary.csv")
     pl.DataFrame(ecdf).write_csv(a.out / "sbc_ecdf.csv")
     with pl.Config(tbl_rows=300, tbl_cols=12):
-        print(pl.DataFrame(summ).filter(pl.col("binning") != "d").select(
+        print(pl.DataFrame(summ).filter(pl.col("binning").is_in(["all", "qi_mean"])).select(
             "quantity", "binning", "lo", "hi", "n", "mean_minus_half", "var12", "ks"))
 
 

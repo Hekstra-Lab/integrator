@@ -17,8 +17,11 @@ drawn exactly as multinomial bin counts). It is computed here from n, so its
 definition lives in one place.
 
 Figure `sim_sbc_<dataset>_<method>`: rows are the quantities I, b, the joint
-log-likelihood, the profile's n_eff and i_rb; columns are bins of I_true, the
-first column every reflection. Each panel prints n and 12 var(u) (1 when
+log-likelihood, the profile's n_eff and i_rb; columns are intensity bins, the
+first column every reflection. The posterior rows are binned by the posterior
+mean qi_mean, a function of the counts, because an exact posterior is uniform
+in a subset selected by the data and is not in one selected by the truth; the
+i_rb row, a point estimate, is binned by I_true. Each panel prints n and 12 var(u) (1 when
 calibrated, > 1 posterior too narrow).
 
 Figure `sim_sbc_eta_<dataset>_<method>`: the components of the profile shape
@@ -103,21 +106,24 @@ def main() -> None:
             r = smm.filter(quantity=q, binning=binning, lo=lo)
             return r.row(0, named=True) if r.height else None
 
-        cols = [("all", -1.0, 1.0)] + [(b, lo, hi) for b, lo, hi in
-                                       em.filter(binning="i_true").select("binning", "lo", "hi").unique(maintain_order=True).iter_rows()]
+        edges = em.filter(binning="i_true").select("lo", "hi").unique(maintain_order=True).rows()
+        cols = [(-1.0, 1.0)] + edges
         rows = [(q, lab) for q, lab in ROWS if em.filter(quantity=q).height]
         fig, ax = plt.subplots(len(rows), len(cols), figsize=figstyle.figsize("full", aspect=0.16 * len(rows) + 0.05),
                                sharex=True, sharey="row", layout="constrained", squeeze=False)
         for i, (q, lab) in enumerate(rows):
-            for j, (binning, lo, hi) in enumerate(cols):
+            by = "i_true" if q == "i_rb" else "qi_mean"
+            for j, (lo, hi) in enumerate(cols):
+                binning = "all" if j == 0 else by
                 d = em.filter(quantity=q, binning=binning, lo=lo).sort("z")
                 panel(ax[i, j], d, colour, roles["frame"], summ(q, binning, lo))
                 if i == 0:
                     ax[i, j].set_title(bin_label(lo, hi, binning), fontsize="x-small")
-            ax[i, 0].set_ylabel(lab + "\nECDF $-$ $z$", fontsize="x-small")
+            ax[i, 0].set_ylabel(lab + ("\nby $I_\\mathrm{true}$" if q == "i_rb" else "") + "\nECDF $-$ $z$",
+                                fontsize="x-small")
         for j in range(len(cols)):
             ax[-1, j].set_xlabel("$z$")
-        fig.suptitle("$I_\\mathrm{true}$ (photons)", fontsize="x-small")
+        fig.suptitle("posterior mean of $I$ (photons); $I_\\mathrm{true}$ for $I_\\mathrm{rb}$", fontsize="x-small")
         for p in figstyle.save(fig, OUT / f"sim_sbc_{dataset}_{method}{a.tag}"):
             print(p)
 
