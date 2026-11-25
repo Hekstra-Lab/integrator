@@ -38,6 +38,11 @@ class PolychromaticWilsonEBLoss(PolychromaticWilsonLoss):
     under the converged B 40.6 it was 1.45-1.73 at 1.7-2.0 A, which is where the
     outer-shell sums fell to 0.71 (scripts/sim_truth/prior_check.py).
 
+    `eb_init_from` loads (g, h) from a file (`scripts/poly/fit_fixed_prior.py`
+    writes one from prior-free per-reflection estimates) and uses it from the
+    first step; with `eb_refit: false` the prior is then held fixed for the
+    whole run, which is the setting simulation-based calibration requires.
+
     Caveat: the M-step is fitted to q, so where q collapses onto the prior (the
     weakest cells) the update moves slowly; the fixed point is the type-II
     maximum of the ELBO, biased wherever q is.
@@ -50,6 +55,8 @@ class PolychromaticWilsonEBLoss(PolychromaticWilsonLoss):
         eb_damping: float = 1.0,
         eb_iterations: int = 10,
         eb_min_count: int = 30,
+        eb_init_from: str | None = None,
+        eb_refit: bool = True,
         **kwargs,
     ):
         kwargs["learn_G"] = False
@@ -73,6 +80,21 @@ class PolychromaticWilsonEBLoss(PolychromaticWilsonLoss):
         # makes the parent call _accumulate_fit in training, refit_prior at epoch end, and detach tau
         self.refit_enabled = True
         self.refit_residual = False
+        if eb_init_from is not None:
+            saved = torch.load(eb_init_from, map_location="cpu", weights_only=False)
+            g, h = torch.as_tensor(saved["eb_g"], dtype=torch.float64), torch.as_tensor(saved["eb_h"], dtype=torch.float64)
+            if g.shape != self.eb_g.shape or h.shape != self.eb_h.shape:
+                raise ValueError(f"eb_init_from shapes {tuple(g.shape)}, {tuple(h.shape)} do not match "
+                                 f"eb_lambda_bins {self.eb_lambda_bins}, n_bins {self.eb_n_d}")
+            self.eb_g.copy_(g)
+            self.eb_h.copy_(h)
+            self.eb_ready.fill_(True)
+        self.eb_refit = bool(eb_refit)
+        if not self.eb_refit:
+            if eb_init_from is None:
+                raise ValueError("eb_refit: false needs eb_init_from (a fixed prior to hold)")
+            # held fixed: no accumulation, no M-step; tau has no parameters to detach from
+            self.refit_enabled = False
 
     def _cells(self, metadata: dict, device) -> tuple[Tensor, Tensor]:
         if "group_label" not in metadata:

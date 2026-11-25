@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-332 scripts.
+333 scripts.
 
 ## Start here
 
@@ -44,6 +44,7 @@ per job, and it lives in the repo".
 | `poly/careless_configs.py` | The careless recipes used for the Laue data, as flag lists. |
 | `poly/emit_merging_stats.py` | Write the canonical merging_stats.csv for a careless-scaled Laue run. |
 | `poly/estimate_wilson_init.py` | Estimate the Wilson prior's scale and B-factor from the raw counts. |
+| `poly/fit_fixed_prior.py` | Fit a FIXED intensity prior once, before training, from per-reflection estimates that do not use a prior (two-stage empirical Bayes). |
 | `poly/laue_process.sh` * | Tutorial-faithful laue-dials processing for one Laue sweep. |
 | `poly/pipeline.slurm` * | Post-training only: predict -> careless -> phenix.refine -> rs.find_peaks. |
 | `poly/rb_predict_config.py` | Derive a predict config that asks for the Rao-Blackwellized columns. |

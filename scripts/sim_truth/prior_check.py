@@ -28,7 +28,7 @@ hi, n, ratio, mean_minus_half, var12, ks), prior_check_ecdf.csv (ECDF(z) - z of
 u on z = 0..1 per row of the summary) and prior_predictive.csv (method,
 dataset, statistic, lo, hi, q, real, sim).
 
-usage: python prior_check.py --run NAME=CKPT:CONFIG [--run ...] --data REAL_DIR
+usage: python prior_check.py --run NAME=CKPT:CONFIG [--run ...]   (CKPT "none": the prior from the config alone) --data REAL_DIR
            --truth truth_reflections.csv --dataset NAME --out DIR [--sim NAME=SBC_DIR ...]
            [--reference metadata_friedel.npy] [--n-bins 30]
 """
@@ -73,10 +73,14 @@ def prior_params(ckpt: Path, config: Path, meta: dict, batch: int = 50000):
     from integrator.utils.factory_utils import construct_integrator
     cfg = yaml.safe_load(config.read_text())
     la = cfg["loss"]["args"]
-    if la.get("spectrum_init_from") and not Path(la["spectrum_init_from"]).exists():
-        la["spectrum_init_from"] = None  # the checkpoint carries the spectrum
+    for key in ("spectrum_init_from", "eb_init_from"):
+        if la.get(key) and not Path(la[key]).exists():
+            if str(ckpt) == "none":
+                raise SystemExit(f"{key} {la[key]} is not on this machine; pass a config whose path exists")
+            la[key] = None  # the checkpoint carries the prior
     model = construct_integrator(cfg)
-    model.load_state_dict(torch.load(ckpt, map_location="cpu", weights_only=False)["state_dict"], strict=True)
+    if str(ckpt) != "none":  # "none": the prior as the config alone builds it (a fixed prior from files)
+        model.load_state_dict(torch.load(ckpt, map_location="cpu", weights_only=False)["state_dict"], strict=True)
     loss = model.loss.eval()
     N = len(meta["d"])
     conc, rate = np.empty(N), np.empty(N)
