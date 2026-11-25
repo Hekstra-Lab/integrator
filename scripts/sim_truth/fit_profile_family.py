@@ -18,8 +18,13 @@ checkpoint's metadata prior mean; the better fit is kept). Per reflection:
 reported by bins of i_true and of d. A family that can represent the truth has
 KL ~ 0, neff ~ 1, kappa ~ 1.
 
+With --prior NAME=CKPT:CONFIG (repeatable) it also evaluates each trained model's
+PRIOR profile on the same reflections, the mean over 16 draws eta ~ N(theta0 +
+f(m), sigma^2) with no data: the n_eff ratio and kappa that a reflection too
+faint to move its shape would get (profile_prior.csv). --ks "" skips the family fit.
+
 usage: python fit_profile_family.py --npz PROFILES.npz --metadata metadata.npy --config CONFIG
-           [--ckpt CKPT] [--ks 3,5,7] [--steps 400] --out DIR
+           [--ckpt CKPT] [--ks 3,5,7] [--steps 400] [--prior NAME=CKPT:CONFIG ...] --out DIR
 """
 
 from __future__ import annotations
@@ -59,6 +64,7 @@ def main() -> None:
     ap.add_argument("--ks", default="3,5,7")
     ap.add_argument("--steps", type=int, default=400)
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--prior", action="append", default=[], help="NAME=CKPT:CONFIG, a trained model's prior profile")
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
 
@@ -76,7 +82,34 @@ def main() -> None:
     n_eff_p = 1 / (P**2).sum(-1)
     cfg0 = yaml.safe_load(a.config.read_text())
     rows_out = []
-    for K in (int(k) for k in a.ks.split(",")):
+    prior_rows = []
+    for spec in a.prior:
+        name, rest = spec.split("=", 1)
+        ckp, cfgp = rest.split(":", 1)
+        pc = yaml.safe_load(Path(cfgp).read_text())
+        pc["integrator"]["args"].pop("init_from_checkpoint", None)
+        qpp = construct_integrator(pc).surrogates["qp"]
+        sdp = torch.load(ckp, map_location="cpu", weights_only=False)["state_dict"]
+        qpp.load_state_dict({k[len("surrogates.qp."):]: v for k, v in sdp.items() if k.startswith("surrogates.qp.")})
+        qpp = qpp.double().eval()
+        torch.manual_seed(0)
+        with torch.no_grad():
+            phi, fxy, em = qpp.eta_prior(md, mask)
+            sig = qpp.eta_sd.double()
+            qs = torch.stack([qpp.profile_from_eta(phi, fxy, em + sig * torch.randn_like(em), mask) for _ in range(16)]).mean(0)
+        ne = (1 / (qs**2).sum(-1) / n_eff_p).numpy()
+        kp = ((qs * P).sum(-1) / (qs**2).sum(-1)).numpy()
+        for i in range(len(rows)):
+            prior_rows.append(dict(prior=name, refl_ids=int(z["refl_ids"][i]), i_true=float(z["i_true"][i]),
+                                   d=float(z["d"][i]), neff_ratio=float(ne[i]), kappa=float(kp[i])))
+    if prior_rows:
+        dfp = pl.DataFrame(prior_rows)
+        dfp.write_csv(a.out / "profile_prior.csv")
+        with pl.Config(tbl_rows=80, tbl_cols=10, float_precision=3):
+            for b, col, edges in (("ibin", "i_true", [10, 30, 100, 300, 1000, 3000]), ("dbin", "d", [1.8, 2.0, 2.5, 3.0, 4.0])):
+                print(dfp.with_columns(pl.col(col).cut(edges).alias(b)).group_by("prior", b).agg(
+                    pl.len(), pl.col("neff_ratio").median(), pl.col("kappa").mean()).sort("prior", b))
+    for K in (int(k) for k in a.ks.split(",") if k):
         cfg = copy.deepcopy(cfg0)
         cfg["surrogates"]["qp"]["args"]["n_components"] = K
         cfg["integrator"]["args"].pop("init_from_checkpoint", None)
@@ -112,6 +145,8 @@ def main() -> None:
                                  kl=float(kl[i]), neff_ratio=float(neff[i]), kappa=float(kappa[i])))
         print(f"K={K}: median KL {np.median(kl):.4f}, median neff ratio {np.median(neff):.3f}, "
               f"median kappa {np.median(kappa):.4f}, mean kappa {np.mean(kappa):.4f}", flush=True)
+    if not rows_out:
+        return
     df = pl.DataFrame(rows_out)
     df.write_csv(a.out / "profile_family_fit.csv")
     with pl.Config(tbl_rows=60, tbl_cols=10, float_precision=4):
