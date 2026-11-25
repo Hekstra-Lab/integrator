@@ -22,11 +22,18 @@ Inference, priors at their generating values:
        scale gradient stopped for reflections of multiplicity 1; Sigma is frozen at the truth,
        so the overall scale is identified (docs/joint_model_closed_forms.md, gauge section);
     4. the posterior of J_h on its grid at the TRUE theta and at the fitted theta; PIT
-       u_h = F(J_h true).
+       u_h = F(J_h true). The J test is the true-theta PIT. Every reflection of one dataset
+       shares the same theta error, so the u_h are not independent given theta_hat; the
+       fitted-theta PIT shows the effect of that error (largest for bright reflections, whose
+       relative sd is below the overall level's), and mixing over q(theta) moves all u_h
+       toward 1/2 together, which is why it is not used as a calibration test.
+    5. the Laplace sd of theta (inverse Hessian of the negative log marginal at the fit, by
+       central differences of the gradient) and z = (theta_hat - theta_true) / sd; across
+       independent seeds z should be standard normal, the test of the scale fit.
 
 Writes --out (parquet, one row per reflection: J_true, s2, centric, n_obs, the posterior mean
 and sd of J and u at the true and fitted theta) and --out.with_suffix('.json') (theta true and
-fitted, the sd of log(g_hat / g) over observations, and the PIT summary: 12 var(u), mean(u) - 1/2
+fitted, its Laplace sd and z, the sd of log(g_hat / g) over observations, and the PIT summary: 12 var(u), mean(u) - 1/2
 and sqrt(n) KS distance, overall and by multiplicity and by posterior-mean bins; never by J_true).
 
 usage: python sbc_joint_simulate.py --out OUT.parquet [--n-refl 2000] [--seed 0] [--device cuda]
@@ -209,18 +216,40 @@ def main() -> None:
     print(f"theta true {theta_true.cpu().numpy().round(4).tolist()}  fitted {theta_hat.cpu().numpy().round(4).tolist()}; "
           f"sd of log(g_hat / g) {dlog.std():.4f}, mean {dlog.mean():+.4f}", flush=True)
 
+    # ---- Laplace posterior of theta: the inverse Hessian of -log marginal at theta_hat, by central
+    # differences of the autograd gradient (the interpolated l_i is piecewise linear in I, so its
+    # analytic second derivative misses the curvature between nodes)
+    def grad_at(t):
+        t = t.clone().requires_grad_(True)
+        gr, = torch.autograd.grad(-log_marginal(t, multi)[0].sum(), t)
+        return gr
+
+    hstep = 1e-3
+    Hm = torch.stack([(grad_at(theta_hat + hstep * e) - grad_at(theta_hat - hstep * e)) / (2 * hstep)
+                      for e in torch.eye(K, dtype=D, device=dev)])
+    Hm = 0.5 * (Hm + Hm.T)
+    theta_cov = torch.linalg.inv(Hm)
+    theta_sd = theta_cov.diagonal().clamp_min(0).sqrt()
+    print(f"Laplace sd of theta {theta_sd.cpu().numpy().round(5).tolist()}; "
+          f"(theta_hat - theta_true) / sd {((theta_hat - theta_true) / theta_sd).cpu().numpy().round(2).tolist()}", flush=True)
+
     # ---- posterior of J and PIT at the true and the fitted scale
     rows = {"J_true": J.cpu().numpy(), "s2": s2.cpu().numpy(), "centric": centric.cpu().numpy(), "n_obs": n_obs}
     summ = {"theta_true": theta_true.cpu().tolist(), "theta_hat": theta_hat.cpu().tolist(),
             "sd_log_g_err": float(dlog.std()), "mean_log_g_err": float(dlog.mean()),
             "n_refl": H, "n_obs": N, "args": vars(a) | {"out": str(a.out)}}
-    for tag, th in (("true", theta_true), ("fit", theta_hat)):
-        with torch.no_grad():
-            _, w, xs, dx = log_marginal(th)
-        mean = (w * xs).sum(1)
-        var = (w * xs**2).sum(1) - mean**2 + dx**2 / 12
-        frac = ((J[:, None] - (xs - dx[:, None] / 2)) / dx[:, None]).clamp(0, 1)
-        u = (w * frac).sum(1).cpu().numpy()
+    summ["theta_sd"] = theta_sd.cpu().tolist()
+    summ["theta_z"] = ((theta_hat - theta_true) / theta_sd).cpu().tolist()
+    for tag, ths in (("true", theta_true[None]), ("fit", theta_hat[None])):
+        ms, m2, us = 0, 0, 0
+        for th in ths:  # equal-weight mixture over the theta draws (one draw for true and fit)
+            with torch.no_grad():
+                _, w, xs, dx = log_marginal(th)
+            frac = ((J[:, None] - (xs - dx[:, None] / 2)) / dx[:, None]).clamp(0, 1)
+            ms = ms + (w * xs).sum(1) / len(ths)
+            m2 = m2 + ((w * xs**2).sum(1) + dx**2 / 12) / len(ths)
+            us = us + (w * frac).sum(1) / len(ths)
+        mean, var, u = ms, m2 - ms**2, us.cpu().numpy()
         rows[f"mean_{tag}"], rows[f"sd_{tag}"], rows[f"u_{tag}"] = mean.cpu().numpy(), var.sqrt().cpu().numpy(), u
         pm = mean.cpu().numpy()
         by = {"all": pit_summary(u)}
