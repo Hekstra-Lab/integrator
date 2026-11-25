@@ -197,7 +197,7 @@ def fit_test(a, md, counts, side, rid, shot, H, K, L, i_true, dom, d_all, truth_
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("arms", nargs="+", help="name=parquet path or glob (the flushed parts of one export)")
+    ap.add_argument("arms", nargs="*", help="name=parquet path or glob (the flushed parts of one export); may be empty with --sample")
     ap.add_argument("--data", required=True, help="shoebox dataset directory")
     ap.add_argument("--truth-dir", required=True, help="datsimx truth directory (shots_<run>_rank0.h5, background_<run>.h5)")
     ap.add_argument("--truth-csv", required=True)
