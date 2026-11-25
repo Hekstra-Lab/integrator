@@ -38,6 +38,8 @@ def _load(path: pathlib.Path) -> dict:
     la = cfg.get("loss", {}).get("args", {}) or {}
     if la.get("spectrum_init_from") and not pathlib.Path(la["spectrum_init_from"]).exists():
         la["spectrum_init_from"] = None
+    if la.get("eb_init_from") and not pathlib.Path(la["eb_init_from"]).exists():
+        la["eb_init_from"], la["eb_refit"] = None, True  # same modules; the fixed values live on the cluster
     ia = cfg.get("integrator", {}).get("args", {}) or {}
     if ia.get("init_from_checkpoint") and not pathlib.Path(ia["init_from_checkpoint"]).exists():
         ia["init_from_checkpoint"] = None

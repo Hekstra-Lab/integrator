@@ -1,5 +1,5 @@
 # B1 with the flat intensity prior (scale_free_intensity_prior: true, rate 1e-6): the Wilson shape with its rate dropped, so the prior carries
-# no scale and nothing in it is learned. Improper in the limit, so it can be tested on data but not simulated from for SBC.
+# no scale and nothing in it is learned (G and B are unused, so learn_G and learn_B are false). Improper in the limit: testable on data, not simulated from for SBC.
 # Otherwise identical to mos010_default_kmixv2_post.yaml, whose header follows.
 # B1: P1 base with a per-reflection shape posterior (11 shape numbers + tilt offset), learned sigma bounded at 1.0.
 # split_seed 0 fixes the train/validation split so validation losses compare across these arms
@@ -99,6 +99,8 @@ loss:
     init_G: 1910.4
     init_B: 19.0
     scale_free_intensity_prior: true
+    learn_G: false
+    learn_B: false
     b_min: 1.0
     polarization: false
     lorentz: false
