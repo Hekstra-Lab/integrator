@@ -87,35 +87,17 @@ def empirical_bg_prior(counts: np.ndarray, masks: np.ndarray, groups: np.ndarray
 
 def eta_prior_mean(qp, md: dict, like: torch.Tensor):
     """phi, the window-centred centroid fxy and the prior mean of eta, as the forward builds them."""
-    phi, mu, _ = qp.prior_mean(md, like.dtype, like.device)
-    _, hh, ww = qp.profile_shape
-    fxy = torch.stack([
-        (md["xyzcal.px.0"].reshape(-1) - md["bbox.0"].reshape(-1)).to(like) - 0.5 - (ww - 1) / 2,
-        (md["xyzcal.px.1"].reshape(-1) - md["bbox.2"].reshape(-1)).to(like) - 0.5 - (hh - 1) / 2,
-    ], -1)
-    if qp.tilt == "metadata":
-        from integrator.model.distributions.profile_geometry import geometry_features
-        feats, _ = geometry_features(md, qp.beam_center, qp.lambda_min, qp.lambda_max)
-        psi = (math.pi / 4) * torch.tanh(qp.tilt_head(feats.to(like))[:, 0])
-    else:
-        psi = like.new_zeros(mu.shape[0])
-    return phi, fxy, torch.cat([mu, psi[:, None]], -1)
+    return qp.eta_prior(md, like)
 
 
 def profile_at(qp, phi, fxy, eta: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     """The profile of shape vector eta, (..., B, NE) -> (..., B, P), by the steps of the forward."""
-    mask = mask.reshape(mask.shape[0], -1)
-    u, v = qp.frame(phi, eta[..., -1], eta[..., :-1], fxy)
-    g = qp.base_uv(u, v, eta[..., :-1], mask)
-    floor = qp.base_floor / qp.decoder.weight.shape[0]
-    return masked_softmax(torch.log(g + floor), mask)
+    return qp.profile_from_eta(phi, fxy, eta, mask)
 
 
 def q_eta(qp, eta_mean: torch.Tensor, raw_delta: torch.Tensor, raw_scale: torch.Tensor):
     """Location and sd of the amortized q(eta) from the raw outputs of eta_delta, eta_scale."""
-    sig = qp.eta_sd.to(eta_mean)
-    loc = eta_mean + sig * qp.max_delta * torch.tanh(raw_delta / qp.max_delta)
-    return loc, sig * (torch.nn.functional.softplus(raw_scale) + 1e-4)
+    return qp.q_eta_from_raw(eta_mean, raw_delta, raw_scale)
 
 
 def predict_batches(model, cfg: dict, device):

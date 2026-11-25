@@ -276,6 +276,22 @@ class IntegratorCfg:
     before. Training never reads it."""
     export_refine_lr: float = 0.05
     """Adam step size for `export_refine_steps`."""
+    export_posterior: Literal["none", "laplace_collapsed"] = "none"
+    """Prediction only. `laplace_collapsed` adds `i_lc`, `var_lc`, `bg_lc`,
+    `var_bg_lc`: a full-covariance Laplace q(eta) at the joint mode of
+    (eta, I, b), with (I, b) | eta computed on a grid in I and integrated in b by
+    Laplace (`integrator.model.posterior.collapsed`), moments of the mixture over
+    `export_posterior_eta_samples` draws. Trained weights are untouched. On the
+    mos010 prior SBC set this posterior calibrated I, b, the joint log-likelihood
+    and n_eff (12 var(u) 1.00-1.02) where the conjugate q(I) is 2.15. Needs a
+    profile surrogate with `eta_prior` / `profile_from_eta` (streak_kmix_v2_profile,
+    shape_posterior amortized). `none` (default) changes nothing."""
+    export_posterior_eta_samples: int = 16
+    """Draws of eta from the Laplace q(eta) for `export_posterior`."""
+    export_posterior_grid: int = 128
+    """Grid points in I for `export_posterior`."""
+    export_posterior_steps: int = 40
+    """Damped-Newton steps to the joint mode for `export_posterior`."""
     profile_coord_channels: bool = False
     """Give the profile encoder two extra channels holding each pixel's offset
     in the beam-centred radial/tangential frame. A conv encoder is translation

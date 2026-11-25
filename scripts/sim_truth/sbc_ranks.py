@@ -71,6 +71,8 @@ from scipy import special, stats
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sbc_simulate import eta_prior_mean, predict_batches, profile_at, q_eta  # noqa: E402
 
+from integrator.model.posterior.collapsed import laplace_collapsed_batch  # noqa: E402
+
 I_EDGES = [0, 10, 30, 100, 300, 1000, 3000, math.inf]
 D_EDGES = [1.7, 1.8, 1.9, 2.0, 2.2, 2.5, 3.0, 4.0, math.inf]
 Z = np.linspace(0, 1, 101)
@@ -119,6 +121,10 @@ def main() -> None:
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--integrator-args", default="", help="k=v,k=v added to integrator.args (e.g. rb_profile=mean)")
     ap.add_argument("--posterior", action="store_true", help="score a --mode posterior dataset")
+    ap.add_argument("--construction", choices=("model", "laplace_collapsed"), default="model",
+                    help="model: the run's own q (default); laplace_collapsed: the full-covariance Laplace q(eta) "
+                         "with (I, b) | eta collapsed (integrator.model.posterior.collapsed), built from the run's networks")
+    ap.add_argument("--lc-eta-samples", type=int, default=16)
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
 
@@ -150,6 +156,7 @@ def main() -> None:
         model._background_prior = lambda md, dev: (obs["qb_conc"][lookup(md)], obs["qb_rate"][lookup(md)])
 
     gen = torch.Generator(device=a.device).manual_seed(a.seed)
+    qp64 = None
     cols: dict[str, list] = {}
     with torch.no_grad():
         for counts, mask, md, out, raw_delta, raw_scale in predict_batches(model, cfg, a.device):
@@ -182,6 +189,48 @@ def main() -> None:
                 T_ll.append(loglik(c, m, Is[s], bs[s], ps))
                 T_ne.append(1 / ps.pow(2).sum(-1))
             p0 = profile_at(qp, phi, fxy, eta0, m)
+
+            if a.construction == "laplace_collapsed":
+                if a.posterior:
+                    raise SystemExit("--construction laplace_collapsed is implemented for prior SBC only")
+                if qp64 is None:
+                    import copy
+                    qp64 = copy.deepcopy(qp).double().eval()
+                with torch.inference_mode(False):
+                    a_I, r_I = model.loss.intensity_prior_params(md, a.device)
+                    a_b, r_b = model._background_prior(md, a.device)
+                    lc = laplace_collapsed_batch(qp64, {k: v.clone() if torch.is_tensor(v) else v for k, v in md.items()},
+                                                 counts.clone(), mask.clone(), raw_delta.clone(), raw_scale.clone(),
+                                                 a_I, r_I, torch.as_tensor(a_b), torch.as_tensor(r_b),
+                                                 out["qi_mean"].clone(), out["qbg_mean"].clone(),
+                                                 n_eta=a.lc_eta_samples, generator=gen, keep=True)
+                with torch.no_grad():
+                    I0d, b0d = I0.double(), b0.double()
+                    uI = torch.stack([q.cdf_I(I0d) for _, q in lc["draws"]]).mean(0)
+                    ub = torch.stack([q.cdf_b(b0d) for _, q in lc["draws"]]).mean(0)
+                    per = max(1, a.draws // len(lc["draws"]))
+                    T_ll, T_ne = [], []
+                    for ps, q in lc["draws"]:
+                        Is_, bs_ = q.sample(per, generator=gen)
+                        T_ll += [loglik(c.double(), m.double(), Is_[:, k], bs_[:, k], ps) for k in range(per)]
+                        T_ne.append(1 / ps.pow(2).sum(-1))
+                    p0d = qp64.profile_from_eta(lc["phi"], lc["fxy"], eta0.double(), m.double())
+                    sdl = torch.diagonal(lc["eta_cov"], dim1=1, dim2=2).sqrt()
+                    u_eta = 0.5 * (1 + torch.erf((eta0.double() - lc["eta_mode"]) / (sdl * math.sqrt(2))))
+                    out = dict(out, qi_mean=lc["i_mean"].float(), qi_var=lc["i_var"].float(),
+                               qbg_mean=lc["b_mean"].float(), qbg_var=lc["b_var"].float())
+                add = {
+                    "refl_ids": out["refl_ids"], "I_true": I0, "d": out["d"], "qi_mean": out["qi_mean"],
+                    "u_I": uI, "u_b": ub,
+                    "u_loglik": rank_pit(loglik(c.double(), m.double(), I0d, b0d, p0d), torch.stack(T_ll), gen),
+                    "u_n_eff": rank_pit(1 / p0d.pow(2).sum(-1), torch.stack(T_ne), gen),
+                    "u_i_rb": torch.as_tensor(stats.norm.cdf(((I0 - out["i_rb"]) / out["var_rb"].sqrt()).cpu().numpy())),
+                }
+                for k in range(u_eta.shape[-1]):
+                    add[f"u_eta_{k}"] = u_eta[:, k]
+                for k, v in add.items():
+                    cols.setdefault(k, []).append(torch.as_tensor(v).reshape(-1).double().cpu().numpy())
+                continue
 
             add = {
                 "refl_ids": out["refl_ids"], "I_true": I0, "d": out["d"], "qi_mean": out["qi_mean"],

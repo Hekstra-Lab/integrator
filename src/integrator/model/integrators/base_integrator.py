@@ -180,6 +180,10 @@ class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
         self.rb_profile = getattr(cfg, "rb_profile", "samples")
         self.export_refine_steps = int(getattr(cfg, "export_refine_steps", 0))
         self.export_refine_lr = float(getattr(cfg, "export_refine_lr", 0.05))
+        self.export_posterior = str(getattr(cfg, "export_posterior", "none"))
+        self.export_posterior_eta_samples = int(getattr(cfg, "export_posterior_eta_samples", 16))
+        self.export_posterior_grid = int(getattr(cfg, "export_posterior_grid", 128))
+        self.export_posterior_steps = int(getattr(cfg, "export_posterior_steps", 40))
         self.profile_coord_channels = getattr(
             cfg, "profile_coord_channels", False
         )
@@ -473,8 +477,55 @@ class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
         if self.export_refine_steps > 0:
             return self._refined_predict_step(batch)
         counts, shoebox, mask, metadata = batch
+        if self.export_posterior == "laplace_collapsed":
+            return self._laplace_collapsed_predict_step(batch)
         outputs = self(counts, shoebox, mask, metadata)
         return self._predict_outputs(outputs, metadata)
+
+    def _laplace_collapsed_predict_step(self, batch):
+        """The usual prediction plus `i_lc`, `var_lc`, `bg_lc`, `var_bg_lc` (see `export_posterior`)."""
+        import copy
+
+        from integrator.model.posterior.collapsed import laplace_collapsed_batch
+
+        counts, shoebox, mask, metadata = batch
+        qp = self.surrogates["qp"]
+        if not hasattr(qp, "profile_from_eta") or getattr(qp, "post", None) != "amortized":
+            raise RuntimeError("export_posterior: laplace_collapsed needs streak_kmix_v2_profile with shape_posterior amortized")
+        qp._refine_capture = []
+        try:
+            outputs = self(counts, shoebox, mask, metadata)
+            raw_delta, raw_scale = qp._refine_capture
+        finally:
+            qp._refine_capture = None
+        res = self._predict_outputs(outputs, metadata)
+        dev = counts.device
+        with torch.inference_mode(False):
+            md = {k: v.clone() if torch.is_tensor(v) else v for k, v in metadata.items()}
+            c, m = counts.clone(), mask.clone()
+            a_I, r_I = self.loss.intensity_prior_params(md, dev)
+            if hasattr(self, "_background_prior"):
+                a_b, r_b = self._background_prior(md, dev)
+            else:
+                a_b, r_b = self.loss._background_prior(md.get("group_label"), md, dev)
+            if "_qp64" not in self.__dict__:
+                # a float64 copy for the Hessian, kept OUT of the module registry so it never
+                # enters state_dict, parameters() or a checkpoint
+                q64 = copy.deepcopy(qp).double().eval()
+                for prm in q64.parameters():
+                    prm.requires_grad_(False)
+                object.__setattr__(self, "_qp64", q64)
+            fo = outputs["forward_out"]
+            lc = laplace_collapsed_batch(
+                self._qp64, md, c, m, raw_delta.clone(), raw_scale.clone(),
+                a_I.clone(), r_I.clone(), torch.as_tensor(a_b).clone(), torch.as_tensor(r_b).clone(),
+                fo["qi_mean"].clone(), fo["qbg_mean"].clone(),
+                n_eta=self.export_posterior_eta_samples, grid=self.export_posterior_grid,
+                steps=self.export_posterior_steps)
+        f32 = res["qi_mean"].dtype if "qi_mean" in res else torch.float32
+        res.update({"i_lc": lc["i_mean"].to(f32), "var_lc": lc["i_var"].to(f32),
+                    "bg_lc": lc["b_mean"].to(f32), "var_bg_lc": lc["b_var"].to(f32)})
+        return res
 
     def _predict_outputs(self, outputs, metadata):
         forward_out = outputs["forward_out"]

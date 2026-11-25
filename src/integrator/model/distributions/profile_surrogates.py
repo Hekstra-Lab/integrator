@@ -2273,6 +2273,39 @@ class StreakKMixV2ProfileSurrogate(StreakKMixProfileSurrogate):
         finally:
             self._refine_capture = None
 
+    # The three helpers below are the steps of `forward` as functions of the shape
+    # vector eta, for code that needs the profile at an eta of its own (simulation-
+    # based calibration, the Laplace and collapsed posteriors). `forward` does not
+    # call them, so its behaviour is unchanged; tests check they reproduce it.
+    def eta_prior(self, metadata: dict, like: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+        """phi, the window-centred centroid fxy, and the prior mean of eta (B, NE)."""
+        phi, mu, _ = self.prior_mean(metadata, like.dtype, like.device)
+        _, hh, ww = self.profile_shape
+        fxy = torch.stack([
+            (metadata["xyzcal.px.0"].reshape(-1) - metadata["bbox.0"].reshape(-1)).to(like) - 0.5 - (ww - 1) / 2,
+            (metadata["xyzcal.px.1"].reshape(-1) - metadata["bbox.2"].reshape(-1)).to(like) - 0.5 - (hh - 1) / 2,
+        ], -1)
+        if self.tilt == "metadata":
+            feats, _ = geometry_features(metadata, self.beam_center, self.lambda_min, self.lambda_max)
+            psi = (math.pi / 4) * torch.tanh(self.tilt_head(feats.to(like))[:, 0])
+        else:
+            psi = like.new_zeros(mu.shape[0])
+        return phi, fxy, torch.cat([mu, psi[:, None]], -1)
+
+    def profile_from_eta(self, phi: Tensor, fxy: Tensor, eta: Tensor, mask: Tensor) -> Tensor:
+        """The profile of shape vector eta, (..., B, NE) -> (..., B, P)."""
+        mask = mask.reshape(mask.shape[0], -1)
+        u, v = self.frame(phi, eta[..., -1], eta[..., :-1], fxy)
+        g = self.base_uv(u, v, eta[..., :-1], mask)
+        floor = self.base_floor / self.decoder.weight.shape[0]
+        return masked_softmax(torch.log(g + floor), mask)
+
+    def q_eta_from_raw(self, eta_mean: Tensor, raw_delta: Tensor, raw_scale: Tensor) -> tuple[Tensor, Tensor]:
+        """Location and sd of the amortized q(eta) from the raw outputs of eta_delta, eta_scale."""
+        sig = self.eta_sd.to(eta_mean)
+        loc = eta_mean + sig * self.max_delta * torch.tanh(raw_delta / self.max_delta)
+        return loc, sig * (F.softplus(raw_scale) + 1e-4)
+
     def frame(self, phi: Tensor, psi: Tensor, th: Tensor, fxy: Tensor):
         """Pixel-centre (u, v) in the frame at phi + psi about the component centre.
 

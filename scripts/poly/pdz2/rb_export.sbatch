@@ -54,7 +54,8 @@ CKPT_EPOCH=${CKPT_EPOCH:-}
 case $EXPORT in
   rb) EXPORT_FLAG=--rb-export ;;
   posterior) EXPORT_FLAG= ;;
-  *) echo "EXPORT must be rb or posterior, got $EXPORT"; exit 1 ;;
+  lc) EXPORT_FLAG=--lc-export ;;
+  *) echo "EXPORT must be rb, posterior or lc, got $EXPORT"; exit 1 ;;
 esac
 # the derived config goes next to the ROOT, which exists; writing it under
 # $OUT fails before predict has had a chance to create $OUT

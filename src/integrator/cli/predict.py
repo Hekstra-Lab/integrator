@@ -63,6 +63,14 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        "--lc-export",
+        action="store_true",
+        help=(
+            "write the Laplace + collapsed posterior mean and variance (i_lc/var_lc, "
+            "integrator.export_posterior: laplace_collapsed) into the MTZ"
+        ),
+    )
+    parser.add_argument(
         "--write-mtz",
         action="store_true",
         help="Write predictions as an .mtz file; for polychromatic data only",
@@ -284,16 +292,18 @@ def main():
             from integrator.io import get_pred_files
 
             logger.info("Writing .mtz output for epoch %d", epoch)
-            if args.rb_export and args.deconv_export:
+            if sum(bool(x) for x in (args.rb_export, args.deconv_export, getattr(args, "lc_export", False))) > 1:
                 raise SystemExit(
-                    "--rb-export and --deconv-export are different export "
-                    "modes; pick one"
+                    "--rb-export, --deconv-export and --lc-export are different "
+                    "export modes; pick one"
                 )
             keys = ()
             if args.rb_export:
                 keys = ("i_rb", "var_rb")
             elif args.deconv_export:
                 keys = ("i_deconv", "var_deconv")
+            elif getattr(args, "lc_export", False):
+                keys = ("i_lc", "var_lc")
             pred_data = get_pred_files(
                 ckpt_dir=ckpt_dir, filetype="parquet", extra_columns=keys
             )
