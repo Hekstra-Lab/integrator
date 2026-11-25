@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-331 scripts.
+332 scripts.
 
 ## Start here
 
@@ -225,6 +225,7 @@ per job, and it lives in the repo".
 | `sim_truth/laue_profiles.py` | laue.integrate's fitted per-reflection profiles, laid on our shoebox windows. |
 | `sim_truth/learned_params_vs_truth.py` | Learned Wilson spectrum G(lambda) and learned profile parameters of trained runs, against the simulation's truth. |
 | `sim_truth/prior_check.py` | Prior checks of trained runs' Wilson intensity prior: against the simulation's true intensities, and prior-predictively. |
+| `sim_truth/sbc_exact_check.py` | Check of the SBC pipeline itself: PIT values under the exact posterior of one latent given the true values of the others. |
 | `sim_truth/sbc_ranks.py` | PIT values of the true latents of an `sbc_simulate.py` dataset under a trained run's posteriors. |
 | `sim_truth/sbc_simulate.py` | Shoeboxes drawn from a trained run's own generative model, for simulation-based calibration (SBC). |
 | `sim_truth/score_against_truth.py` | Score an unmerged integrated MTZ against the per-reflection truth of a datsimx run. |

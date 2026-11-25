@@ -27,6 +27,13 @@ calibrated, > 1 posterior too narrow).
 Figure `sim_sbc_eta_<dataset>_<method>`: the components of the profile shape
 vector eta, every reflection.
 
+Figure `sim_sbc_pit_<dataset><tag>`: the plain PIT histograms, every reflection,
+rows the quantities and one column per run given in --src, 20 bins of width
+0.05. The bin counts are read off the ECDF grid, n (ECDF(z_b) - ECDF(z_a)). The
+band is the pointwise 99 % interval of a Binomial(n, 0.05) count around n/20: a
+calibrated posterior's bars stay inside it, a U shape is a posterior too narrow,
+a hump too wide, a slope a shifted posterior.
+
     uv run --with-editable /Users/luis/master/software/figtex \\
         python scripts/figures/fig_sim_sbc.py --src DIR [DIR ...]
 """
@@ -98,6 +105,7 @@ def main() -> None:
     roles = figstyle.roles()
     e = pl.concat([pl.read_csv(s / "sbc_ecdf.csv") for s in a.src])
     sm = pl.concat([pl.read_csv(s / "sbc_summary.csv") for s in a.src])
+    pit_histograms(e, sm, OUT / f"sim_sbc_pit_{e['dataset'][0]}{a.tag}")
     for (method, dataset), em in e.group_by(["method", "dataset"], maintain_order=True):
         smm = sm.filter(method=method, dataset=dataset)
         colour = figstyle.arm_colors([method])[method]
@@ -142,6 +150,42 @@ def main() -> None:
             ax[k // nc, k % nc].set_axis_off()
         for p in figstyle.save(fig, OUT / f"sim_sbc_eta_{dataset}_{method}{a.tag}"):
             print(p)
+
+
+def pit_histograms(e: pl.DataFrame, sm: pl.DataFrame, path: Path) -> None:
+    from scipy import stats
+
+    roles = figstyle.roles()
+    methods = list(dict.fromkeys(e["method"].to_list()))
+    rows = [(q, lab) for q, lab in ROWS if e.filter(quantity=q).height]
+    fig, ax = plt.subplots(len(rows), len(methods), figsize=figstyle.figsize("full", aspect=0.17 * len(rows) + 0.06),
+                           sharex=True, sharey="row", layout="constrained", squeeze=False)
+    col = figstyle.arm_colors(methods)
+    edges = np.round(np.arange(0, 1.0001, 0.05), 2)
+    for j, m in enumerate(methods):
+        for i, (q, lab) in enumerate(rows):
+            d = e.filter(method=m, quantity=q, binning="all").sort("z")
+            if d.height == 0:
+                ax[i, j].set_axis_off()
+                continue
+            n = int(d["n"][0])
+            F = dict(zip(np.round(d["z"].to_numpy(), 2), d["ecdf_minus_z"].to_numpy() + d["z"].to_numpy()))
+            counts = np.array([n * (F[b] - F[a]) for a, b in zip(edges[:-1], edges[1:])])
+            lo, hi = stats.binom.ppf([0.005, 0.995], n, 0.05) / n * 20
+            ax[i, j].axhspan(lo, hi, color=roles["frame"], alpha=0.25, lw=0)
+            ax[i, j].axhline(1, color=roles["frame"], lw=0.5)
+            ax[i, j].bar(edges[:-1], counts / n * 20, width=0.05, align="edge", color=col[m], lw=0)
+            r = sm.filter(method=m, quantity=q, binning="all")
+            if r.height:
+                ax[i, j].text(0.03, 0.95, f"$12\\,\\mathrm{{var}}\\,u$ {r['var12'][0]:.2f}", transform=ax[i, j].transAxes,
+                              va="top", fontsize="xx-small")
+            if j == 0:
+                ax[i, j].set_ylabel(lab + "\ndensity", fontsize="x-small")
+            if i == 0:
+                ax[i, j].set_title(m.replace("b1_sbc_", "").replace("b1_", ""), fontsize="x-small")
+        ax[-1, j].set_xlabel("PIT $u$")
+    for p_ in figstyle.save(fig, path):
+        print(p_)
 
 
 if __name__ == "__main__":
