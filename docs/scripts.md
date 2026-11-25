@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-334 scripts.
+335 scripts.
 
 ## Start here
 
@@ -222,6 +222,7 @@ per job, and it lives in the repo".
 | `sim_truth/dump_profile_truth_examples.py` | Shoeboxes beside their true profile and each arm's predicted profile and gate, for fig_profile_truth_examples.py. |
 | `sim_truth/dump_shoebox_examples.py` | Example shoeboxes from several shoebox datasets, chosen at the same laue I/sigma, for fig_sim_shoeboxes.py. |
 | `sim_truth/elbo_landscape.py` | The ELBO and each of its terms along profile-shape directions, at the parameters that generated an SBC dataset. |
+| `sim_truth/fit_profile_family.py` | How well the `streak_kmix_v2_profile` family can represent the TRUE spot profiles, per number of components K. |
 | `sim_truth/image_stats.py` | Per-image statistics of a simulated Laue shot, by one estimator for the laue-dials paper sims and for datsimx. |
 | `sim_truth/laue_profiles.py` | laue.integrate's fitted per-reflection profiles, laid on our shoebox windows. |
 | `sim_truth/learned_params_vs_truth.py` | Learned Wilson spectrum G(lambda) and learned profile parameters of trained runs, against the simulation's truth. |

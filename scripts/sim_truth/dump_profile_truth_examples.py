@@ -24,6 +24,10 @@ model read):
     (`box_x0`, `box_y0`) differs from the shoebox `bbox` are dropped (24 of
     162,117 and 81 of 462,541 on mos010_pc).
 
+With --sample N, the picks are N in-domain reflections spread evenly over
+log10 i_true (0.25-decade bins from 3 to 10^4 photons) instead of --targets; the
+npz then serves `fit_profile_family.py`.
+
 With --bg-out, over every in-domain reflection, each method's background is
 compared with the truth: b_true is the mean of the `background` image over
 the reflection's window (photons per pixel), the method's b is laue's `bg` or
@@ -214,6 +218,9 @@ def main() -> None:
     ap.add_argument("--lam-hi", type=float, default=1.165)
     ap.add_argument("--max-mixed", type=float, default=0.05)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--sample", type=int, default=0,
+                    help="instead of --targets, N in-domain reflections spread evenly over log10 i_true in [0.5, 4] "
+                         "(N/14 per 0.25-decade bin), for fitting a profile family to the true profiles")
     a = ap.parse_args()
 
     import h5py
@@ -255,6 +262,14 @@ def main() -> None:
             if i < 0:
                 raise SystemExit(f"--pick {spec}: no shoebox with that shot and hkl")
             pick.append(int(i))
+        targets = np.array([i_true[i] for i in pick])
+    elif a.sample:
+        edges = 10 ** np.arange(0.5, 4.01, 0.25)
+        per = max(1, a.sample // (len(edges) - 1))
+        for lo, hi in zip(edges[:-1], edges[1:]):
+            cand = np.flatnonzero(dom & (i_true >= lo) & (i_true < hi))
+            if len(cand):
+                pick += rng.choice(cand, size=min(per, len(cand)), replace=False).tolist()
         targets = np.array([i_true[i] for i in pick])
     else:
         for tv in targets:
