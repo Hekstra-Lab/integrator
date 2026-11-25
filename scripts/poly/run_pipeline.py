@@ -137,6 +137,14 @@ def parse_args():
              "output, such as laue.integrate's integrated.mtz, which does not "
              "follow the epoch_*/preds_epoch_*.mtz layout. careless writes "
              "next to it, as for a run's own MTZ.")
+    p.add_argument(
+        "--careless-seed", type=int, default=None,
+        help="merge with this careless seed instead of the config's, into "
+             "`<out_dir>_seed<N>` beside the config's own directory, so "
+             "several merging seeds of one MTZ sit side by side. On Laue "
+             "data the merging seed moves R-free about ninefold more than "
+             "the refinement seed, so arm comparisons average over several. "
+             "Default: the config's seed and out_dir, the existing behaviour.")
     p.add_argument("--dry-run", action="store_true")
     return p.parse_args()
 
@@ -671,6 +679,11 @@ def main():
     for key in ("method", "dataset"):
         if getattr(args, key) is not None:
             cfg.setdefault("keys", {})[key] = getattr(args, key)
+
+    if args.careless_seed is not None:
+        ccfg = cfg.setdefault("careless", {})
+        ccfg["seed"] = args.careless_seed
+        ccfg["out_dir"] = f"{ccfg.get('out_dir', 'scaling')}_seed{args.careless_seed}"
 
     if args.phenix_dmin is not None:
         cfg.setdefault("phenix", {})["d_min"] = args.phenix_dmin

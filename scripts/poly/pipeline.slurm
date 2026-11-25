@@ -41,6 +41,8 @@ OUT_BASE="${OUT_BASE:-}"
 #   MTZ=<.../laue_dials_pc/integrated.mtz> STEPS=careless,stats,phenix,peaks \
 #       PIPELINE_CFG=<cfg> sbatch -p gpu --gres=gpu:1 scripts/poly/pipeline.slurm
 MTZ="${MTZ:-}"
+# CARELESS_SEED=<n> merges with that careless seed into <out_dir>_seed<n>, so
+# several merging seeds of one MTZ can be averaged (run_pipeline.py --careless-seed).
 if [ -n "$MTZ" ]; then
   RUN_DIR=""
 elif [ -z "$OUT_BASE" ]; then
@@ -84,4 +86,5 @@ fi
     ${PRED_DIR:+--pred-dir "$PRED_DIR"} \
     ${METHOD:+--method "$METHOD"} \
     ${DATASET:+--dataset "$DATASET"} \
-    ${PHENIX_DMIN:+--phenix-dmin "$PHENIX_DMIN"}
+    ${PHENIX_DMIN:+--phenix-dmin "$PHENIX_DMIN"} \
+    ${CARELESS_SEED:+--careless-seed "$CARELESS_SEED"}
