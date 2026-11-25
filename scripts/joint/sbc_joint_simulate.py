@@ -210,7 +210,16 @@ def main() -> None:
         loss.backward()
         return loss
 
-    opt.step(closure)
+    # repeated L-BFGS passes until theta stops moving: a single pass with the default tolerances
+    # stopped short on 20,000 reflections (the loss is O(1e6)), which shrank theta toward its
+    # start of 0 and gave errors smaller than the Laplace sd
+    for it in range(50):
+        before = theta.detach().clone()
+        opt.step(closure)
+        if (theta.detach() - before).abs().max() < 1e-7:
+            break
+    gnorm = float(torch.autograd.grad(-log_marginal(theta, multi)[0].sum(), theta)[0].norm())
+    print(f"L-BFGS passes {it + 1}; gradient norm at the fit {gnorm:.3g}", flush=True)
     theta_hat = theta.detach()
     dlog = (Tl @ (theta_hat - theta_true)).cpu().numpy()
     print(f"theta true {theta_true.cpu().numpy().round(4).tolist()}  fitted {theta_hat.cpu().numpy().round(4).tolist()}; "
@@ -239,6 +248,7 @@ def main() -> None:
             "sd_log_g_err": float(dlog.std()), "mean_log_g_err": float(dlog.mean()),
             "n_refl": H, "n_obs": N, "args": vars(a) | {"out": str(a.out)}}
     summ["theta_sd"] = theta_sd.cpu().tolist()
+    summ["lbfgs_passes"], summ["grad_norm"] = it + 1, gnorm
     summ["theta_z"] = ((theta_hat - theta_true) / theta_sd).cpu().tolist()
     for tag, ths in (("true", theta_true[None]), ("fit", theta_hat[None])):
         ms, m2, us = 0, 0, 0
