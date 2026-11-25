@@ -22,6 +22,11 @@ class TrainerConfig:
             NaN or inf, with the forward traceback. Roughly 3x slower, so it is for
             debugging a divergence rather than for production runs -- but it reports
             where a NaN was CREATED instead of where it is first noticed.
+        ema_decay: Keep an exponential moving average of the trainable parameters with
+            this decay per optimizer step (`integrator.callbacks.ema.ParameterEMA`);
+            validation and every checkpoint then use the average. `None` (default) is
+            off, so existing runs are unchanged. 0.999 averages over about 1000 steps.
+        ema_start_epoch: First epoch whose steps update the average.
     """
 
     max_epochs: int = 100
@@ -36,8 +41,12 @@ class TrainerConfig:
     gradient_clip_val: float | None = None
     gradient_clip_algorithm: Literal["norm", "value"] | None = None
     detect_anomaly: bool = False
+    ema_decay: float | None = None
+    ema_start_epoch: int = 0
 
     def __post_init__(self):
+        if self.ema_decay is not None and not 0.0 < self.ema_decay < 1.0:
+            raise ValueError(f"ema_decay must be in (0, 1), got {self.ema_decay}")
         if self.max_epochs < 0:
             raise ValueError(
                 f"""

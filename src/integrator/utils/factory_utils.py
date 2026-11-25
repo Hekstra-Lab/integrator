@@ -704,6 +704,14 @@ def construct_trainer(
 ) -> pl.Trainer:
     # trainer section is optional; TrainerConfig defaults cover an empty one
     tr_cfg = configs.TrainerConfig(**(cfg.get("trainer") or {}))
+    if tr_cfg.ema_decay is not None:
+        from integrator.callbacks.ema import ParameterEMA
+
+        if callbacks is None:
+            callbacks = []
+        elif not isinstance(callbacks, list):
+            callbacks = [callbacks]
+        callbacks = [*callbacks, ParameterEMA(decay=tr_cfg.ema_decay, start_epoch=tr_cfg.ema_start_epoch)]
 
     trainer_kwargs = dict(
         max_epochs=tr_cfg.max_epochs,
