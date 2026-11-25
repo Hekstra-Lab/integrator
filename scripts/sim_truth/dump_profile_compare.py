@@ -87,8 +87,9 @@ def main() -> None:
             with torch.no_grad():
                 p_prior = torch.stack([qp.profile_from_eta(phi, fxy, em + sig * torch.randn(em.shape, generator=g, device=dev, dtype=D), m)
                                        for _ in range(16)]).mean(0)
-            a_I, r_I = model.loss.intensity_prior_params(md, dev)
-            a_b, r_b = model._background_prior(md, dev)
+            md32 = {k: (v.float() if v.is_floating_point() else v) for k, v in md.items()}  # the loss is float32
+            a_I, r_I = model.loss.intensity_prior_params(md32, dev)
+            a_b, r_b = model._background_prior(md32, dev)
             a_I, r_I, a_b, r_b = (torch.as_tensor(x, dtype=D, device=dev).expand(len(r)) for x in (a_I, r_I, a_b, r_b))
             NE = em.shape[1]
             b0 = (c * m).sum(1) / m.sum(1)
