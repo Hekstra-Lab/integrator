@@ -57,7 +57,7 @@ if [ ${#want[@]} -eq 0 ]; then
   if [ -n "$TEMPLATE" ]; then
     want=(ccsym pdz2 refine basis basiscmp cost)
   else
-    want=(shoebox loss wilson basis basiscmp cost scatter merging peaks spectrum careless ccsym pdz2 refine shape patch arms simsampling simimage simtruth simshoebox simtruthpc simprofile simcmp simsbc simprior)
+    want=(shoebox loss wilson basis basiscmp cost scatter merging peaks spectrum careless ccsym pdz2 refine shape patch arms simsampling simimage simtruth simshoebox simtruthpc simprofile simcmp simsbc simprior simcrps simprofcmp)
   fi
 fi
 has() { printf '%s\n' "${want[@]}" | grep -qx "$1"; }
@@ -209,6 +209,10 @@ has simprofile && ls "$DATA"/profile_truth_examples_*.npz >/dev/null 2>&1 && ste
 has simsbc && ls "$DATA"/sbc/*/sbc_ecdf.csv >/dev/null 2>&1 && step simsbc "${PY[0]}" "${PY[1]}" --with "arviz<1" "${PY[@]:2}" scripts/figures/fig_sim_sbc.py --src "$DATA"/sbc/*/
 # prior checks of the Wilson intensity prior (scripts/sim_truth/prior_check.py)
 has simprior && [ -f "$DATA/prior_check/prior_check_summary.csv" ] && step simprior "${PY[@]}" scripts/figures/fig_sim_prior_check.py --src "$DATA/prior_check"
+# CRPS of every export against the truth (scripts/sim_truth/crps_against_truth.py)
+has simcrps && [ -f "$DATA/sim_crps_mos010_pc.csv" ] && step simcrps "${PY[@]}" scripts/figures/fig_sim_crps.py --src "$DATA/sim_crps_mos010_pc.csv"
+# true profiles beside prior and Laplace-mode profiles (scripts/sim_truth/dump_profile_compare.py)
+has simprofcmp && ls "$DATA"/profile_compare_*.npz >/dev/null 2>&1 && for f in "$DATA"/profile_compare_*.npz; do step simprofcmp "${PY[@]}" scripts/figures/fig_sim_profile_compare.py --src "$f"; done
 if has simcmp && [ -f "$SIMPC" ]; then
   for ds in mos010_pc_default mos010_pc_permissive; do for est in rb posterior; do
     step simcmp "${PY[@]}" scripts/figures/fig_intensity_scatter.py --data "$SIMPC" --id shot,h,k,l --value i_hat \

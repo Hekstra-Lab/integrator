@@ -208,6 +208,12 @@ Colour comes from the witch scheme, one colour per arm, assigned in
   The summary has one row per (`method`, `dataset`, `binning` in `all`, `d`, `wavelength`; `group` in `all`, `acentric`, `centric`; `lo`, `hi`), with `ratio` (mean true I over mean prior mean), `n`, `mean_minus_half`, `var12` and `ks` of u = F_prior(I_true).
   `prior_predictive.csv` holds per (`method` = the prior draw, `statistic` in `total`, `max`, `median`, d bin `lo`, `hi`, quantile `q`) the `real` and `sim` quantiles of that shoebox statistic.
 
+`sim_crps_mos010_pc.csv`
+: CRPS of each export against the true intensity, from `scripts/sim_truth/crps_against_truth.py`: one row per (`method`, `dataset`, `bin` of `i_true`), with `n`, `crps_rel` (mean CRPS / max(i_true, 1)) and `crps_abs` (photons).
+
+`profile_compare_<dataset>.npz`
+: From `scripts/sim_truth/dump_profile_compare.py`: for sampled reflections, `true_profile`, `counts`, `i_true`, `d`, `phi`, and per model in `models` its `<name>_prior` and `<name>_mode` profiles (25 x 25).
+
 ## Rebuilding
 
 ```bash

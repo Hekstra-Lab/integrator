@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-338 scripts.
+340 scripts.
 
 ## Start here
 
@@ -177,10 +177,12 @@ per job, and it lives in the repo".
 | `figures/fig_profile_gate_examples.py` | One reflection per row: the counts, the profile drawn for it, the gate. |
 | `figures/fig_profile_shape.py` | Does a profile model follow the spot shape of the reflections beside it? |
 | `figures/fig_profile_truth_examples.py` | Shoeboxes of the datsimx sims beside their true profile and each arm's predicted profile and gate. |
+| `figures/fig_sim_crps.py` | CRPS of each integrator's exported intensities against the simulation's true intensity, by true-intensity bin. |
 | `figures/fig_sim_image.py` | Simulated Laue shots side by side: whole detector (block means) and a full-resolution crop. |
 | `figures/fig_sim_learned_spectrum.py` | Learned Wilson spectrum G(lambda) of trained runs against the simulation's spectrum and its truth table. |
 | `figures/fig_sim_merged_vs_truth.py` | Merged structure factors and careless's per-observation scale against the simulation's truth. |
 | `figures/fig_sim_prior_check.py` | Prior checks of the Wilson intensity prior: against the simulation's true intensities, and prior-predictively. |
+| `figures/fig_sim_profile_compare.py` | True spot profiles beside each model's prior profile and Laplace-mode profile, and their averages by resolution. |
 | `figures/fig_sim_profile_params.py` | Learned profile parameters of trained runs: the K-component widths and weights against geometry, and residual bases. |
 | `figures/fig_sim_sampling.py` | Noiseless datsimx spots at each (enSteps, mosDoms) sampling, one figure per mosaic spread. |
 | `figures/fig_sim_sbc.py` | Simulation-based calibration of trained runs: ECDF of the PIT values minus the uniform, with simultaneous 95 % bands. |
