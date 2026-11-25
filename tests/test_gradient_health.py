@@ -12,7 +12,8 @@ The parameters a config cannot reach, and why:
 - `surrogates.qi`, `surrogates.qbg`: the `svae` family builds q(I) and q(b) by a
   conjugate update, so the amortized heads are built and never called; q(I)
   uses its head only under `intensity_posterior: amortized`.
-- `encoders.signal`, `gate_head`: plain `svae` (and `svae_per_sample`) with a computed gate
+- `encoders.signal`, `gate_head`: plain `svae` (and `svae_per_sample`) with a computed gate and the conjugate q(I)
+  (under `intensity_posterior: amortized` the signal encoder feeds q(I))
   (`responsibility`, `joint`) never reads them (svae_profile_encoder_dead,
   CLAUDE.md "Testing an architecture"). `svae_bg` and `svae_conjugate` give the
   encoder a job.
@@ -84,7 +85,9 @@ def expected_unreached(cfg: dict) -> set[str]:
         if ia.get("intensity_posterior", "conjugate") != "amortized":
             out.add("surrogates.qi")
     if integ in ("svae", "svae_per_sample") and ia.get("gate", "learned") in ("responsibility", "joint"):
-        out |= {"encoders.signal", "gate_head"}
+        out.add("gate_head")
+        if ia.get("intensity_posterior", "conjugate") != "amortized":
+            out.add("encoders.signal")
 
     qp = cfg.get("surrogates", {}).get("qp", {})
     name, a = qp.get("name"), qp.get("args", {}) or {}
@@ -127,7 +130,12 @@ def test_every_built_parameter_trains_unless_the_config_says_otherwise(path):
     reached = {n: False for n, p in model.named_parameters() if p.requires_grad}
     for _ in range(STEPS):
         opt.zero_grad()
-        out = model._step(_batch(), step="train")
+        batch = _batch()
+        if cfg["integrator"]["name"] not in SVAE_FAMILY:
+            # the data module yields (B, P) shoebox and mask; the svae family also accepts the (B, P, 1) of _batch
+            counts, shoebox, mask, md = batch
+            batch = (counts, shoebox.squeeze(-1), mask.squeeze(-1), md)
+        out = model._step(batch, step="train")
         loss = out["loss"] if isinstance(out, dict) else out
         assert torch.isfinite(loss), f"loss {float(loss)}"
         loss.backward()
