@@ -178,3 +178,33 @@ def interp_loglik(nodes: Tensor, ll: Tensor, I: Tensor) -> Tensor:
     x0, x1 = nodes.gather(1, k - 1), nodes.gather(1, k)
     y0, y1 = ll.gather(1, k - 1), ll.gather(1, k)
     return y0 + (y1 - y0) * (I - x0) / (x1 - x0)
+
+
+def interp_loglik_hermite(nodes: Tensor, ll: Tensor, I: Tensor) -> Tensor:
+    """log l at I (N, G') by cubic Hermite interpolation on uniform nodes (N, G), slopes by central differences.
+
+    The derivative is continuous, so an optimiser of the scale sees a smooth objective:
+    with `interp_loglik` (piecewise linear) the gradient jumps at every node and L-BFGS
+    stalled with gradient norms of 2-150 on 20,000 reflections, leaving the scale fit
+    biased toward its start (2026-11-25). Outside the nodes the end value is continued
+    along the end slope.
+    """
+    G = nodes.shape[1]
+    h = (nodes[:, 1] - nodes[:, 0])[:, None]
+    m = torch.empty_like(ll)
+    m[:, 1:-1] = (ll[:, 2:] - ll[:, :-2]) / (2 * h)
+    m[:, 0] = (ll[:, 1] - ll[:, 0]) / h[:, 0]
+    m[:, -1] = (ll[:, -1] - ll[:, -2]) / h[:, 0]
+    k = torch.searchsorted(nodes.contiguous(), I.detach().contiguous()).clamp(1, G - 1)
+    x0 = nodes.gather(1, k - 1)
+    y0, y1 = ll.gather(1, k - 1), ll.gather(1, k)
+    m0, m1 = m.gather(1, k - 1), m.gather(1, k)
+    t = (I - x0) / h
+    inside = (t >= 0) & (t <= 1)
+    tc = t.clamp(0, 1)
+    h00, h10 = 2 * tc**3 - 3 * tc**2 + 1, tc**3 - 2 * tc**2 + tc
+    h01, h11 = -2 * tc**3 + 3 * tc**2, tc**3 - tc**2
+    cub = h00 * y0 + h10 * h * m0 + h01 * y1 + h11 * h * m1
+    # outside [nodes_0, nodes_-1]: linear from the end along its slope
+    lin = torch.where(t < 0, y0 + m0 * (I - x0), y1 + m1 * (I - nodes.gather(1, k)))
+    return torch.where(inside, cub, lin)

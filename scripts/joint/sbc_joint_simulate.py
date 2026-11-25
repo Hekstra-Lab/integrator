@@ -18,8 +18,8 @@ Inference, priors at their generating values:
        proposal q(eta) (its eta block of the inverse Hessian, sd x --q-inflate);
     2. l_i(I) on the observation's own I grid (`obs_grid`), eta integrated by importance
        sampling with p/q weights (`obs_loglik_is`, --n-eta draws), b by Laplace;
-    3. the scale: theta by maximising sum_h log int p(J) prod_i l_i(g_i J) dJ (L-BFGS), the
-       scale gradient stopped for reflections of multiplicity 1; Sigma is frozen at the truth,
+    3. the scale: theta by maximising sum_h log int p(J) prod_i l_i(g_i J) dJ (L-BFGS) over the
+       reflections of multiplicity > 1 (one observation carries no relative-scale information); Sigma is frozen at the truth,
        so the overall scale is identified (docs/joint_model_closed_forms.md, gauge section);
     4. the posterior of J_h on its grid at the TRUE theta and at the fitted theta; PIT
        u_h = F(J_h true). The J test is the true-theta PIT. Every reflection of one dataset
@@ -52,6 +52,7 @@ import torch
 
 from integrator.model.joint.marginal import (
     interp_loglik,
+    interp_loglik_hermite,
     j_grid,
     log_prior_J,
     ls_intensity,
@@ -119,6 +120,8 @@ def main() -> None:
     ap.add_argument("--obs-grid", type=int, default=256)
     ap.add_argument("--j-grid", type=int, default=256)
     ap.add_argument("--chunk", type=int, default=2048)
+    ap.add_argument("--interp", choices=("hermite", "linear"), default="hermite",
+                    help="interpolation of log l_i onto g_i J: cubic Hermite (smooth gradient) or piecewise linear")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     a = ap.parse_args()
     dev = a.device
@@ -196,7 +199,7 @@ def main() -> None:
         if grad_mask is not None:  # stop the scale gradient of multiplicity-1 reflections
             gg = torch.where(grad_mask, gg, gg.detach())
         xs, dx = j_grid(i_hat, sd, gg, refl, H, grid=a.j_grid)
-        oll = interp_loglik(nodes, ll, gg[:, None] * xs[refl])
+        oll = (interp_loglik_hermite if a.interp == "hermite" else interp_loglik)(nodes, ll, gg[:, None] * xs[refl])
         lm, w = reflection_marginal(oll, refl, H, log_prior_J(xs, "wilson", sigma, centric), dx)
         return lm, w, xs, dx
 
@@ -204,9 +207,19 @@ def main() -> None:
     theta = torch.zeros(K, dtype=D, device=dev, requires_grad=True)
     opt = torch.optim.LBFGS([theta], lr=1, max_iter=200, line_search_fn="strong_wolfe", tolerance_grad=1e-9)
 
+    # the scale objective sums over reflections of multiplicity > 1 only. Keeping
+    # the multiplicity-1 terms in the value while stopping their gradient made the
+    # value and the gradient of different functions, and L-BFGS's line search
+    # stalled with gradient norms of 2-151 (2026-11-25); a reflection observed
+    # once carries no relative-scale information, so dropping it loses none
+    multi_refl = torch.as_tensor(n_obs > 1, device=dev)
+
+    def scale_loss(t):
+        return -log_marginal(t)[0][multi_refl].sum()
+
     def closure():
         opt.zero_grad()
-        loss = -log_marginal(theta, multi)[0].sum()
+        loss = scale_loss(theta)
         loss.backward()
         return loss
 
@@ -218,7 +231,7 @@ def main() -> None:
         opt.step(closure)
         if (theta.detach() - before).abs().max() < 1e-7:
             break
-    gnorm = float(torch.autograd.grad(-log_marginal(theta, multi)[0].sum(), theta)[0].norm())
+    gnorm = float(torch.autograd.grad(scale_loss(theta), theta)[0].norm())
     print(f"L-BFGS passes {it + 1}; gradient norm at the fit {gnorm:.3g}", flush=True)
     theta_hat = theta.detach()
     dlog = (Tl @ (theta_hat - theta_true)).cpu().numpy()
@@ -230,7 +243,7 @@ def main() -> None:
     # analytic second derivative misses the curvature between nodes)
     def grad_at(t):
         t = t.clone().requires_grad_(True)
-        gr, = torch.autograd.grad(-log_marginal(t, multi)[0].sum(), t)
+        gr, = torch.autograd.grad(scale_loss(t), t)
         return gr
 
     hstep = 1e-3

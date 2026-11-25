@@ -148,3 +148,26 @@ def test_interpolated_loglik_matches_direct_and_its_gradient():
     Id = I.clone().requires_grad_(True)
     obs_loglik(c, m, p, Id, a_b, r_b).sum().backward()
     assert (Ig.grad - Id.grad).abs().max() < 0.02
+
+
+def test_hermite_interpolation_matches_direct_and_is_smooth():
+    from integrator.model.joint.marginal import interp_loglik_hermite, obs_grid
+
+    c, p, g, refl, a_b, r_b = make(seed=7)
+    m = torch.ones_like(c)
+    i_hat, _, sd = ls_intensity(c, m, p)
+    nodes = obs_grid(i_hat, sd, grid=256)
+    ll = obs_loglik(c, m, p, nodes, a_b, r_b)
+    I = torch.stack([torch.linspace(float(nodes[i, 0]) + 0.1, float(nodes[i, -1]) - 0.1, 401, dtype=D) for i in range(len(g))])
+    direct = obs_loglik(c, m, p, I, a_b, r_b)
+    got = interp_loglik_hermite(nodes, ll, I)
+    assert (got - direct).abs().max() < 2e-3
+    Ig = I.clone().requires_grad_(True)
+    interp_loglik_hermite(nodes, ll, Ig).sum().backward()
+    Id = I.clone().requires_grad_(True)
+    obs_loglik(c, m, p, Id, a_b, r_b).sum().backward()
+    Il = I.clone().requires_grad_(True)
+    from integrator.model.joint.marginal import interp_loglik
+    interp_loglik(nodes, ll, Il).sum().backward()
+    err_h, err_l = (Ig.grad - Id.grad).abs().max(), (Il.grad - Id.grad).abs().max()
+    assert err_h < 0.25 * err_l, (float(err_h), float(err_l))
