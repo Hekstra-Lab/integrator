@@ -206,7 +206,7 @@ has simtruthpc && [ -f "$DATA/sim_truth_scores_mos010_pc.csv" ] && step simtruth
 has simtruthpc && [ -f "$DATA/sim_truth_scores_by_d_mos010_pc.csv" ] && step simtruthpc "${PY[@]}" scripts/figures/fig_sim_truth_scores.py --by-d "$DATA/sim_truth_scores_by_d_mos010_pc.csv"
 has simprofile && ls "$DATA"/profile_truth_examples_*.npz >/dev/null 2>&1 && step simprofile "${PY[@]}" scripts/figures/fig_profile_truth_examples.py
 # simulation-based calibration, one directory per scored run (scripts/sim_truth/sbc_ranks.py)
-has simsbc && ls "$DATA"/sbc/*/sbc_ecdf.csv >/dev/null 2>&1 && step simsbc "${PY[@]}" scripts/figures/fig_sim_sbc.py --src "$DATA"/sbc/*/
+has simsbc && ls "$DATA"/sbc/*/sbc_ecdf.csv >/dev/null 2>&1 && step simsbc "${PY[0]}" "${PY[1]}" --with "arviz<1" "${PY[@]:2}" scripts/figures/fig_sim_sbc.py --src "$DATA"/sbc/*/
 # prior checks of the Wilson intensity prior (scripts/sim_truth/prior_check.py)
 has simprior && [ -f "$DATA/prior_check/prior_check_summary.csv" ] && step simprior "${PY[@]}" scripts/figures/fig_sim_prior_check.py --src "$DATA/prior_check"
 if has simcmp && [ -f "$SIMPC" ]; then

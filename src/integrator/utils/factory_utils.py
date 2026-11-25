@@ -647,6 +647,15 @@ def construct_integrator(
             integrator, integrator_args.init_from_checkpoint
         )
 
+    # after the warm start, so a frozen parameter keeps the checkpoint's value
+    frozen = list(getattr(optimizer_cfg, "frozen_params", None) or [])
+    for prefix in frozen:
+        hits = [p for n, p in integrator.named_parameters() if n.startswith(prefix)]
+        if not hits:
+            raise ValueError(f"optimizer.frozen_params: no parameter starts with {prefix!r}")
+        for p in hits:
+            p.requires_grad_(False)
+
     return integrator
 
 

@@ -10,11 +10,9 @@ below the posterior; a curve that is positive below z = 1/2 and negative above
 wide.
 
 The band is the simultaneous 95 % envelope for n uniform PIT values at the 101
-grid points: c sqrt(z (1 - z) / n), with c the 95th percentile, over 4000 draws
-of the uniform ECDF, of max_z |ECDF(z) - z| / sqrt(z (1 - z) / n) on 0 < z < 1
-(the equal-precision band of Saeilynoja et al. 2022; the ECDF on the grid is
-drawn exactly as multinomial bin counts). It is computed here from n, so its
-definition lives in one place.
+grid points, from ArviZ's `ecdf_confidence_band` (method "optimized", the
+reference implementation of Saeilynoja et al. 2022). It is computed here from
+n, so its definition lives in one place.
 
 Figure `sim_sbc_<dataset>_<method>`: rows are the quantities I, b, the joint
 log-likelihood, the profile's n_eff and i_rb; columns are intensity bins, the
@@ -34,7 +32,7 @@ band is the pointwise 99 % interval of a Binomial(n, 0.05) count around n/20: a
 calibrated posterior's bars stay inside it, a U shape is a posterior too narrow,
 a hump too wide, a slope a shifted posterior.
 
-    uv run --with-editable /Users/luis/master/software/figtex \\
+    uv run --with-editable /Users/luis/master/software/figtex --with "arviz<1" \\
         python scripts/figures/fig_sim_sbc.py --src DIR [DIR ...]
 """
 
@@ -59,20 +57,17 @@ ROWS = (("I", "$I$"), ("b", "$b$"), ("loglik", "$\\log p(c \\mid \\theta)$"), ("
 
 
 @lru_cache(maxsize=None)
-def band_c(n: int, n_sim: int = 4000, seed: int = 0) -> float:
-    rng = np.random.default_rng(seed)
-    z = np.linspace(0, 1, 101)
-    p = np.diff(z)
-    cnt = rng.multinomial(n, p, size=n_sim)
-    ecdf = np.concatenate([np.zeros((n_sim, 1)), np.cumsum(cnt, 1)], 1) / n
-    inner = slice(1, -1)
-    s = np.sqrt(z[inner] * (1 - z[inner]) / n)
-    return float(np.quantile((np.abs(ecdf[:, inner] - z[inner]) / s).max(1), 0.95))
-
-
 def band(n: int) -> tuple[np.ndarray, np.ndarray]:
+    """z and the half-width of the simultaneous 95 % band of ECDF(z) - z for n uniform PIT values.
+
+    ArviZ's `ecdf_confidence_band` (method "optimized", Saeilynoja et al. 2022), the
+    reference implementation; returned as a symmetric half-width, max of the two sides.
+    """
+    from arviz.stats.ecdf_utils import ecdf_confidence_band
+
     z = np.linspace(0, 1, 101)
-    return z, band_c(int(n)) * np.sqrt(z * (1 - z) / max(n, 1))
+    lo, hi = ecdf_confidence_band(int(max(n, 1)), z, z, prob=0.95, method="optimized")
+    return z, np.maximum(hi - z, z - lo)
 
 
 def panel(ax, d: pl.DataFrame, colour: str, frame: str, summary: dict | None) -> None:

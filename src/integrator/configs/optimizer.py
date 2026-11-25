@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 
@@ -21,6 +21,13 @@ class OptimizerConfig:
             whose gradient keeps one sign moves about `lr` per step whatever the gradient's
             size, so at lr 1e-3 the Wilson B rose a constant 0.18/epoch for 60 epochs and
             never converged.
+        frozen_params: Parameter-name prefixes (e.g. `surrogates.qp.theta0`) whose
+            parameters are frozen at construction, after any `init_from_checkpoint`
+            warm start: `requires_grad` false, so they take no gradient and the
+            optimizer never sees them. Each prefix must match at least one parameter.
+            Empty (default) freezes nothing. For SBC, which is valid only when the
+            inference uses the prior the data were drawn from, this holds every prior
+            parameter at its generating value while the inference networks train.
     """
 
     lr: float = 0.001
@@ -31,6 +38,7 @@ class OptimizerConfig:
     warmup_steps: int = 0
     lr_min: float = 1.0e-5
     loss_lr: float | None = None
+    frozen_params: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         if self.lr <= 0:
