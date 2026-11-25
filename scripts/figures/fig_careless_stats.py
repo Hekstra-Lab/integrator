@@ -417,8 +417,11 @@ def draw(df: pl.DataFrame, out_dir: Path, dataset: str, prefix: str) -> int:
 
     # and the grid, which is the reported figure
     n = len(panels)
-    cols = 2 if n > 1 else 1
-    rows = (n + cols - 1) // cols
+    # three columns once there are more than six panels, and an explicit
+    # height: at two columns figTeX's default height gave each of six rows a
+    # data area too short to read (11 panels on mos010, 2026-11-25)
+    cols = 1 if n == 1 else (2 if n <= 6 else 3)
+    rows = (n + 1 + cols - 1) // cols  # +1: the legend cell
     # Each panel is a DIFFERENT statistic, so neither axis is shared:
     # `panels` shares both by default once there is more than one row, and
     # that put CC-half, R-split and completeness on I/sigma's 0-110 scale,
@@ -426,7 +429,11 @@ def draw(df: pl.DataFrame, out_dir: Path, dataset: str, prefix: str) -> int:
     # each tool separately -- isigi defaults to 20 shells, the rest to
     # 10 -- so position 5 is a different resolution in different panels and
     # x cannot be shared either.
-    P = figstyle().panels(f"{rows}x{cols}", shared=False)
+    from figtex import sizing as _sizing
+
+    tall = 0.9 * _sizing.TEMPLATES[figstyle().active()].text_height
+    P = figstyle().panels(f"{rows}x{cols}", shared=False,
+                          height=min(tall, rows * 0.8 * _sizing.TEMPLATES[figstyle().active()].text_width / cols))
     import numpy as np
 
     flat = list(np.ravel(np.asarray(P.axs, dtype=object)))
