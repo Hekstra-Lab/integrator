@@ -149,3 +149,32 @@ def reflection_marginal(obs_ll: Tensor, refl: Tensor, n_refl: int, log_prior: Te
     tot = torch.zeros(n_refl, obs_ll.shape[1], dtype=D, device=obs_ll.device).index_add(0, refl, obs_ll.to(D)) + log_prior
     log_m = torch.logsumexp(tot, 1) + torch.log(dx)
     return log_m, torch.softmax(tot.detach(), 1)
+
+
+def obs_grid(i_hat: Tensor, sd_i: Tensor, grid: int = 256, width: float = 12.0) -> Tensor:
+    """Nodes (N, G) of each observation's own I grid: i_hat +- width sd, floored at 0, plus 3 photons; detached.
+
+    l_i(I) depends on observation i's pixels and its local priors only, not on its scale,
+    so it can be evaluated once on these nodes and interpolated at g_i J by `interp_loglik`
+    for every value of the scale parameters.
+    """
+    with torch.no_grad():
+        lo = (i_hat.to(D) - width * sd_i.to(D)).clamp_min(0)
+        hi = i_hat.to(D) + width * sd_i.to(D) + 3
+        t = torch.linspace(0, 1, grid, dtype=D, device=i_hat.device)
+        return lo[:, None] + (hi - lo)[:, None] * t
+
+
+def interp_loglik(nodes: Tensor, ll: Tensor, I: Tensor) -> Tensor:
+    """log l at I (N, G') from its values ll (N, G) on increasing nodes (N, G): linear inside, linear extrapolation outside.
+
+    Differentiable in I (and in ll). Outside the nodes the end segments are continued, which
+    for a Poisson likelihood is the right shape at large I (log l falls linearly in I with
+    slope -sum_k p_k) and is only reached where the reflection's other observations put J
+    far outside this observation's own +- width sd range.
+    """
+    G = nodes.shape[1]
+    k = torch.searchsorted(nodes.contiguous(), I.detach().contiguous()).clamp(1, G - 1)
+    x0, x1 = nodes.gather(1, k - 1), nodes.gather(1, k)
+    y0, y1 = ll.gather(1, k - 1), ll.gather(1, k)
+    return y0 + (y1 - y0) * (I - x0) / (x1 - x0)

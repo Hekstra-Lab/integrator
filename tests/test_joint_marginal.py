@@ -129,3 +129,22 @@ def test_importance_weights_give_the_marginal_over_eta():
     unweighted = torch.logsumexp(torch.stack([obs_loglik(c, m, profile(torch.tensor([[0.15]], dtype=D) + 0.12**0.5 * torch.randn(1, 1, dtype=D, generator=gq)), I, a_b, r_b)[0]
                                               for _ in range(2000)]), 0) - math.log(2000)
     assert (unweighted - ref).abs().max() > 0.05
+
+
+def test_interpolated_loglik_matches_direct_and_its_gradient():
+    from integrator.model.joint.marginal import interp_loglik, obs_grid
+
+    c, p, g, refl, a_b, r_b = make(seed=7)
+    m = torch.ones_like(c)
+    i_hat, _, sd = ls_intensity(c, m, p)
+    nodes = obs_grid(i_hat, sd, grid=256)
+    ll = obs_loglik(c, m, p, nodes, a_b, r_b)
+    I = torch.stack([torch.linspace(float(nodes[i, 0]) + 0.1, float(nodes[i, -1]) - 0.1, 37, dtype=D) for i in range(len(g))])
+    direct = obs_loglik(c, m, p, I, a_b, r_b)
+    got = interp_loglik(nodes, ll, I)
+    assert (got - direct).abs().max() < 0.02
+    Ig = I.clone().requires_grad_(True)
+    interp_loglik(nodes, ll, Ig).sum().backward()
+    Id = I.clone().requires_grad_(True)
+    obs_loglik(c, m, p, Id, a_b, r_b).sum().backward()
+    assert (Ig.grad - Id.grad).abs().max() < 0.02

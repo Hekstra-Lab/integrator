@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-341 scripts.
+342 scripts.
 
 ## Start here
 
@@ -453,5 +453,11 @@ per job, and it lives in the repo".
 | `wedge_profile_analysis.py` | Empirical per-wedge profile analysis - decides whether per-bin basis is worth building. |
 | `wilson_fit_refl.py` | Fit the Wilson scale G and B factor from a DIALS reflection file. |
 | `write_unmerged_mtz.py` | -- |
+
+## `scripts/joint`
+
+| script | what it does |
+|---|---|
+| `joint/sbc_joint_simulate.py` | Simulation-based calibration of the joint model, pixels to scaled and merged intensities, with every prior frozen. |
 
 `*` marks an entry point from the table at the top.
