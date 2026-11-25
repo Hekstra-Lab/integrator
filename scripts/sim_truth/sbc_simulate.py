@@ -115,7 +115,8 @@ def predict_batches(model, cfg: dict, device):
             qp._refine_capture = []
             try:
                 out = model.predict_step((counts, shoebox, mask, md), bi)
-                raw_delta, raw_scale = qp._refine_capture
+                # a class that does not call the surrogate's forward (svae_collapsed) captures nothing
+                raw_delta, raw_scale = qp._refine_capture if len(qp._refine_capture) == 2 else (None, None)
             finally:
                 qp._refine_capture = None
             yield counts, mask, md, out, raw_delta, raw_scale

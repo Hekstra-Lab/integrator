@@ -45,7 +45,7 @@ B, SIDE = 6, 25
 P = SIDE * SIDE
 STEPS = 4
 
-SVAE_FAMILY = {"svae", "svae_bg", "svae_conjugate", "svae_calib", "svae_per_sample"}
+SVAE_FAMILY = {"svae", "svae_bg", "svae_conjugate", "svae_calib", "svae_per_sample", "svae_collapsed"}
 
 
 def _batch():

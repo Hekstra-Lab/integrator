@@ -75,3 +75,24 @@ def test_laplace_recovers_a_gaussian():
     torch.testing.assert_close(mode, mu, rtol=0, atol=1e-8)
     torch.testing.assert_close(cov, torch.linalg.inv(P), rtol=1e-6, atol=1e-10)
     assert not npd.any()
+
+
+def test_differentiable_log_z_matches_and_has_the_right_gradient():
+    from integrator.model.posterior.collapsed import collapsed_log_z
+
+    gen = torch.Generator().manual_seed(3)
+    c, m, p, I0, b0 = _draw(5, gen)
+    one = torch.ones(5, dtype=torch.float64)
+    args = (one, 0.01 * one, 40 * one, 2 * one)
+    theta = torch.log(p.clone()).requires_grad_(True)  # profile through a softmax, as in the model
+    lz, q = collapsed_log_z(c, m, torch.softmax(theta, -1), *args, grid=128)
+    torch.testing.assert_close(lz.detach(), q.log_z, rtol=0, atol=1e-8)
+    g, = torch.autograd.grad(lz.sum(), theta)
+    # finite difference along a random direction
+    d = torch.randn(theta.shape, dtype=torch.float64, generator=gen)
+    eps = 1e-4
+    lp_, _ = collapsed_log_z(c, m, torch.softmax(theta.detach() + eps * d, -1), *args, grid=128)
+    lm_, _ = collapsed_log_z(c, m, torch.softmax(theta.detach() - eps * d, -1), *args, grid=128)
+    fd = (lp_ - lm_) / (2 * eps)
+    ad = (g * d).sum(-1)
+    assert torch.allclose(ad, fd, rtol=0.02, atol=0.02), (ad, fd)

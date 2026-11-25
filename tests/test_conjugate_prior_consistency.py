@@ -46,9 +46,10 @@ def _load(path: pathlib.Path) -> dict:
     return cfg
 
 
+# svae_collapsed has no conjugate q(I) or q(b): it integrates (I, b) out given the profile
 CONFIGS = [
     p for p in sorted((ROOT / "configs" / "sim_truth").glob("*.yaml"))
-    if _load(p)["integrator"]["name"] in SVAE_FAMILY
+    if _load(p)["integrator"]["name"] in SVAE_FAMILY - {"svae_collapsed"}
 ]
 IDS = [p.stem for p in CONFIGS]
 

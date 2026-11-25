@@ -53,6 +53,7 @@ from integrator.model.integrators.svae_gate_integrators import (
     SVAECalibIntegrator,
     SVAEConjugateIntegrator,
 )
+from integrator.model.integrators.svae_collapsed_integrator import SVAECollapsedIntegrator
 from integrator.model.integrators.svae_per_sample_integrator import SVAEPerSampleIntegrator
 from integrator.model.loss import (
     AmplitudeWilsonLoss,
@@ -111,6 +112,7 @@ REGISTRY = {
         "svae_bg": SVAEBackgroundIntegrator,
         "svae_calib": SVAECalibIntegrator,
         "svae_per_sample": SVAEPerSampleIntegrator,
+        "svae_collapsed": SVAECollapsedIntegrator,
         "scaling": ScalingIntegrator,
         "merging": MergingIntegrator,
         "deepsets_merging": DeepSetsMergingIntegrator,

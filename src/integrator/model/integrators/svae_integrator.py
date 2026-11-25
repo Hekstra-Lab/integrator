@@ -187,8 +187,18 @@ class SVAEIntegrator(BaseIntegrator):
             b0 = ((spp * sc - sp * spc) / det).clamp_min(0.0)
         else:
             s2 = (prf_r.pow(2) * m).sum(-1, keepdim=True).clamp_min(1e-12)
+            if getattr(self.cfg, "gate_background", "median") == "least_squares":
+                n_valid = m.sum(-1, keepdim=True).clamp_min(1.0)
+                b0 = c.sum(-1, keepdim=True) / n_valid
+                for _ in range(3):
+                    i0 = ((prf_r * (c - b0) * m).sum(-1, keepdim=True) / s2).clamp_min(0.0)
+                    b0 = (((c - i0 * prf_r) * m).sum(-1, keepdim=True) / n_valid).clamp_min(0.05)
             i0 = ((prf_r * (c - b0) * m).sum(-1, keepdim=True)
                   / s2).clamp_min(0.0)
+            floor = getattr(self.cfg, "gate_i0_floor", 0.0)
+            prior_mean = getattr(self, "_gate_prior_mean", None)
+            if floor > 0 and prior_mean is not None:
+                i0 = torch.maximum(i0, floor * prior_mean.reshape(-1, 1).to(i0))
         lam_s = i0 * prf_r
         signal_prob = lam_s / (lam_s + b0.clamp_min(1e-6) + 1e-12)
         signal_prob = signal_prob * m
@@ -329,6 +339,12 @@ class SVAEIntegrator(BaseIntegrator):
             if self.cfg.shared_encoder
             else self.encoders["signal"](shoebox_reshaped)
         )
+        # the prior mean of I, for `gate_i0_floor`; recorded here rather than passed so
+        # the five _get_pixel_probs overrides keep their signature
+        self.__dict__["_gate_prior_mean"] = None
+        if getattr(self.cfg, "gate_i0_floor", 0.0) > 0:
+            a_I, r_I = self._intensity_prior(metadata, counts.device)
+            self.__dict__["_gate_prior_mean"] = (torch.as_tensor(a_I) / r_I).detach()
         i_prob, bg_prob, mean_prf = self._get_pixel_probs(
             qp, x_signal, raw_counts=counts, mask=mask
         )

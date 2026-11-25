@@ -195,10 +195,22 @@ def laplace_collapsed_batch(qp, metadata: dict, counts: Tensor, mask: Tensor, ra
 
     start = torch.cat([loc.detach(), I_start.to(D).reshape(B, 1).clamp_min(0.5), b_start.to(D).reshape(B, 1).clamp_min(0.05)], 1)
     mode, cov, npd = laplace_eta(nlp, start, steps=steps, positive=(NE, NE + 1))
-    ce = cov[:, :NE, :NE]
-    L = torch.linalg.cholesky(ce + 1e-10 * torch.eye(NE, dtype=D, device=c.device))
+    out = collapsed_mixture(qp, phi, fxy, c, m, mode[:, :NE], cov[:, :NE, :NE], a_I, r_I, a_b, r_b,
+                            n_eta=n_eta, grid=grid, generator=generator, keep=keep)
+    out["non_pd"] = npd
+    return out
+
+
+def collapsed_mixture(qp, phi: Tensor, fxy: Tensor, c: Tensor, m: Tensor, eta_loc: Tensor, eta_cov: Tensor,
+                      a_I: Tensor, r_I: Tensor, a_b: Tensor, r_b: Tensor, n_eta: int = 16, grid: int = 128,
+                      generator: torch.Generator | None = None, keep: bool = False) -> dict:
+    """eta_s ~ N(eta_loc, eta_cov), s = 1..n_eta, each with its collapsed (I, b) posterior; mixture moments."""
+    D = torch.float64
+    c, m = c.to(D), m.to(D)
+    B, NE = eta_loc.shape
+    L = torch.linalg.cholesky(eta_cov.to(D) + 1e-10 * torch.eye(NE, dtype=D, device=c.device))
     z = torch.randn((n_eta, B, NE), dtype=D, device=c.device, generator=generator)
-    etas = mode[None, :, :NE] + torch.einsum("bij,sbj->sbi", L, z)
+    etas = eta_loc.to(D)[None] + torch.einsum("bij,sbj->sbi", L, z)
     mI, vI, mb, vb, kept = [], [], [], [], []
     with torch.no_grad():
         for s in range(n_eta):
@@ -215,8 +227,33 @@ def laplace_collapsed_batch(qp, metadata: dict, counts: Tensor, mask: Tensor, ra
     mI, vI, mb, vb = (torch.stack(x) for x in (mI, vI, mb, vb))
     out = {"i_mean": mI.mean(0), "i_var": vI.mean(0) + mI.var(0, unbiased=False),
            "b_mean": mb.mean(0), "b_var": vb.mean(0) + mb.var(0, unbiased=False),
-           "eta_mode": mode[:, :NE], "eta_cov": ce, "eta_samples": etas, "non_pd": npd,
-           "phi": phi, "fxy": fxy}
+           "eta_mode": eta_loc.to(D), "eta_cov": eta_cov.to(D), "eta_samples": etas, "phi": phi, "fxy": fxy}
     if keep:
         out["draws"] = kept
     return out
+
+
+def collapsed_log_z(c: Tensor, m: Tensor, p: Tensor, a_I: Tensor, r_I: Tensor, a_b: Tensor, r_b: Tensor,
+                    grid: int = 64, newton_b: int = 6, width: float = 9.0) -> tuple[Tensor, Collapsed]:
+    """log Z(p), differentiable in p, and the (detached) `Collapsed` posterior.
+
+    The grid range and the modes b*(I) are found without gradient; log Z is then
+    evaluated with gradient at those fixed points. Since b* maximises the inner
+    integrand, d log Z / d p through b* vanishes to first order (envelope theorem),
+    so the gradient is correct to that order while the inner Newton steps keep no
+    graph. Everything is float64.
+    """
+    with torch.no_grad():
+        q = collapsed(c, m, p.detach(), a_I, r_I, a_b, r_b, grid=grid, newton_b=newton_b, width=width)
+    c, m, p = c.double(), m.double(), p.double()
+    B = c.shape[0]
+    a_I, r_I, a_b, r_b = (torch.as_tensor(x, dtype=torch.float64, device=c.device).expand(B) for x in (a_I, r_I, a_b, r_b))
+    xs, b = q.xs, q.b_hat
+    lam = xs[:, :, None] * p[:, None, :] + b[:, :, None]
+    g2 = -(m[:, None] * c[:, None] / lam**2).sum(-1) - (a_b[:, None] - 1) / b**2
+    lp = ((m[:, None] * (c[:, None] * torch.log(lam) - lam)).sum(-1)
+          + (a_b[:, None] - 1) * torch.log(b) - r_b[:, None] * b + a_b[:, None] * torch.log(r_b[:, None]) - torch.lgamma(a_b)[:, None]
+          + (a_I[:, None] - 1) * torch.log(xs) - r_I[:, None] * xs + a_I[:, None] * torch.log(r_I[:, None]) - torch.lgamma(a_I)[:, None]
+          + 0.5 * math.log(2 * math.pi) - 0.5 * torch.log(-g2))
+    log_z = torch.logsumexp(lp, 1) + torch.log(q.dx)
+    return log_z, q

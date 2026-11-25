@@ -85,6 +85,23 @@ class IntegratorCfg:
     `true` detaches them, which is the intended coordinate ascent.
     """
 
+    gate_i0_floor: float = 0.0
+    """`gate: responsibility` only. Floor on the gate's starting intensity i0 as a
+    fraction of the prior mean 1/tau. 0.0 (default) keeps `i0.clamp_min(0)`, under
+    which a reflection whose least-squares i0 is negative gets r = 0 on every pixel
+    and q(I) = Gamma(alpha_I, tau + 1), mean about one photon whatever the counts:
+    5.7% of the mos010 prior-SBC reflections, whose exact posterior means have
+    median 15 photons."""
+
+    gate_background: Literal["median", "least_squares"] = "median"
+    """`gate: responsibility` only. The gate's starting background b0. `median`
+    (default) is the box median of the valid pixels, an integer for photon
+    counts: on the mos010 prior SBC set b0 - b_true has sd 0.44 against an exact
+    posterior sd of b of 0.175, and q(I)'s mean moves by -delta_b n_eff.
+    `least_squares` is three alternations of the profile least-squares fit of
+    (i0, b0) on the valid pixels, b0 floored at 0.05: continuous, and on the
+    same scale as i0."""
+
     gate: Literal["learned", "responsibility", "joint"] = "learned"
     """Where the SVAE's per-pixel signal/background split comes from.
     `learned` (default) is the 55k-parameter sigmoid head, unchanged.
@@ -292,6 +309,10 @@ class IntegratorCfg:
     """Grid points in I for `export_posterior`."""
     export_posterior_steps: int = 40
     """Damped-Newton steps to the joint mode for `export_posterior`."""
+    collapsed_eta_samples: int = 2
+    """`svae_collapsed` only: reparameterised draws of eta per reflection in the bound."""
+    collapsed_grid: int = 64
+    """`svae_collapsed` only: grid points in I for the collapsed log evidence."""
     profile_coord_channels: bool = False
     """Give the profile encoder two extra channels holding each pixel's offset
     in the beam-centred radial/tangential frame. A conv encoder is translation

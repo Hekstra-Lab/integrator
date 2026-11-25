@@ -71,7 +71,7 @@ from scipy import special, stats
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sbc_simulate import eta_prior_mean, predict_batches, profile_at, q_eta  # noqa: E402
 
-from integrator.model.posterior.collapsed import laplace_collapsed_batch  # noqa: E402
+from integrator.model.posterior.collapsed import collapsed_mixture, laplace_collapsed_batch  # noqa: E402
 
 I_EDGES = [0, 10, 30, 100, 300, 1000, 3000, math.inf]
 D_EDGES = [1.7, 1.8, 1.9, 2.0, 2.2, 2.5, 3.0, 4.0, math.inf]
@@ -121,9 +121,11 @@ def main() -> None:
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--integrator-args", default="", help="k=v,k=v added to integrator.args (e.g. rb_profile=mean)")
     ap.add_argument("--posterior", action="store_true", help="score a --mode posterior dataset")
-    ap.add_argument("--construction", choices=("model", "laplace_collapsed"), default="model",
+    ap.add_argument("--construction", choices=("model", "laplace_collapsed", "model_collapsed"), default="model",
                     help="model: the run's own q (default); laplace_collapsed: the full-covariance Laplace q(eta) "
-                         "with (I, b) | eta collapsed (integrator.model.posterior.collapsed), built from the run's networks")
+                         "with (I, b) | eta collapsed (integrator.model.posterior.collapsed), built from the run's networks; "
+                         "model_collapsed: the run's own full-covariance q(eta) (svae_collapsed: eta_loc, eta_chol) "
+                         "with (I, b) | eta collapsed")
     ap.add_argument("--lc-eta-samples", type=int, default=16)
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
@@ -136,7 +138,7 @@ def main() -> None:
     for kv in filter(None, a.integrator_args.split(",")):
         k, v = kv.split("=", 1)
         cfg["integrator"]["args"][k] = yaml.safe_load(v)
-    cfg["integrator"]["args"]["predict_keys"] = KEYS
+    cfg["integrator"]["args"]["predict_keys"] = KEYS + (["eta_loc", "eta_chol"] if a.construction == "model_collapsed" else [])
     model = construct_integrator(cfg)
     model.load_state_dict(torch.load(a.ckpt, map_location="cpu", weights_only=False)["state_dict"], strict=True)
     model = model.eval().to(a.device)
@@ -166,7 +168,12 @@ def main() -> None:
             m = mask.reshape(mask.shape[0], -1).float()
 
             phi, fxy, eta_mean = eta_prior_mean(qp, md, c)
-            loc, sd = q_eta(qp, eta_mean, raw_delta, raw_scale)
+            if raw_delta is None:
+                if a.construction != "model_collapsed":
+                    raise SystemExit("this model exposes no amortized q(eta) heads; use --construction model_collapsed")
+                loc, sd = out["eta_loc"], out["eta_chol"].pow(2).sum(-1).sqrt()
+            else:
+                loc, sd = q_eta(qp, eta_mean, raw_delta, raw_scale)
             if a.posterior:
                 r = rows.to(a.device)
                 lo, so, sig = obs["eta_loc"][r], obs["eta_sdq"][r], qp.eta_sd.to(loc)
@@ -190,20 +197,28 @@ def main() -> None:
                 T_ne.append(1 / ps.pow(2).sum(-1))
             p0 = profile_at(qp, phi, fxy, eta0, m)
 
-            if a.construction == "laplace_collapsed":
+            if a.construction in ("laplace_collapsed", "model_collapsed"):
                 if a.posterior:
-                    raise SystemExit("--construction laplace_collapsed is implemented for prior SBC only")
+                    raise SystemExit(f"--construction {a.construction} is implemented for prior SBC only")
                 if qp64 is None:
                     import copy
                     qp64 = copy.deepcopy(qp).double().eval()
                 with torch.inference_mode(False):
                     a_I, r_I = model.loss.intensity_prior_params(md, a.device)
                     a_b, r_b = model._background_prior(md, a.device)
-                    lc = laplace_collapsed_batch(qp64, {k: v.clone() if torch.is_tensor(v) else v for k, v in md.items()},
-                                                 counts.clone(), mask.clone(), raw_delta.clone(), raw_scale.clone(),
-                                                 a_I, r_I, torch.as_tensor(a_b), torch.as_tensor(r_b),
-                                                 out["qi_mean"].clone(), out["qbg_mean"].clone(),
-                                                 n_eta=a.lc_eta_samples, generator=gen, keep=True)
+                    mdc = {k: v.clone() if torch.is_tensor(v) else v for k, v in md.items()}
+                    if a.construction == "laplace_collapsed":
+                        lc = laplace_collapsed_batch(qp64, mdc, counts.clone(), mask.clone(), raw_delta.clone(), raw_scale.clone(),
+                                                     a_I, r_I, torch.as_tensor(a_b), torch.as_tensor(r_b),
+                                                     out["qi_mean"].clone(), out["qbg_mean"].clone(),
+                                                     n_eta=a.lc_eta_samples, generator=gen, keep=True)
+                    else:
+                        md64 = {k: (v.double() if torch.is_tensor(v) and v.is_floating_point() else v) for k, v in mdc.items()}
+                        phi64, fxy64, _ = qp64.eta_prior(md64, m.double())
+                        Lc = out["eta_chol"].double()
+                        lc = collapsed_mixture(qp64, phi64, fxy64, c.double(), m.double(), out["eta_loc"].double(),
+                                               Lc @ Lc.transpose(1, 2), a_I, r_I, torch.as_tensor(a_b), torch.as_tensor(r_b),
+                                               n_eta=a.lc_eta_samples, generator=gen, keep=True)
                 with torch.no_grad():
                     I0d, b0d = I0.double(), b0.double()
                     uI = torch.stack([q.cdf_I(I0d) for _, q in lc["draws"]]).mean(0)
