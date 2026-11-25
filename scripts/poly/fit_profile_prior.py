@@ -105,7 +105,7 @@ def main() -> None:
         feats_l.append(f.cpu())
         ds.append(mdk["d"].reshape(-1).double().cpu())
         ids.append(out["refl_ids"][keep].cpu())
-    E, V, Fm = torch.cat(modes), torch.cat(covd), torch.cat(feats_l)
+    E, V, Fm = torch.cat(modes).double(), torch.cat(covd).double(), torch.cat(feats_l).double()
     print(f"stage 1: {len(E)} Laplace modes; median diag var of eta {V.median(0).values.numpy().round(4).tolist()}")
 
     NZ = qp.NZ
