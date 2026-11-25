@@ -147,7 +147,7 @@ def main() -> None:
 
     cfg = yaml.safe_load(a.config.read_text())
     qcfg = cfg["surrogates"]["qp"]
-    if qcfg["name"] != "streak_kmix_v2_profile" or qcfg["args"].get("residual", "detector") != "none" \
+    if qcfg["name"] not in ("streak_kmix_v2_profile", "streak_kmix_v2_geom") or qcfg["args"].get("residual", "detector") != "none" \
             or qcfg["args"].get("shape_posterior", "none") != "amortized":
         raise SystemExit("implemented for streak_kmix_v2_profile with shape_posterior amortized, residual none")
     model = construct_integrator(cfg)

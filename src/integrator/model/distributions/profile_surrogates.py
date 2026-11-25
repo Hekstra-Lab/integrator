@@ -2389,6 +2389,94 @@ class StreakKMixV2ProfileSurrogate(StreakKMixProfileSurrogate):
                                       loc=loc, scale=scale, prior_scale=self.prior_scale, kl=kl)
 
 
+class StreakKMixV2GeomPriorSurrogate(StreakKMixV2ProfileSurrogate):
+    """`streak_kmix_v2_profile` whose prior mean comes from a geometric form in t = tan(2 theta), not a network.
+
+    The parent's prior mean is theta0 + f(m) with f an MLP of the geometry
+    features. Learned from data, f is set at high resolution by reflections too
+    faint to determine a shape, and it extrapolates badly there: on mos010 photon
+    counting the prior profile at 1.8-2.0 A was 0.71x (fitted from bright
+    reflections), 0.92x (svae) or 1.70x (svae_collapsed) the true n_eff, with
+    kappa 0.75, 0.88 and 1.19. Here, with r the reflection's distance from the
+    beam centre and D the detector distance, both in pixels, t = r / D, the
+    widths of component k (pixel units, before the 1/12 pixel variance) are
+
+        along_k  = sqrt(alpha_k^2 + beta_k^2 (1 + t^2)^2)
+        across_k = sqrt(gamma_k^2 + eps_k^2 t^2)
+
+    the constant terms covering divergence and crystal size, beta the radial
+    broadening a mosaic tilt delta causes on a flat detector (dr = 2 D delta (1 + t^2)),
+    eps its tangential part. alpha, beta, gamma, eps = softplus of free
+    parameters, started at the parent's initial grid (alpha, gamma) and 0.05 px
+    (beta, eps); the weight logits and the centre shift are the constants of
+    theta0. The widths are mapped back to the parent's raw coordinates, so
+    everything downstream (q(eta), the collapsed and Laplace posteriors) is
+    unchanged. 4K global shape parameters instead of the network, shared across
+    resolution, so the high-resolution prior is fixed by the same physics the
+    low-resolution reflections constrain. The parent's `shape_head` is not built.
+    """
+
+    def __init__(self, input_dim: int, latent_dim: int | None = None, output_dim: int = 625, init_std: float = 0.5,
+                 prior_scale: float = 3.0, beam_center=None, profile_shape=None, lambda_min: float | None = None,
+                 lambda_max: float | None = None, n_components: int = 3, init_grid_scale: float = 1.0,
+                 max_shift: float = 2.0, max_delta: float = 3.0, shape_samples: int = 8, base_floor: float = 0.001,
+                 geom_hidden: int = 32, tilt: str = "none", shape_posterior: str = "none", shape_sd: str = "learned",
+                 init_shape_sd: float = 0.3, shape_sd_max: float = 1.0, init_tilt_sd_deg: float = 2.0,
+                 residual: str = "none", detector_distance_px: float | None = None, **kwargs) -> None:
+        # the full signature, not *args: the factory validates config keys against it
+        super().__init__(input_dim, latent_dim=latent_dim, output_dim=output_dim, init_std=init_std,
+                         prior_scale=prior_scale, beam_center=beam_center, profile_shape=profile_shape,
+                         lambda_min=lambda_min, lambda_max=lambda_max, n_components=n_components,
+                         init_grid_scale=init_grid_scale, max_shift=max_shift, max_delta=max_delta,
+                         shape_samples=shape_samples, base_floor=base_floor, geom_hidden=geom_hidden, tilt=tilt,
+                         shape_posterior=shape_posterior, shape_sd=shape_sd, init_shape_sd=init_shape_sd,
+                         shape_sd_max=shape_sd_max, init_tilt_sd_deg=init_tilt_sd_deg, residual=residual, **kwargs)
+        if detector_distance_px is None or detector_distance_px <= 0:
+            raise ValueError("streak_kmix_v2_geom needs detector_distance_px")
+        self.detector_distance_px = float(detector_distance_px)
+        self.shape_head = None
+        K = self.K
+        with torch.no_grad():
+            a0 = self.cap * torch.tanh(F.softplus(self.theta0[:K]) / self.cap)
+            c0 = self.cap * torch.tanh(F.softplus(self.theta0[K:2 * K]) / self.cap)
+
+        def inv_sp(x):
+            return x + torch.log(-torch.expm1(-x))
+
+        self.alpha_raw = nn.Parameter(inv_sp(a0.clamp_min(1e-3)))
+        self.gamma_raw = nn.Parameter(inv_sp(c0.clamp_min(1e-3)))
+        self.beta_raw = nn.Parameter(inv_sp(torch.full((K,), 0.05)))
+        self.eps_raw = nn.Parameter(inv_sp(torch.full((K,), 0.05)))
+
+    def geom_widths(self, metadata: dict, dtype, device) -> tuple[Tensor, Tensor]:
+        r, _, _ = detector_polar(metadata, self.beam_center)
+        t = (r.reshape(-1).to(dtype).to(device) / self.detector_distance_px)[:, None]
+        al, be = F.softplus(self.alpha_raw).to(dtype), F.softplus(self.beta_raw).to(dtype)
+        ga, ep = F.softplus(self.gamma_raw).to(dtype), F.softplus(self.eps_raw).to(dtype)
+        along = torch.sqrt(al**2 + be**2 * (1 + t**2) ** 2)
+        across = torch.sqrt(ga**2 + ep**2 * t**2)
+        return along, across
+
+    def prior_mean(self, metadata: dict, dtype, device):
+        """phi (B,), the geometric prior mean of theta (B, NZ), the xyzcal centroid in the streak frame (B, 2)."""
+        _, phi = geometry_features(metadata, self.beam_center, self.lambda_min, self.lambda_max)
+        phi = phi.to(dtype).to(device)
+        along, across = self.geom_widths(metadata, dtype, device)
+
+        def to_raw(a):  # inverse of a = cap tanh(softplus(raw) / cap)
+            y = self.cap * torch.atanh((a / self.cap).clamp(max=0.999))
+            return y + torch.log(-torch.expm1(-y.clamp_min(1e-6)))
+
+        K = self.K
+        rest = self.theta0[2 * K:].to(dtype).to(device).expand(along.shape[0], -1)
+        mu = torch.cat([to_raw(along), to_raw(across), rest], -1)
+        _, h, w = self.profile_shape
+        fx = (metadata["xyzcal.px.0"].reshape(-1) - metadata["bbox.0"].reshape(-1)).to(dtype).to(device) - 0.5 - (w - 1) / 2
+        fy = (metadata["xyzcal.px.1"].reshape(-1) - metadata["bbox.2"].reshape(-1)).to(dtype).to(device) - 0.5 - (h - 1) / 2
+        c, s_ = torch.cos(phi), torch.sin(phi)
+        return phi, mu, torch.stack([c * fx + s_ * fy, -s_ * fx + c * fy], -1)
+
+
 class HellingerBasisProfileSurrogate(nn.Module):
     """Learned-basis profile in the square-root chart, orthonormal in Fisher-Rao.
 
