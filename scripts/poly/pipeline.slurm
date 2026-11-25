@@ -41,6 +41,10 @@ OUT_BASE="${OUT_BASE:-}"
 #   MTZ=<.../laue_dials_pc/integrated.mtz> STEPS=careless,stats,phenix,peaks \
 #       PIPELINE_CFG=<cfg> sbatch -p gpu --gres=gpu:1 scripts/poly/pipeline.slurm
 MTZ="${MTZ:-}"
+# Set STEPS (and anything else holding a comma) in the ENVIRONMENT and submit with
+# --export=ALL: `sbatch --export=...,STEPS=phenix,peaks` splits on the commas, the job
+# receives STEPS=phenix, and the peaks step is silently skipped (2026-11-25, all five
+# mos010 arms lost `stats` and `peaks` this way).
 # CARELESS_SEED=<n> merges with that careless seed into <out_dir>_seed<n>, so
 # several merging seeds of one MTZ can be averaged (run_pipeline.py --careless-seed).
 if [ -n "$MTZ" ]; then
