@@ -21,7 +21,8 @@ Rows are the resolution shells D_EDGES. Three figures:
   along x, then averaged over the shell's reflections; columns the mean true
   profile, then each model's mean on the same scale as the truth of that row.
 - `sim_profile_models_diff_<dataset>`: each model's mean minus the mean true
-  profile, on a diverging scale symmetric about 0 and shared along the row, with
+  profile, on a diverging scale symmetric about 0 and shared along the row (set by
+  every column but laue.integrate, whose error is ~5x larger and is clipped), with
   kappa = sum q p / sum q^2 of the two means (the ratio a profile fit with q
   returns on counts that follow p; < 1 means intensities come out low).
 
@@ -49,6 +50,10 @@ ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "docs" / "figures" / "sim"
 D_EDGES = (1.78, 2.0, 2.5, 3.0, 4.0, 99.0)
 ORDER = ("laue_integrate", "t0_rb", "p2_rb", "b1_rb", "b1_laplace", "geom_laplace")
+# Column titles name the PROFILE model, not the export: b1_rb and b1_laplace share
+# one checkpoint and one amortized profile, and arms.label names the export.
+COLUMN = {"laue_integrate": "laue.integrate", "t0_rb": "T0", "p2_rb": "P2", "b1_rb": "B1",
+          "b1_laplace": "B1", "geom_laplace": "geometric"}
 
 
 def shell_name(lo: float, hi: float) -> str:
@@ -93,7 +98,7 @@ def main() -> None:
     ids = z["refl_ids"]
     present = {k[: -len("_profile")] for k in z.files if k.endswith("_profile") and k != "true_profile"}
     arms = [m for m in ORDER if m in present] + sorted(present - set(ORDER))
-    cols = [(arm_label(m), z[f"{m}_profile"].astype(float)) for m in arms]
+    cols = [(COLUMN.get(m, arm_label(m)), z[f"{m}_profile"].astype(float)) for m in arms]
     if a.modes is not None:
         zm = np.load(a.modes, allow_pickle=True)
         pos = {int(r): i for i, r in enumerate(zm["refl_ids"])}
@@ -105,10 +110,10 @@ def main() -> None:
             out.append((lab, arr))
             for spec in a.mode_after:
                 name, arm = spec.split("=", 1)
-                if arm in arms and lab == arm_label(arm) and f"{name}_mode" in zm.files:
+                if arm in arms and lab == COLUMN.get(arm, arm_label(arm)) and f"{name}_mode" in zm.files:
                     m = np.full_like(arr, np.nan)
                     m[keep] = zm[f"{name}_mode"][idx[keep]]
-                    out.append((f"{arm_label(arm).split(',')[0]}, Laplace mode", m))
+                    out.append((f"{lab}\nLaplace mode", m))
         cols = out
     true, counts, I, d = z["true_profile"].astype(float), z["counts"], z["i_true"], z["d"]
     nb = len(D_EDGES) - 1
@@ -153,7 +158,10 @@ def main() -> None:
         pt = true_al[sel].mean(0)
         vmax = pt.max()
         means = [(lab, arr[sel].mean(0)) for lab, arr in cols_al]
-        lim = max(np.abs(q - pt).max() for _, q in means)
+        # laue.integrate's error is ~5x the models'; on a scale it set, every
+        # other column was blank, so the scale comes from the other columns and
+        # laue's panel is clipped (its kappa is printed)
+        lim = max(np.abs(q - pt).max() for lab, q in means if lab != "laue.integrate")
         for k, (lab, img) in enumerate([("true profile", pt)] + means):
             x = axm[r, k]
             x.imshow(img, cmap=cm, interpolation="nearest", vmin=0, vmax=vmax)
@@ -168,6 +176,8 @@ def main() -> None:
             x.text(0.04, 0.04, f"$\\kappa$ {kappa:.3f}", transform=x.transAxes, fontsize=5)
             if r == 0:
                 x.set_title(f"{lab}\n$-$ truth", fontsize=5)
+            if lab == "laue.integrate":
+                x.text(0.96, 0.96, "clipped", transform=x.transAxes, fontsize=4, ha="right", va="top")
         axd[r, 0].set_ylabel(f"{shell_name(D_EDGES[r], D_EDGES[r + 1])}\nn {sel.sum()}", fontsize=5)
     for x in list(axm.ravel()) + list(axd.ravel()):
         x.set_xticks([])
