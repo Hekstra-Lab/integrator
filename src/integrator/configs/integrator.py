@@ -309,6 +309,10 @@ class IntegratorCfg:
     """Grid points in I for `export_posterior`."""
     export_posterior_steps: int = 40
     """Damped-Newton steps to the joint mode for `export_posterior`."""
+    export_posterior_eta_prior_scale: float = 1.0
+    """Multiplies the profile prior's sigma in `export_posterior`; 1.0 (default) is the
+    model's prior, a large value (100) removes it, each shape then fitted from its own
+    pixels."""
     collapsed_eta_samples: int = 2
     """`svae_collapsed` only: reparameterised draws of eta per reflection in the bound."""
     collapsed_grid: int = 64

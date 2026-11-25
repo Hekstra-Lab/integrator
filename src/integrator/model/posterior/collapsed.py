@@ -164,7 +164,8 @@ def laplace_eta(neg_log_post: Callable[[Tensor], Tensor], theta0: Tensor, steps:
 def laplace_collapsed_batch(qp, metadata: dict, counts: Tensor, mask: Tensor, raw_delta: Tensor, raw_scale: Tensor,
                             a_I: Tensor, r_I: Tensor, a_b: Tensor, r_b: Tensor, I_start: Tensor, b_start: Tensor,
                             n_eta: int = 16, grid: int = 128, steps: int = 40,
-                            generator: torch.Generator | None = None, keep: bool = False) -> dict:
+                            generator: torch.Generator | None = None, keep: bool = False,
+                            eta_prior_scale: float = 1.0) -> dict:
     """Laplace q(eta) (full covariance, at the joint mode of (eta, I, b)) with (I, b) | eta collapsed.
 
     `qp` is a `streak_kmix_v2_profile` surrogate (float64 copy recommended) exposing
@@ -174,7 +175,9 @@ def laplace_collapsed_batch(qp, metadata: dict, counts: Tensor, mask: Tensor, ra
     q(eta) location and (I_start, b_start). n_eta draws eta_s ~ N(mode_eta, cov_eta)
     each give a collapsed (I, b) posterior; the returned moments are those of the
     equal-weight mixture (law of total variance). With `keep`, the profiles and
-    `Collapsed` objects of the draws are returned too.
+    `Collapsed` objects of the draws are returned too. `eta_prior_scale` multiplies
+    sigma (1 = the model's prior; 100 effectively removes the profile prior, so each
+    reflection's shape comes from its own pixels).
     """
     D = torch.float64
     c = counts.reshape(counts.shape[0], -1).to(D)
@@ -183,7 +186,8 @@ def laplace_collapsed_batch(qp, metadata: dict, counts: Tensor, mask: Tensor, ra
     md = {k: (v.to(D) if torch.is_tensor(v) and v.is_floating_point() else v) for k, v in metadata.items()}
     phi, fxy, eta_mean = qp.eta_prior(md, m)
     loc, _ = qp.q_eta_from_raw(eta_mean, raw_delta.to(D), raw_scale.to(D))
-    sig = qp.eta_sd.detach().to(D)
+    # eta_prior_scale > 1 widens the profile prior N(eta_mean, sigma^2); large values remove it
+    sig = qp.eta_sd.detach().to(D) * float(eta_prior_scale)
     NE = eta_mean.shape[1]
     a_I, r_I, a_b, r_b = (torch.as_tensor(x, dtype=D, device=c.device).expand(B) for x in (a_I, r_I, a_b, r_b))
 
