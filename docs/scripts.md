@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-337 scripts.
+338 scripts.
 
 ## Start here
 
@@ -221,6 +221,7 @@ per job, and it lives in the repo".
 | `sim_truth/compare_sampling.py` | Compare datsimx sampling settings (enSteps, mosDoms) against a reference setting, shot by shot. |
 | `sim_truth/crps_against_truth.py` | CRPS of every exported intensity against the simulation's true intensity, the proper score that rewards accuracy and calibration together. |
 | `sim_truth/dump_image_view.py` | Dump a whole-detector view and a full-resolution crop of simulated Laue shots, for fig_sim_image.py. |
+| `sim_truth/dump_profile_compare.py` | True profiles beside each model's prior profile and Laplace-mode profile, for fig_sim_profile_compare.py. |
 | `sim_truth/dump_profile_truth_examples.py` | Shoeboxes beside their true profile and each arm's predicted profile and gate, for fig_profile_truth_examples.py. |
 | `sim_truth/dump_shoebox_examples.py` | Example shoeboxes from several shoebox datasets, chosen at the same laue I/sigma, for fig_sim_shoeboxes.py. |
 | `sim_truth/elbo_landscape.py` | The ELBO and each of its terms along profile-shape directions, at the parameters that generated an SBC dataset. |
