@@ -145,6 +145,14 @@ def use(layout: str = LAYOUT, fast: bool | None = None, grid: bool = True):
             "grid.linewidth": GRID_WIDTH,
             "grid.linestyle": "-",
         })
+    # The PNG resolution. With the LuaLaTeX engine matplotlib's pgf backend
+    # rasterises the PNG from the typeset PDF at the FIGURE dpi, not at
+    # savefig.dpi, so at the default of 100 a full-width figure came out
+    # about 520 px wide. FIG_DPI (default 300) sets it; the PDF is vector and
+    # sizes in inches are unchanged.
+    import matplotlib as mpl
+
+    mpl.rcParams["figure.dpi"] = float(os.environ.get("FIG_DPI", "300") or 300)
     return out
 
 

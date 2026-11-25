@@ -80,6 +80,7 @@ of the truth table's own `n_eff`, as a long CSV (--stats-out).
 from __future__ import annotations
 
 import argparse
+import glob
 import os
 from pathlib import Path
 
@@ -407,11 +408,16 @@ def main() -> None:
 
     for spec in a.arms:
         name, path = spec.split("=", 1)
-        df = pl.read_parquet(path, columns=["refl_ids", "qp_mean", "signal_prob", "qbg_mean"])
+        # an arm without a gate (svae_collapsed exports no signal_prob) is read
+        # without one, like laue.integrate, and the gate figure skips it
+        has_gate = "signal_prob" in pl.read_parquet_schema(sorted(glob.glob(path))[0])
+        cols = ["refl_ids", "qp_mean", "qbg_mean"] + (["signal_prob"] if has_gate else [])
+        df = pl.read_parquet(path, columns=cols)
         ids = df["refl_ids"].to_numpy().astype(np.int64)
         qp = np.stack(df["qp_mean"].to_numpy()) if df["qp_mean"].dtype != pl.Array else df["qp_mean"].to_numpy()
         qp = np.asarray(qp, dtype=np.float64).reshape(len(ids), -1)
-        gate = np.asarray(np.stack(df["signal_prob"].to_numpy()), dtype=np.float64).reshape(len(ids), -1)
+        gate = (np.asarray(np.stack(df["signal_prob"].to_numpy()), dtype=np.float64).reshape(len(ids), -1)
+                if has_gate else None)
         add(name, qp, ids, gate, bg_all=df["qbg_mean"].to_numpy().astype(np.float64))
         arm_names.append(name)
     out["arms"] = np.array(arm_names)

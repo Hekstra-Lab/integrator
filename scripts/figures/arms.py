@@ -36,6 +36,13 @@ LABELS = {
     "m9_geomcap2": r"steer, cap $2.72$",
     "m9_geomresp": "responsibility gate",
     "m9_geomrespsteer": r"responsibility $+$ steer",
+    # mos010 photon-counting simulation, careless -> phenix arms (2026-11-25)
+    "b1_laplace": r"B1, Laplace $+$ collapsed",
+    "geom_laplace": "geometric prior, collapsed",
+    "b1_rb": r"B1, $i_\mathrm{rb}$",
+    "p2_rb": r"P2, $i_\mathrm{rb}$",
+    "t0_rb": r"T0, $i_\mathrm{rb}$",
+    "laue_integrate": "laue.integrate",
 }
 
 # The axis ratio of the profiles each model fits to its OWN bright
@@ -66,3 +73,23 @@ def ordered(methods) -> list[str]:
     seen = list(methods)
     known = [m for m in ORDER if m in seen]
     return known + [m for m in seen if m not in known]
+
+
+# The mos010 careless -> phenix arms, in the order their colours are taken.
+# laue.integrate is the reference and is drawn in figTeX's reference colour;
+# the five model arms take the categorical palette in this order, so every
+# figure of that analysis shows an arm in one colour.
+SIM_ORDER = ("laue_integrate", "t0_rb", "p2_rb", "b1_rb", "b1_laplace", "geom_laplace")
+SIM_REFERENCE = "laue_integrate"
+
+
+def colours(methods) -> dict[str, str]:
+    """A colour per method: fixed by `SIM_ORDER` when every method is one of
+    those arms, otherwise figTeX's categorical colours by position."""
+    methods = list(methods)
+    if methods and all(m in SIM_ORDER for m in methods):
+        pal = dict(figstyle.arm_colors(list(SIM_ORDER[1:])))
+        pal[SIM_REFERENCE] = figstyle.reference_style()["color"]
+        return {m: pal[m] for m in methods}
+    return dict(figstyle.arm_colors(methods))
+

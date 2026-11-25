@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-342 scripts.
+343 scripts.
 
 ## Start here
 
@@ -183,6 +183,7 @@ per job, and it lives in the repo".
 | `figures/fig_sim_merged_vs_truth.py` | Merged structure factors and careless's per-observation scale against the simulation's truth. |
 | `figures/fig_sim_prior_check.py` | Prior checks of the Wilson intensity prior: against the simulation's true intensities, and prior-predictively. |
 | `figures/fig_sim_profile_compare.py` | True spot profiles beside each model's prior profile and Laplace-mode profile, and their averages by resolution. |
+| `figures/fig_sim_profile_models.py` | Spot profiles of each profile model beside the true profile, by resolution shell (rows) and model (columns). |
 | `figures/fig_sim_profile_params.py` | Learned profile parameters of trained runs: the K-component widths and weights against geometry, and residual bases. |
 | `figures/fig_sim_sampling.py` | Noiseless datsimx spots at each (enSteps, mosDoms) sampling, one figure per mosaic spread. |
 | `figures/fig_sim_sbc.py` | Simulation-based calibration of trained runs: ECDF of the PIT values minus the uniform, with simultaneous 95 % bands. |

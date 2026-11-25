@@ -47,7 +47,13 @@ TITLES = {"laue_integrated": "laue.integrate, default prediction",
           "svae_bg_rb": "svae_bg, profile fit at export",
           "svae_bg_posterior": "svae_bg, posterior mean",
           "svae_conjugate_rb": "svae_conjugate, profile fit at export",
-          "svae_conjugate_posterior": "svae_conjugate, posterior mean"}
+          "svae_conjugate_posterior": "svae_conjugate, posterior mean",
+          # the mos010 careless -> phenix arms (2026-11-25)
+          "t0_rb": "T0, profile fit at export",
+          "p2_rb": "P2, profile fit at export",
+          "b1_rb": "B1, profile fit at export",
+          "b1_laplace": "B1, Laplace + collapsed posterior mean",
+          "geom_laplace": "geometric prior, collapsed posterior mean"}
 
 
 def main() -> None:
@@ -101,8 +107,9 @@ def main() -> None:
             ax.set_title(f"{TITLES.get(m, m)}\nn = {len(d):,}", fontsize=6)
         for ax in axes[-1]:
             ax.set_xlabel("$I_\\mathrm{true}$ (photons)")
-        for ax in axes[:, 0]:
-            ax.set_ylabel("$\\hat I = I_\\mathrm{MTZ} / g$ (photons)")
+        # one y label for the figure: per row, the long label of each row ran
+        # into the next one's at three panels per row
+        fig.supylabel("$\\hat I = I_\\mathrm{MTZ} / g$ (photons)", fontsize=7)
         axes[0, 0].legend(loc="upper left", fontsize=6)
         fig.suptitle(f"{dataset}: integrated against truth intensity, per observation", fontsize=7)
         OUT.mkdir(parents=True, exist_ok=True)

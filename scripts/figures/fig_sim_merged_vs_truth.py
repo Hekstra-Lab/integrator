@@ -56,7 +56,9 @@ def main() -> None:
     m = pl.read_csv(a.src / "scores_merged.csv", infer_schema_length=None)
     dataset = m["dataset"][0]
     methods = list(dict.fromkeys(m["method"].to_list()))
-    col = figstyle.arm_colors([LABEL.get(x, x) for x in methods])
+    from arms import colours, label as arm_label
+
+    col = colours(methods)
     sh = m.filter(pl.col("shell") != "all").with_columns(
         x=1 / ((pl.col("d_min") + pl.col("d_max").clip(upper_bound=6.0)) / 2) ** 2)
 
@@ -64,8 +66,8 @@ def main() -> None:
     ax = ax.ravel()
     for meth in methods:
         g = sh.filter(method=meth).sort("x")
-        c = col[LABEL.get(meth, meth)]
-        lab = LABEL.get(meth, meth)
+        c = col[meth]
+        lab = arm_label(meth)
         ax[0].plot(g["x"], g["cc_F_kB"], "-o", color=c, ms=2.5, lw=1, label=lab)
         ax[0].plot(g["x"], g["cc_F"], "--", color=c, lw=0.8)
         ax[1].plot(g["x"], g["r_F"], "-o", color=c, ms=2.5, lw=1)
@@ -79,7 +81,6 @@ def main() -> None:
                             "cc$(\\Delta F, \\Delta F_\\mathrm{true})$", "completeness"]):
         ax[i].set_ylabel(yl)
         ax[i].set_xlabel("$1/d^2$ (\\AA$^{-2}$)")
-    ax[0].legend(fontsize="x-small", frameon=False)
     jp = a.src / f"merged_joined_{methods[0]}.parquet"
     if jp.exists():
         j = pl.read_parquet(jp).filter((pl.col("F_kB") > 0) & (pl.col("F_true") > 0))
@@ -90,7 +91,13 @@ def main() -> None:
         ax[5].set_xlabel("$\\log_{10} F_\\mathrm{true}$")
         ax[5].set_ylabel(f"$\\log_{{10}} F'$, {LABEL.get(methods[0], methods[0])}")
     else:
+        # no per-reflection table: the spare cell holds the legend, off the data
         ax[5].axis("off")
+        h, lab = ax[0].get_legend_handles_labels()
+        ax[5].legend(h, lab, loc="center", frameon=False, fontsize="small",
+                     title="solid: after $k$, $B$; dashed: raw\n(cc$(\Delta F)$: dotted, crossed)")
+    if jp.exists():
+        ax[0].legend(fontsize="x-small", frameon=False)
     for p in figstyle.save(fig, OUT / f"sim_merged_vs_truth_{dataset}{a.tag}"):
         print(p)
 
@@ -100,9 +107,9 @@ def main() -> None:
     s = pl.read_csv(sp, infer_schema_length=None)
     fig, ax = plt.subplots(1, 4, figsize=figstyle.figsize("full", aspect=0.3), layout="constrained")
     for meth in list(dict.fromkeys(s["method"].to_list())):
-        c = col.get(LABEL.get(meth, meth), roles["ink"])
+        c = col.get(meth, roles["ink"])
         w = s.filter(method=meth, axis="wavelength").sort("lam_mean")
-        ax[0].plot(w["lam_mean"], w["sd_log_ratio"], "-o", color=c, ms=2.5, lw=1, label=LABEL.get(meth, meth))
+        ax[0].plot(w["lam_mean"], w["sd_log_ratio"], "-o", color=c, ms=2.5, lw=1, label=arm_label(meth))
         ax[0].plot(w["lam_mean"], w["cc_log"], "--", color=c, lw=0.8)
         ax[1].plot(w["lam_mean"], w["mean_log_ratio"], "-o", color=c, ms=2.5, lw=1)
         ax[2].plot(w["lam_mean"], w["mean_log_ipred"], "-o", color=c, ms=2.5, lw=1)

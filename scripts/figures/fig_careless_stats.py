@@ -79,13 +79,42 @@ LABELS = {
 TOOL_ORDER = ("cchalf", "ccanom", "ccpred", "rsplit", "isigi", "completeness")
 
 
+QUALIFIERS = {"spearman": "Spearman", "pearson": "Pearson"}
+
+
+def label_parts(tool: str, statistic: str) -> tuple[str, str]:
+    """(typeset name, qualifier) of `label_for`; the y axis takes the name alone."""
+    full = label_for(tool, statistic)
+    base = label_for(tool, re.sub(r"\s*\(\w+\)$", "", str(statistic)))
+    if tool.lower() in LABELS and full.startswith(LABELS[tool.lower()]):
+        base = LABELS[tool.lower()] if str(statistic).strip().lower().replace(" ", "") not in LABELS else base
+    return base, full[len(base):].lstrip(", ")
+
+
 def label_for(tool: str, statistic: str) -> str:
-    key = str(statistic).strip().lower().replace(" ", "")
+    """The typeset name, with what distinguishes two panels of one tool.
+
+    `panels_of` appends the correlation, `CChalf (spearman)`, and
+    careless.completeness names its three statistics `all`, `anomalous` and
+    `non-anomalous`; both used to be dropped, so two CC-half panels and three
+    completeness panels carried identical titles.
+    """
+    s = str(statistic).strip()
+    qual = ""
+    m = re.match(r"^(.*?)\s*\((\w+)\)$", s)
+    if m:
+        s, qual = m.group(1).strip(), m.group(2)
+    key = s.lower().replace(" ", "")
     if key in LABELS:
-        return LABELS[key]
-    if tool.lower() in LABELS:
-        return LABELS[tool.lower()]
-    return str(statistic)
+        base = LABELS[key]
+    elif tool.lower() in LABELS:
+        base = LABELS[tool.lower()]
+        if key and key.replace("_", "") != tool.lower().replace("_", ""):
+            qual = s + (f", {qual}" if qual else "")
+    else:
+        base = s
+    qual = QUALIFIERS.get(qual, qual)
+    return f"{base}, {qual}" if qual else base
 
 
 def parse_args():
@@ -260,7 +289,9 @@ def draw_panel(ax, panel: pl.DataFrame, tool: str, statistic: str, P,
         _, ramp = figstyle().epoch_ramp(len(lines))
     prefix = GROUP_PREFIX.get(tool.lower(), "") if column == "group" else ""
     names = [short(f"{prefix} {n}".strip()) for n, _ in lines]
-    palette = figstyle().arm_colors(names) if ramp is None else {}
+    from arms import colours, label as arm_label
+
+    palette = colours(names) if ramp is None else {}
 
     drawn = False
     for i, (name, part) in enumerate(lines):
@@ -275,21 +306,25 @@ def draw_panel(ax, panel: pl.DataFrame, tool: str, statistic: str, P,
         if not y:
             continue
         x = shell_axis(part["shell"].to_list())
-        is_ref = ramp is None and str(names[i]).strip() == REFERENCE
+        is_ref = ramp is None and str(names[i]).strip() in (REFERENCE, "laue_integrate")
         colour = (figstyle().reference_style()["color"] if is_ref else
                   ramp[i] if ramp is not None else palette.get(names[i]))
         if "lo" in part.columns and part["lo"].ne(part["hi"]).any():
             ax.fill_between(x, part["lo"], part["hi"], color=colour,
                             alpha=0.15, linewidth=0)
+        shown = arm_label(names[i]) if names[i] else None
         if is_ref:
-            figstyle().parts.reference(ax, x, y, label=names[i] or None)
+            figstyle().parts.reference(ax, x, y, label=shown)
         else:
-            ax.plot(x, y, lw=0.9, color=colour, label=names[i] or None)
+            ax.plot(x, y, lw=0.9, color=colour, label=shown)
         drawn = True
     if not drawn:
         return False
     resolution_ticks(ax, panel["shell"].to_list(), P)
-    ax.set_ylabel(label_for(tool, statistic))
+    # the name alone: the qualifier (Pearson, Spearman, anomalous, ...) is in
+    # the panel title, and a full label on every y axis overprinted the
+    # neighbouring panel in the two-column grid
+    ax.set_ylabel(label_parts(tool, statistic)[0])
     if legend and ramp is None and any(names):
         # boxed, like the grid's: the ink theme draws a legend on the page
         # rather than on a panel, and an unframed one over the data reads

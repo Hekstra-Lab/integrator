@@ -76,6 +76,9 @@ def parse_args():
     p.add_argument("--dataset", default=None,
                    help="draw only this dataset (default: each one present)")
     p.add_argument("--prefix", default="refinement")
+    p.add_argument("--reference", default=REFERENCE,
+                   help="the method drawn as the reference, with the noise band "
+                        "around it; default %(default)s (PDZ2's name for laue.integrate)")
     p.add_argument("--template", default=None,
                    help="figTeX template to size for (article, paper, book, "
                         "slides, poster); default is figstyle's")
@@ -125,11 +128,11 @@ def ranking(df: pl.DataFrame, metric: str) -> list[str]:
 
 
 def draw_panel(ax, stats: pl.DataFrame, metric: str, label: str,
-               palette: dict) -> None:
+               palette: dict, reference: str = REFERENCE) -> None:
     arms = stats["method"].to_list()
     y = np.arange(len(arms))
 
-    ref = stats.filter(pl.col("method") == REFERENCE)
+    ref = stats.filter(pl.col("method") == reference)
     if ref.height and metric == "r_free":
         # the reference's own mean, with the run-to-run spread around it, so
         # an arm inside the band is not distinguishable from the reference
@@ -196,12 +199,15 @@ def main() -> None:
         # so an unstable input order would repaint the arms between renders
         # and break "an arm keeps its colour across figures"
         arms = sorted(sub["method"].unique().to_list(),
-                      key=lambda m: (m != REFERENCE, m))
-        palette = dict(figstyle().arm_colors(arms))
+                      key=lambda m: (m != args.reference, m))
+        from arms import SIM_ORDER, colours
+
+        palette = (colours(arms) if all(m in SIM_ORDER for m in arms)
+                   else dict(figstyle().arm_colors(arms)))
         # the reference's replicates in the reference colour, so its points
         # and its vermilion mean line read as one arm
-        if REFERENCE in palette:
-            palette[REFERENCE] = figstyle().reference_style()["color"]
+        if args.reference in palette:
+            palette[args.reference] = figstyle().reference_style()["color"]
 
         # the template-aware path: `panels` sizes the data areas for the
         # active template. y is shared because both panels list the same
@@ -218,7 +224,7 @@ def main() -> None:
         for i, (ax, (metric, label)) in enumerate(
                 zip(flat, PANELS, strict=True)):
             stats = summarise(sub, metric, order)
-            draw_panel(ax, stats, metric, label, palette)
+            draw_panel(ax, stats, metric, label, palette, args.reference)
             if i:  # the shared y carries the arm names once, on the left
                 ax.tick_params(axis="y", labelleft=False)
             if metric == "r_free":
