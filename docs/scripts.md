@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-333 scripts.
+334 scripts.
 
 ## Start here
 
@@ -225,6 +225,7 @@ per job, and it lives in the repo".
 | `sim_truth/image_stats.py` | Per-image statistics of a simulated Laue shot, by one estimator for the laue-dials paper sims and for datsimx. |
 | `sim_truth/laue_profiles.py` | laue.integrate's fitted per-reflection profiles, laid on our shoebox windows. |
 | `sim_truth/learned_params_vs_truth.py` | Learned Wilson spectrum G(lambda) and learned profile parameters of trained runs, against the simulation's truth. |
+| `sim_truth/pixel_noise_check.py` | Whether the shoeboxes' pixels are what the likelihood assumes: independent Poisson about a flat background. |
 | `sim_truth/prior_check.py` | Prior checks of trained runs' Wilson intensity prior: against the simulation's true intensities, and prior-predictively. |
 | `sim_truth/sbc_exact_check.py` | Check of the SBC pipeline itself: PIT values under the exact posterior of one latent given the true values of the others. |
 | `sim_truth/sbc_ranks.py` | PIT values of the true latents of an `sbc_simulate.py` dataset under a trained run's posteriors. |
