@@ -28,6 +28,7 @@ With --sample N, the picks are N in-domain reflections spread evenly over
 log10 i_true (0.25-decade bins from 3 to 10^4 photons) instead of --targets; the
 npz then serves `fit_profile_family.py`.
 
+With --bg-rows-out (and --bg-out), the per-reflection values behind those bins are written too.
 With --bg-out, over every in-domain reflection, each method's background is
 compared with the truth: b_true is the mean of the `background` image over
 the reflection's window (photons per pixel), the method's b is laue's `bg` or
@@ -210,6 +211,9 @@ def main() -> None:
                     help="apply the shoebox mask to every profile in the --fit-out test (default: not)")
     ap.add_argument("--fit-out", default=None, help="append the fixed-estimator profile test here (long CSV)")
     ap.add_argument("--bg-out", default=None, help="append the background comparison here (long CSV)")
+    ap.add_argument("--bg-rows-out", default=None,
+                    help="with --bg-out: every reflection's b_true and each method's background (parquet: method, "
+                         "dataset, refl_ids, i_true, d, in_domain, b_true, b_hat), for the background scatter")
     ap.add_argument("--laue-profiles", default=None, help="laue_profiles.py npz of the same prediction set")
     ap.add_argument("--targets", default="3,10,30,100,300,1000,3000")
     ap.add_argument("--pick", default=None,
@@ -298,7 +302,7 @@ def main() -> None:
     tp = out["bragg"] * out["own"]
     out["true_profile"] = tp / np.maximum(tp.sum(axis=(1, 2), keepdims=True), 1e-30)
 
-    rows, bg_rows = [], []
+    rows, bg_rows, bg_rows_all = [], [], []
     d_all = np.asarray(md["d"], float)
     b_true = None
     if a.bg_out:
@@ -349,6 +353,9 @@ def main() -> None:
                                     b_true_median=float(np.median(bt[s])), db_median=float(np.median(db[s])),
                                     db_mean=float(db[s].mean()), db_sd=float(db[s].std()),
                                     rel_db_mean=float((db[s] / bt[s]).mean()), dI_bg_median=float(np.median(dI[s]))))
+            if a.bg_rows_out:
+                bg_rows_all.append(pd.DataFrame(dict(method=name, dataset=a.dataset, refl_ids=rid[at],
+                                                     i_true=it, d=dd, in_domain=dm, b_true=bt, b_hat=b_hat)))
             print(f"{name}: background db median {np.median(db[dm]):+.3f} photons/px, mean db/b_true "
                   f"{(db[dm] / bt[dm]).mean():+.4f}, median dI_bg {np.median(dI[dm]):+.1f} photons")
 
@@ -426,6 +433,9 @@ def main() -> None:
     print("->", a.out)
     if a.fit_out:
         fit_test(a, md, counts, side, rid, shot, H, K, L, i_true, dom, d_all, truth_dir, fit_profiles)
+    if a.bg_rows_out and bg_rows_all:
+        pd.concat(bg_rows_all).to_parquet(a.bg_rows_out, index=False)
+        print(f"wrote {sum(len(x) for x in bg_rows_all)} per-reflection background rows to {a.bg_rows_out}")
     if a.bg_out and bg_rows:
         pd.DataFrame(bg_rows).to_csv(a.bg_out, mode="a", header=not os.path.exists(a.bg_out), index=False)
         print(f"appended {len(bg_rows)} rows to {a.bg_out}")
