@@ -104,3 +104,16 @@ def test_flat_intensity_prior_is_the_normalised_likelihood():
         w = torch.exp(lp - lp.max()).sum(1)
         ref = (w * xs).sum() / w.sum()
         assert abs(float(got[row]) / float(ref) - 1) < 5e-3, (row, float(got[row]), float(ref))
+
+
+def test_newton_b_default_is_six_and_more_steps_change_the_export():
+    m, base = _lc()
+    assert m.export_posterior_newton_b == 6
+    _, same = _lc(export_posterior_newton_b=6)
+    for k in ("i_lc", "var_lc", "bg_lc", "var_bg_lc"):
+        assert torch.equal(base[k], same[k]), k
+    _, more = _lc(export_posterior_newton_b=30)
+    for k in ("i_lc", "var_lc", "bg_lc", "var_bg_lc"):
+        assert torch.isfinite(more[k]).all() and (more[k] > 0).all(), k
+    for k in ("qi_mean", "qi_var", "i_rb", "var_rb"):
+        assert torch.equal(more[k], base[k]), k

@@ -320,6 +320,11 @@ class IntegratorCfg:
     `var_lc` summarise the likelihood in I with b and eta integrated out. careless
     applies its own Wilson prior to whatever it is given; with `model` the exported
     posterior carries a second one. The background and profile priors are unchanged."""
+    export_posterior_newton_b: int = 6
+    """Newton steps to the conditional background mode b*(I) at each grid point in I
+    inside `export_posterior`. 6 (default) is the existing behaviour and is unconverged
+    on bright reflections: on 49 pixels at I ~ 770 the posterior mean is 0.8 % low
+    (764.0 against 770.0 by 2-D quadrature); 30 agrees to 1e-4."""
     collapsed_eta_samples: int = 2
     """`svae_collapsed` only: reparameterised draws of eta per reflection in the bound."""
     collapsed_grid: int = 64

@@ -186,6 +186,7 @@ class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
         self.export_posterior_steps = int(getattr(cfg, "export_posterior_steps", 40))
         self.export_posterior_eta_prior_scale = float(getattr(cfg, "export_posterior_eta_prior_scale", 1.0))
         self.export_posterior_intensity_prior = str(getattr(cfg, "export_posterior_intensity_prior", "model"))
+        self.export_posterior_newton_b = int(getattr(cfg, "export_posterior_newton_b", 6))
         self.profile_coord_channels = getattr(
             cfg, "profile_coord_channels", False
         )
@@ -530,7 +531,8 @@ class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
                 a_I.clone(), r_I.clone(), torch.as_tensor(a_b).clone(), torch.as_tensor(r_b).clone(),
                 fo["qi_mean"].clone(), fo["qbg_mean"].clone(),
                 n_eta=self.export_posterior_eta_samples, grid=self.export_posterior_grid,
-                steps=self.export_posterior_steps, eta_prior_scale=self.export_posterior_eta_prior_scale)
+                steps=self.export_posterior_steps, eta_prior_scale=self.export_posterior_eta_prior_scale,
+                newton_b=self.export_posterior_newton_b)
         f32 = res["qi_mean"].dtype if "qi_mean" in res else torch.float32
         res.update({"i_lc": lc["i_mean"].to(f32), "var_lc": lc["i_var"].to(f32),
                     "bg_lc": lc["b_mean"].to(f32), "var_bg_lc": lc["b_var"].to(f32)})

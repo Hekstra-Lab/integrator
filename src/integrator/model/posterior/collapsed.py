@@ -165,7 +165,7 @@ def laplace_collapsed_batch(qp, metadata: dict, counts: Tensor, mask: Tensor, ra
                             a_I: Tensor, r_I: Tensor, a_b: Tensor, r_b: Tensor, I_start: Tensor, b_start: Tensor,
                             n_eta: int = 16, grid: int = 128, steps: int = 40,
                             generator: torch.Generator | None = None, keep: bool = False,
-                            eta_prior_scale: float = 1.0) -> dict:
+                            eta_prior_scale: float = 1.0, newton_b: int = 6) -> dict:
     """Laplace q(eta) (full covariance, at the joint mode of (eta, I, b)) with (I, b) | eta collapsed.
 
     `qp` is a `streak_kmix_v2_profile` surrogate (float64 copy recommended) exposing
@@ -177,7 +177,9 @@ def laplace_collapsed_batch(qp, metadata: dict, counts: Tensor, mask: Tensor, ra
     equal-weight mixture (law of total variance). With `keep`, the profiles and
     `Collapsed` objects of the draws are returned too. `eta_prior_scale` multiplies
     sigma (1 = the model's prior; 100 effectively removes the profile prior, so each
-    reflection's shape comes from its own pixels).
+    reflection's shape comes from its own pixels). `newton_b` is the number of Newton
+    steps to the conditional b-mode inside `collapsed` (6, the default, is unconverged
+    on bright reflections: 0.8 % low in the mean at I ~ 770 on 49 pixels).
     """
     D = torch.float64
     c = counts.reshape(counts.shape[0], -1).to(D)
@@ -200,15 +202,17 @@ def laplace_collapsed_batch(qp, metadata: dict, counts: Tensor, mask: Tensor, ra
     start = torch.cat([loc.detach(), I_start.to(D).reshape(B, 1).clamp_min(0.5), b_start.to(D).reshape(B, 1).clamp_min(0.05)], 1)
     mode, cov, npd = laplace_eta(nlp, start, steps=steps, positive=(NE, NE + 1))
     out = collapsed_mixture(qp, phi, fxy, c, m, mode[:, :NE], cov[:, :NE, :NE], a_I, r_I, a_b, r_b,
-                            n_eta=n_eta, grid=grid, generator=generator, keep=keep)
+                            n_eta=n_eta, grid=grid, generator=generator, keep=keep, newton_b=newton_b)
     out["non_pd"] = npd
     return out
 
 
 def collapsed_mixture(qp, phi: Tensor, fxy: Tensor, c: Tensor, m: Tensor, eta_loc: Tensor, eta_cov: Tensor,
                       a_I: Tensor, r_I: Tensor, a_b: Tensor, r_b: Tensor, n_eta: int = 16, grid: int = 128,
-                      generator: torch.Generator | None = None, keep: bool = False) -> dict:
-    """eta_s ~ N(eta_loc, eta_cov), s = 1..n_eta, each with its collapsed (I, b) posterior; mixture moments."""
+                      generator: torch.Generator | None = None, keep: bool = False, newton_b: int = 6) -> dict:
+    """eta_s ~ N(eta_loc, eta_cov), s = 1..n_eta, each with its collapsed (I, b) posterior; mixture moments.
+
+    `newton_b` is passed to `collapsed`: Newton steps to the b-mode at each grid point in I."""
     D = torch.float64
     c, m = c.to(D), m.to(D)
     B, NE = eta_loc.shape
@@ -219,7 +223,7 @@ def collapsed_mixture(qp, phi: Tensor, fxy: Tensor, c: Tensor, m: Tensor, eta_lo
     with torch.no_grad():
         for s in range(n_eta):
             p = qp.profile_from_eta(phi, fxy, etas[s], m)
-            q = collapsed(c, m, p, a_I, r_I, a_b, r_b, grid=grid)
+            q = collapsed(c, m, p, a_I, r_I, a_b, r_b, grid=grid, newton_b=newton_b)
             a, v = q.mean_var_I()
             mI.append(a)
             vI.append(v)
