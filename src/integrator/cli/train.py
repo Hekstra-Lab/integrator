@@ -532,7 +532,6 @@ def main():
         save_top_k,
         every_n_epochs,
         ckpt_monitor,
-        every_n_epochs,
     )
 
     callbacks = [
