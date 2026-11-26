@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-347 scripts.
+348 scripts.
 
 ## Start here
 
@@ -166,6 +166,7 @@ per job, and it lives in the repo".
 | `figures/dump_heldout_score.py` | Score a profile on pixels it was not allowed to see. |
 | `figures/dump_profile_maps.py` | The profile each model draws, overall and by detector region. |
 | `figures/encoder_health.sbatch` | Measure whether the profile encoder is alive, over training. |
+| `figures/explore_profile_model.py` | See a trained streak profile model at work: the profile it predicts for any detector position and wavelength. |
 | `figures/fig_architecture_diagrams.py` | Architecture diagrams of the integrators, profile models, encoders, exports and the planned joint model. |
 | `figures/fig_arm_metrics.py` | What each arm is worth after scaling, merging and refinement. |
 | `figures/fig_basis_convergence.py` | The learned basis converging, svae against hierarchical, per dataset. |
