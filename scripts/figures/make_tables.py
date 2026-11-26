@@ -754,7 +754,127 @@ def table_hyperparameters() -> None:
         )
 
 
+# the mos010 careless -> phenix arms: name in the tables, profile model, export, and
+# the method name the truth-side CRPS table (sim_crps_mos010_pc.csv) uses for the same export
+SIM_ARMS = {
+    "laue_integrate": ("laue.integrate", "ellipse (laue-dials)", "summation / fit", "laue_integrate"),
+    "svae_rb": ("svae", "learned basis", r"$i_\mathrm{rb}$", "svae_rb"),
+    "svae_bg_rb": (r"svae\_bg", "learned basis", r"$i_\mathrm{rb}$", "svae_bg_rb"),
+    "t0_rb": ("T0", "streak mixture, geometry only", r"$i_\mathrm{rb}$", "svae_kmix_base_rb"),
+    "p2_rb": ("P2", "T0, wider geometry MLP, half-width start", r"$i_\mathrm{rb}$", "svae_kmix_h128_grid05_rb"),
+    "b1_rb": ("B1", "streak mixture + per-reflection shape", r"$i_\mathrm{rb}$", "svae_kmixv2_post_avg_avg"),
+    "b1_laplace": ("B1", "streak mixture + per-reflection shape", "Laplace posterior", "svae_kmixv2_post_avg_lc"),
+    "geom_laplace": ("geometric", "streak mixture, width law", "collapsed posterior",
+                     "svae_kmixv2_post_collapsed_geom_avg_geom_posterior"),
+}
+SIM_DOWNSTREAM = ROOT / "docs" / "figures" / "data" / "sim_downstream"
+SIM_CRPS = ROOT / "docs" / "figures" / "data" / "sim_crps_mos010_pc.csv"
+SIM_SHELLS = ((99.0, 3.0), (3.0, 2.2), (2.2, 1.95), (1.95, 1.78))
+
+
+def _sim_rows():
+    import polars as pl
+
+    ref = pl.read_csv(SIM_DOWNSTREAM / "downstream_refine.csv").filter(seed=1)
+    sh = pl.read_csv(SIM_DOWNSTREAM / "downstream_refine_shells.csv").filter(seed=1)
+    mg = pl.read_csv(SIM_DOWNSTREAM / "downstream_merged.csv", infer_schema_length=None).filter(seed=1)
+    pk = pl.read_csv(SIM_DOWNSTREAM / "downstream_peaks.csv").filter(seed=1)
+    crps = pl.read_csv(SIM_CRPS) if SIM_CRPS.is_file() else None
+    rows = []
+    for m, (name, profile, export, crps_name) in SIM_ARMS.items():
+        r = ref.filter(method=m)
+        if not r.height:
+            continue
+        s = sh.filter(method=m)
+        hi = s.filter(pl.col("d_min") < 1.95)
+        g = mg.filter((pl.col("method") == m) & (pl.col("shell").cast(pl.Utf8) == "all"))
+        p = pk.filter(method=m)
+        row = {"arm": name, "profile": profile, "export": export,
+               "r_work": float(r["r_work"][0]), "r_free": float(r["r_free"][0]),
+               "gap": float(r["r_free"][0] - r["r_work"][0]),
+               "r_free_hi": float((hi["r_free"] * hi["n_free"]).sum() / hi["n_free"].sum()) if hi.height else None,
+               "fom_hi": float((hi["fom"] * hi["n_free"]).sum() / hi["n_free"].sum()) if hi.height else None,
+               "phase_hi": float((hi["phase_error"] * hi["n_free"]).sum() / hi["n_free"].sum()) if hi.height else None,
+               "r_F_true": float(g["r_F"][0]) if g.height else None,
+               "cc_dano": float(g["cc_dano"][0]) if g.height else None,
+               "peak_mn": float(p.filter(pl.col("residue") == "MN")["peakz"].mean()) if p.height else None}
+        if crps is not None:
+            c = crps.filter(method=crps_name)
+            for b in ("10-30", "100-300", ">3000"):
+                v = c.filter(bin=b)["crps_rel"]
+                row[f"crps_{b}"] = float(v[0]) if len(v) else None
+        shells = {}
+        for dmax, dmin in SIM_SHELLS:
+            q = s.filter((pl.col("d_min") >= dmin - 1e-6) & (pl.col("d_max") <= dmax + 1e-6))
+            shells[f"{dmax:g}-{dmin:g}"] = (float((q["r_free"] * q["n_free"]).sum() / q["n_free"].sum())
+                                            if q.height else None)
+        row["_shells"] = shells
+        rows.append(row)
+    return rows
+
+
+def table_sim_downstream() -> None:
+    """R-work and R-free of every mos010 arm, beside the per-reflection truth scores.
+
+    One careless seed per arm, phenix.refine twice against the pinned flags
+    (sim_7lvc_rfree.mtz). r_F is sum |F' - F_true| / sum F_true after a fitted
+    scale and B; cc_dano the correlation of merged with true Bijvoet
+    differences; CRPS / I_true per bin of the true intensity
+    (crps_against_truth.py).
+    """
+    if not (SIM_DOWNSTREAM / "downstream_refine.csv").is_file():
+        return
+    rows = _sim_rows()
+    main_rows = [{k: v for k, v in r.items() if k != "_shells"} for r in rows]
+    t = Table(main_rows)
+    t.column("arm", label="arm")
+    t.column("profile", label="profile model")
+    t.column("export", label="export")
+    t.column("r_work", label=r"$R_\mathrm{work}$", fmt="{:.4f}", best="min")
+    t.column("r_free", label=r"$R_\mathrm{free}$", fmt="{:.4f}", best="min")
+    t.column("gap", label=r"$R_\mathrm{free}-R_\mathrm{work}$", fmt="{:.4f}")
+    t.column("r_free_hi", label=r"$R_\mathrm{free}$, $d<1.95$", fmt="{:.4f}", best="min")
+    t.column("fom_hi", label=r"FOM, $d<1.95$", fmt="{:.3f}", best="max")
+    t.column("phase_hi", label=r"phase err., $d<1.95$", unit="deg", fmt="{:.1f}", best="min")
+    t.column("r_F_true", label=r"$r_F$ vs truth", fmt="{:.3f}", best="min")
+    t.column("cc_dano", label=r"cc $\Delta F$ vs truth", fmt="{:.3f}", best="max")
+    t.column("peak_mn", label=r"Mn peak (mean)", unit=r"$\sigma$", fmt="{:.2f}", best="max")
+    for b in ("10-30", "100-300", ">3000"):
+        if any(r.get(f"crps_{b}") is not None for r in main_rows):
+            t.column(f"crps_{b}", label=rf"CRPS$/I$, {b} ph", fmt="{:.3f}", best="min")
+    write(
+        t, "sim_downstream_refinement",
+        "The mos010 photon-counting simulation: each integrator's export merged by careless "
+        "(config 4, one seed) and refined twice by phenix against one pinned R-free set. "
+        "Refinement columns are phenix's; $r_F$ and cc $\\Delta F$ compare the merged structure "
+        "factors with the simulation's true ones after a fitted scale and $B$; CRPS$/I$ scores each "
+        "export's per-reflection predictive distribution against the true intensity. "
+        "Single merging seed: $R_\\mathrm{free}$ differences below about 0.008 are not resolved.",
+    )
+    shell_rows = []
+    for r in rows:
+        sr = {"arm": r["arm"], "export": r["export"]}
+        sr.update(r["_shells"])
+        shell_rows.append(sr)
+    t2 = Table(shell_rows)
+    t2.column("arm", label="arm")
+    t2.column("export", label="export")
+    for dmax, dmin in SIM_SHELLS:
+        k = f"{dmax:g}-{dmin:g}"
+        lab = rf"$d>{dmin:g}$ \AA" if dmax > 50 else rf"{dmax:g}--{dmin:g} \AA"
+        t2.column(k, label=rf"$R_\mathrm{{free}}$, {lab}", fmt="{:.4f}", best="min")
+    write(t2, "sim_downstream_rfree_shells",
+          "$R_\\mathrm{free}$ of each mos010 arm by resolution range, from phenix's final 20-shell "
+          "table, combined with weights equal to the number of free reflections per shell.")
+
+
 def main() -> int:
+    if "--only" in sys.argv and sys.argv[sys.argv.index("--only") + 1] == "sim":
+        # the simulation tables read docs/figures/data/sim_downstream and need no DIALS logs
+        print(f"tables -> {OUT.relative_to(ROOT)}")
+        table_sim_truth_scores()
+        table_sim_downstream()
+        return 0
     if not LOGS.is_dir():
         raise SystemExit(
             f"no logs at {LOGS}; run `bash scripts/figures/pull_figdata.sh "
@@ -769,6 +889,7 @@ def main() -> int:
     table_anomalous_differences()
     table_hyperparameters()
     table_sim_truth_scores()
+    table_sim_downstream()
     write_long_format()
     write_statistic_labels()
     return 0
