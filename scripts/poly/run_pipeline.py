@@ -125,6 +125,14 @@ def parse_args():
              "on the same reflections. Default: whatever the MTZ carries.",
     )
     p.add_argument(
+        "--refine-tag", default=None,
+        help="write phenix and peaks into `config<N>_refine_<TAG>` instead of "
+             "`config<N>_refine`, so a second refinement of one merge -- at a "
+             "capped --phenix-dmin, say -- sits beside the first instead of "
+             "overwriting it. Default: `config<N>_refine`, the existing "
+             "behaviour.",
+    )
+    p.add_argument(
         "--epoch",
         type=int,
         default=None,
@@ -501,6 +509,11 @@ def _tidy_careless_stats(written, tidy: Path, cfg, epoch) -> None:
     print(f"stats    : {tidy} ({len(rows)} rows from {len(written)} tools)")
 
 
+def refine_dir_name(base: str, tag: str | None) -> str:
+    """`<base>_refine`, or `<base>_refine_<tag>` with --refine-tag."""
+    return f"{base}_refine_{tag}" if tag else f"{base}_refine"
+
+
 def step_phenix(cfg, merged: Path, work_dir: Path, dry) -> Path:
     """Two-pass phenix.refine, matching the Laue refinement recipe.
 
@@ -714,7 +727,7 @@ def main():
         print(f"out base : {out_base}")
         print(f"steps    : {', '.join(steps)}")
         merged = Path(f"{out_base}_0.mtz")
-        work_dir = out_base.parent / f"{out_base.name}_refine"
+        work_dir = out_base.parent / refine_dir_name(out_base.name, args.refine_tag)
         refine2 = None
         if "stats" in steps:
             step_stats(cfg, out_base, args.epoch, args.dry_run)
@@ -810,7 +823,7 @@ def process_one(cfg, mtz: Path, steps, args) -> None:
     scaling_dir = mtz.parent / ccfg.get("out_dir", "scaling")
     out_base = scaling_dir / f"config{config}"
     merged = scaling_dir / f"config{config}_0.mtz"
-    work_dir = scaling_dir / f"config{config}_refine"
+    work_dir = scaling_dir / refine_dir_name(f"config{config}", args.refine_tag)
     refine2 = None
 
     if "careless" in steps:

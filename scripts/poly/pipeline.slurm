@@ -30,6 +30,8 @@
 #
 #   OUT_BASE=<.../laue_c4/laue> METHOD=laue DATASET=hewl_1118 \
 #       STEPS=phenix,peaks PHENIX_DMIN=1.70 sbatch scripts/poly/pipeline.slurm
+# REFINE_TAG=<tag> writes that refinement into config<N>_refine_<tag>, beside the
+# full-range one rather than over it.
 
 set -euo pipefail
 
@@ -91,4 +93,5 @@ fi
     ${METHOD:+--method "$METHOD"} \
     ${DATASET:+--dataset "$DATASET"} \
     ${PHENIX_DMIN:+--phenix-dmin "$PHENIX_DMIN"} \
+    ${REFINE_TAG:+--refine-tag "$REFINE_TAG"} \
     ${CARELESS_SEED:+--careless-seed "$CARELESS_SEED"}
