@@ -72,6 +72,13 @@ def parse_args():
                         "profile per arm (each row labelled with d and detector x, y)")
     p.add_argument("--labels", nargs="*", default=[],
                    help="ARM=NAME column titles for the combined grid, overriding the shortened arm names")
+    p.add_argument("--laue-profiles", type=Path, default=None,
+                   help="npz of scripts/sim_truth/laue_profiles.py: laue.integrate's fitted profile per reflection, "
+                        "drawn as a column after the counts (joined on image, h, k, l) and in --regions")
+    p.add_argument("--laue-label", default="laue.integrate")
+    p.add_argument("--regions", action="store_true",
+                   help="also draw the mean profile per detector region (dump_profile_maps' 3x3 grid): one row "
+                        "per region, one column per arm (and laue, from --laue-profiles, on the same region edges)")
     p.add_argument("--rows", type=int, default=6,
                    help="reflections drawn, spanning the resolution range "
                         "(only for a dump of NAMED reflections)")
@@ -122,7 +129,8 @@ def named_as_examples(blob, n_rows: int):
         idx = {int(r): i for i, r in enumerate(ids[a])}
         take = np.array([idx[int(r)] for r in pick])
         for src, dst in (("counts", "counts"), ("profile", "profile"),
-                         ("gate", "gate"), ("d", "d"), ("x", "x"), ("y", "y")):
+                         ("gate", "gate"), ("d", "d"), ("x", "x"), ("y", "y"),
+                         ("image", "image"), ("h", "h"), ("k", "k"), ("l", "l")):
             key = f"{a}_named_{src}"
             if key in blob:
                 out[f"{a}_ex_{dst}"] = blob[key][take]
@@ -224,8 +232,24 @@ def draw_arm(blob, arm, out_dir: Path, prefix: str) -> Path | None:
     return path
 
 
+def laue_rows(laue: dict, blob, arm: str):
+    """laue.integrate's profiles for the drawn rows, by (image, h, k, l); None where laue has no fit."""
+    need = [f"{arm}_ex_{k}" for k in ("image", "h", "k", "l")]
+    if laue is None or any(k not in blob for k in need):
+        return None
+    key = {(int(i), int(h), int(k), int(l)): j for j, (i, h, k, l) in
+           enumerate(zip(laue["image_num"], laue["h"], laue["k"], laue["l"]))}
+    out = []
+    for i, h, k, l in zip(*(blob[k] for k in need)):
+        j = key.get((int(i), int(h), int(k), int(l)))
+        out.append(None if j is None else laue["profile_box"][j])
+    logger.info("  laue profiles found for %d of %d rows", sum(o is not None for o in out), len(out))
+    return out
+
+
 def draw_combined(blob, arms, out_dir: Path, prefix: str, profiles_only: bool = False,
-                  label_override: dict | None = None) -> Path | None:
+                  label_override: dict | None = None, laue: dict | None = None,
+                  laue_label: str = "laue.integrate") -> Path | None:
     """All arms on one grid, one row per reflection.
 
     Only valid when the arms picked the SAME reflections, which they do
@@ -253,7 +277,8 @@ def draw_combined(blob, arms, out_dir: Path, prefix: str, profiles_only: bool = 
     for a in arms:
         blocks.append((a, blob.get(f"{a}_ex_profile"),
                        None if profiles_only else blob.get(f"{a}_ex_gate")))
-    cols = 1 + sum(1 + (1 if g is not None else 0) for _a, _p, g in blocks)
+    lrows = laue_rows(laue, blob, arms[0]) if laue is not None else None
+    cols = 1 + (1 if lrows is not None else 0) + sum(1 + (1 if g is not None else 0) for _a, _p, g in blocks)
     labels = column_labels(arms)
     labels.update(label_override or {})
     xs, ys = blob.get(f"{arms[0]}_ex_x"), blob.get(f"{arms[0]}_ex_y")
@@ -276,6 +301,17 @@ def draw_combined(blob, arms, out_dir: Path, prefix: str, profiles_only: bool = 
             row += f"\n({float(xs[i]):.0f}, {float(ys[i]):.0f})"
         ax.set_ylabel(row, fontsize="x-small")
         j += 1
+        if lrows is not None:
+            ax = axes[i][j]
+            if lrows[i] is not None:
+                ax.imshow(square(lrows[i], shape), cmap=figstyle().cmap(), interpolation="nearest")
+            else:
+                ax.text(0.5, 0.5, "no fit", ha="center", va="center", fontsize="x-small", transform=ax.transAxes)
+            ax.set_xticks([])
+            ax.set_yticks([])
+            if i == 0:
+                ax.set_title(laue_label, fontsize="x-small")
+            j += 1
         for arm, prof, gate in blocks:
             short = labels[arm]
             ax = axes[i][j]
@@ -303,6 +339,63 @@ def draw_combined(blob, arms, out_dir: Path, prefix: str, profiles_only: bool = 
     return path
 
 
+def draw_regions(raw, arms, out_dir: Path, prefix: str, label_override: dict | None = None,
+                 laue: dict | None = None, laue_label: str = "laue.integrate") -> Path | None:
+    """Mean profile per detector region: rows the 3x3 cells of dump_profile_maps, columns the arms.
+
+    Each arm's `<arm>_cells` is its mean profile over the reflections in that cell (cut on
+    the observed xyzcal range, `<arm>_extent`); laue's column averages its fitted
+    profiles over the reflections falling in the same cell edges.
+    """
+    have = [a for a in arms if f"{a}_cells" in raw]
+    if not have:
+        return None
+    shape = raw.get(f"{have[0]}_shape", np.array([0, 0]))
+    x0, x1, y0, y1 = (float(v) for v in raw[f"{have[0]}_extent"])
+    grid = raw[f"{have[0]}_cells"].shape[0]
+    labels = column_labels(have)
+    labels.update(label_override or {})
+    lcells = None
+    if laue is not None:
+        x, y = np.asarray(laue["x"]), np.asarray(laue["y"])
+        ix = np.clip(((x - x0) / max(x1 - x0, 1e-9) * grid).astype(int), 0, grid - 1)
+        iy = np.clip(((y - y0) / max(y1 - y0, 1e-9) * grid).astype(int), 0, grid - 1)
+        prof = np.asarray(laue["profile_box"], dtype=np.float64)
+        lcells = {(r, c): prof[(iy == r) & (ix == c)].mean(0) if ((iy == r) & (ix == c)).any() else None
+                  for r in range(grid) for c in range(grid)}
+    cols = len(have) + (1 if lcells is not None else 0)
+    n = grid * grid
+    fig, axes = plt.subplots(n, cols, squeeze=False, layout="constrained",
+                             figsize=figstyle().figsize("full", aspect=0.17 * n * 7 / max(cols, 4)))
+    for r in range(grid):
+        for c in range(grid):
+            i = r * grid + c
+            j = 0
+            panels = []
+            if lcells is not None:
+                panels.append((laue_label, lcells[(r, c)]))
+            for a in have:
+                panels.append((labels[a], raw[f"{a}_cells"][r, c]))
+            for lab, img in panels:
+                ax = axes[i][j]
+                if img is not None and np.isfinite(img).all() and img.sum() > 0:
+                    ax.imshow(square(np.asarray(img), shape), cmap=figstyle().cmap(), interpolation="nearest")
+                ax.set_xticks([])
+                ax.set_yticks([])
+                if i == 0:
+                    ax.set_title(lab, fontsize="x-small")
+                j += 1
+            xc = x0 + (c + 0.5) * (x1 - x0) / grid
+            yc = y0 + (r + 0.5) * (y1 - y0) / grid
+            ncount = int(raw[f"{have[0]}_counts"][r, c]) if f"{have[0]}_counts" in raw else 0
+            axes[i][0].set_ylabel(f"({xc:.0f}, {yc:.0f})\nn {ncount}", fontsize="x-small")
+    fig.supylabel("detector region centre (x, y) px; reflections averaged", fontsize="x-small")
+    path = out_dir / f"{prefix}_regions"
+    figstyle().save(fig, path)
+    plt.close(fig)
+    return path
+
+
 def main() -> None:
     args = parse_args()
     if not args.data.is_file():
@@ -311,6 +404,7 @@ def main() -> None:
             "scripts/figures/dump_profile_maps.py"
         )
     blob = np.load(args.data, allow_pickle=False)
+    raw = blob  # the dump as written, for --regions (blob may be replaced by the matched rows)
     figstyle().use()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -323,8 +417,15 @@ def main() -> None:
         arms = arms_in(blob)
     if not arms:
         raise SystemExit(f"{args.data} holds no `<arm>_ex_counts`")
+    laue = dict(np.load(args.laue_profiles)) if args.laue_profiles is not None else None
+    overrides = dict(x.split("=", 1) for x in args.labels)
     combined = draw_combined(blob, arms, args.out_dir, args.prefix, profiles_only=args.profiles_only,
-                             label_override=dict(x.split("=", 1) for x in args.labels))
+                             label_override=overrides, laue=laue, laue_label=args.laue_label)
+    if args.regions:
+        reg = draw_regions(raw, arms, args.out_dir, args.prefix, label_override=overrides, laue=laue,
+                           laue_label=args.laue_label)
+        if reg is not None:
+            logger.info("  regions: %s", reg)
     if combined is not None:
         logger.info("  combined: %s", combined)
     drawn = 0
