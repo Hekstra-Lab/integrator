@@ -313,6 +313,13 @@ class IntegratorCfg:
     """Multiplies the profile prior's sigma in `export_posterior`; 1.0 (default) is the
     model's prior, a large value (100) removes it, each shape then fitted from its own
     pixels."""
+    export_posterior_intensity_prior: Literal["model", "flat"] = "model"
+    """The intensity prior inside `export_posterior`. `model` (default) is the
+    trained model's own Gamma(alpha_I, r_I), the existing behaviour. `flat` replaces it
+    by Gamma(1, 1e-10), flat in I to within r_I * I <= 1e-5 at I = 1e5, so `i_lc` /
+    `var_lc` summarise the likelihood in I with b and eta integrated out. careless
+    applies its own Wilson prior to whatever it is given; with `model` the exported
+    posterior carries a second one. The background and profile priors are unchanged."""
     collapsed_eta_samples: int = 2
     """`svae_collapsed` only: reparameterised draws of eta per reflection in the bound."""
     collapsed_grid: int = 64

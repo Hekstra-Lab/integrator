@@ -185,6 +185,7 @@ class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
         self.export_posterior_grid = int(getattr(cfg, "export_posterior_grid", 128))
         self.export_posterior_steps = int(getattr(cfg, "export_posterior_steps", 40))
         self.export_posterior_eta_prior_scale = float(getattr(cfg, "export_posterior_eta_prior_scale", 1.0))
+        self.export_posterior_intensity_prior = str(getattr(cfg, "export_posterior_intensity_prior", "model"))
         self.profile_coord_channels = getattr(
             cfg, "profile_coord_channels", False
         )
@@ -505,6 +506,13 @@ class BaseIntegrator(ScatterLoggerMixin, pl.LightningModule):
             md = {k: v.clone() if torch.is_tensor(v) else v for k, v in metadata.items()}
             c, m = counts.clone(), mask.clone()
             a_I, r_I = self.loss.intensity_prior_params(md, dev)
+            if self.export_posterior_intensity_prior == "flat":
+                # Gamma(1, r) with r -> 0: the posterior in I is the likelihood
+                a_I = torch.ones_like(torch.as_tensor(a_I, dtype=torch.float64, device=dev)).expand(c.shape[0])
+                r_I = torch.full_like(a_I, 1e-10)
+            elif self.export_posterior_intensity_prior != "model":
+                raise ValueError(f"export_posterior_intensity_prior must be model or flat, "
+                                 f"got {self.export_posterior_intensity_prior!r}")
             if hasattr(self, "_background_prior"):
                 a_b, r_b = self._background_prior(md, dev)
             else:

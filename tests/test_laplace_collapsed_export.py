@@ -52,3 +52,55 @@ def test_export_adds_finite_columns_and_leaves_the_model_alone():
     for k, v in m.state_dict().items():
         assert torch.equal(v, before[k]), k
     assert all(p.grad is None for p in m.parameters())
+
+
+def _lc(**kw):
+    m = _model(export_posterior="laplace_collapsed", export_posterior_eta_samples=4, export_posterior_steps=10,
+               export_posterior_grid=64, **kw)
+    torch.manual_seed(1)  # the eta draws
+    with torch.inference_mode():
+        return m, m.predict_step(_batch_bp(), 0)
+
+
+def test_intensity_prior_default_is_the_model_prior():
+    m, base = _lc()
+    assert m.export_posterior_intensity_prior == "model"
+    _, same = _lc(export_posterior_intensity_prior="model")
+    for k in ("i_lc", "var_lc", "bg_lc", "var_bg_lc"):
+        assert torch.equal(base[k], same[k]), k
+
+
+def test_flat_intensity_prior_changes_only_the_exported_posterior():
+    _, base = _lc()
+    _, flat = _lc(export_posterior_intensity_prior="flat")
+    for k in ("i_lc", "var_lc", "bg_lc", "var_bg_lc"):
+        assert torch.isfinite(flat[k]).all() and (flat[k] > 0).all(), k
+    assert not torch.allclose(flat["i_lc"], base["i_lc"])
+    # the amortized columns do not see the export's prior
+    for k in ("qi_mean", "qi_var", "i_rb", "var_rb"):
+        assert torch.equal(flat[k], base[k]), k
+
+
+def test_flat_intensity_prior_is_the_normalised_likelihood():
+    """With Gamma(1, 1e-10) on I, the collapsed posterior mean of I is the mean of
+    likelihood(I, b) * p(b) integrated numerically over a 2-D grid."""
+    from integrator.model.posterior.collapsed import collapsed
+
+    torch.manual_seed(0)
+    P = 49
+    p = torch.softmax(torch.randn(3, P), -1).double()
+    c = torch.poisson(torch.tensor([[5.0], [60.0], [800.0]]) * p + 2.0).double()
+    a_b, r_b = 4.0, 2.0
+    q = collapsed(c, torch.ones_like(c), p, torch.ones(3), torch.full((3,), 1e-10),
+                  torch.full((3,), a_b), torch.full((3,), r_b), grid=512, newton_b=30)
+    # newton_b=30: at the default 6 the inner b-mode is unconverged at I ~ 800 and the
+    # mean is 0.8 % low (764.0 vs 770.0); that is a property of `collapsed`, not the prior
+    got = q.mean_var_I()[0]
+    bs = torch.linspace(0.01, 8.0, 800, dtype=torch.float64)
+    for row, hi in zip(range(3), (60.0, 250.0, 1500.0)):
+        xs = torch.linspace(1e-6, hi, 3000, dtype=torch.float64)
+        lam = xs[:, None, None] * p[row] + bs[None, :, None]
+        lp = (c[row] * torch.log(lam) - lam).sum(-1) + (a_b - 1) * torch.log(bs) - r_b * bs
+        w = torch.exp(lp - lp.max()).sum(1)
+        ref = (w * xs).sum() / w.sum()
+        assert abs(float(got[row]) / float(ref) - 1) < 5e-3, (row, float(got[row]), float(ref))
