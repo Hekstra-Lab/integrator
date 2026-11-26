@@ -133,6 +133,14 @@ def careless_shells(frame: pl.DataFrame, value: str) -> pl.DataFrame | None:
     return pl.DataFrame(rows)
 
 
+def _stddev_column(ds) -> str:
+    """The single Stddev-typed column of an unmerged MTZ."""
+    keys = [k for k, t in ds.dtypes.items() if str(t) == "Stddev"]
+    if len(keys) != 1:
+        raise KeyError(f"expected one Stddev column, found {keys}")
+    return keys[0]
+
+
 def unmerged_stats(
     path: Path, bins: int, edges: np.ndarray | None = None
 ) -> pl.DataFrame:
@@ -148,7 +156,10 @@ def unmerged_stats(
     ds = ds.compute_dHKL().hkl_to_asu()
     d = ds["dHKL"].to_numpy().astype(float)
     intensity = ds["I"].to_numpy().astype(float)
-    sigma = ds["SIGI"].to_numpy().astype(float)
+    # laue.integrate writes SIGI; precognition writes SigI. Exactly one
+    # Stddev column is expected beside I.
+    sigma_key = "SIGI" if "SIGI" in ds.columns else _stddev_column(ds)
+    sigma = ds[sigma_key].to_numpy().astype(float)
     # one integer id per unique ASU reflection
     hkl = np.ascontiguousarray(ds.get_hkls().astype(np.int64))
     _, group = np.unique(hkl, axis=0, return_inverse=True)
