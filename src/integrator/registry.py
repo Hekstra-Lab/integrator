@@ -30,7 +30,7 @@ from integrator.model.distributions import (
     TuckerBasisProfileSurrogate,
     build_gamma,
 )
-from integrator.model.distributions.learned_geom_prior import LearnedBasisGeomPriorSurrogate
+from integrator.model.distributions.learned_geom_prior import GMMGeomPriorSurrogate, LearnedBasisGeomPriorSurrogate
 from integrator.model.distributions.quasiconformal_profile import (
     QuasiconformalProfileSurrogate,
 )
@@ -152,6 +152,7 @@ REGISTRY = {
         "streak_kmix_v2_profile": StreakKMixV2ProfileSurrogate,
         "streak_kmix_v2_geom": StreakKMixV2GeomPriorSurrogate,
         "learned_basis_geom_prior_profile": LearnedBasisGeomPriorSurrogate,
+        "gmm_geom_prior_profile": GMMGeomPriorSurrogate,
         "quasiconformal_profile": QuasiconformalProfileSurrogate,
         "fixed_basis_profile": FixedBasisProfileSurrogate,
         "shapelet_profile": ShapeletProfileSurrogate,
