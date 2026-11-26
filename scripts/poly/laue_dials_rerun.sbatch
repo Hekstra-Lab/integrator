@@ -35,9 +35,11 @@ set -euo pipefail
 MAMBA_ROOT=/n/lab_storage/hekstra_lab/people/aldama/micromamba
 E=${LD_ENV:-$MAMBA_ROOT/envs/integrator-cuda-dev}
 LAUE_DIALS_SRC=${LAUE_DIALS_SRC:-/n/lab_storage/hekstra_lab/people/aldama/software/laue-dials-main/src}
-DATA=${DATA:?set DATA to the dataset directory holding poly_refined_<PREFIX>.expt/.refl}
+DATA=${DATA:?set DATA to the dataset directory holding poly_refined_<LD_PREFIX>.expt/.refl}
 WORK=${WORK:?set WORK to an output directory}
-PREFIX=${PREFIX:-HEWL_anom_3049}
+# LD_PREFIX, not PREFIX: conda/micromamba environments export PREFIX (the env path), and
+# inheriting it named the inputs poly_refined_/n/lab_storage/.../local.expt
+LD_PREFIX=${LD_PREFIX:-HEWL_anom_3049}
 LAM_MIN=${LAM_MIN:-0.97}
 LAM_MAX=${LAM_MAX:-1.25}
 D_MIN=${D_MIN:-1.4}
@@ -59,19 +61,19 @@ echo "===== env $E; laue_dials from $(python -c 'import laue_dials; print(laue_d
 
 mkdir -p "$WORK"
 cd "$WORK"
-sed "s#$IMAGE_PATH_FROM#$IMAGE_PATH_TO#g" "$DATA/poly_refined_$PREFIX.expt" > "poly_refined_$PREFIX.expt"
-ln -sf "$DATA/poly_refined_$PREFIX.refl" .
-if [ ! -f "predicted_$PREFIX.refl" ]; then
-  laue.predict "poly_refined_$PREFIX.expt" "poly_refined_$PREFIX.refl" \
-    output.reflections="predicted_$PREFIX.refl" output.log="laue.predict_$PREFIX.log" \
+sed "s#$IMAGE_PATH_FROM#$IMAGE_PATH_TO#g" "$DATA/poly_refined_$LD_PREFIX.expt" > "poly_refined_$LD_PREFIX.expt"
+ln -sf "$DATA/poly_refined_$LD_PREFIX.refl" .
+if [ ! -f "predicted_$LD_PREFIX.refl" ]; then
+  laue.predict "poly_refined_$LD_PREFIX.expt" "poly_refined_$LD_PREFIX.refl" \
+    output.reflections="predicted_$LD_PREFIX.refl" output.log="laue.predict_$LD_PREFIX.log" \
     wavelengths.lam_min=$LAM_MIN wavelengths.lam_max=$LAM_MAX reciprocal_grid.d_min=$D_MIN nproc=$NPROC
 fi
-if [ ! -f "integrated_$PREFIX.mtz" ]; then
-  laue.integrate "poly_refined_$PREFIX.expt" "predicted_$PREFIX.refl" \
-    output.filename="integrated_$PREFIX.mtz" output.reflections="integrated_$PREFIX.refl" \
-    output.log="laue.integrate_$PREFIX.log" nproc=$NPROC
+if [ ! -f "integrated_$LD_PREFIX.mtz" ]; then
+  laue.integrate "poly_refined_$LD_PREFIX.expt" "predicted_$LD_PREFIX.refl" \
+    output.filename="integrated_$LD_PREFIX.mtz" output.reflections="integrated_$LD_PREFIX.refl" \
+    output.log="laue.integrate_$LD_PREFIX.log" nproc=$NPROC
 fi
 python "$REPO/scripts/poly/compare_laue_predictions.py" \
-  --new-refl "integrated_$PREFIX.refl" --new-mtz "integrated_$PREFIX.mtz" --ours "$OURS" \
-  --max-images "$MAX_IMAGES" --out-mtz "integrated_${PREFIX}_first${MAX_IMAGES}.mtz" --out-csv prediction_comparison.csv
+  --new-refl "integrated_$LD_PREFIX.refl" --new-mtz "integrated_$LD_PREFIX.mtz" --ours "$OURS" \
+  --max-images "$MAX_IMAGES" --out-mtz "integrated_${LD_PREFIX}_first${MAX_IMAGES}.mtz" --out-csv prediction_comparison.csv
 echo "LD_RERUN_DONE"

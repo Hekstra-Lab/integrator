@@ -144,9 +144,11 @@ class GMMGeomPriorSurrogate(nn.Module):
         nn.init.zeros_(self.scale_head.weight)
         nn.init.constant_(self.scale_head.bias, float(torch.log(torch.expm1(torch.tensor(init_std)))))
         self.prior_mean_head = GeomPriorMLP(self.d, geom_hidden)
-        self.decoder = nn.Sequential(nn.Linear(self.d, hidden), nn.SiLU(), nn.Linear(hidden, hidden), nn.SiLU(),
+        # named mixture_decoder, not decoder: callbacks/figures.py records `qp.decoder` as a
+        # linear basis (weight, bias), which this MLP is not
+        self.mixture_decoder = nn.Sequential(nn.Linear(self.d, hidden), nn.SiLU(), nn.Linear(hidden, hidden), nn.SiLU(),
                                      nn.Linear(hidden, 7 * self.K))
-        last = self.decoder[-1]
+        last = self.mixture_decoder[-1]
         nn.init.zeros_(last.weight)
         with torch.no_grad():
             b = torch.zeros(self.K, 7)
@@ -166,7 +168,7 @@ class GMMGeomPriorSurrogate(nn.Module):
 
     def components(self, z: Tensor):
         """z (..., d) -> centres (..., K, 2), sds (..., K, 2), angles (..., K), weights (..., K)."""
-        out = self.decoder(z).reshape(*z.shape[:-1], self.K, 7)
+        out = self.mixture_decoder(z).reshape(*z.shape[:-1], self.K, 7)
         centre = self.max_shift * torch.tanh(out[..., 0:2] / self.max_shift)
         sds = self.sd_min + (self.sd_max - self.sd_min) * torch.sigmoid(out[..., 2:4])
         theta = torch.atan2(out[..., 5], out[..., 4])
