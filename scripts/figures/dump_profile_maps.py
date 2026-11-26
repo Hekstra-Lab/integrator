@@ -123,7 +123,7 @@ def accumulate(model, loader, device, n_batches: int, want_ids=None):
     want = None if want_ids is None else set(int(v) for v in want_ids)
     picked: dict[str, list] = {k: [] for k in
                               ("refl_id", "gate", "profile", "counts",
-                               "mask", "d")}
+                               "mask", "d", "x", "y")}
     with torch.no_grad():
         for i, batch in enumerate(loader):
             if i >= n_batches and not want:
@@ -181,6 +181,9 @@ def accumulate(model, loader, device, n_batches: int, want_ids=None):
                         if dd is not None:
                             picked["d"].append(
                                 dd.detach().float().cpu().numpy()[sel])
+                        # detector position, so a figure can label each named row
+                        picked["x"].append(metadata["xyzcal.px.0"].detach().float().cpu().numpy()[sel])
+                        picked["y"].append(metadata["xyzcal.px.1"].detach().float().cpu().numpy()[sel])
                         want -= set(rid_np[sel].tolist())
                         if not want:
                             print(f"    collected every named reflection "
@@ -457,7 +460,8 @@ def main() -> int:
         for key in ("batch_refl_id", "batch_gate", "batch_profile",
                     "batch_counts", "batch_mask", "batch_d",
                     "named_refl_id", "named_gate", "named_profile",
-                    "named_counts", "named_mask", "named_d"):
+                    "named_counts", "named_mask", "named_d",
+                    "named_x", "named_y"):
             arr = examples.get(key)
             if arr is not None:
                 blobs[f"{arm}_{key}"] = (
