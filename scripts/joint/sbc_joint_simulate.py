@@ -120,6 +120,8 @@ def main() -> None:
     ap.add_argument("--obs-grid", type=int, default=256)
     ap.add_argument("--j-grid", type=int, default=256)
     ap.add_argument("--chunk", type=int, default=2048)
+    ap.add_argument("--optimizer", choices=("powell", "newton"), default="powell",
+                    help="polish after the L-BFGS start: scipy Powell (derivative-free) or damped Newton")
     ap.add_argument("--scan", action="store_true",
                     help="print the scale objective along the overall level, both interpolations, then exit")
     ap.add_argument("--interp", choices=("hermite", "linear"), default="hermite",
@@ -262,7 +264,21 @@ def main() -> None:
     a.interp = interp_final
     theta = th0.detach().clone()
     f, gr = grad_at(theta)
-    for it in range(50):
+    if a.optimizer == "powell":
+        # derivative-free polish (scipy Powell): insensitive to small-scale roughness of
+        # the objective, and cheap for K = 4 since l_i is precomputed on its grid
+        from scipy.optimize import minimize
+
+        def fnp(x):
+            with torch.no_grad():
+                return float(scale_loss(torch.as_tensor(x, dtype=D, device=dev)))
+
+        res = minimize(fnp, theta.cpu().numpy(), method="Powell",
+                       options={"xtol": 1e-6, "ftol": 1e-9, "maxfev": 4000})
+        theta = torch.as_tensor(res.x, dtype=D, device=dev)
+        f, gr = grad_at(theta)
+        print(f"Powell: {res.nfev} evaluations, {res.message}", flush=True)
+    for it in range(50 if a.optimizer == "newton" else 0):
         Hm = hess_at(theta)
         ev, V = torch.linalg.eigh(Hm)
         step = -(V @ ((V.T @ gr) / ev.abs().clamp_min(1e-6 * ev.abs().max())))
@@ -276,7 +292,8 @@ def main() -> None:
         if (lam * step).abs().max() < 1e-9:
             break
     gnorm = float(gr.norm())
-    print(f"Newton steps {it + 1}; gradient norm at the fit {gnorm:.3g}", flush=True)
+    it = locals().get("it", -1)
+    print(f"optimizer {a.optimizer}; Newton steps {it + 1}; gradient norm at the fit {gnorm:.3g}", flush=True)
     theta_hat = theta.detach()
     dlog = (Tl @ (theta_hat - theta_true)).cpu().numpy()
     print(f"theta true {theta_true.cpu().numpy().round(4).tolist()}  fitted {theta_hat.cpu().numpy().round(4).tolist()}; "
