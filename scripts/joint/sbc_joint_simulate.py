@@ -18,7 +18,7 @@ Inference, priors at their generating values:
        proposal q(eta) (its eta block of the inverse Hessian, sd x --q-inflate);
     2. l_i(I) on the observation's own I grid (`obs_grid`), eta integrated by importance
        sampling with p/q weights (`obs_loglik_is`, --n-eta draws), b by Laplace;
-    3. the scale: theta by maximising sum_h log int p(J) prod_i l_i(g_i J) dJ (L-BFGS) over the
+    3. the scale: theta by maximising sum_h log int p(J) prod_i l_i(g_i J) dJ (damped Newton) over the
        reflections of multiplicity > 1 (one observation carries no relative-scale information); Sigma is frozen at the truth,
        so the overall scale is identified (docs/joint_model_closed_forms.md, gauge section);
     4. the posterior of J_h on its grid at the TRUE theta and at the fitted theta; PIT
@@ -120,6 +120,8 @@ def main() -> None:
     ap.add_argument("--obs-grid", type=int, default=256)
     ap.add_argument("--j-grid", type=int, default=256)
     ap.add_argument("--chunk", type=int, default=2048)
+    ap.add_argument("--scan", action="store_true",
+                    help="print the scale objective along the overall level, both interpolations, then exit")
     ap.add_argument("--interp", choices=("hermite", "linear"), default="hermite",
                     help="interpolation of log l_i onto g_i J: cubic Hermite (smooth gradient) or piecewise linear")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -203,53 +205,85 @@ def main() -> None:
         lm, w = reflection_marginal(oll, refl, H, log_prior_J(xs, "wilson", sigma, centric), dx)
         return lm, w, xs, dx
 
-    # ---- the scale: type-II maximum likelihood of theta, Sigma frozen
-    theta = torch.zeros(K, dtype=D, device=dev, requires_grad=True)
-    opt = torch.optim.LBFGS([theta], lr=1, max_iter=200, line_search_fn="strong_wolfe", tolerance_grad=1e-9)
+    if a.scan:
+        mr = torch.as_tensor(n_obs > 1, device=dev)
+        for interp in ("linear", "hermite"):
+            a.interp = interp
+            vals = []
+            for c0 in np.linspace(-0.1, 0.4, 11):
+                t = theta_true.clone()
+                t[0] += c0
+                with torch.no_grad():
+                    lm = log_marginal(t)[0][mr]
+                vals.append((round(float(c0), 2), round(float(-lm.sum()), 1), int(torch.isfinite(lm).sum())))
+            print(interp, vals, flush=True)
+            t = theta_true.clone().requires_grad_(True)
+            gr, = torch.autograd.grad(-log_marginal(t)[0][mr].sum(), t)
+            print(f"  gradient at theta_true ({interp}): {gr.cpu().numpy().round(2).tolist()}", flush=True)
+        return
 
-    # the scale objective sums over reflections of multiplicity > 1 only. Keeping
-    # the multiplicity-1 terms in the value while stopping their gradient made the
-    # value and the gradient of different functions, and L-BFGS's line search
-    # stalled with gradient norms of 2-151 (2026-11-25); a reflection observed
-    # once carries no relative-scale information, so dropping it loses none
+    # ---- the scale: type-II maximum likelihood of theta, Sigma frozen
+    # L-BFGS into the basin, then damped Newton on the K scale parameters, Hessian by central differences of the
+    # gradient. L-BFGS failed here twice: with the piecewise-linear l_i it stalled on
+    # the kinks, and with the smooth one its line search left the basin on 9 of 10
+    # seeds, because the problem is ill-conditioned (curvature ~2e6 in the shape
+    # coefficients against ~2e4 in the overall level, which only the Wilson prior
+    # identifies). K is 4, so the exact Hessian costs 2K gradients per step.
     multi_refl = torch.as_tensor(n_obs > 1, device=dev)
 
     def scale_loss(t):
         return -log_marginal(t)[0][multi_refl].sum()
 
+    def grad_at(t):
+        t = t.clone().requires_grad_(True)
+        f = scale_loss(t)
+        gr, = torch.autograd.grad(f, t)
+        return f.detach(), gr
+
+    def hess_at(t, hstep=1e-3):
+        Hm = torch.stack([(grad_at(t + hstep * e)[1] - grad_at(t - hstep * e)[1]) / (2 * hstep)
+                          for e in torch.eye(K, dtype=D, device=dev)])
+        return 0.5 * (Hm + Hm.T)
+
+    # start: L-BFGS on the piecewise-linear interpolant, which reliably reaches the
+    # basin (errors ~0.006 in the level) but stalls there on the kinks
+    interp_final = a.interp
+    a.interp = "linear"
+    th0 = torch.zeros(K, dtype=D, device=dev, requires_grad=True)
+    opt = torch.optim.LBFGS([th0], lr=1, max_iter=200, line_search_fn="strong_wolfe")
+
     def closure():
         opt.zero_grad()
-        loss = scale_loss(theta)
+        loss = scale_loss(th0)
         loss.backward()
         return loss
 
-    # repeated L-BFGS passes until theta stops moving: a single pass with the default tolerances
-    # stopped short on 20,000 reflections (the loss is O(1e6)), which shrank theta toward its
-    # start of 0 and gave errors smaller than the Laplace sd
+    opt.step(closure)
+    a.interp = interp_final
+    theta = th0.detach().clone()
+    f, gr = grad_at(theta)
     for it in range(50):
-        before = theta.detach().clone()
-        opt.step(closure)
-        if (theta.detach() - before).abs().max() < 1e-7:
+        Hm = hess_at(theta)
+        ev, V = torch.linalg.eigh(Hm)
+        step = -(V @ ((V.T @ gr) / ev.abs().clamp_min(1e-6 * ev.abs().max())))
+        lam = 1.0
+        while lam > 1e-4:
+            f_new, g_new = grad_at(theta + lam * step)
+            if f_new <= f:
+                break
+            lam *= 0.5
+        theta, f, gr = theta + lam * step, f_new, g_new
+        if (lam * step).abs().max() < 1e-9:
             break
-    gnorm = float(torch.autograd.grad(scale_loss(theta), theta)[0].norm())
-    print(f"L-BFGS passes {it + 1}; gradient norm at the fit {gnorm:.3g}", flush=True)
+    gnorm = float(gr.norm())
+    print(f"Newton steps {it + 1}; gradient norm at the fit {gnorm:.3g}", flush=True)
     theta_hat = theta.detach()
     dlog = (Tl @ (theta_hat - theta_true)).cpu().numpy()
     print(f"theta true {theta_true.cpu().numpy().round(4).tolist()}  fitted {theta_hat.cpu().numpy().round(4).tolist()}; "
           f"sd of log(g_hat / g) {dlog.std():.4f}, mean {dlog.mean():+.4f}", flush=True)
 
-    # ---- Laplace posterior of theta: the inverse Hessian of -log marginal at theta_hat, by central
-    # differences of the autograd gradient (the interpolated l_i is piecewise linear in I, so its
-    # analytic second derivative misses the curvature between nodes)
-    def grad_at(t):
-        t = t.clone().requires_grad_(True)
-        gr, = torch.autograd.grad(scale_loss(t), t)
-        return gr
-
-    hstep = 1e-3
-    Hm = torch.stack([(grad_at(theta_hat + hstep * e) - grad_at(theta_hat - hstep * e)) / (2 * hstep)
-                      for e in torch.eye(K, dtype=D, device=dev)])
-    Hm = 0.5 * (Hm + Hm.T)
+    # ---- Laplace posterior of theta: the inverse Hessian of the scale objective at the fit
+    Hm = hess_at(theta_hat)
     theta_cov = torch.linalg.inv(Hm)
     theta_sd = theta_cov.diagonal().clamp_min(0).sqrt()
     print(f"Laplace sd of theta {theta_sd.cpu().numpy().round(5).tolist()}; "
@@ -261,7 +295,7 @@ def main() -> None:
             "sd_log_g_err": float(dlog.std()), "mean_log_g_err": float(dlog.mean()),
             "n_refl": H, "n_obs": N, "args": vars(a) | {"out": str(a.out)}}
     summ["theta_sd"] = theta_sd.cpu().tolist()
-    summ["lbfgs_passes"], summ["grad_norm"] = it + 1, gnorm
+    summ["newton_steps"], summ["grad_norm"] = it + 1, gnorm
     summ["theta_z"] = ((theta_hat - theta_true) / theta_sd).cpu().tolist()
     for tag, ths in (("true", theta_true[None]), ("fit", theta_hat[None])):
         ms, m2, us = 0, 0, 0
