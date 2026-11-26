@@ -67,6 +67,11 @@ def parse_args():
                    default=DATA / "profile_maps_pdz2.npz")
     p.add_argument("--out-dir", type=Path, default=OUT)
     p.add_argument("--prefix", default="profile_gate")
+    p.add_argument("--profiles-only", action="store_true",
+                   help="combined grid without the gate columns: the counts, then one "
+                        "profile per arm (each row labelled with d and detector x, y)")
+    p.add_argument("--labels", nargs="*", default=[],
+                   help="ARM=NAME column titles for the combined grid, overriding the shortened arm names")
     p.add_argument("--rows", type=int, default=6,
                    help="reflections drawn, spanning the resolution range "
                         "(only for a dump of NAMED reflections)")
@@ -117,7 +122,7 @@ def named_as_examples(blob, n_rows: int):
         idx = {int(r): i for i, r in enumerate(ids[a])}
         take = np.array([idx[int(r)] for r in pick])
         for src, dst in (("counts", "counts"), ("profile", "profile"),
-                         ("gate", "gate"), ("d", "d")):
+                         ("gate", "gate"), ("d", "d"), ("x", "x"), ("y", "y")):
             key = f"{a}_named_{src}"
             if key in blob:
                 out[f"{a}_ex_{dst}"] = blob[key][take]
@@ -219,7 +224,8 @@ def draw_arm(blob, arm, out_dir: Path, prefix: str) -> Path | None:
     return path
 
 
-def draw_combined(blob, arms, out_dir: Path, prefix: str) -> Path | None:
+def draw_combined(blob, arms, out_dir: Path, prefix: str, profiles_only: bool = False,
+                  label_override: dict | None = None) -> Path | None:
     """All arms on one grid, one row per reflection.
 
     Only valid when the arms picked the SAME reflections, which they do
@@ -246,9 +252,11 @@ def draw_combined(blob, arms, out_dir: Path, prefix: str) -> Path | None:
     blocks = []
     for a in arms:
         blocks.append((a, blob.get(f"{a}_ex_profile"),
-                       blob.get(f"{a}_ex_gate")))
+                       None if profiles_only else blob.get(f"{a}_ex_gate")))
     cols = 1 + sum(1 + (1 if g is not None else 0) for _a, _p, g in blocks)
     labels = column_labels(arms)
+    labels.update(label_override or {})
+    xs, ys = blob.get(f"{arms[0]}_ex_x"), blob.get(f"{arms[0]}_ex_y")
 
     fig, axes = plt.subplots(
         n, cols, squeeze=False, layout="constrained",
@@ -263,7 +271,10 @@ def draw_combined(blob, arms, out_dir: Path, prefix: str) -> Path | None:
         ax.set_yticks([])
         if i == 0:
             ax.set_title("counts", fontsize="x-small")
-        ax.set_ylabel(f"{float(ref[i]):.2f}", fontsize="x-small")
+        row = f"{float(ref[i]):.2f}" + (r" \AA" if profiles_only else "")
+        if profiles_only and xs is not None and ys is not None:
+            row += f"\n({float(xs[i]):.0f}, {float(ys[i]):.0f})"
+        ax.set_ylabel(row, fontsize="x-small")
         j += 1
         for arm, prof, gate in blocks:
             short = labels[arm]
@@ -273,7 +284,7 @@ def draw_combined(blob, arms, out_dir: Path, prefix: str) -> Path | None:
             ax.set_xticks([])
             ax.set_yticks([])
             if i == 0:
-                ax.set_title(f"{short}\nprofile", fontsize="x-small")
+                ax.set_title(short if profiles_only else f"{short}\nprofile", fontsize="x-small")
             j += 1
             if gate is not None:
                 ax = axes[i][j]
@@ -284,7 +295,9 @@ def draw_combined(blob, arms, out_dir: Path, prefix: str) -> Path | None:
                 if i == 0:
                     ax.set_title(f"{short}\ngate", fontsize="x-small")
                 j += 1
-    path = out_dir / f"{prefix}_combined"
+    if profiles_only:
+        fig.supylabel(r"resolution (\AA), detector (x, y) px", fontsize="x-small")
+    path = out_dir / (f"{prefix}_combined" + ("_profiles" if profiles_only else ""))
     figstyle().save(fig, path)
     plt.close(fig)
     return path
@@ -310,7 +323,8 @@ def main() -> None:
         arms = arms_in(blob)
     if not arms:
         raise SystemExit(f"{args.data} holds no `<arm>_ex_counts`")
-    combined = draw_combined(blob, arms, args.out_dir, args.prefix)
+    combined = draw_combined(blob, arms, args.out_dir, args.prefix, profiles_only=args.profiles_only,
+                             label_override=dict(x.split("=", 1) for x in args.labels))
     if combined is not None:
         logger.info("  combined: %s", combined)
     drawn = 0
