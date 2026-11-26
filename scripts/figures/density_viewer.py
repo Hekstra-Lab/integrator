@@ -39,7 +39,10 @@ PAGE = """<!doctype html>
   .pane .title {{ position: absolute; top: 4px; left: 6px; z-index: 5; background: rgba(0,0,0,.6); padding: 2px 6px; border-radius: 3px; }}
   .pane .view {{ position: absolute; inset: 0; }}
   .hud {{ position: absolute; bottom: 4px; left: 6px; z-index: 5; font-size: 11px; color: #aaa; }}
-  .help {{ display: none; }}
+  /* UglyMol shows the help by setting display:block on this element; it must sit
+     above the canvas, which fills the pane */
+  .help {{ display: none; position: absolute; top: 28px; right: 6px; z-index: 10; max-width: 60%; max-height: 80%;
+           overflow: auto; background: rgba(20,20,20,.92); padding: 6px 10px; border: 1px solid #444; font-size: 11px; }}
 </style>
 <script src="{uglymol}"></script>
 </head><body>
@@ -61,7 +64,10 @@ ARMS.forEach((a, i) => {{
   views.push(v);
   v.load_pdb(a.dir + '/refined_2.pdb', {{}}, () => {{
     if (TRUTH) v.load_pdb(TRUTH, {{hue_shift: 0.5}});
-    v.load_maps(a.dir + '/2fofc.ccp4', a.dir + '/fofc.ccp4', {{format: 'ccp4'}});
+    // jump this pane to the starting residue as soon as its own maps are in, so a
+    // late jump cannot reset a view the user has already started rotating
+    v.load_maps(a.dir + '/2fofc.ccp4', a.dir + '/fofc.ccp4', {{format: 'ccp4'}},
+                () => goToView(v, document.getElementById('goto').value));
   }});
 }});
 // copy the view of the pane being moved to every other pane after each of its renders
@@ -81,9 +87,10 @@ views.forEach((v, i) => {{
       oq._x = q._x; oq._y = q._y; oq._z = q._z; oq._w = q._w;
       o.camera.up.copy(v.camera.up);
       o.camera.zoom = v.camera.zoom;
+      const moved = o.target.distanceToSquared(v.target) > 1e-6;
       o.target.copy(v.target);
       o.update_camera();
-      o.redraw_maps();
+      if (moved) o.redraw_maps();  // re-mesh only when the centre moved, not on every rotation frame
       o.renderer.render(o.scene, o.camera);
     }});
     syncing = false;
@@ -96,29 +103,27 @@ function goTo(spec) {{
   const parts = spec.split(/\s+/);
   const chain = parts.length > 1 ? parts[0] : null, key = parts[parts.length - 1].toUpperCase();
   const halfw = parseFloat(document.getElementById('halfw').value) || 12;
-  views.forEach((v) => {{
-    const bag = v.model_bags[0];
-    if (!bag) return;
-    const atom = bag.model.atoms.find((a) => (chain === null || a.chain === chain) &&
-      (a.resname.toUpperCase() === key || String(a.seqid).trim() === key));
-    if (!atom) return;
-    v.select_atom({{bag: bag, atom: atom}}, {{steps: 1}});
-    v.camera.zoom = v.camera.top / halfw;
-    v.update_camera();
-    v.redraw_maps(true);
-    v.request_render();
-  }});
+  views.forEach((v) => goToView(v, spec));
+}}
+function goToView(v, spec) {{
+  spec = (spec || '').trim();
+  if (!spec) return;
+  const parts = spec.split(/\s+/);
+  const chain = parts.length > 1 ? parts[0] : null, key = parts[parts.length - 1].toUpperCase();
+  const halfw = parseFloat(document.getElementById('halfw').value) || 12;
+  const bag = v.model_bags[0];
+  if (!bag) return;
+  const atom = bag.model.atoms.find((a) => (chain === null || a.chain === chain) &&
+    (a.resname.toUpperCase() === key || String(a.seqid).trim() === key));
+  if (!atom) return;
+  v.select_atom({{bag: bag, atom: atom}}, {{steps: 1}});
+  v.camera.zoom = v.camera.top / halfw;
+  v.update_camera();
+  v.redraw_maps(true);
+  v.request_render();
 }}
 document.getElementById('goto').addEventListener('change', (e) => goTo(e.target.value));
 document.getElementById('halfw').addEventListener('change', () => goTo(document.getElementById('goto').value));
-// once every pane has its maps, jump to the starting residue
-let ready = 0;
-const waitAll = setInterval(() => {{
-  if (views.every((v) => v.map_bags.length >= 2)) {{
-    clearInterval(waitAll);
-    goTo(document.getElementById('goto').value);
-  }}
-}}, 300);
 document.getElementById('mapsel').addEventListener('change', (e) => {{
   const which = e.target.value;
   ARMS.forEach((a, i) => {{
