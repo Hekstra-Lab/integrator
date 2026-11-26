@@ -290,6 +290,77 @@ def refinement_from_phenix_log(path) -> dict | None:
     return None
 
 
+_PHENIX_BIN_RE = re.compile(
+    r"^\|\s*(\d+):\s+([\d.]+)\s+-\s+([\d.]+)\s+((?:[-\d.]+\s+){6}[-\d.]+)\s*\|\s*$")
+_PHENIX_STEP_RE = re.compile(
+    r"^\s*(\S+)\s*:\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+(-?[\d.]+)\s+([\d.]+)\s+([\d.]+)"
+    r"\s+(\d+)\s+([\d.]+)\s*$")
+
+
+def refinement_shells_from_phenix_log(path) -> dict[str, list[dict]]:
+    """The per-shell tables of the FINAL statistics in a phenix.refine log.
+
+    Two tables, each the last occurrence in the file (phenix prints them for the
+    start and the end of refinement):
+
+    `rfactors`: shell, d_max, d_min, completeness, n_work, n_free, r_work,
+    r_free, target_work, target_free -- from the table headed `R-factors`.
+    `fom`: shell, d_max, d_min, n_work, n_free, fom, phase_error, scale,
+    alpha, beta -- from the table headed `figures of merit` (the R-free
+    likelihood estimates, Acta Cryst. (1995). A51, 880-887).
+
+    Both tables have ten numbers per row, so they are told apart by the header
+    above them, not by their shape.
+    """
+    text = Path(path).read_text(errors="replace")
+    tables: dict[str, list[list[dict]]] = {"rfactors": [], "fom": []}
+    current = None
+    keys = {"rfactors": ("completeness", "n_work", "n_free", "r_work", "r_free", "target_work", "target_free"),
+            "fom": ("n_work", "n_free", "fom", "phase_error", "scale", "alpha", "beta")}
+    for line in text.splitlines():
+        if "R-factors" in line and "Resolution" in line:
+            current = "rfactors"
+            tables[current].append([])
+            continue
+        if "figures of merit" in line:
+            current = "fom"
+            tables[current].append([])
+            continue
+        m = _PHENIX_BIN_RE.match(line)
+        if m and current is not None:
+            vals = [float(v) for v in m.group(4).split()]
+            row = {"shell": int(m.group(1)), "d_max": float(m.group(2)), "d_min": float(m.group(3))}
+            row.update(dict(zip(keys[current], vals)))
+            for k in ("n_work", "n_free"):
+                row[k] = int(row[k])
+            tables[current][-1].append(row)
+        elif current is not None and tables[current] and tables[current][-1] and line.startswith("|---"):
+            current = None
+    return {k: (v[-1] if v else []) for k, v in tables.items()}
+
+
+def refinement_steps_from_phenix_log(path) -> list[dict]:
+    """The `REFINEMENT STATISTICS STEP BY STEP` table: stage, r_work, r_free,
+    bonds, angles, b_min, b_max, b_ave, n_water, shift, in the order printed."""
+    text = Path(path).read_text(errors="replace")
+    # anchored on the column header, which every version prints, not on the banner
+    if "stage r-work r-free" not in text:
+        return []
+    block = text[text.rindex("stage r-work r-free"):]
+    out = []
+    names = ("r_work", "r_free", "bonds", "angles", "b_min", "b_max", "b_ave", "n_water", "shift")
+    for line in block.splitlines():
+        m = _PHENIX_STEP_RE.match(line)
+        if m:
+            vals = [float(v) for v in m.groups()[1:]]
+            row = {"stage": m.group(1), **dict(zip(names, vals))}
+            row["n_water"] = int(row["n_water"])
+            out.append(row)
+        elif out and line.startswith("----"):
+            break
+    return out
+
+
 def shell_midpoint(d_max, d_min) -> float:
     """The resolution at the middle of a shell, in 1/d^2.
 
