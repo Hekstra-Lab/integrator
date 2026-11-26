@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-343 scripts.
+345 scripts.
 
 ## Start here
 
@@ -178,6 +178,7 @@ per job, and it lives in the repo".
 | `figures/fig_profile_shape.py` | Does a profile model follow the spot shape of the reflections beside it? |
 | `figures/fig_profile_truth_examples.py` | Shoeboxes of the datsimx sims beside their true profile and each arm's predicted profile and gate. |
 | `figures/fig_sim_crps.py` | CRPS of each integrator's exported intensities against the simulation's true intensity, by true-intensity bin. |
+| `figures/fig_sim_diagnostics.py` | Integrator, merging and refinement diagnostics for the mos010 careless -> phenix arms, as large-panel PDFs. |
 | `figures/fig_sim_image.py` | Simulated Laue shots side by side: whole detector (block means) and a full-resolution crop. |
 | `figures/fig_sim_learned_spectrum.py` | Learned Wilson spectrum G(lambda) of trained runs against the simulation's spectrum and its truth table. |
 | `figures/fig_sim_merged_vs_truth.py` | Merged structure factors and careless's per-observation scale against the simulation's truth. |
@@ -195,6 +196,7 @@ per job, and it lives in the repo".
 | `figures/figstyle.py` | The one place the figure scripts get their look: figTeX, the ink theme. |
 | `figures/make_tables.py` * | The LaTeX tables, from the DIALS logs each arm already wrote. |
 | `figures/pull_figdata.sh` * | Bring the plot-ready tables down from Cannon into docs/figures/data/. |
+| `figures/readable.py` | Large-panel diagnostic figures: a fixed panel size in inches, readable type, PDF output. |
 | `figures/render_all.sh` * | Re-render every reported figure from docs/figures/data/, then rebuild the |
 | `figures/shapes.py` | Shape statistics of a profile image, shared by the figure scripts. |
 | `figures/tables.py` | LaTeX tables in the mydesign dialect: booktabs rules and siunitx columns. |

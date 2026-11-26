@@ -322,7 +322,9 @@ def refinement_shells_from_phenix_log(path) -> dict[str, list[dict]]:
             current = "rfactors"
             tables[current].append([])
             continue
-        if "figures of merit" in line:
+        # the header line only: the table is followed by a summary line,
+        # `|figures of merit: min = ... mean = ...|`, which must not open a new one
+        if "likelihood based estimates for figures of merit" in line:
             current = "fom"
             tables[current].append([])
             continue

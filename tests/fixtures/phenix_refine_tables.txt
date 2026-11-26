@@ -54,6 +54,10 @@
 | 20:    1.81 -    1.78   914    91  0.91  16.72   1.06     0.98      14873.99|
 |alpha:            min =        0.96 max =            1.00 mean =         0.98|
 |beta:             min =     2756.08 max =        14873.99 mean =      6559.75|
+|figures of merit: min =        0.00 max =            1.00 mean =         0.95|
+|phase err.(work): min =        0.00 max =           89.98 mean =         9.53|
+|phase err.(test): min =        0.00 max =           89.32 mean =        10.16|
+|-----------------------------------------------------------------------------|
 leading digit, like 1_, means number of macro-cycle                     
 0    : statistics at the very beginning when nothing is done yet        
 1_bss: bulk solvent correction and/or (anisotropic) scaling             

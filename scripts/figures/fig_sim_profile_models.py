@@ -43,21 +43,20 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 from scipy import ndimage  # noqa: E402
 
-import figstyle  # noqa: E402
-from arms import label as arm_label  # noqa: E402
+import readable as R  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "docs" / "figures" / "sim"
 D_EDGES = (1.78, 2.0, 2.5, 3.0, 4.0, 99.0)
-ORDER = ("laue_integrate", "t0_rb", "p2_rb", "b1_rb", "b1_laplace", "geom_laplace")
+ORDER = ("laue_integrate", "svae_rb", "t0_rb", "p2_rb", "b1_rb", "b1_laplace", "geom_laplace")
 # Column titles name the PROFILE model, not the export: b1_rb and b1_laplace share
 # one checkpoint and one amortized profile, and arms.label names the export.
-COLUMN = {"laue_integrate": "laue.integrate", "t0_rb": "T0", "p2_rb": "P2", "b1_rb": "B1",
+COLUMN = {"laue_integrate": "laue.integrate", "svae_rb": "svae\n(learned basis)", "t0_rb": "T0", "p2_rb": "P2", "b1_rb": "B1",
           "b1_laplace": "B1", "geom_laplace": "geometric"}
 
 
 def shell_name(lo: float, hi: float) -> str:
-    return f"$>{lo:g}$ \\AA" if hi > 50 else f"{lo:g}--{hi:g} \\AA"
+    return f"$>{lo:g}$ Å" if hi > 50 else f"{lo:g}--{hi:g} Å"
 
 
 def major_axis_angle(p: np.ndarray) -> np.ndarray:
@@ -92,13 +91,13 @@ def main() -> None:
                     help="NAME=ARM: draw the modes npz's <NAME>_mode as a column after ARM")
     ap.add_argument("--example-i", default="30,300", help="true intensities of the example rows (photons)")
     a = ap.parse_args()
-    figstyle.use()
+    R.setup(9)
     z = np.load(a.src, allow_pickle=True)
     dataset = str(z["dataset"])
     ids = z["refl_ids"]
     present = {k[: -len("_profile")] for k in z.files if k.endswith("_profile") and k != "true_profile"}
     arms = [m for m in ORDER if m in present] + sorted(present - set(ORDER))
-    cols = [(COLUMN.get(m, arm_label(m)), z[f"{m}_profile"].astype(float)) for m in arms]
+    cols = [(COLUMN.get(m, R.label(m)), z[f"{m}_profile"].astype(float)) for m in arms]
     if a.modes is not None:
         zm = np.load(a.modes, allow_pickle=True)
         pos = {int(r): i for i, r in enumerate(zm["refl_ids"])}
@@ -110,19 +109,20 @@ def main() -> None:
             out.append((lab, arr))
             for spec in a.mode_after:
                 name, arm = spec.split("=", 1)
-                if arm in arms and lab == COLUMN.get(arm, arm_label(arm)) and f"{name}_mode" in zm.files:
+                if arm in arms and lab == COLUMN.get(arm, R.label(arm)) and f"{name}_mode" in zm.files:
                     m = np.full_like(arr, np.nan)
                     m[keep] = zm[f"{name}_mode"][idx[keep]]
                     out.append((f"{lab}\nLaplace mode", m))
         cols = out
     true, counts, I, d = z["true_profile"].astype(float), z["counts"], z["i_true"], z["d"]
     nb = len(D_EDGES) - 1
-    cm, dm = figstyle.cmap(), figstyle.diverging_cmap()
+    cm, dm = "Blues", "RdBu_r"
+    PANEL = 1.55  # inches per panel: the figure grows with the number of models
     ncol = len(cols)
 
     # ---- examples, one reflection per shell
     for target in (float(x) for x in a.example_i.split(",")):
-        fig, ax = plt.subplots(nb, ncol + 2, figsize=figstyle.figsize("full", aspect=nb / (ncol + 2) * 1.05),
+        fig, ax = plt.subplots(nb, ncol + 2, figsize=(PANEL * (ncol + 2), PANEL * nb + 0.6),
                                layout="constrained", squeeze=False)
         for r in range(nb):
             sel = np.where((d >= D_EDGES[r]) & (d < D_EDGES[r + 1]) & np.isfinite(cols[-1][1]).all((1, 2)))[0]
@@ -136,12 +136,11 @@ def main() -> None:
                 x.set_yticks([])
                 x.grid(False)
                 if k >= 1:
-                    x.text(0.04, 0.04, f"{neff(img):.0f}", transform=x.transAxes, fontsize=5, color="white")
+                    x.text(0.04, 0.04, f"{neff(img):.0f}", transform=x.transAxes, fontsize=8, color="black", bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.8))
                 if r == 0:
-                    x.set_title(lab, fontsize=5)
-            ax[r, 0].set_ylabel(f"{shell_name(D_EDGES[r], D_EDGES[r + 1])}\n{I[j]:.0f} ph", fontsize=5)
-        for p in figstyle.save(fig, OUT / f"sim_profile_models_examples_{dataset}_{target:g}"):
-            print(p)
+                    x.set_title(lab, fontsize=8)
+            ax[r, 0].set_ylabel(f"{shell_name(D_EDGES[r], D_EDGES[r + 1])}\n{I[j]:.0f} ph", fontsize=8)
+        print(R.save(fig, OUT / f"sim_profile_models_examples_{dataset}_{target:g}"))
         plt.close(fig)
 
     # ---- streak-aligned means and differences
@@ -149,9 +148,9 @@ def main() -> None:
     ang = major_axis_angle(true)
     true_al = aligned(true, ang)
     cols_al = [(lab, aligned(np.nan_to_num(arr), ang)) for lab, arr in cols]
-    figm, axm = plt.subplots(nb, ncol + 1, figsize=figstyle.figsize("full", aspect=nb / (ncol + 1) * 1.05),
+    figm, axm = plt.subplots(nb, ncol + 1, figsize=(PANEL * (ncol + 1), PANEL * nb + 0.6),
                              layout="constrained", squeeze=False)
-    figd, axd = plt.subplots(nb, ncol, figsize=figstyle.figsize("full", aspect=nb / ncol * 1.08),
+    figd, axd = plt.subplots(nb, ncol, figsize=(PANEL * ncol, PANEL * nb + 0.8),
                              layout="constrained", squeeze=False)
     for r in range(nb):
         sel = (d >= D_EDGES[r]) & (d < D_EDGES[r + 1]) & ok
@@ -165,28 +164,26 @@ def main() -> None:
         for k, (lab, img) in enumerate([("true profile", pt)] + means):
             x = axm[r, k]
             x.imshow(img, cmap=cm, interpolation="nearest", vmin=0, vmax=vmax)
-            x.text(0.04, 0.04, f"{neff(img):.0f}", transform=x.transAxes, fontsize=5, color="white")
+            x.text(0.04, 0.04, f"{neff(img):.0f}", transform=x.transAxes, fontsize=8, color="black", bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.8))
             if r == 0:
-                x.set_title(lab, fontsize=5)
-        axm[r, 0].set_ylabel(f"{shell_name(D_EDGES[r], D_EDGES[r + 1])}\nn {sel.sum()}", fontsize=5)
+                x.set_title(lab, fontsize=8)
+        axm[r, 0].set_ylabel(f"{shell_name(D_EDGES[r], D_EDGES[r + 1])}\nn {sel.sum()}", fontsize=8)
         for k, (lab, q) in enumerate(means):
             x = axd[r, k]
             x.imshow(q - pt, cmap=dm, vmin=-lim, vmax=lim, interpolation="nearest")
             kappa = float((q * pt).sum() / (q * q).sum())
-            x.text(0.04, 0.04, f"$\\kappa$ {kappa:.3f}", transform=x.transAxes, fontsize=5)
+            x.text(0.04, 0.04, f"$\\kappa$ {kappa:.3f}", transform=x.transAxes, fontsize=8)
             if r == 0:
-                x.set_title(f"{lab}\n$-$ truth", fontsize=5)
+                x.set_title(f"{lab}\n$-$ truth", fontsize=8)
             if lab == "laue.integrate":
-                x.text(0.96, 0.96, "clipped", transform=x.transAxes, fontsize=4, ha="right", va="top")
-        axd[r, 0].set_ylabel(f"{shell_name(D_EDGES[r], D_EDGES[r + 1])}\nn {sel.sum()}", fontsize=5)
+                x.text(0.96, 0.96, "clipped", transform=x.transAxes, fontsize=7, ha="right", va="top")
+        axd[r, 0].set_ylabel(f"{shell_name(D_EDGES[r], D_EDGES[r + 1])}\nn {sel.sum()}", fontsize=8)
     for x in list(axm.ravel()) + list(axd.ravel()):
         x.set_xticks([])
         x.set_yticks([])
         x.grid(False)
-    for p in figstyle.save(figm, OUT / f"sim_profile_models_means_{dataset}"):
-        print(p)
-    for p in figstyle.save(figd, OUT / f"sim_profile_models_diff_{dataset}"):
-        print(p)
+    print(R.save(figm, OUT / f"sim_profile_models_means_{dataset}"))
+    print(R.save(figd, OUT / f"sim_profile_models_diff_{dataset}"))
 
 
 if __name__ == "__main__":

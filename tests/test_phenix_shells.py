@@ -19,6 +19,8 @@ def test_fom_shells_are_told_apart_by_their_header():
     t = metrics.refinement_shells_from_phenix_log(LOG)["fom"]
     assert t[0]["fom"] == 0.95 and t[0]["phase_error"] == 7.33 and t[0]["beta"] == 8998.78
     assert "r_work" not in t[0]
+    # the summary line after the table (`|figures of merit: min = ...|`) does not open an empty one
+    assert len(t) == 20 and t[-1]["fom"] == 0.91
 
 
 def test_step_table():
