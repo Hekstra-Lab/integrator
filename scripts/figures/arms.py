@@ -43,6 +43,8 @@ LABELS = {
     "p2_rb": r"P2, $i_\mathrm{rb}$",
     "t0_rb": r"T0, $i_\mathrm{rb}$",
     "laue_integrate": "laue.integrate",
+    "svae_rb": r"svae (learned basis), $i_\mathrm{rb}$",
+    "svae_bg_rb": r"svae\_bg (learned basis), $i_\mathrm{rb}$",
 }
 
 # The axis ratio of the profiles each model fits to its OWN bright
@@ -79,7 +81,7 @@ def ordered(methods) -> list[str]:
 # laue.integrate is the reference and is drawn in figTeX's reference colour;
 # the five model arms take the categorical palette in this order, so every
 # figure of that analysis shows an arm in one colour.
-SIM_ORDER = ("laue_integrate", "t0_rb", "p2_rb", "b1_rb", "b1_laplace", "geom_laplace")
+SIM_ORDER = ("laue_integrate", "svae_rb", "svae_bg_rb", "t0_rb", "p2_rb", "b1_rb", "b1_laplace", "geom_laplace")
 SIM_REFERENCE = "laue_integrate"
 
 
