@@ -47,6 +47,8 @@ PAGE = """<!doctype html>
   <b>Density comparison</b>
   <label>map <select id="mapsel">{map_options}</select></label>
   <label><input type="checkbox" id="sync" checked> keep views in step</label>
+  <label>go to <input id="goto" size="10" value="{focus}" title="residue name (FOL, MN) or number, optionally chain first: A 27"></label>
+  <label>view half-width (Å) <input id="halfw" size="4" value="12"></label>
   <span>drag: rotate; wheel: zoom; shift-drag: pan; ctrl-click: recentre on an atom; H in a pane: UglyMol help</span>
 </div>
 <div id="grid">{panes}</div>
@@ -72,18 +74,51 @@ views.forEach((v, i) => {{
     syncing = true;
     views.forEach((o, j) => {{
       if (j === i || !o.renderer) return;
+      // UglyMol bundles a cut-down three.js whose Quaternion has no copy(),
+      // so the four components are copied; update_camera() resets near/far
       o.camera.position.copy(v.camera.position);
-      o.camera.quaternion.copy(v.camera.quaternion);
+      const q = v.camera.quaternion, oq = o.camera.quaternion;
+      oq._x = q._x; oq._y = q._y; oq._z = q._z; oq._w = q._w;
       o.camera.up.copy(v.camera.up);
       o.camera.zoom = v.camera.zoom;
-      o.camera.updateProjectionMatrix();
       o.target.copy(v.target);
+      o.update_camera();
       o.redraw_maps();
       o.renderer.render(o.scene, o.camera);
     }});
     syncing = false;
   }};
 }});
+// centre every pane on a residue, zoomed so the view spans +-halfw Angstrom
+function goTo(spec) {{
+  spec = (spec || '').trim();
+  if (!spec) return;
+  const parts = spec.split(/\s+/);
+  const chain = parts.length > 1 ? parts[0] : null, key = parts[parts.length - 1].toUpperCase();
+  const halfw = parseFloat(document.getElementById('halfw').value) || 12;
+  views.forEach((v) => {{
+    const bag = v.model_bags[0];
+    if (!bag) return;
+    const atom = bag.model.atoms.find((a) => (chain === null || a.chain === chain) &&
+      (a.resname.toUpperCase() === key || String(a.seqid).trim() === key));
+    if (!atom) return;
+    v.select_atom({{bag: bag, atom: atom}}, {{steps: 1}});
+    v.camera.zoom = v.camera.top / halfw;
+    v.update_camera();
+    v.redraw_maps(true);
+    v.request_render();
+  }});
+}}
+document.getElementById('goto').addEventListener('change', (e) => goTo(e.target.value));
+document.getElementById('halfw').addEventListener('change', () => goTo(document.getElementById('goto').value));
+// once every pane has its maps, jump to the starting residue
+let ready = 0;
+const waitAll = setInterval(() => {{
+  if (views.every((v) => v.map_bags.length >= 2)) {{
+    clearInterval(waitAll);
+    goTo(document.getElementById('goto').value);
+  }}
+}}, 300);
 document.getElementById('mapsel').addEventListener('change', (e) => {{
   const which = e.target.value;
   ARMS.forEach((a, i) => {{
@@ -116,6 +151,7 @@ def main() -> None:
     ap.add_argument("--truth", type=Path, default=None, help="the true model, drawn in every pane")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--ncols", type=int, default=0, help="panes per row (default: about square)")
+    ap.add_argument("--focus", default="FOL", help="residue the panes start centred on (name or number; default the folate)")
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
     arms, has_anom = [], True
@@ -144,7 +180,7 @@ def main() -> None:
     opts = '<option value="2fofc">2mFo-DFc and mFo-DFc</option>' + (
         '<option value="anom">anomalous difference</option>' if has_anom else "")
     (a.out / "index.html").write_text(PAGE.format(ncols=ncols, uglymol=UGLYMOL, panes=panes, map_options=opts,
-                                                  arms_json=json.dumps(arms), truth_json=json.dumps(truth)))
+                                                  arms_json=json.dumps(arms), truth_json=json.dumps(truth), focus=a.focus))
     print(f"wrote {a.out / 'index.html'}; serve with: uv run python -m http.server 8765 --directory {a.out}")
 
 
