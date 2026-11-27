@@ -23,6 +23,13 @@
 # is measured afterwards rather than assumed; if it drifts, the comparison uses
 # the unrefined geometry instead.
 #
+# OPT_MACROCYCLES (default unset = laue-dials' own default, 3): passed to
+# laue.optimize_indexing as n_macrocycles. 0 assigns Miller indices and
+# wavelengths once at truth.expt's orientation, without rotation updates or
+# outlier rejection. On mos025 (mosaic 0.25) the default 3 macrocycles rotate
+# the true crystals by a median 0.87 deg and up to 11.3 deg (mos010: 0.0017
+# deg), and the image left with no refined reflections then trips laue.predict.
+#
 # Resumable: each step runs only if its output is missing.
 #
 # Overrides (defaults = the hkl_data run as made): OUT (holds truth.expt),
@@ -125,7 +132,7 @@ laue.optimize_indexing "$OUT/truth.expt" "$OUT/stills.refl" \
   wavelengths.lam_min="$LAM_MIN" \
   wavelengths.lam_max="$LAM_MAX" \
   reciprocal_grid.d_min="$DMIN" \
-  nproc="$NPROC" || exit 1
+  nproc="$NPROC" ${OPT_MACROCYCLES:+n_macrocycles="$OPT_MACROCYCLES"} || exit 1
 fi
 
 if have "$OUT/poly_refined.refl"; then echo "  [4/5] skip (poly_refined.refl)"; else
