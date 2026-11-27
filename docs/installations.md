@@ -23,7 +23,8 @@ PyPI's newest release is still 0.5.1 (0.6.dev0 is a 2025-02 pre-release), so "la
 
 - hewl_1118 shoeboxes and the `laue.integrate` reference `integrated_HEWL_anom_{0999,3049}.mtz` (May 2026): env `ld`, i.e. the v0.5.1-based summation integrator (`integrator_data/hewl_1118/process.sh`, `pytorch_data/mksbox.sh`).
 - `docs/ablation_1118_1000.md` baseline (R-free 0.1780): built from `integrated_HEWL_anom_0999.mtz`, the same v0.5.1 integrator.
-- mos010 simulation: `laue_dials_pc` (v0.5.1-based) and `laue_dials_main` (upstream main via `LAUE_DIALS_SRC`).
+- mos010 simulation: `laue_dials` (v0.5.1-based), `laue_dials_main` and `laue_dials_pc` (both upstream main d57f96e via `LAUE_DIALS_SRC`; the `lauepc_mos010` log, job 62803623, records the module path and commit).
+- mos025 simulation: `laue_dials_pc`, upstream main d57f96e, the same chain as mos010's (jobs 64010395, 64010397).
 
 ## Environments (`/n/lab_storage/hekstra_lab/people/aldama/micromamba/envs/`)
 
