@@ -6,7 +6,7 @@ Update this file when a checkout moves or an environment is rebuilt, and name th
 
 ## laue-dials
 
-Four checkouts.
+Five checkouts.
 Which one a job imports is set by the environment's editable install, or by `LAUE_DIALS_SRC` (a checkout's `src/` first on `PYTHONPATH`) in `scripts/sim_truth/paper_sims/sim_laue_process.sbatch` and `scripts/poly/laue_dials_rerun.sbatch`.
 
 | checkout | commit, date | branch | relative to upstream | imported by |
@@ -14,7 +14,8 @@ Which one a job imports is set by the environment's editable install, or by `LAU
 | `/n/holylabs/hekstra_lab/Users/laldama/software/laue-dials` | 63d483b, 2025-08-15 | `dump-profiles` | v0.5.1 plus local commits; the old summation `laue.integrate` | env `ld` (editable) |
 | `/n/lab_storage/hekstra_lab/people/aldama/software/laue-dials` | 31d6f10, 2026-06-18 | `integrator` | v0.5.1-35; the new integrator, before the multi-panel and window-centring fixes | env `integrator-cuda-dev` (editable) |
 | `/n/lab_storage/hekstra_lab/people/aldama/software/laue-dials-eiger` | 5de60e4, 2026-11-21 | `eiger-row-size` | v0.5.1-36; fixes predict's mask indexing on a non-square panel | `LAUE_DIALS_SRC`, the Eiger runs |
-| `/n/lab_storage/hekstra_lab/people/aldama/software/laue-dials-main` | d57f96e, 2026-09-20 | `datsimx-sim` (local name) | **upstream `main` exactly**, clean | `LAUE_DIALS_SRC`, the mos010 `laue_dials_main` run and the hewl_1118 rerun |
+| `/n/lab_storage/hekstra_lab/people/aldama/software/laue-dials-main` | d57f96e, 2026-09-20 | `datsimx-sim` (local name) | **upstream `main` exactly**, clean | `LAUE_DIALS_SRC`, the mos010 `laue_dials_main` and `laue_dials_pc` runs |
+| `/n/lab_storage/hekstra_lab/people/aldama/software/laue-dials-emptyguard` | 4c83503, 2026-11-26 | `empty-image-guard` | upstream main d57f96e plus one guard: `filter_masked_predictions` returns an empty table instead of raising `IndexError` on `preds["id"][0]` when no prediction on an image survives `cutoff_log_probability`; identical output on every image with a prediction | `LAUE_DIALS_SRC`, the hewl_1118 rerun (64010706) and mos025 (64013297), both of which crashed on main |
 
 Upstream main (rs-station/laue-dials) merged the new integrator in PR #86 on 2026-09-18: profile fitting in place of v0.5.1's summation, Sivia's prior on the final intensities, an integration radius estimated with a KD-tree, windows centred on floor(centroid), multi-panel support.
 PyPI's newest release is still 0.5.1 (0.6.dev0 is a 2025-02 pre-release), so "laue-dials" without a commit is ambiguous.
@@ -24,7 +25,7 @@ PyPI's newest release is still 0.5.1 (0.6.dev0 is a 2025-02 pre-release), so "la
 - hewl_1118 shoeboxes and the `laue.integrate` reference `integrated_HEWL_anom_{0999,3049}.mtz` (May 2026): env `ld`, i.e. the v0.5.1-based summation integrator (`integrator_data/hewl_1118/process.sh`, `pytorch_data/mksbox.sh`).
 - `docs/ablation_1118_1000.md` baseline (R-free 0.1780): built from `integrated_HEWL_anom_0999.mtz`, the same v0.5.1 integrator.
 - mos010 simulation: `laue_dials` (v0.5.1-based), `laue_dials_main` and `laue_dials_pc` (both upstream main d57f96e via `LAUE_DIALS_SRC`; the `lauepc_mos010` log, job 62803623, records the module path and commit).
-- mos025 simulation: `laue_dials_pc`, upstream main d57f96e, the same chain as mos010's (jobs 64010395, 64010397).
+- mos025 simulation: `laue_dials_pc`, the `empty-image-guard` clone (jobs 64013297, 64013298); upstream main crashed in `laue.predict` (64010395).
 
 ## Environments (`/n/lab_storage/hekstra_lab/people/aldama/micromamba/envs/`)
 
