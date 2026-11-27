@@ -259,6 +259,18 @@ if has simwindow && [ -f "$DATA/sim_truth_joined_mos025_41_pc.csv.gz" ]; then
       --methods laue_integrate,svae_bg_$est,t0_$est,p2_$est,b1_$est,geom_both_$est --tag mos025_window_$est
   done
 fi
+# careless.stats and phenix R-work / R-free of mos025 on 25x25 against 41x41 shoeboxes, careless seed 1, three layouts
+if has simwindow && [ -f "$DATA/sim_downstream_mos025_41/downstream_careless_stats.csv" ]; then
+  for f in method dataset overlay; do
+    step simwindow "${PY[@]}" scripts/figures/fig_careless_stats.py --data "$DATA/sim_downstream_mos025/downstream_careless_stats.csv" \
+      --extra-data "$DATA/sim_downstream_mos025_41/downstream_careless_stats.csv" \
+      --refine-shells "$DATA/sim_downstream_mos025/downstream_refine_shells.csv" "$DATA/sim_downstream_mos025_41/downstream_refine_shells.csv" \
+      --seed 1 --facet $f --tool cchalf,ccanom,ccpred,rsplit,isigi,completeness,phenix --correlation pearson \
+      --method laue_integrate,svae_bg_rb,t0_rb,p2_rb,b1_rb,geom_both_rb \
+      --dataset-label "mos025_pc_m0_default=25x25" --dataset-label "mos025_pc_m0_default41=41x41" \
+      --out-dir docs/figures/sim/window --prefix sim_window
+  done
+fi
 has simprofile && ls "$DATA"/profile_truth_examples_*.npz >/dev/null 2>&1 && step simprofile "${PY[@]}" scripts/figures/fig_profile_truth_examples.py
 # simulation-based calibration, one directory per scored run (scripts/sim_truth/sbc_ranks.py)
 has simsbc && ls "$DATA"/sbc/*/sbc_ecdf.csv >/dev/null 2>&1 && step simsbc "${PY[0]}" "${PY[1]}" --with "arviz<1" "${PY[@]:2}" scripts/figures/fig_sim_sbc.py --src "$DATA"/sbc/*/

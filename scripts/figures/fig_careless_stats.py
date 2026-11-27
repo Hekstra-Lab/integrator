@@ -572,9 +572,14 @@ def draw_by_method(df: pl.DataFrame, args) -> int:
             ax.set_ylim(lo - pad, hi + pad)
         for ax in flat[len(ms):]:
             ax.set_visible(False)
-        handles = flat[0].get_legend_handles_labels()
-        if handles[0]:
-            figstyle().top_legend(P, *handles)
+        # the legend from every panel: an arm drawn for one dataset only (laue.integrate,
+        # whose merge does not depend on our shoeboxes) would otherwise set it
+        seen = {}
+        for x_ in flat[:len(ms)]:
+            for h, lab in zip(*x_.get_legend_handles_labels()):
+                seen.setdefault(lab, h)
+        if seen:
+            figstyle().top_legend(P, list(seen.values()), list(seen))
         P.finish()
         path = args.out_dir / f"{args.prefix}_by_method_{_panel_slug(tool, statistic)}"
         figstyle().save(P.fig, path)

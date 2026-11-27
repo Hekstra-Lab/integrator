@@ -45,6 +45,13 @@ LABELS = {
     "laue_integrate": "laue.integrate",
     "svae_rb": r"svae (learned basis), $i_\mathrm{rb}$",
     "svae_bg_rb": r"svae\_bg (learned basis), $i_\mathrm{rb}$",
+    # mos025 arms (2026-11-27)
+    "geom_both_rb": r"geom\_both (geometric basis), $i_\mathrm{rb}$",
+    "geom_both_posterior": r"geom\_both, posterior",
+    "svae_bg_posterior": r"svae\_bg, posterior",
+    "t0_posterior": "T0, posterior",
+    "p2_posterior": "P2, posterior",
+    "b1_posterior": "B1, posterior",
 }
 
 # The axis ratio of the profiles each model fits to its OWN bright
