@@ -158,10 +158,12 @@ def parse_args():
                    help="more careless_stats tables appended to --data (another dataset's)")
     p.add_argument("--seed", type=int, default=None,
                    help="draw only this careless seed (tables with a seed column)")
-    p.add_argument("--facet", choices=("method", "dataset"), default=None,
+    p.add_argument("--facet", choices=("method", "dataset", "overlay"), default=None,
                    help="method: per statistic, one panel per arm and one line per dataset; "
                         "dataset: per statistic, one panel per dataset and one line per arm, "
-                        "on a shared y range (default: one figure per dataset, one line per arm)")
+                        "on a shared y range; overlay: per statistic, every arm in one panel (colour = arm, "
+                        "line style = dataset) beside the change from the first dataset to the second "
+                        "(default: one figure per dataset, one line per arm)")
     p.add_argument("--tool", default="cchalf",
                    help="with --facet: the careless tools to draw, comma separated")
     p.add_argument("--refine-shells", type=Path, nargs="*", default=[],
@@ -646,6 +648,87 @@ def draw_by_dataset(df: pl.DataFrame, args) -> int:
     return written
 
 
+def draw_overlay(df: pl.DataFrame, args) -> int:
+    """Per (tool, statistic, correlation): all arms and both datasets on one axis, and the change.
+
+    Left, colour is the arm (laue.integrate as the reference colour) and the line
+    style the dataset, solid for the first and dashed for the second. Right, the
+    second dataset's value minus the first's, per arm. careless and phenix bin each
+    run separately, so the first dataset's curve is interpolated linearly in 1/d^2
+    onto the second's shell centres, inside the range both cover only.
+    """
+    import numpy as np
+
+    from arms import colours, label as arm_label
+
+    tools = [t.strip().lower() for t in args.tool.split(",") if t.strip()]
+    df = df.filter(pl.col("tool").str.to_lowercase().is_in(tools))
+    names = dict(x.split("=", 1) for x in args.dataset_label)
+    datasets = df["dataset"].unique(maintain_order=True).to_list()
+    if len(datasets) != 2:
+        raise SystemExit(f"--facet overlay needs exactly two datasets, got {datasets}")
+    d0, d1 = datasets
+    methods = ([m.strip() for m in args.method.split(",") if m.strip()] if args.method
+               else sorted(df["method"].unique().to_list()))
+    palette = colours([short(m) for m in methods])
+    ref_colour = figstyle().reference_style()["color"]
+    styles = {d0: "-", d1: "--"}
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    written = 0
+    for tool, statistic, panel in panels_of(df):
+        panel = panel.filter(pl.col("shell").str.contains("-"))
+        if tool.lower() == "ccpred":
+            panel = panel.filter(pl.col("group").cast(pl.Utf8) == "Test")
+            statistic = f"{statistic}, test"
+        ms = [m for m in methods if panel.filter(method=m).height]
+        if not ms:
+            continue
+        P = figstyle().panels("1x2", shared=False)
+        ax, dx = list(np.ravel(np.asarray(P.axs, dtype=object)))[:2]
+        curves = {}
+        for m in ms:
+            c = ref_colour if short(m) in (REFERENCE, "laue_integrate") else palette.get(short(m))
+            for d in (d0, d1):
+                part = panel.filter((pl.col("method") == m) & (pl.col("dataset") == d))
+                if not part.height:
+                    continue
+                part = _one_point_per_bin(part.sort("bin"))
+                x = np.asarray(shell_axis(part["shell"].to_list()), float)
+                y = part["value"].to_numpy()
+                curves[m, d] = (x, y)
+                ax.plot(x, y, ls=styles[d], lw=1.0 if d == d0 else 1.2, color=c,
+                        label=f"{arm_label(short(m))}, {names.get(d, d)}")
+            if (m, d0) in curves and (m, d1) in curves:
+                (x0, y0), (x1, y1) = curves[m, d0], curves[m, d1]
+                o = np.argsort(x0)
+                inside = (x1 >= x0.min()) & (x1 <= x0.max())
+                dx.plot(x1[inside], y1[inside] - np.interp(x1[inside], x0[o], y0[o]), lw=1.0, marker="o", ms=2,
+                        color=c, label=arm_label(short(m)))
+        dx.axhline(0, color=figstyle().roles()["frame"], lw=0.6)
+        for a in (ax, dx):
+            resolution_ticks(a, panel["shell"].to_list(), P)
+        base = label_parts(tool, statistic)[0]
+        ax.set_ylabel(base + better_arrow(tool, statistic))
+        dx.set_ylabel(rf"{names.get(d1, d1)} $-$ {names.get(d0, d0)}")
+        P.head(ax, 0, label_for(tool, statistic))
+        P.head(dx, 1, "change")
+        handles = dx.get_legend_handles_labels()
+        if handles[0]:
+            from matplotlib.lines import Line2D
+
+            h, l = list(handles[0]), list(handles[1])
+            h += [Line2D([], [], color="0.3", ls=styles[d]) for d in (d0, d1)]
+            l += [names.get(d, d) for d in (d0, d1)]
+            figstyle().top_legend(P, h, l)
+        P.finish()
+        path = args.out_dir / f"{args.prefix}_overlay_{_panel_slug(tool, statistic)}"
+        figstyle().save(P.fig, path)
+        logger.info("Saved %s", path)
+        plt.close(P.fig)
+        written += 1
+    return written
+
+
 def main() -> int:
     args = parse_args()
     if not args.data.is_file():
@@ -700,8 +783,8 @@ def main() -> int:
         df = df.filter(pl.col("correlation").fill_null("")
                        .is_in([args.correlation, ""]))
 
-    if args.facet in ("method", "dataset"):
-        n = (draw_by_method if args.facet == "method" else draw_by_dataset)(df, args)
+    if args.facet in ("method", "dataset", "overlay"):
+        n = {"method": draw_by_method, "dataset": draw_by_dataset, "overlay": draw_overlay}[args.facet](df, args)
         logger.info("%d figures", n)
         return 0
 

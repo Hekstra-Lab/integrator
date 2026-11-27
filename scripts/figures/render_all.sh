@@ -238,7 +238,7 @@ fi
 # careless.stats (every tool) and phenix's per-shell R-work / R-free, mos010 against mos025, careless seed 1:
 # per model with a line per mosaic spread (--facet method) and per mosaic spread with a line per model (--facet dataset)
 if has simmosaiccc && [ -f "$DATA/sim_downstream_mos025/downstream_careless_stats.csv" ]; then
-  for f in dataset method; do
+  for f in dataset method overlay; do
     step simmosaiccc "${PY[@]}" scripts/figures/fig_careless_stats.py --data "$DATA/sim_downstream/downstream_careless_stats.csv" \
       --extra-data "$DATA/sim_downstream_mos025/downstream_careless_stats.csv" \
       --refine-shells "$DATA/sim_downstream/downstream_refine_shells.csv" "$DATA/sim_downstream_mos025/downstream_refine_shells.csv" \
