@@ -868,12 +868,144 @@ def table_sim_downstream() -> None:
           "table, combined with weights equal to the number of free reflections per shell.")
 
 
+# mos010 against mos025 (mosaic spread 0.10 and 0.25, otherwise the same datsimx row), every
+# careless seed each has: (collect_downstream.py directory, dataset key). mos025's arms are the
+# epoch-39-59 averaged exports; mos010's svae_bg, T0 and P2 rows are last-epoch exports with one
+# seed, which the n columns show.
+SIM_MOSAIC = {
+    "mos010": (ROOT / "docs" / "figures" / "data" / "sim_downstream", "mos010_pc_default"),
+    "mos025": (ROOT / "docs" / "figures" / "data" / "sim_downstream_mos025", "mos025_pc_m0_default"),
+}
+SIM_MOSAIC_ARMS = {
+    "laue_integrate": ("laue.integrate", "summation / fit"),
+    "svae_bg_rb": (r"svae\_bg", r"$i_\mathrm{rb}$"),
+    "t0_rb": ("T0", r"$i_\mathrm{rb}$"),
+    "p2_rb": ("P2", r"$i_\mathrm{rb}$"),
+    "b1_rb": ("B1", r"$i_\mathrm{rb}$"),
+    "geom_both_rb": ("geom\\_both", r"$i_\mathrm{rb}$"),
+    "svae_bg_posterior": (r"svae\_bg", "posterior"),
+    "t0_posterior": ("T0", "posterior"),
+    "p2_posterior": ("P2", "posterior"),
+    "b1_posterior": ("B1", "posterior"),
+    "geom_both_posterior": ("geom\\_both", "posterior"),
+}
+
+
+def _sim_mosaic_rows():
+    """Per arm and dataset: seed means of the refinement, the merged-vs-truth r_F and careless.stats."""
+    import polars as pl
+
+    tabs = {}
+    for k, (d, ds) in SIM_MOSAIC.items():
+        if not (d / "downstream_refine.csv").is_file():
+            continue
+        cs = d / "downstream_careless_stats.csv"
+        tabs[k] = dict(
+            ref=pl.read_csv(d / "downstream_refine.csv").filter(dataset=ds),
+            mg=pl.read_csv(d / "downstream_merged.csv", infer_schema_length=None).filter(
+                (pl.col("dataset") == ds) & (pl.col("shell").cast(pl.Utf8) == "all")),
+            cs=pl.read_csv(cs, infer_schema_length=None).filter(dataset=ds) if cs.is_file() else None)
+
+    def careless(c, m, tool, b, statistic=None, correlation=None, group=None):
+        if c is None:
+            return None
+        q = c.filter((pl.col("method") == m) & (pl.col("tool") == tool) & (pl.col("bin") == b))
+        if statistic is not None:
+            q = q.filter(pl.col("statistic") == statistic)
+        if correlation is not None:
+            q = q.filter(pl.col("correlation") == correlation)
+        if group is not None:
+            q = q.filter(pl.col("group").cast(pl.Utf8) == group)
+        if not q.height:
+            return None
+        # mean over careless's repeat groups within a seed, then over seeds
+        return float(q.group_by("seed").agg(pl.col("value").mean())["value"].mean())
+
+    laue = {k: t["ref"].filter(method="laue_integrate")["r_free"].mean() for k, t in tabs.items()}
+    rows = []
+    for m, (arm, export) in SIM_MOSAIC_ARMS.items():
+        row = {"arm": arm, "export": export}
+        seen = False
+        for k, t in tabs.items():
+            r = t["ref"].filter(method=m)
+            if not r.height:
+                continue
+            seen = True
+            cc = t["cs"].filter((pl.col("method") == m) & (pl.col("tool") == "cchalf")) if t["cs"] is not None else None
+            outer = int(cc["bin"].max()) if cc is not None and cc.height else None  # completeness has an extra bin
+            g = t["mg"].filter(method=m)
+            row.update({
+                f"{k}_n": r.height,
+                f"{k}_r_work": float(r["r_work"].mean()),
+                f"{k}_r_free": float(r["r_free"].mean()),
+                f"{k}_sd": float(r["r_free"].std()) if r.height > 1 else None,
+                f"{k}_d_laue": float(r["r_free"].mean() - laue[k]) if laue.get(k) is not None else None,
+                f"{k}_r_F": float(g["r_F"].mean()) if g.height else None,
+                f"{k}_cchalf_in": careless(t["cs"], m, "cchalf", 1, correlation="pearson"),
+                f"{k}_cchalf_out": careless(t["cs"], m, "cchalf", outer, correlation="pearson") if outer else None,
+                f"{k}_ccpred_out": careless(t["cs"], m, "ccpred", outer, correlation="pearson", group="Test") if outer else None,
+                f"{k}_rsplit_out": careless(t["cs"], m, "rsplit", outer) if outer else None,
+                f"{k}_isigi_out": careless(t["cs"], m, "isigi", outer) if outer else None,
+            })
+        if seen:
+            rows.append(row)
+    return rows, list(tabs)
+
+
+def table_sim_mosaic() -> None:
+    """mos010 against mos025: refinement and careless.stats per arm, averaged over careless seeds.
+
+    The two datasets are one datsimx row at mosaic spread 0.10 and 0.25, through the same
+    laue-dials (mos025 with optimize_indexing n_macrocycles=0), 25x25 shoeboxes, careless
+    config 4 and two phenix passes against one pinned R-free set.
+    """
+    rows, sets = _sim_mosaic_rows()
+    if not rows:
+        return
+    lab = {"mos010": "0.10", "mos025": "0.25"}
+
+    def only(*suffixes):
+        return [{k: v for k, v in r.items() if k in ("arm", "export") or k.endswith(suffixes)} for r in rows]
+
+    t = Table(only("_n", "_r_work", "_r_free", "_sd", "_d_laue", "_r_F"))
+    t.column("arm", label="arm")
+    t.column("export", label="export")
+    for k in sets:
+        t.column(f"{k}_n", label=f"$n$, {lab[k]}", fmt="{:d}")
+        t.column(f"{k}_r_work", label=rf"$R_\mathrm{{work}}$, {lab[k]}", fmt="{:.4f}", best="min")
+        t.column(f"{k}_r_free", label=rf"$R_\mathrm{{free}}$, {lab[k]}", fmt="{:.4f}", best="min")
+        t.column(f"{k}_sd", label=rf"sd $R_\mathrm{{free}}$, {lab[k]}", fmt="{:.4f}")
+        t.column(f"{k}_d_laue", label=rf"$\Delta R_\mathrm{{free}}$ vs laue, {lab[k]}", fmt="{:+.4f}", best="min")
+        t.column(f"{k}_r_F", label=rf"$r_F$ vs truth, {lab[k]}", fmt="{:.3f}", best="min")
+    write(t, "sim_mosaic_refinement",
+          "The same datsimx simulation at mosaic spread 0.10$^\\circ$ (mos010) and 0.25$^\\circ$ (mos025): "
+          "each export merged by careless (config 4) and refined twice by phenix against one pinned R-free "
+          "set, averaged over the $n$ careless seeds available; sd is over those seeds. $\\Delta R_\\mathrm{free}$ "
+          "is against that dataset's laue.integrate mean. $r_F$ compares merged with true structure factors "
+          "after a fitted scale and $B$. mos025's model exports average the checkpoints of epochs 39--59; "
+          "mos010's svae\\_bg, T0 and P2 exports are the last epoch.")
+    t2 = Table(only("_cchalf_in", "_cchalf_out", "_ccpred_out", "_rsplit_out", "_isigi_out"))
+    t2.column("arm", label="arm")
+    t2.column("export", label="export")
+    for k in sets:
+        t2.column(f"{k}_cchalf_in", label=rf"CC$_{{1/2}}$ inner, {lab[k]}", fmt="{:.3f}", best="max")
+        t2.column(f"{k}_cchalf_out", label=rf"CC$_{{1/2}}$ outer, {lab[k]}", fmt="{:.3f}", best="max")
+        t2.column(f"{k}_ccpred_out", label=rf"CC$_\mathrm{{pred}}$ test, outer, {lab[k]}", fmt="{:.3f}", best="max")
+        t2.column(f"{k}_rsplit_out", label=rf"$R_\mathrm{{split}}$ outer, {lab[k]}", fmt="{:.3f}", best="min")
+        t2.column(f"{k}_isigi_out", label=rf"$I/\sigma$ outer, {lab[k]}", fmt="{:.2f}")
+    write(t2, "sim_mosaic_careless",
+          "careless.stats of the same merges, in careless's innermost and outermost of ten resolution "
+          "shells (Pearson correlations; each statistic averaged over careless's repeat groups, then over "
+          "seeds).")
+
+
 def main() -> int:
     if "--only" in sys.argv and sys.argv[sys.argv.index("--only") + 1] == "sim":
         # the simulation tables read docs/figures/data/sim_downstream and need no DIALS logs
         print(f"tables -> {OUT.relative_to(ROOT)}")
         table_sim_truth_scores()
         table_sim_downstream()
+        table_sim_mosaic()
         return 0
     if not LOGS.is_dir():
         raise SystemExit(
@@ -890,6 +1022,7 @@ def main() -> int:
     table_hyperparameters()
     table_sim_truth_scores()
     table_sim_downstream()
+    table_sim_mosaic()
     write_long_format()
     write_statistic_labels()
     return 0
