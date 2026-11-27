@@ -140,9 +140,10 @@ def parse_args():
                    help="more careless_stats tables appended to --data (another dataset's)")
     p.add_argument("--seed", type=int, default=None,
                    help="draw only this careless seed (tables with a seed column)")
-    p.add_argument("--facet", choices=("method",), default=None,
-                   help="method: per statistic, one panel per arm and one line per dataset "
-                        "(default: one figure per dataset, one line per arm)")
+    p.add_argument("--facet", choices=("method", "dataset"), default=None,
+                   help="method: per statistic, one panel per arm and one line per dataset; "
+                        "dataset: per statistic, one panel per dataset and one line per arm, "
+                        "on a shared y range (default: one figure per dataset, one line per arm)")
     p.add_argument("--tool", default="cchalf",
                    help="with --facet: the careless tools to draw, comma separated")
     p.add_argument("--dataset-label", action="append", default=[],
@@ -557,6 +558,67 @@ def draw_by_method(df: pl.DataFrame, args) -> int:
     return written
 
 
+def draw_by_dataset(df: pl.DataFrame, args) -> int:
+    """Per (tool, statistic, correlation): one panel per dataset, one line per arm.
+
+    The arms keep their colours from `arms.py` and laue.integrate is drawn as
+    the reference; panels share the y range so the datasets compare.
+    """
+    import numpy as np
+
+    from arms import colours, label as arm_label
+
+    tools = [t.strip().lower() for t in args.tool.split(",") if t.strip()]
+    df = df.filter(pl.col("tool").str.to_lowercase().is_in(tools))
+    names = dict(x.split("=", 1) for x in args.dataset_label)
+    datasets = df["dataset"].unique(maintain_order=True).to_list()
+    methods = ([m.strip() for m in args.method.split(",") if m.strip()] if args.method
+               else sorted(df["method"].unique().to_list()))
+    palette = colours([short(m) for m in methods])
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    written = 0
+    for tool, statistic, panel in panels_of(df):
+        panel = panel.filter(pl.col("shell").str.contains("-"))
+        ds = [d for d in datasets if panel.filter(dataset=d).height]
+        if not ds:
+            continue
+        P = figstyle().panels(f"1x{len(ds)}", shared=False)
+        flat = list(np.ravel(np.asarray(P.axs, dtype=object)))
+        lo, hi = np.inf, -np.inf
+        for i, d in enumerate(ds):
+            ax = flat[i]
+            for m in methods:
+                part = panel.filter((pl.col("method") == m) & (pl.col("dataset") == d))
+                if not part.height:
+                    continue
+                part = _one_point_per_bin(part.sort("bin"))
+                x = shell_axis(part["shell"].to_list())
+                lab = arm_label(short(m))
+                if short(m) in (REFERENCE, "laue_integrate"):
+                    figstyle().parts.reference(ax, x, part["value"].to_list(), label=lab)
+                else:
+                    c = palette.get(short(m))
+                    ax.fill_between(x, part["lo"], part["hi"], color=c, alpha=0.15, linewidth=0)
+                    ax.plot(x, part["value"], lw=0.9, marker="o", ms=2, color=c, label=lab)
+                lo, hi = min(lo, float(part["lo"].min())), max(hi, float(part["hi"].max()))
+            resolution_ticks(ax, panel.filter(dataset=d)["shell"].to_list(), P)
+            ax.set_ylabel(label_parts(tool, statistic)[0] if i == 0 else "")
+            P.head(ax, i, names.get(d, d))
+        pad = 0.04 * (hi - lo)
+        for ax in flat:
+            ax.set_ylim(lo - pad, hi + pad)
+        handles = flat[0].get_legend_handles_labels()
+        if handles[0]:
+            figstyle().top_legend(P, *handles)
+        P.finish()
+        path = args.out_dir / f"{args.prefix}_by_dataset_{_panel_slug(tool, statistic)}"
+        figstyle().save(P.fig, path)
+        logger.info("Saved %s (%d datasets)", path, len(ds))
+        plt.close(P.fig)
+        written += 1
+    return written
+
+
 def main() -> int:
     args = parse_args()
     if not args.data.is_file():
@@ -601,8 +663,8 @@ def main() -> int:
         df = df.filter(pl.col("correlation").fill_null("")
                        .is_in([args.correlation, ""]))
 
-    if args.facet == "method":
-        n = draw_by_method(df, args)
+    if args.facet in ("method", "dataset"):
+        n = (draw_by_method if args.facet == "method" else draw_by_dataset)(df, args)
         logger.info("%d figures", n)
         return 0
 

@@ -242,6 +242,11 @@ if has simmosaiccc && [ -f "$DATA/sim_downstream_mos025/downstream_careless_stat
     --correlation pearson --method laue_integrate,svae_bg_rb,t0_rb,p2_rb,b1_rb \
     --dataset-label "mos010_pc_default=mosaic 0.10°" --dataset-label "mos025_pc_m0_default=mosaic 0.25°" \
     --out-dir docs/figures/sim --prefix sim_mosaic
+  step simmosaiccc "${PY[@]}" scripts/figures/fig_careless_stats.py --data "$DATA/sim_downstream/downstream_careless_stats.csv" \
+    --extra-data "$DATA/sim_downstream_mos025/downstream_careless_stats.csv" --seed 1 --facet dataset --tool cchalf \
+    --correlation pearson --method laue_integrate,svae_bg_rb,t0_rb,p2_rb,b1_rb \
+    --dataset-label "mos010_pc_default=mosaic 0.10°" --dataset-label "mos025_pc_m0_default=mosaic 0.25°" \
+    --out-dir docs/figures/sim --prefix sim_mosaic
 fi
 has simprofile && ls "$DATA"/profile_truth_examples_*.npz >/dev/null 2>&1 && step simprofile "${PY[@]}" scripts/figures/fig_profile_truth_examples.py
 # simulation-based calibration, one directory per scored run (scripts/sim_truth/sbc_ranks.py)
