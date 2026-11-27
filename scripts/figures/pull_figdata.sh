@@ -42,6 +42,7 @@ mkdir -p "$DEST"
 #                            what names the atom carrying each peak
 # hewl1118_downstream        collect_downstream.py over the hewl_1118 arms,
 #                            full range and capped at 1.81 A
+# shoebox_mosaic             the same reflections in mos010 and mos025
 # hewl1118_profiles          profile_maps_hewl1118.npz and laue-dials' profiles
 #                            reduced to its reflections and regions
 want=("$@")
@@ -341,6 +342,18 @@ if has basis; then
       tail -n +2 "$f" >> "$DEST/$sub/basis_components.csv"
     done
   done
+fi
+
+if has shoebox_mosaic; then
+  # the same reflections (image, h k l) in mos010 and mos025, which differ only
+  # in mosaic spread (0.10, 0.25), both through laue-dials main and our default
+  # shoebox cut; mos025 is the n_macrocycles=0 run (laue_dials_pc_m0)
+  M=$S/sims/paper_full
+  ssh cannon "git -C $REPO pull -q && cd $REPO && $P scripts/sim_truth/dump_shoebox_examples.py --same-reflections \
+    --out $M/mos025/figdata/shoebox_examples_mosaic.npz \
+    mos010_pc_default_mosaic=$M/mos010/shoeboxes/pc_default_25 \
+    mos025_pc_m0_default_mosaic=$M/mos025/shoeboxes/pc_m0_default_25" || exit 1
+  scp -q "cannon:$M/mos025/figdata/shoebox_examples_mosaic.npz" "$DEST/" && echo "shoebox_mosaic <- $M/mos025/figdata"
 fi
 
 if has hewl1118_downstream; then

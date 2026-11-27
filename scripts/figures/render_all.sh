@@ -57,7 +57,7 @@ if [ ${#want[@]} -eq 0 ]; then
   if [ -n "$TEMPLATE" ]; then
     want=(ccsym pdz2 refine basis basiscmp cost)
   else
-    want=(shoebox loss wilson basis basiscmp cost scatter merging peaks spectrum careless ccsym pdz2 refine shape patch arms simsampling simimage simtruth simshoebox simtruthpc simprofile simcmp simsbc simprior simcrps simprofcmp hewl1118profiles)
+    want=(shoebox loss wilson basis basiscmp cost scatter merging peaks spectrum careless ccsym pdz2 refine shape patch arms simsampling simimage simtruth simshoebox simtruthpc simprofile simcmp simsbc simprior simcrps simprofcmp hewl1118profiles simmosaic)
   fi
 fi
 has() { printf '%s\n' "${want[@]}" | grep -qx "$1"; }
@@ -199,6 +199,9 @@ has simsampling && [ -f "$DATA/sim_sampling_patches.npz" ] && step simsampling "
 has simimage && [ -f "$DATA/sim_image_view.npz" ] && step simimage "${PY[@]}" scripts/figures/fig_sim_image.py
 has simtruth && [ -f "$DATA/sim_truth_joined_mos010.csv" ] && step simtruth "${PY[@]}" scripts/figures/fig_sim_truth_scatter.py
 has simshoebox && [ -f "$DATA/shoebox_examples.npz" ] && step simshoebox "${PY[@]}" scripts/figures/fig_sim_shoeboxes.py
+# the same reflections under mosaic spread 0.10 and 0.25 (mos010, mos025)
+has simmosaic && [ -f "$DATA/shoebox_examples_mosaic.npz" ] && step simmosaic "${PY[@]}" scripts/figures/fig_sim_shoeboxes.py \
+  --src "$DATA/shoebox_examples_mosaic.npz" --out sim_shoeboxes_mosaic
 # mos010 photon-counting: laue.integrate and the svae arms, both estimators, against truth
 SIMPC="$DATA/sim_truth_joined_mos010_pc.csv.gz"
 has simtruthpc && [ -f "$SIMPC" ] && step simtruthpc "${PY[@]}" scripts/figures/fig_sim_truth_scatter.py --src "$SIMPC" --psf-fraction 0
