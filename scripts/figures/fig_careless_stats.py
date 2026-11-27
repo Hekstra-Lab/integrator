@@ -136,6 +136,17 @@ def parse_args():
                         "slides, poster); default is figstyle's")
     p.add_argument("--prefix", default="careless",
                    help="stem of the written figures")
+    p.add_argument("--extra-data", type=Path, nargs="*", default=[],
+                   help="more careless_stats tables appended to --data (another dataset's)")
+    p.add_argument("--seed", type=int, default=None,
+                   help="draw only this careless seed (tables with a seed column)")
+    p.add_argument("--facet", choices=("method",), default=None,
+                   help="method: per statistic, one panel per arm and one line per dataset "
+                        "(default: one figure per dataset, one line per arm)")
+    p.add_argument("--tool", default="cchalf",
+                   help="with --facet: the careless tools to draw, comma separated")
+    p.add_argument("--dataset-label", action="append", default=[],
+                   help="with --facet: DATASET=LABEL for the legend, repeatable")
     return p.parse_args()
 
 
@@ -481,6 +492,71 @@ def draw(df: pl.DataFrame, out_dir: Path, dataset: str, prefix: str) -> int:
     return written + 1
 
 
+def draw_by_method(df: pl.DataFrame, args) -> int:
+    """Per (tool, statistic, correlation): one panel per arm, one line per dataset.
+
+    For one model across datasets that differ in one simulation parameter
+    (mos010 and mos025, mosaic spread 0.10 and 0.25). Each line is the mean
+    over careless's cross-validation repeats per shell, with their range as
+    the band; panels share the y range so arms compare across panels.
+    """
+    import numpy as np
+
+    from arms import label as arm_label
+
+    tools = [t.strip().lower() for t in args.tool.split(",") if t.strip()]
+    df = df.filter(pl.col("tool").str.to_lowercase().is_in(tools))
+    names = dict(x.split("=", 1) for x in args.dataset_label)
+    datasets = [d for d in df["dataset"].unique(maintain_order=True).to_list()]
+    labels = [names.get(d, d) for d in datasets]
+    colour = figstyle().arm_colors(labels)
+    methods = ([m.strip() for m in args.method.split(",") if m.strip()] if args.method
+               else sorted(df["method"].unique().to_list()))
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    written = 0
+    for tool, statistic, panel in panels_of(df):
+        panel = panel.filter(pl.col("shell").str.contains("-"))
+        ms = [m for m in methods if panel.filter(method=m).height]
+        if not ms:
+            continue
+        cols = min(3, len(ms))
+        rows = (len(ms) + cols - 1) // cols
+        P = figstyle().panels(f"{rows}x{cols}", shared=False)
+        flat = list(np.ravel(np.asarray(P.axs, dtype=object)))
+        lo, hi = np.inf, -np.inf
+        for i, m in enumerate(ms):
+            ax = flat[i]
+            for d, lab in zip(datasets, labels):
+                part = panel.filter((pl.col("method") == m) & (pl.col("dataset") == d))
+                if not part.height:
+                    continue
+                part = _one_point_per_bin(part.sort("bin"))
+                x = shell_axis(part["shell"].to_list())
+                ax.fill_between(x, part["lo"], part["hi"], color=colour[lab], alpha=0.15, linewidth=0)
+                ax.plot(x, part["value"], lw=0.9, marker="o", ms=2, color=colour[lab], label=lab)
+                lo, hi = min(lo, float(part["lo"].min())), max(hi, float(part["hi"].max()))
+            resolution_ticks(ax, panel.filter(method=m)["shell"].to_list(), P)
+            ax.set_ylabel(label_parts(tool, statistic)[0] if i % cols == 0 else "")
+            P.head(ax, i, arm_label(short(m)))
+            if i < len(ms) - cols:
+                ax.set_xlabel("")
+        pad = 0.04 * (hi - lo)
+        for ax in flat[:len(ms)]:
+            ax.set_ylim(lo - pad, hi + pad)
+        for ax in flat[len(ms):]:
+            ax.set_visible(False)
+        handles = flat[0].get_legend_handles_labels()
+        if handles[0]:
+            figstyle().top_legend(P, *handles)
+        P.finish()
+        path = args.out_dir / f"{args.prefix}_by_method_{_panel_slug(tool, statistic)}"
+        figstyle().save(P.fig, path)
+        logger.info("Saved %s (%d arms)", path, len(ms))
+        plt.close(P.fig)
+        written += 1
+    return written
+
+
 def main() -> int:
     args = parse_args()
     if not args.data.is_file():
@@ -497,6 +573,12 @@ def main() -> int:
     if missing:
         raise SystemExit(f"{args.data} has no {sorted(missing)} column")
     df = df.with_columns(pl.col("value").cast(pl.Float64, strict=False))
+    for extra in args.extra_data:
+        more = pl.read_csv(extra, infer_schema_length=None).with_columns(
+            pl.col("value").cast(pl.Float64, strict=False))
+        df = pl.concat([df, more], how="diagonal_relaxed")
+    if args.seed is not None and "seed" in df.columns:
+        df = df.filter(pl.col("seed") == args.seed)
 
     if args.method:
         want = [m.strip() for m in args.method.split(",") if m.strip()]
@@ -518,6 +600,11 @@ def main() -> int:
         # a correlation and dropping them would silently shorten the figure
         df = df.filter(pl.col("correlation").fill_null("")
                        .is_in([args.correlation, ""]))
+
+    if args.facet == "method":
+        n = draw_by_method(df, args)
+        logger.info("%d figures", n)
+        return 0
 
     datasets = (
         [args.dataset] if args.dataset
