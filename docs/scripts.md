@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-350 scripts.
+351 scripts.
 
 ## Start here
 
@@ -41,6 +41,7 @@ per job, and it lives in the repo".
 
 | script | what it does |
 |---|---|
+| `poly/average_checkpoints.py` | Average a run's checkpoints over several epochs into one checkpoint that predict and rb_export.sbatch read. |
 | `poly/careless_configs.py` | The careless recipes used for the Laue data, as flag lists. |
 | `poly/compare_laue_predictions.py` | Compare a rerun laue-dials prediction with the reflection list an integrator dataset was cut from. |
 | `poly/emit_merging_stats.py` | Write the canonical merging_stats.csv for a careless-scaled Laue run. |
