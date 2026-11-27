@@ -9,9 +9,9 @@ true profiles and shoebox counts), and for each model given as NAME=CKPT:CONFIG:
              own counts (`integrator.model.posterior.collapsed.laplace_eta`, from the prior
              mean), what the Laplace + collapsed export uses at its centre
 
-Writes one npz with `true_profile`, `counts` (N, 25, 25), `i_true`, `d`, `phi`
+Writes one npz with `true_profile`, `counts` (N, side, side), `i_true`, `d`, `phi`
 (the streak azimuth), `refl_ids`, and per model `<name>_prior`, `<name>_mode`
-(N, 25, 25, float32). Derived quantities (means over cells, differences, kappa)
+(N, side, side, float32; side from the shoeboxes). Derived quantities (means over cells, differences, kappa)
 are left to the figure.
 
 usage: python dump_profile_compare.py --npz SAMPLE.npz --data SHOEBOX_DIR --out OUT.npz
@@ -55,7 +55,8 @@ def main() -> None:
     out = {k: z[k] for k in ("true_profile", "i_true", "d", "refl_ids")}
     order = np.argsort(rows)
     inv = np.argsort(order)
-    out["counts"] = np.asarray(counts[rows[order]])[inv].reshape(N, 25, 25).astype(np.float32)
+    side = int(round(np.sqrt(counts.shape[1])))
+    out["counts"] = np.asarray(counts[rows[order]])[inv].reshape(N, side, side).astype(np.float32)
     dev = a.device
     for spec in a.model:
         name, rest = spec.split("=", 1)
@@ -108,8 +109,8 @@ def main() -> None:
             pri.append(p_prior.cpu().numpy())
             mod.append(p_mode.cpu().numpy())
             phis.append(phi.cpu().numpy())
-        out[f"{name}_prior"] = np.concatenate(pri).reshape(N, 25, 25).astype(np.float32)
-        out[f"{name}_mode"] = np.concatenate(mod).reshape(N, 25, 25).astype(np.float32)
+        out[f"{name}_prior"] = np.concatenate(pri).reshape(N, side, side).astype(np.float32)
+        out[f"{name}_mode"] = np.concatenate(mod).reshape(N, side, side).astype(np.float32)
         out["phi"] = np.concatenate(phis)
         print(f"{name}: done", flush=True)
     out["models"] = np.array([s.split("=", 1)[0] for s in a.model])
