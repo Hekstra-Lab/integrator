@@ -63,6 +63,53 @@ mkdir -p "$WORK"
 cd "$WORK"
 sed "s#$IMAGE_PATH_FROM#$IMAGE_PATH_TO#g" "$DATA/poly_refined_$LD_PREFIX.expt" > "poly_refined_$LD_PREFIX.expt"
 ln -sf "$DATA/poly_refined_$LD_PREFIX.refl" .
+
+# IMAGES (default unset = every experiment): a comma list of experiment indices of
+# poly_refined_<LD_PREFIX>.expt. Only those experiments and their refined reflections
+# go to laue.predict and laue.integrate, renumbered 0..n-1 in the order given, with
+# matching identifiers (laue.predict labels predictions int(identifier)). This is
+# split -> keep -> combine done in one step. laue.integrate is per image (window
+# radius and knn profile pooling from that image alone); laue.predict's probability
+# cutoff is a KDE trained on the reflections passed in, so it sees only the subset's.
+# The subset files are written as poly_refined_<LD_PREFIX>_subset.*, the outputs as
+# *_<LD_PREFIX>_subset.*, and the comparison step is skipped. Use
+# laue_profiles.py --reference-expt poly_refined_<LD_PREFIX>.expt to report the
+# original experiment indices.
+if [ -n "${IMAGES:-}" ]; then
+  python - "poly_refined_$LD_PREFIX" "poly_refined_${LD_PREFIX}_subset" "$IMAGES" <<'PY'
+import sys
+import numpy as np
+from dials.array_family import flex
+from dxtbx.model.experiment_list import ExperimentList, ExperimentListFactory
+src, dst, images = sys.argv[1], sys.argv[2], [int(v) for v in sys.argv[3].split(",")]
+assert len(set(images)) == len(images), "IMAGES repeats an index"
+ex = ExperimentListFactory.from_json_file(src + ".expt", check_format=False)
+r = flex.reflection_table.from_file(src + ".refl")
+old = r["id"].as_numpy_array()
+new_of = {o: n for n, o in enumerate(images)}
+keep = np.isin(old, images)
+sub = r.select(flex.bool(keep))
+sub["id"] = flex.int([new_of[o] for o in old[keep].tolist()])
+ids = sub.experiment_identifiers()
+for k in list(ids.keys()):
+    del ids[k]
+out = ExperimentList()
+for n, o in enumerate(images):
+    e = ex[o]
+    e.identifier = str(n)
+    ids[n] = str(n)
+    out.append(e)
+counts = np.bincount(sub["id"].as_numpy_array(), minlength=len(images))
+if (counts == 0).any():
+    sys.exit(f"IMAGES includes experiments with no refined reflections: "
+             f"{[images[i] for i in np.flatnonzero(counts == 0)]}")
+out.as_file(dst + ".expt")
+sub.as_file(dst + ".refl")
+print(f"subset: {len(images)} of {len(ex)} experiments, {len(sub):,} of {len(r):,} reflections, "
+      f"per experiment min {counts.min()} median {int(np.median(counts))} -> {dst}.expt/.refl")
+PY
+  LD_PREFIX="${LD_PREFIX}_subset"
+fi
 if [ ! -f "predicted_$LD_PREFIX.refl" ]; then
   laue.predict "poly_refined_$LD_PREFIX.expt" "poly_refined_$LD_PREFIX.refl" \
     output.reflections="predicted_$LD_PREFIX.refl" output.log="laue.predict_$LD_PREFIX.log" \
@@ -73,6 +120,7 @@ if [ ! -f "integrated_$LD_PREFIX.mtz" ]; then
     output.filename="integrated_$LD_PREFIX.mtz" output.reflections="integrated_$LD_PREFIX.refl" \
     output.log="laue.integrate_$LD_PREFIX.log" nproc=$NPROC
 fi
+if [ -n "${IMAGES:-}" ]; then echo "LD_RERUN_DONE (subset; comparison skipped)"; exit 0; fi
 python "$REPO/scripts/poly/compare_laue_predictions.py" \
   --new-refl "integrated_$LD_PREFIX.refl" --new-mtz "integrated_$LD_PREFIX.mtz" --ours "$OURS" \
   --max-images "$MAX_IMAGES" --out-mtz "integrated_${LD_PREFIX}_first${MAX_IMAGES}.mtz" --out-csv prediction_comparison.csv

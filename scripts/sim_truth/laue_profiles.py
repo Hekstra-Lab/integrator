@@ -16,7 +16,12 @@ integrated.refl, given the same inputs, parameters and laue-dials commit.
 
 Per reflection the npz holds
 
-    image_num, h, k, l, x, y          the input table's row (x, y = xyzcal.px)
+    image_num, h, k, l, x, y          the input table's row (x, y = xyzcal.px);
+                                      image_num = the imageset frame + 1, which is 1
+                                      on every row when each image is its own file
+    expt_id                           the experiment's index in --reference-expt,
+                                      found by image path (default: in --expt);
+                                      the `image_num` our shoeboxes carry on hewl_1118
     I, sigI, bg                       laue's intensity, sigma, per-pixel background
     radius, n_valid                   window radius and usable pixels in the disc
     loc (y, x), scale (2x2)           the fitted Gaussian, image coordinates
@@ -48,7 +53,11 @@ fits nothing; it reads a full npz and a `dump_profile_maps.py` npz and writes wh
                                              and grid, the edges the figure uses
 
     python laue_profiles.py --reduce-from laue_profiles.npz --maps profile_maps.npz \\
-        --out laue_profiles_reduced.npz
+        --out laue_profiles_reduced.npz [--join expt_id]
+
+`--join` names the laue column matched to the maps' `<arm>_named_image`: `image_num`
+(default) for a single multi-frame file, `expt_id` where the shoeboxes' image number
+is the experiment id (hewl_1118, one file per image).
 """
 
 from __future__ import annotations
@@ -82,7 +91,7 @@ def _install():
 
 
 def _one_image(job):
-    img_set, table, params, box, image_num = job
+    img_set, table, params, box, image_num, expt_id = job
     li = _install()
     _KEPT.clear()
     li.integrate_image(img_set, table, *params)
@@ -108,7 +117,7 @@ def _one_image(job):
     r_idx = np.broadcast_to(np.arange(len(cen))[:, None], p.shape)
     np.add.at(prof, (r_idx[inside], (by * box + bx)[inside]), p[inside])
     return dict(
-        image_num=np.full(len(cen), image_num), h=hkl_in[rows, 0], k=hkl_in[rows, 1], l=hkl_in[rows, 2],
+        image_num=np.full(len(cen), image_num), expt_id=np.full(len(cen), expt_id), h=hkl_in[rows, 0], k=hkl_in[rows, 1], l=hkl_in[rows, 2],
         x=cen[:, 0], y=cen[:, 1], I=it.intensity, sigI=it.uncertainty, bg=it.background.squeeze(-1),
         radius=np.full(len(cen), it.radius), n_valid=it.window_valid.sum(-1), loc=it.profile_loc,
         scale=it.profile_scale, strong=it.strong.astype(bool), profile_box=prof.astype(np.float32),
@@ -116,7 +125,7 @@ def _one_image(job):
     )
 
 
-def reduce_for_figure(full_path: str, maps_path: str, out_path: str) -> None:
+def reduce_for_figure(full_path: str, maps_path: str, out_path: str, join: str = "image_num") -> None:
     """Named rows and per-cell means of a full laue_profiles npz; see the module docstring."""
     full = np.load(full_path)
     maps = np.load(maps_path)
@@ -128,11 +137,16 @@ def reduce_for_figure(full_path: str, maps_path: str, out_path: str) -> None:
         raise SystemExit(f"{maps_path} has no <arm>_named_image or <arm>_ex_image keys; rerun dump_profile_maps.py")
     arms = sorted({a for a, _ in sets})
     key = lambda f, h, k, l: ((np.asarray(f, np.int64) * 1024 + h + 256) * 1024 + k + 256) * 1024 + l + 256
-    have = key(full["image_num"], full["h"], full["k"], full["l"])
+    if join not in full.files:
+        raise SystemExit(f"{full_path} has no {join!r} column; rerun laue_profiles.py")
+    have = key(full[join], full["h"], full["k"], full["l"])
     want = np.unique(np.concatenate([key(*(maps[f"{a}_{tag}_{c}"] for c in ("image", "h", "k", "l")))
                                      for a, tag in sets]))
     rows = np.flatnonzero(np.isin(have, want))
-    out = {k: full[k][rows] for k in ("image_num", "h", "k", "l", "x", "y", "profile_box")}
+    out = {k: full[k][rows] for k in ("image_num", "expt_id", "h", "k", "l", "x", "y", "profile_box")
+           if k in full.files}
+    if join != "image_num":
+        out["image_num"] = full[join][rows]  # the figure joins on image_num
 
     cell_arm = next((a for a in arms if f"{a}_extent" in maps.files and f"{a}_cells" in maps.files), None)
     if cell_arm is not None:
@@ -168,11 +182,16 @@ def main():
     ap.add_argument("--nproc", type=int, default=8)
     ap.add_argument("--max-images", type=int, default=0)
     ap.add_argument("--check-refl", default=None, help="an integrated.refl from the same chain, to compare I")
+    ap.add_argument("--reference-expt", default=None,
+                    help="the experiment list whose indices expt_id reports, matched by image path "
+                         "(for a subset of it); default --expt")
+    ap.add_argument("--join", choices=("image_num", "expt_id"), default="image_num",
+                    help="with --reduce-from: the laue column matched to the maps' image number")
     a = ap.parse_args()
     if a.reduce_from:
         if not a.maps:
             ap.error("--reduce-from needs --maps")
-        reduce_for_figure(a.reduce_from, a.maps, a.out)
+        reduce_for_figure(a.reduce_from, a.maps, a.out, a.join)
         return
     if not (a.expt and a.refl):
         ap.error("--expt and --refl are required unless --reduce-from is given")
@@ -194,7 +213,13 @@ def main():
     ids = list(np.unique(preds["id"]).astype(np.int32))
     assert len(imagesets) == len(ids), "imagesets and prediction ids differ, as laue.integrate would refuse"
     frames = [int(e.imageset.indices()[0]) for e in expts]
-    jobs = [(imagesets[k], preds.select(preds["id"] == i), params, a.box, frames[i] + 1)
+    if a.reference_expt:
+        ref = ExperimentListFactory.from_json_file(a.reference_expt, check_format=False)
+        where = {os.path.basename(e.imageset.paths()[0]): j for j, e in enumerate(ref)}
+        expt_ids = [where[os.path.basename(e.imageset.paths()[0])] for e in expts]
+    else:
+        expt_ids = list(range(len(expts)))
+    jobs = [(imagesets[k], preds.select(preds["id"] == i), params, a.box, frames[i] + 1, expt_ids[i])
             for k, i in enumerate(ids)]
     if a.max_images:
         jobs = jobs[: a.max_images]

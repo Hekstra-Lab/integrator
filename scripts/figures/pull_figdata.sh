@@ -378,13 +378,19 @@ if has hewl1118_profiles; then
   F=$S/hewl1118_runs/figdata
   LM=$S/hewl1118_runs/laue_main
   scp -q "cannon:$F/profile_maps_hewl1118.npz" "$DEST/" && echo "hewl1118_profiles <- $F/profile_maps_hewl1118.npz"
-  if ssh cannon "[ -s $LM/laue_profiles_main.npz ]"; then
+  # the full first-1000-image dump if it exists, else the 50-image subset
+  # (laue_dials_rerun.sbatch IMAGES=); hewl_1118 is one file per image, so the
+  # join is on the experiment id, which is the shoeboxes' image_num
+  LP=$(ssh cannon "for f in $LM/laue_profiles_main.npz ${LM}_subset/laue_profiles_subset.npz; do \
+    [ -s \$f ] && { echo \$f; break; }; done")
+  if [ -n "$LP" ]; then
     ssh cannon "git -C $REPO pull -q && cd $REPO && $P scripts/sim_truth/laue_profiles.py \
-      --reduce-from $LM/laue_profiles_main.npz --maps $F/profile_maps_hewl1118.npz \
+      --reduce-from $LP --maps $F/profile_maps_hewl1118.npz --join expt_id \
       --out $F/laue_profiles_hewl1118_main.npz" || exit 1
+    echo "hewl1118_profiles <- $LP"
     scp -q "cannon:$F/laue_profiles_hewl1118_main.npz" "$DEST/"
   else
-    echo "hewl1118_profiles: no $LM/laue_profiles_main.npz yet (laue main rerun + laue_profiles.py)"
+    echo "hewl1118_profiles: no laue-dials profiles yet ($LM/laue_profiles_main.npz or ${LM}_subset/laue_profiles_subset.npz)"
   fi
 fi
 
