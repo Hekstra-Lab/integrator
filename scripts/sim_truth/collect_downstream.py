@@ -26,6 +26,9 @@ domain) and `downstream_careless_stats.csv`. Missing pieces are reported and ski
 
 usage: python collect_downstream.py --arm NAME=MTZ [--arm ...] --truth ground_truth.mtz
            --dataset mos010_pc_default --dmin 1.78 --out-dir DIR [--default-seed 1]
+
+On real data, where there is no truth, leave out --truth; `--refine-tag d1.81` reads a
+refinement written by `run_pipeline.py --refine-tag d1.81` instead of the full-range one.
 """
 
 from __future__ import annotations
@@ -83,11 +86,16 @@ def cc_work_free(mtz: Path, shells: list[dict]) -> list[dict]:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--arm", action="append", required=True, help="NAME=UNMERGED_MTZ")
-    ap.add_argument("--truth", type=Path, required=True)
+    ap.add_argument("--truth", type=Path, default=None,
+                    help="the simulation's ground_truth.mtz. Omitted on real data: every table but "
+                         "downstream_merged.csv is still written")
     ap.add_argument("--dataset", required=True)
     ap.add_argument("--dmin", type=float, default=1.78)
     ap.add_argument("--default-seed", type=int, default=1)
     ap.add_argument("--out-dir", type=Path, required=True)
+    ap.add_argument("--refine-tag", default=None,
+                    help="read refinement and peaks from config4_refine_<TAG> (run_pipeline.py --refine-tag), "
+                         "e.g. d1.81 for a capped resolution. Default config4_refine")
     a = ap.parse_args()
     a.out_dir.mkdir(parents=True, exist_ok=True)
     tmp = a.out_dir / "merged_parts"
@@ -101,7 +109,7 @@ def main() -> None:
             print(f"{name}: no merge beside {mtz}")
         for seed, d in found:
             key = dict(method=name, dataset=a.dataset, seed=seed)
-            work = d / "config4_refine"
+            work = d / (f"config4_refine_{a.refine_tag}" if a.refine_tag else "config4_refine")
             r = metrics.refinement_from_phenix_log(sorted((work / "refine2").glob("*.log")))
             if r is None:
                 print(f"{name} seed {seed}: no refine2 result")
@@ -129,6 +137,9 @@ def main() -> None:
             if cs.is_file():
                 cstats.append(pl.read_csv(cs, infer_schema_length=None).with_columns(
                     method=pl.lit(name), seed=pl.lit(seed)))
+            if a.truth is None:
+                print(f"{name} seed {seed}: {r}")
+                continue
             part = tmp / f"{name}_s{seed}.csv"
             part.unlink(missing_ok=True)
             res = subprocess.run([sys.executable, str(HERE / "score_merged_vs_truth.py"), "--merged", str(d / "config4_0.mtz"),
