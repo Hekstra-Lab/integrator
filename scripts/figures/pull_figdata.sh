@@ -352,7 +352,9 @@ if has shoebox_mosaic; then
   ssh cannon "git -C $REPO pull -q && cd $REPO && $P scripts/sim_truth/dump_shoebox_examples.py --same-reflections \
     --out $M/mos025/figdata/shoebox_examples_mosaic.npz \
     mos010_pc_default_mosaic=$M/mos010/shoeboxes/pc_default_25 \
-    mos025_pc_m0_default_mosaic=$M/mos025/shoeboxes/pc_m0_default_25" || exit 1
+    mos025_pc_m0_default_mosaic=$M/mos025/shoeboxes/pc_m0_default_25 \
+    --truth mos010_pc_default_mosaic=$M/mos010/truth/shots_1_rank0.h5 \
+    --truth mos025_pc_m0_default_mosaic=$M/mos025/truth/shots_1_rank0.h5" || exit 1
   scp -q "cannon:$M/mos025/figdata/shoebox_examples_mosaic.npz" "$DEST/" && echo "shoebox_mosaic <- $M/mos025/figdata"
 fi
 

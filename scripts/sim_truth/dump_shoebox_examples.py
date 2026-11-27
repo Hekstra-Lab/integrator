@@ -23,6 +23,11 @@ reflections are taken from each dataset, in the same order; the npz then carries
 same_reflections = 1 and each dataset's image_num, h, k, l. For two sims that
 differ in one parameter (mos010 and mos025, mosaic spread 0.10 and 0.25) this
 shows one reflection under each value.
+
+--truth name=TRUTH_SHOTS (repeatable; datsimx datasets only) adds, for the picked
+rows of that dataset, `<name>_truth`: the noiseless Bragg image of the run's TRUTH
+shots file (`sim_image/shot_<run>_<image_num:05d>`, photons, no background), cut
+at the row's own bbox and cropped like the counts, so it covers the same pixels.
 """
 
 from __future__ import annotations
@@ -54,6 +59,7 @@ def main() -> None:
     ap.add_argument("--isigi", default="0,2,5,10,30,100", help="target laue I/sigma values, one column each")
     ap.add_argument("--n-stats", type=int, default=5000)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--truth", action="append", default=[], help="name=TRUTH_SHOTS h5 (datsimx), repeatable")
     ap.add_argument("--same-reflections", action="store_true",
                     help="pick in the first dataset among reflections all datasets hold; take the same ones from each")
     a = ap.parse_args()
@@ -119,6 +125,22 @@ def main() -> None:
         out[f"{name}_d"] = np.asarray(md["d"], dtype=float)[pick]
         for col, src in (("image_num", "image_num"), ("h", "H"), ("k", "K"), ("l", "L")):
             out[f"{name}_{col}"] = np.asarray(md[src], dtype=np.int64)[pick]
+        truth_of = dict(t.split("=", 1) for t in a.truth)
+        if name in truth_of:
+            import h5py
+
+            run = None
+            rows_t = np.empty((len(pick), c.shape[1]), dtype=np.float64)
+            with h5py.File(truth_of[name], "r") as f:
+                keys_h5 = sorted(f["sim_image"].keys())
+                run = keys_h5[0].split("_")[1]
+                for r, i in enumerate(pick):
+                    x0, x1, y0, y1 = (int(md[f"bbox.{j}"][i]) for j in range(4))
+                    img = f[f"sim_image/shot_{run}_{int(md['image_num'][i]):05d}"]
+                    rows_t[r] = img[y0:y1, x0:x1].astype(np.float64).ravel()
+            out[f"{name}_truth"] = crop(rows_t, side, a.box)
+            print(f"{name}: noiseless Bragg photons in the picked boxes "
+                  + ", ".join(f"{v:.0f}" for v in out[f"{name}_truth"].sum((1, 2))))
         out[f"{name}_dtype"] = str(c.dtype)
         out[f"{name}_side"] = side
         out[f"{name}_n"] = c.shape[0]
