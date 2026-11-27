@@ -83,6 +83,22 @@ TOOL_ORDER = ("cchalf", "ccanom", "ccpred", "rsplit", "isigi", "completeness", "
 
 QUALIFIERS = {"spearman": "Spearman", "pearson": "Pearson"}
 
+# Which direction is better, shown as an arrow on the y label. Correlations,
+# I/sigma and completeness: higher; R factors and Rsplit: lower.
+HIGHER_BETTER = {"cchalf", "ccanom", "ccpred", "isigi", "i/sigi", "completeness"}
+LOWER_BETTER = {"rsplit", "r-work", "r-free"}
+
+
+def better_arrow(tool: str, statistic: str) -> str:
+    """` $\\uparrow$` where higher is better, ` $\\downarrow$` where lower is, else ''."""
+    key = re.sub(r"\s*\(.*$", "", str(statistic)).split(",")[0].strip().lower().replace(" ", "")
+    for k in (key, str(tool).lower()):
+        if k in LOWER_BETTER:
+            return r" $\downarrow$"
+        if k in HIGHER_BETTER:
+            return r" $\uparrow$"
+    return ""
+
 
 def label_parts(tool: str, statistic: str) -> tuple[str, str]:
     """(typeset name, qualifier) of `label_for`; the y axis takes the name alone."""
@@ -341,7 +357,7 @@ def draw_panel(ax, panel: pl.DataFrame, tool: str, statistic: str, P,
     # the name alone: the qualifier (Pearson, Spearman, anomalous, ...) is in
     # the panel title, and a full label on every y axis overprinted the
     # neighbouring panel in the two-column grid
-    ax.set_ylabel(label_parts(tool, statistic)[0])
+    ax.set_ylabel(label_parts(tool, statistic)[0] + better_arrow(tool, statistic))
     if legend and ramp is None and any(names):
         # boxed, like the grid's: the ink theme draws a legend on the page
         # rather than on a panel, and an unframed one over the data reads
@@ -545,7 +561,7 @@ def draw_by_method(df: pl.DataFrame, args) -> int:
                 ax.plot(x, part["value"], lw=0.9, marker="o", ms=2, color=colour[lab], label=lab)
                 lo, hi = min(lo, float(part["lo"].min())), max(hi, float(part["hi"].max()))
             resolution_ticks(ax, panel.filter(method=m)["shell"].to_list(), P)
-            ax.set_ylabel(label_parts(tool, statistic)[0] if i % cols == 0 else "")
+            ax.set_ylabel(label_parts(tool, statistic)[0] + better_arrow(tool, statistic) if i % cols == 0 else "")
             P.head(ax, i, arm_label(short(m)))
             if i < len(ms) - cols:
                 ax.set_xlabel("")
@@ -613,7 +629,7 @@ def draw_by_dataset(df: pl.DataFrame, args) -> int:
                     ax.plot(x, part["value"], lw=0.9, marker="o", ms=2, color=c, label=lab)
                 lo, hi = min(lo, float(part["lo"].min())), max(hi, float(part["hi"].max()))
             resolution_ticks(ax, panel.filter(dataset=d)["shell"].to_list(), P)
-            ax.set_ylabel(label_parts(tool, statistic)[0] if i == 0 else "")
+            ax.set_ylabel(label_parts(tool, statistic)[0] + better_arrow(tool, statistic) if i == 0 else "")
             P.head(ax, i, names.get(d, d))
         pad = 0.04 * (hi - lo)
         for ax in flat:
