@@ -235,18 +235,18 @@ if has simtruth025b && [ -f "$S41" ]; then
       --out-dir docs/figures/sim/cmp --prefix mos025_pc_m0_default41_$est
   done
 fi
-# careless.stats CC-half per model, one line per mosaic spread (mos010, mos025), careless seed 1
+# careless.stats (every tool) and phenix's per-shell R-work / R-free, mos010 against mos025, careless seed 1:
+# per model with a line per mosaic spread (--facet method) and per mosaic spread with a line per model (--facet dataset)
 if has simmosaiccc && [ -f "$DATA/sim_downstream_mos025/downstream_careless_stats.csv" ]; then
-  step simmosaiccc "${PY[@]}" scripts/figures/fig_careless_stats.py --data "$DATA/sim_downstream/downstream_careless_stats.csv" \
-    --extra-data "$DATA/sim_downstream_mos025/downstream_careless_stats.csv" --seed 1 --facet method --tool cchalf \
-    --correlation pearson --method laue_integrate,svae_bg_rb,t0_rb,p2_rb,b1_rb \
-    --dataset-label "mos010_pc_default=mosaic 0.10°" --dataset-label "mos025_pc_m0_default=mosaic 0.25°" \
-    --out-dir docs/figures/sim --prefix sim_mosaic
-  step simmosaiccc "${PY[@]}" scripts/figures/fig_careless_stats.py --data "$DATA/sim_downstream/downstream_careless_stats.csv" \
-    --extra-data "$DATA/sim_downstream_mos025/downstream_careless_stats.csv" --seed 1 --facet dataset --tool cchalf \
-    --correlation pearson --method laue_integrate,svae_bg_rb,t0_rb,p2_rb,b1_rb \
-    --dataset-label "mos010_pc_default=mosaic 0.10°" --dataset-label "mos025_pc_m0_default=mosaic 0.25°" \
-    --out-dir docs/figures/sim --prefix sim_mosaic
+  for f in dataset method; do
+    step simmosaiccc "${PY[@]}" scripts/figures/fig_careless_stats.py --data "$DATA/sim_downstream/downstream_careless_stats.csv" \
+      --extra-data "$DATA/sim_downstream_mos025/downstream_careless_stats.csv" \
+      --refine-shells "$DATA/sim_downstream/downstream_refine_shells.csv" "$DATA/sim_downstream_mos025/downstream_refine_shells.csv" \
+      --seed 1 --facet $f --tool cchalf,ccanom,ccpred,rsplit,isigi,completeness,phenix --correlation pearson \
+      --method laue_integrate,svae_bg_rb,t0_rb,p2_rb,b1_rb \
+      --dataset-label "mos010_pc_default=mosaic 0.10°" --dataset-label "mos025_pc_m0_default=mosaic 0.25°" \
+      --out-dir docs/figures/sim/mosaic --prefix sim_mosaic
+  done
 fi
 has simprofile && ls "$DATA"/profile_truth_examples_*.npz >/dev/null 2>&1 && step simprofile "${PY[@]}" scripts/figures/fig_profile_truth_examples.py
 # simulation-based calibration, one directory per scored run (scripts/sim_truth/sbc_ranks.py)

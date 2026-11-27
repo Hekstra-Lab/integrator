@@ -72,11 +72,13 @@ LABELS = {
     "isigi": r"$I/\sigma_I$",
     "i/sigi": r"$I/\sigma_I$",
     "completeness": "completeness",
+    "r-work": r"$R_\mathrm{work}$",
+    "r-free": r"$R_\mathrm{free}$",
     "spearman": r"$\rho_\mathrm{Spearman}$",
     "pearson": r"$r_\mathrm{Pearson}$",
 }
 # The order the panels are reported in; anything else follows, sorted.
-TOOL_ORDER = ("cchalf", "ccanom", "ccpred", "rsplit", "isigi", "completeness")
+TOOL_ORDER = ("cchalf", "ccanom", "ccpred", "rsplit", "isigi", "completeness", "phenix")
 
 
 QUALIFIERS = {"spearman": "Spearman", "pearson": "Pearson"}
@@ -146,6 +148,9 @@ def parse_args():
                         "on a shared y range (default: one figure per dataset, one line per arm)")
     p.add_argument("--tool", default="cchalf",
                    help="with --facet: the careless tools to draw, comma separated")
+    p.add_argument("--refine-shells", type=Path, nargs="*", default=[],
+                   help="collect_downstream.py downstream_refine_shells.csv tables: phenix's final "
+                        "per-shell R-work and R-free, added as tool `phenix` (with --tool phenix)")
     p.add_argument("--dataset-label", action="append", default=[],
                    help="with --facet: DATASET=LABEL for the legend, repeatable")
     return p.parse_args()
@@ -517,6 +522,9 @@ def draw_by_method(df: pl.DataFrame, args) -> int:
     written = 0
     for tool, statistic, panel in panels_of(df):
         panel = panel.filter(pl.col("shell").str.contains("-"))
+        if tool.lower() == "ccpred":  # Train and Test are different quantities: the test set
+            panel = panel.filter(pl.col("group").cast(pl.Utf8) == "Test")
+            statistic = f"{statistic}, test"
         ms = [m for m in methods if panel.filter(method=m).height]
         if not ms:
             continue
@@ -579,6 +587,9 @@ def draw_by_dataset(df: pl.DataFrame, args) -> int:
     written = 0
     for tool, statistic, panel in panels_of(df):
         panel = panel.filter(pl.col("shell").str.contains("-"))
+        if tool.lower() == "ccpred":  # Train and Test are different quantities: the test set
+            panel = panel.filter(pl.col("group").cast(pl.Utf8) == "Test")
+            statistic = f"{statistic}, test"
         ds = [d for d in datasets if panel.filter(dataset=d).height]
         if not ds:
             continue
@@ -639,6 +650,16 @@ def main() -> int:
         more = pl.read_csv(extra, infer_schema_length=None).with_columns(
             pl.col("value").cast(pl.Float64, strict=False))
         df = pl.concat([df, more], how="diagonal_relaxed")
+    for rs in args.refine_shells:
+        sh = pl.read_csv(rs)
+        sh = sh.with_columns(
+            shell=pl.format("{} - {}", pl.col("d_max").round(2), pl.col("d_min").round(2)),
+            bin=pl.col("shell").cast(pl.Int64))
+        long = (sh.unpivot(index=["method", "dataset", "seed", "shell", "bin"],
+                           on=["r_work", "r_free"], variable_name="statistic", value_name="value")
+                .with_columns(tool=pl.lit("phenix"), correlation=pl.lit(""), group=pl.lit(None, pl.Utf8),
+                              statistic=pl.col("statistic").replace({"r_work": "R-work", "r_free": "R-free"})))
+        df = pl.concat([df, long], how="diagonal_relaxed")
     if args.seed is not None and "seed" in df.columns:
         df = df.filter(pl.col("seed") == args.seed)
 
