@@ -235,11 +235,12 @@ def main():
     if a.check_refl:
         r = flex.reflection_table.from_file(a.check_refl)
         rid = r["id"].as_numpy_array()
-        rf = np.array(frames)[rid] + 1
+        # keyed on the experiment, not the frame: one file per image puts every row on frame 0
+        rf = np.array(expt_ids)[rid]
         hkl = np.asarray(r["miller_index"], dtype=np.int64).reshape(-1, 3)
         key = lambda f, h, k, l: ((f.astype(np.int64) * 1024 + h + 256) * 1024 + k + 256) * 1024 + l + 256
         ref = dict(zip(key(rf, hkl[:, 0], hkl[:, 1], hkl[:, 2]).tolist(), r["intensity.sum.value"].as_numpy_array()))
-        mine = key(out["image_num"], out["h"], out["k"], out["l"])
+        mine = key(out["expt_id"], out["h"], out["k"], out["l"])
         both = np.array([m in ref for m in mine.tolist()])
         d = np.abs(out["I"][both] - np.array([ref[m] for m in mine[both].tolist()]))
         print(f"--check-refl: {both.sum():,} of {len(mine):,} rows in {a.check_refl}; |I - I_refl| max {d.max():.3g}, "
