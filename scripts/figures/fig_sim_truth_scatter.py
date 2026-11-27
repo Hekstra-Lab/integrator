@@ -60,7 +60,9 @@ TITLES = {"laue_integrated": "laue.integrate, default prediction",
           "b1_laplace": "B1, Laplace + collapsed posterior mean",
           "geom_laplace": "geometric prior, collapsed posterior mean",
           "svae_rb": "svae (learned basis), profile fit at export",
-          "svae_bg_rb": "svae_bg (learned basis), profile fit at export"}
+          "svae_bg_rb": "svae_bg (learned basis), profile fit at export",
+          "geom_both_rb": "geom_both (geometric basis), profile fit at export",
+          "geom_both_posterior": "geom_both, posterior mean"}
 
 
 def _intensity(ax, d, a, roles, edges, full):

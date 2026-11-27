@@ -42,6 +42,8 @@ LABELS = {
     "p2_rb": "P2, i_rb",
     "b1_rb": "B1, i_rb",
     "b1_posterior": "B1, posterior",
+    "geom_both_rb": "geom_both, i_rb",
+    "geom_both_posterior": "geom_both, posterior",
 }
 REF = "laue_integrate"
 BASE = "svae_kmixv2_post_avg_avg"

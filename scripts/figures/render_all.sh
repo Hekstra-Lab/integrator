@@ -217,7 +217,7 @@ if has simtruth025 && [ -f "$S25" ]; then
   step simtruth025 "${PY[@]}" scripts/figures/fig_sim_crps.py --src "$DATA/sim_crps_mos025_pc.csv" --base b1_rb
   for est in rb posterior; do
     step simtruth025 "${PY[@]}" scripts/figures/fig_intensity_scatter.py --data "$S25" --id shot,h,k,l --value i_hat --in-domain \
-      --dataset mos025_pc_m0_default --methods laue_integrate,svae_bg_$est,t0_$est,p2_$est,b1_$est \
+      --dataset mos025_pc_m0_default --methods laue_integrate,svae_bg_$est,t0_$est,p2_$est,b1_$est,geom_both_$est \
       --out-dir docs/figures/sim/cmp --prefix mos025_pc_m0_default_$est
   done
 fi
@@ -231,7 +231,7 @@ if has simtruth025b && [ -f "$S41" ]; then
   step simtruth025b "${PY[@]}" scripts/figures/fig_sim_crps.py --src "$DATA/sim_crps_mos025_41_pc.csv" --base b1_rb
   for est in rb posterior; do
     step simtruth025b "${PY[@]}" scripts/figures/fig_intensity_scatter.py --data "$S41" --id shot,h,k,l --value i_hat --in-domain \
-      --dataset mos025_pc_m0_default41 --methods laue_integrate,svae_bg_$est,t0_$est,p2_$est,b1_$est \
+      --dataset mos025_pc_m0_default41 --methods laue_integrate,svae_bg_$est,t0_$est,p2_$est,b1_$est,geom_both_$est \
       --out-dir docs/figures/sim/cmp --prefix mos025_pc_m0_default41_$est
   done
 fi
