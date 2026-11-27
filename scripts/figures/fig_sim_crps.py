@@ -35,6 +35,13 @@ LABELS = {
     "svae_kmixv2_post_avg_avg": "B1, i_rb",
     "svae_kmixv2_post_avg_lc": "B1, Laplace + collapsed",
     "svae_kmixv2_post_collapsed_geom_avg_geom_posterior": "geometric prior, collapsed",
+    # score_exports.sh method names of the mos025 arms (<arm>_<estimator>)
+    "svae_bg_rb": "svae_bg (learned basis), i_rb",
+    "svae_bg_posterior": "svae_bg (learned basis), posterior",
+    "t0_rb": "T0, i_rb",
+    "p2_rb": "P2, i_rb",
+    "b1_rb": "B1, i_rb",
+    "b1_posterior": "B1, posterior",
 }
 REF = "laue_integrate"
 BASE = "svae_kmixv2_post_avg_avg"
@@ -45,6 +52,7 @@ CENTRES = np.sqrt([10 * 30, 30 * 100, 100 * 300, 300 * 1000, 1000 * 3000, 3000 *
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--src", type=Path, required=True)
+    ap.add_argument("--base", default=BASE, help="the method the right panel divides by (B1, i_rb)")
     a = ap.parse_args()
     figstyle.use()
     d = pl.read_csv(a.src)
@@ -56,15 +64,15 @@ def main() -> None:
     ax[0].plot(CENTRES, val[REF], label="laue.integrate", **figstyle.reference_style())
     for m in names:
         ax[0].plot(CENTRES, val[m], "-o", ms=2.5, lw=1.0, color=col[LABELS[m]], label=LABELS[m])
-        ax[1].plot(CENTRES, val[m] / val[BASE], "-o", ms=2.5, lw=1.0, color=col[LABELS[m]])
-    ax[1].plot(CENTRES, val[REF] / val[BASE], **figstyle.reference_style())
+        ax[1].plot(CENTRES, val[m] / val[a.base], "-o", ms=2.5, lw=1.0, color=col[LABELS[m]])
+    ax[1].plot(CENTRES, val[REF] / val[a.base], **figstyle.reference_style())
     ax[1].axhline(1, color=figstyle.roles()["frame"], lw=0.6)
     for x in ax:
         x.set_xscale("log")
         x.set_xlabel("true intensity (photons)")
     ax[0].set_yscale("log")
     ax[0].set_ylabel("mean CRPS / $I_\\mathrm{true}$")
-    ax[1].set_ylabel("ratio to B1, $i_\\mathrm{rb}$")
+    ax[1].set_ylabel(f"ratio to {LABELS.get(a.base, a.base)}")
     ax[1].set_ylim(0.4, 2.0)
     ax[0].legend(fontsize="xx-small", frameon=False)
     for p in figstyle.save(fig, OUT / f"sim_crps_{dataset}"):
