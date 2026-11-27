@@ -57,7 +57,7 @@ if [ ${#want[@]} -eq 0 ]; then
   if [ -n "$TEMPLATE" ]; then
     want=(ccsym pdz2 refine basis basiscmp cost)
   else
-    want=(shoebox loss wilson basis basiscmp cost scatter merging peaks spectrum careless ccsym pdz2 refine shape patch arms simsampling simimage simtruth simshoebox simtruthpc simprofile simcmp simsbc simprior simcrps simprofcmp hewl1118profiles simmosaic simtruth025)
+    want=(shoebox loss wilson basis basiscmp cost scatter merging peaks spectrum careless ccsym pdz2 refine shape patch arms simsampling simimage simtruth simshoebox simtruthpc simprofile simcmp simsbc simprior simcrps simprofcmp hewl1118profiles simmosaic simtruth025 simtruth025b)
   fi
 fi
 has() { printf '%s\n' "${want[@]}" | grep -qx "$1"; }
@@ -219,6 +219,20 @@ if has simtruth025 && [ -f "$S25" ]; then
     step simtruth025 "${PY[@]}" scripts/figures/fig_intensity_scatter.py --data "$S25" --id shot,h,k,l --value i_hat --in-domain \
       --dataset mos025_pc_m0_default --methods laue_integrate,svae_bg_$est,t0_$est,p2_$est,b1_$est \
       --out-dir docs/figures/sim/cmp --prefix mos025_pc_m0_default_$est
+  done
+fi
+# the same on 41x41 shoeboxes (pc_m0_default_41), where the 25x25 window held 0.836 of the truth photons
+S41="$DATA/sim_truth_joined_mos025_41_pc.csv.gz"
+if has simtruth025b && [ -f "$S41" ]; then
+  step simtruth025b "${PY[@]}" scripts/figures/fig_sim_truth_scatter.py --src "$S41" --psf-fraction 0 --tag mos025_41
+  step simtruth025b "${PY[@]}" scripts/figures/fig_sim_truth_scores.py --src "$DATA/sim_truth_scores_mos025_41_pc.csv" --tag mos025_41
+  step simtruth025b "${PY[@]}" scripts/figures/fig_sim_truth_scores.py --src "$DATA/sim_truth_scores_mos025_41_pc.csv" \
+    --by-d "$DATA/sim_truth_scores_by_d_mos025_41_pc.csv" --tag mos025_41
+  step simtruth025b "${PY[@]}" scripts/figures/fig_sim_crps.py --src "$DATA/sim_crps_mos025_41_pc.csv" --base b1_rb
+  for est in rb posterior; do
+    step simtruth025b "${PY[@]}" scripts/figures/fig_intensity_scatter.py --data "$S41" --id shot,h,k,l --value i_hat --in-domain \
+      --dataset mos025_pc_m0_default41 --methods laue_integrate,svae_bg_$est,t0_$est,p2_$est,b1_$est \
+      --out-dir docs/figures/sim/cmp --prefix mos025_pc_m0_default41_$est
   done
 fi
 has simprofile && ls "$DATA"/profile_truth_examples_*.npz >/dev/null 2>&1 && step simprofile "${PY[@]}" scripts/figures/fig_profile_truth_examples.py
