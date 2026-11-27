@@ -57,7 +57,7 @@ if [ ${#want[@]} -eq 0 ]; then
   if [ -n "$TEMPLATE" ]; then
     want=(ccsym pdz2 refine basis basiscmp cost)
   else
-    want=(shoebox loss wilson basis basiscmp cost scatter merging peaks spectrum careless ccsym pdz2 refine shape patch arms simsampling simimage simtruth simshoebox simtruthpc simprofile simcmp simsbc simprior simcrps simprofcmp)
+    want=(shoebox loss wilson basis basiscmp cost scatter merging peaks spectrum careless ccsym pdz2 refine shape patch arms simsampling simimage simtruth simshoebox simtruthpc simprofile simcmp simsbc simprior simcrps simprofcmp hewl1118profiles)
   fi
 fi
 has() { printf '%s\n' "${want[@]}" | grep -qx "$1"; }
@@ -211,6 +211,15 @@ has simsbc && ls "$DATA"/sbc/*/sbc_ecdf.csv >/dev/null 2>&1 && step simsbc "${PY
 has simprior && [ -f "$DATA/prior_check/prior_check_summary.csv" ] && step simprior "${PY[@]}" scripts/figures/fig_sim_prior_check.py --src "$DATA/prior_check"
 # CRPS of every export against the truth (scripts/sim_truth/crps_against_truth.py)
 has simcrps && [ -f "$DATA/sim_crps_mos010_pc.csv" ] && step simcrps "${PY[@]}" scripts/figures/fig_sim_crps.py --src "$DATA/sim_crps_mos010_pc.csv"
+# hewl_1118: counts and each arm's profile for the named reflections, and the mean profile per
+# detector region, with laue.integrate (upstream main) as a column when its reduced profiles are here
+# (laue_profiles.py --reduce-from; pull_figdata.sh hewl1118_profiles)
+H1118_LAUE=()
+[ -f "$DATA/laue_profiles_hewl1118_main.npz" ] && H1118_LAUE=(--laue-profiles "$DATA/laue_profiles_hewl1118_main.npz" --laue-label "laue-dials")
+has hewl1118profiles && [ -f "$DATA/profile_maps_hewl1118.npz" ] && step hewl1118profiles "${PY[@]}" scripts/figures/fig_profile_gate_examples.py \
+  --data "$DATA/profile_maps_hewl1118.npz" --out-dir "$HERE/docs/figures/hewl1118" --prefix profiles_hewl1118 \
+  --profiles-only --regions --labels hewl1118_svae="learned basis" hewl1118_kmix_base=T0 \
+  hewl1118_kmix_h128_grid05=P2 hewl1118_kmixv2_post=B1 ${H1118_LAUE[@]+"${H1118_LAUE[@]}"}
 # true profiles beside prior and Laplace-mode profiles (scripts/sim_truth/dump_profile_compare.py)
 has simprofcmp && ls "$DATA"/profile_compare_*.npz >/dev/null 2>&1 && for f in "$DATA"/profile_compare_*.npz; do step simprofcmp "${PY[@]}" scripts/figures/fig_sim_profile_compare.py --src "$f"; done
 if has simcmp && [ -f "$SIMPC" ]; then

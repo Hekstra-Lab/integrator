@@ -42,6 +42,8 @@ mkdir -p "$DEST"
 #                            what names the atom carrying each peak
 # hewl1118_downstream        collect_downstream.py over the hewl_1118 arms,
 #                            full range and capped at 1.81 A
+# hewl1118_profiles          profile_maps_hewl1118.npz and laue-dials' profiles
+#                            reduced to its reflections and regions
 want=("$@")
 [ ${#want[@]} -eq 0 ] && want=(mono scatter profile_shape profile_anisotropy dials_logs arm_metrics)
 
@@ -366,6 +368,24 @@ if has hewl1118_downstream; then
     mkdir -p "$DEST/$sub"
     scp -q "cannon:$out/downstream_*.csv" "$DEST/$sub/"
   done
+fi
+
+if has hewl1118_profiles; then
+  # dump_profile_maps.py's hewl_1118 npz (named reflections with image and Miller
+  # index, per-region means) and laue-dials' fitted profiles reduced to the same
+  # reflections and regions by laue_profiles.py --reduce-from, run here on the
+  # cluster because the full laue npz is gigabytes
+  F=$S/hewl1118_runs/figdata
+  LM=$S/hewl1118_runs/laue_main
+  scp -q "cannon:$F/profile_maps_hewl1118.npz" "$DEST/" && echo "hewl1118_profiles <- $F/profile_maps_hewl1118.npz"
+  if ssh cannon "[ -s $LM/laue_profiles_main.npz ]"; then
+    ssh cannon "git -C $REPO pull -q && cd $REPO && $P scripts/sim_truth/laue_profiles.py \
+      --reduce-from $LM/laue_profiles_main.npz --maps $F/profile_maps_hewl1118.npz \
+      --out $F/laue_profiles_hewl1118_main.npz" || exit 1
+    scp -q "cannon:$F/laue_profiles_hewl1118_main.npz" "$DEST/"
+  else
+    echo "hewl1118_profiles: no $LM/laue_profiles_main.npz yet (laue main rerun + laue_profiles.py)"
+  fi
 fi
 
 ls -la "$DEST"

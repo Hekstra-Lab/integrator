@@ -35,6 +35,20 @@ the same chain, which says whether this reproduces that run.
 
     PYTHONPATH=<laue-dials>/src python laue_profiles.py --expt poly_refined.expt \\
         --refl predicted.refl --out laue_profiles.npz [--check-refl integrated.refl]
+
+On a real dataset the full npz is gigabytes (hewl_1118: about 2.6 million rows of
+625 pixels), too large to take to the laptop where figures are drawn. `--reduce-from`
+fits nothing; it reads a full npz and a `dump_profile_maps.py` npz and writes what
+`fig_profile_gate_examples.py --laue-profiles` draws:
+
+    image_num, h, k, l, x, y, profile_box    the rows matching any arm's named
+                                             reflections (`<arm>_named_*` or `<arm>_ex_*`)
+    cells (grid, grid, box*box)              laue's mean profile_box per detector
+    cells_n (grid, grid)                     cell, on the first arm's `<arm>_extent`
+                                             and grid, the edges the figure uses
+
+    python laue_profiles.py --reduce-from laue_profiles.npz --maps profile_maps.npz \\
+        --out laue_profiles_reduced.npz
 """
 
 from __future__ import annotations
@@ -102,16 +116,66 @@ def _one_image(job):
     )
 
 
+def reduce_for_figure(full_path: str, maps_path: str, out_path: str) -> None:
+    """Named rows and per-cell means of a full laue_profiles npz; see the module docstring."""
+    full = np.load(full_path)
+    maps = np.load(maps_path)
+    # REFL_IDS runs store the named reflections as `<arm>_named_*`, which the figure
+    # presents as `<arm>_ex_*`; other runs store `<arm>_ex_*` directly
+    sets = [(k[: -len(f"_{tag}_image")], tag) for tag in ("named", "ex")
+            for k in maps.files if k.endswith(f"_{tag}_image")]
+    if not sets:
+        raise SystemExit(f"{maps_path} has no <arm>_named_image or <arm>_ex_image keys; rerun dump_profile_maps.py")
+    arms = sorted({a for a, _ in sets})
+    key = lambda f, h, k, l: ((np.asarray(f, np.int64) * 1024 + h + 256) * 1024 + k + 256) * 1024 + l + 256
+    have = key(full["image_num"], full["h"], full["k"], full["l"])
+    want = np.unique(np.concatenate([key(*(maps[f"{a}_{tag}_{c}"] for c in ("image", "h", "k", "l")))
+                                     for a, tag in sets]))
+    rows = np.flatnonzero(np.isin(have, want))
+    out = {k: full[k][rows] for k in ("image_num", "h", "k", "l", "x", "y", "profile_box")}
+
+    cell_arm = next((a for a in arms if f"{a}_extent" in maps.files and f"{a}_cells" in maps.files), None)
+    if cell_arm is not None:
+        x0, x1, y0, y1 = (float(v) for v in maps[f"{cell_arm}_extent"])
+        grid = maps[f"{cell_arm}_cells"].shape[0]
+        x, y = full["x"], full["y"]
+        ix = np.clip(((x - x0) / max(x1 - x0, 1e-9) * grid).astype(int), 0, grid - 1)
+        iy = np.clip(((y - y0) / max(y1 - y0, 1e-9) * grid).astype(int), 0, grid - 1)
+        prof = full["profile_box"]
+        cells = np.full((grid, grid, prof.shape[1]), np.nan, dtype=np.float64)
+        cells_n = np.zeros((grid, grid), dtype=np.int64)
+        for r in range(grid):
+            for c in range(grid):
+                sel = (iy == r) & (ix == c)
+                cells_n[r, c] = int(sel.sum())
+                if cells_n[r, c]:
+                    cells[r, c] = prof[sel].astype(np.float64).mean(0)
+        out.update(cells=cells, cells_n=cells_n, cells_extent=np.array([x0, x1, y0, y1]))
+    np.savez_compressed(out_path, **out)
+    print(f"{len(rows)} of {len(want)} named reflections found among {len(have):,} laue rows; "
+          f"cells {'from ' + cell_arm if cell_arm else 'not written (no <arm>_cells)'} -> {out_path}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--expt", required=True, help="the experiment list laue.integrate read (poly_refined.expt)")
-    ap.add_argument("--refl", required=True, help="the prediction table laue.integrate read")
+    ap.add_argument("--expt", help="the experiment list laue.integrate read (poly_refined.expt)")
+    ap.add_argument("--refl", help="the prediction table laue.integrate read")
+    ap.add_argument("--reduce-from", default=None,
+                    help="a full npz of this script: write only the figure's rows and cell means to --out")
+    ap.add_argument("--maps", default=None, help="with --reduce-from: the dump_profile_maps.py npz")
     ap.add_argument("--out", required=True)
     ap.add_argument("--box", type=int, default=25)
     ap.add_argument("--nproc", type=int, default=8)
     ap.add_argument("--max-images", type=int, default=0)
     ap.add_argument("--check-refl", default=None, help="an integrated.refl from the same chain, to compare I")
     a = ap.parse_args()
+    if a.reduce_from:
+        if not a.maps:
+            ap.error("--reduce-from needs --maps")
+        reduce_for_figure(a.reduce_from, a.maps, a.out)
+        return
+    if not (a.expt and a.refl):
+        ap.error("--expt and --refl are required unless --reduce-from is given")
     os.environ.setdefault("HDF5_USE_FILE_LOCKING", "FALSE")
 
     import laue_dials

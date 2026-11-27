@@ -356,7 +356,15 @@ def draw_regions(raw, arms, out_dir: Path, prefix: str, label_override: dict | N
     labels = column_labels(have)
     labels.update(label_override or {})
     lcells = None
-    if laue is not None:
+    if laue is not None and "cells" in laue:
+        # laue_profiles.py --reduce-from: cell means computed on the cluster over every laue row
+        if not np.allclose(np.asarray(laue["cells_extent"], float), [x0, x1, y0, y1]):
+            logger.warning("laue cells were cut on extent %s, the arms on %s",
+                           np.asarray(laue["cells_extent"]).tolist(), [x0, x1, y0, y1])
+        lc = np.asarray(laue["cells"], dtype=np.float64)
+        lcells = {(r, c): None if np.isnan(lc[r, c]).all() else lc[r, c]
+                  for r in range(grid) for c in range(grid)}
+    elif laue is not None:
         x, y = np.asarray(laue["x"]), np.asarray(laue["y"])
         ix = np.clip(((x - x0) / max(x1 - x0, 1e-9) * grid).astype(int), 0, grid - 1)
         iy = np.clip(((y - y0) / max(y1 - y0, 1e-9) * grid).astype(int), 0, grid - 1)
