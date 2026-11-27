@@ -9,7 +9,7 @@ extend it with an option that defaults to today's behaviour rather
 than adding a second script beside it -- see CLAUDE.md, "One script
 per job, and it lives in the repo".
 
-351 scripts.
+352 scripts.
 
 ## Start here
 
@@ -197,6 +197,7 @@ per job, and it lives in the repo".
 | `figures/fig_sim_shoeboxes.py` | Example shoeboxes of several simulated datasets, one row per dataset, columns at the same laue I/sigma. |
 | `figures/fig_sim_truth_scatter.py` | Integrated intensity against the simulated truth intensity, one panel per prediction set. |
 | `figures/fig_sim_truth_scores.py` | Integrated intensity scored against the simulated truth, per bin of truth intensity, every method on one set of axes. |
+| `figures/fig_sim_window_compare.py` | One simulation integrated on two shoebox sizes: per method, a line per size, against the true intensity. |
 | `figures/fig_svae_vs_hierarchical.py` | svae against hierarchical, every metric that exists for both, side by side. |
 | `figures/fig_wilson_params.py` | The Wilson prior's learned scale and B-factor over training. |
 | `figures/figstyle.py` | The one place the figure scripts get their look: figTeX, the ink theme. |

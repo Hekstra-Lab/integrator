@@ -57,7 +57,7 @@ if [ ${#want[@]} -eq 0 ]; then
   if [ -n "$TEMPLATE" ]; then
     want=(ccsym pdz2 refine basis basiscmp cost)
   else
-    want=(shoebox loss wilson basis basiscmp cost scatter merging peaks spectrum careless ccsym pdz2 refine shape patch arms simsampling simimage simtruth simshoebox simtruthpc simprofile simcmp simsbc simprior simcrps simprofcmp hewl1118profiles simmosaic simtruth025 simtruth025b simmosaiccc)
+    want=(shoebox loss wilson basis basiscmp cost scatter merging peaks spectrum careless ccsym pdz2 refine shape patch arms simsampling simimage simtruth simshoebox simtruthpc simprofile simcmp simsbc simprior simcrps simprofcmp hewl1118profiles simmosaic simtruth025 simtruth025b simmosaiccc simwindow)
   fi
 fi
 has() { printf '%s\n' "${want[@]}" | grep -qx "$1"; }
@@ -248,6 +248,10 @@ if has simmosaiccc && [ -f "$DATA/sim_downstream_mos025/downstream_careless_stat
       --out-dir docs/figures/sim/mosaic --prefix sim_mosaic
   done
 fi
+# mos025 on 25x25 against 41x41 shoeboxes: photons recovered, relative deviation and CRPS per method
+has simwindow && [ -f "$DATA/profile_fit_vs_truth_mos025_pc_m0_default41.csv" ] && step simwindow "${PY[@]}" scripts/figures/fig_sim_window_compare.py \
+  --window "25x25=mos025_pc_m0_default:sim_truth_scores_mos025_pc.csv:sim_crps_mos025_pc.csv" \
+  --window "41x41=mos025_pc_m0_default41:sim_truth_scores_mos025_41_pc.csv:sim_crps_mos025_41_pc.csv" --out sim_window_mos025
 has simprofile && ls "$DATA"/profile_truth_examples_*.npz >/dev/null 2>&1 && step simprofile "${PY[@]}" scripts/figures/fig_profile_truth_examples.py
 # simulation-based calibration, one directory per scored run (scripts/sim_truth/sbc_ranks.py)
 has simsbc && ls "$DATA"/sbc/*/sbc_ecdf.csv >/dev/null 2>&1 && step simsbc "${PY[0]}" "${PY[1]}" --with "arviz<1" "${PY[@]:2}" scripts/figures/fig_sim_sbc.py --src "$DATA"/sbc/*/
