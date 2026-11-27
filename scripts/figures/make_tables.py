@@ -870,12 +870,13 @@ def table_sim_downstream() -> None:
 
 # mos010 against mos025 (mosaic spread 0.10 and 0.25, otherwise the same datsimx row), every
 # careless seed each has: (collect_downstream.py directory, dataset key). mos025's arms are the
-# epoch-39-59 averaged exports; mos010's svae_bg, T0 and P2 rows are last-epoch exports with one
-# seed, which the n columns show.
+# epoch-39-59 averaged exports; mos010's svae_bg, T0 and P2 rows are last-epoch exports. Both are
+# compared at careless seed 1, the one seed every mos010 arm has.
 SIM_MOSAIC = {
     "mos010": (ROOT / "docs" / "figures" / "data" / "sim_downstream", "mos010_pc_default"),
     "mos025": (ROOT / "docs" / "figures" / "data" / "sim_downstream_mos025", "mos025_pc_m0_default"),
 }
+SIM_MOSAIC_SEED = 1
 SIM_MOSAIC_ARMS = {
     "laue_integrate": ("laue.integrate", "summation / fit"),
     "svae_bg_rb": (r"svae\_bg", r"$i_\mathrm{rb}$"),
@@ -901,10 +902,11 @@ def _sim_mosaic_rows():
             continue
         cs = d / "downstream_careless_stats.csv"
         tabs[k] = dict(
-            ref=pl.read_csv(d / "downstream_refine.csv").filter(dataset=ds),
+            ref=pl.read_csv(d / "downstream_refine.csv").filter(dataset=ds, seed=SIM_MOSAIC_SEED),
             mg=pl.read_csv(d / "downstream_merged.csv", infer_schema_length=None).filter(
-                (pl.col("dataset") == ds) & (pl.col("shell").cast(pl.Utf8) == "all")),
-            cs=pl.read_csv(cs, infer_schema_length=None).filter(dataset=ds) if cs.is_file() else None)
+                (pl.col("dataset") == ds) & (pl.col("shell").cast(pl.Utf8) == "all") & (pl.col("seed") == SIM_MOSAIC_SEED)),
+            cs=(pl.read_csv(cs, infer_schema_length=None).filter(dataset=ds, seed=SIM_MOSAIC_SEED)
+                if cs.is_file() else None))
 
     def careless(c, m, tool, b, statistic=None, correlation=None, group=None):
         if c is None:
@@ -935,10 +937,8 @@ def _sim_mosaic_rows():
             outer = int(cc["bin"].max()) if cc is not None and cc.height else None  # completeness has an extra bin
             g = t["mg"].filter(method=m)
             row.update({
-                f"{k}_n": r.height,
                 f"{k}_r_work": float(r["r_work"].mean()),
                 f"{k}_r_free": float(r["r_free"].mean()),
-                f"{k}_sd": float(r["r_free"].std()) if r.height > 1 else None,
                 f"{k}_d_laue": float(r["r_free"].mean() - laue[k]) if laue.get(k) is not None else None,
                 f"{k}_r_F": float(g["r_F"].mean()) if g.height else None,
                 f"{k}_cchalf_in": careless(t["cs"], m, "cchalf", 1, correlation="pearson"),
@@ -967,21 +967,19 @@ def table_sim_mosaic() -> None:
     def only(*suffixes):
         return [{k: v for k, v in r.items() if k in ("arm", "export") or k.endswith(suffixes)} for r in rows]
 
-    t = Table(only("_n", "_r_work", "_r_free", "_sd", "_d_laue", "_r_F"))
+    t = Table(only("_r_work", "_r_free", "_d_laue", "_r_F"))
     t.column("arm", label="arm")
     t.column("export", label="export")
     for k in sets:
-        t.column(f"{k}_n", label=f"$n$, {lab[k]}", fmt="{:d}")
         t.column(f"{k}_r_work", label=rf"$R_\mathrm{{work}}$, {lab[k]}", fmt="{:.4f}", best="min")
         t.column(f"{k}_r_free", label=rf"$R_\mathrm{{free}}$, {lab[k]}", fmt="{:.4f}", best="min")
-        t.column(f"{k}_sd", label=rf"sd $R_\mathrm{{free}}$, {lab[k]}", fmt="{:.4f}")
         t.column(f"{k}_d_laue", label=rf"$\Delta R_\mathrm{{free}}$ vs laue, {lab[k]}", fmt="{:+.4f}", best="min")
         t.column(f"{k}_r_F", label=rf"$r_F$ vs truth, {lab[k]}", fmt="{:.3f}", best="min")
     write(t, "sim_mosaic_refinement",
           "The same datsimx simulation at mosaic spread 0.10$^\\circ$ (mos010) and 0.25$^\\circ$ (mos025): "
-          "each export merged by careless (config 4) and refined twice by phenix against one pinned R-free "
-          "set, averaged over the $n$ careless seeds available; sd is over those seeds. $\\Delta R_\\mathrm{free}$ "
-          "is against that dataset's laue.integrate mean. $r_F$ compares merged with true structure factors "
+          "each export merged by careless (config 4, seed 1) and refined twice by phenix against one pinned "
+          "R-free set; one merging seed, so $R_\\mathrm{free}$ differences below about 0.008 are not resolved. "
+          "$\\Delta R_\\mathrm{free}$ is against that dataset's laue.integrate. $r_F$ compares merged with true structure factors "
           "after a fitted scale and $B$. mos025's model exports average the checkpoints of epochs 39--59; "
           "mos010's svae\\_bg, T0 and P2 exports are the last epoch.")
     t2 = Table(only("_cchalf_in", "_cchalf_out", "_ccpred_out", "_rsplit_out", "_isigi_out"))
@@ -995,8 +993,7 @@ def table_sim_mosaic() -> None:
         t2.column(f"{k}_isigi_out", label=rf"$I/\sigma$ outer, {lab[k]}", fmt="{:.2f}")
     write(t2, "sim_mosaic_careless",
           "careless.stats of the same merges, in careless's innermost and outermost of ten resolution "
-          "shells (Pearson correlations; each statistic averaged over careless's repeat groups, then over "
-          "seeds).")
+          "shells, careless seed 1 (Pearson correlations; each statistic averaged over careless's repeat groups).")
 
 
 def main() -> int:
