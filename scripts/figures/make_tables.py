@@ -996,6 +996,91 @@ def table_sim_mosaic() -> None:
           "shells, careless seed 1 (Pearson correlations; each statistic averaged over careless's repeat groups).")
 
 
+# mos025 at two shoebox sizes, from the same laue-dials reflections: (profile-fit dataset key,
+# score table, CRPS table) per window. Method names are the profile_fit table's; the score and
+# CRPS tables carry `<arm>_<estimator>` (score_exports.sh).
+SIM_WINDOWS = {
+    "25": ("mos025_pc_m0_default", "sim_truth_scores_mos025_pc.csv", "sim_crps_mos025_pc.csv"),
+    "41": ("mos025_pc_m0_default41", "sim_truth_scores_mos025_41_pc.csv", "sim_crps_mos025_41_pc.csv"),
+}
+SIM_WINDOW_ARMS = {
+    "truth_mask_profile": "true profile",
+    "laue_integrate": "laue.integrate",
+    "svae_bg": r"svae\_bg",
+    "t0": "T0",
+    "p2": "P2",
+    "b1": "B1",
+    "geom_both": r"geom\_both",
+}
+
+
+def _sim_window_rows():
+    import polars as pl
+
+    data = ROOT / "docs" / "figures" / "data"
+    rows = []
+    have = []
+    for w, (ds, scores, crps) in SIM_WINDOWS.items():
+        fit = data / f"profile_fit_vs_truth_{ds}.csv"
+        if fit.is_file():
+            have.append(w)
+    for m, name in SIM_WINDOW_ARMS.items():
+        row = {"arm": name}
+        seen = False
+        for w in have:
+            ds, scores, crps = SIM_WINDOWS[w]
+            f = pl.read_csv(data / f"profile_fit_vs_truth_{ds}.csv").filter(method=m)
+            if not f.height:
+                continue
+            seen = True
+            a = f.filter(bin_kind="all")
+            bright = f.filter((pl.col("bin_kind") == "i_true") & (pl.col("lo") >= 1000))
+            row[f"sum_ratio_{w}"] = float(a["sum_ratio"][0]) if a.height else None
+            row[f"hell_{w}"] = float(a["hellinger_mean"][0]) if a.height else None
+            row[f"hell_bright_{w}"] = (float((bright["hellinger_mean"] * bright["n"]).sum() / bright["n"].sum())
+                                       if bright.height else None)
+            est = "" if m in ("laue_integrate", "truth_mask_profile") else "_rb"
+            key = m + est
+            sc = data / scores
+            if sc.is_file() and m != "truth_mask_profile":
+                s = pl.read_csv(sc).filter(method=key)
+                mid = s.filter(pl.col("i_true_lo") == 100)
+                row[f"reldev_{w}"] = float(mid["rel_dev_mean"][0]) if mid.height else None
+            cr = data / crps
+            if cr.is_file() and m != "truth_mask_profile":
+                c = pl.read_csv(cr).filter(method=key)
+                for b, lab in (("all", "all"), (">3000", "hi")):
+                    v = c.filter(bin=b)["crps_rel"]
+                    row[f"crps_{lab}_{w}"] = float(v[0]) if len(v) else None
+        if seen:
+            rows.append(row)
+    return rows, have
+
+
+def table_sim_window() -> None:
+    """mos025 at 25x25 and 41x41 shoeboxes: profile shape, photons recovered and the export against truth."""
+    rows, have = _sim_window_rows()
+    if not rows:
+        return
+    t = Table(rows)
+    t.column("arm", label="profile")
+    for w in have:
+        t.column(f"sum_ratio_{w}", label=rf"$\sum \hat I / \sum I_\mathrm{{true}}$, {w}", fmt="{:.3f}")
+        t.column(f"hell_{w}", label=f"Hellinger, {w}", fmt="{:.3f}", best="min")
+        t.column(f"hell_bright_{w}", label=rf"Hellinger, $I_\mathrm{{true}}>1000$, {w}", fmt="{:.3f}", best="min")
+        t.column(f"reldev_{w}", label=rf"rel. dev., 100--300 ph, {w}", fmt="{:+.3f}")
+        t.column(f"crps_all_{w}", label=f"CRPS$/I$, all, {w}", fmt="{:.3f}", best="min")
+        t.column(f"crps_hi_{w}", label=rf"CRPS$/I$, $>3000$ ph, {w}", fmt="{:.3f}", best="min")
+    write(t, "sim_window_mos025",
+          "mos025 (mosaic spread 0.25$^\\circ$) integrated on 25$\\times$25 and 41$\\times$41 shoeboxes cut from "
+          "the same laue-dials reflections. The first three columns per window put each profile through one "
+          "estimator, the profile fit with the true background, $\\hat I = \\sum p(c-b)/\\sum p^2$, on the "
+          "stored counts, so methods differ only in $p$; $\\sum \\hat I/\\sum I_\\mathrm{true}$ is over every "
+          "in-domain reflection, and the true profile cut to the window is the ceiling. Hellinger distance is "
+          "from the true profile. Relative deviation and CRPS score each arm's own export ($i_\\mathrm{rb}$; "
+          "laue.integrate's intensities) against the true intensity.")
+
+
 def main() -> int:
     if "--only" in sys.argv and sys.argv[sys.argv.index("--only") + 1] == "sim":
         # the simulation tables read docs/figures/data/sim_downstream and need no DIALS logs
@@ -1003,6 +1088,7 @@ def main() -> int:
         table_sim_truth_scores()
         table_sim_downstream()
         table_sim_mosaic()
+        table_sim_window()
         return 0
     if not LOGS.is_dir():
         raise SystemExit(
@@ -1020,6 +1106,7 @@ def main() -> int:
     table_sim_truth_scores()
     table_sim_downstream()
     table_sim_mosaic()
+    table_sim_window()
     write_long_format()
     write_statistic_labels()
     return 0
