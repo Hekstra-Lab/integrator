@@ -40,6 +40,8 @@ mkdir -p "$DEST"
 #                            per-component table
 # peak_models                the refined PDB beside each peaks.csv, which is
 #                            what names the atom carrying each peak
+# hewl1118_downstream        collect_downstream.py over the hewl_1118 arms,
+#                            full range and capped at 1.81 A
 want=("$@")
 [ ${#want[@]} -eq 0 ] && want=(mono scatter profile_shape profile_anisotropy dials_logs arm_metrics)
 
@@ -336,6 +338,33 @@ if has basis; then
       case "$f" in *basis_components.csv) continue;; esac
       tail -n +2 "$f" >> "$DEST/$sub/basis_components.csv"
     done
+  done
+fi
+
+if has hewl1118_downstream; then
+  # collect_downstream.py over the hewl_1118 arms scored through careless
+  # config 4 + phenix on hewl_1118_rfree.mtz: refinement overall, by shell and
+  # by step, CC_work/CC_free, anomalous peaks, careless.stats. No truth on real
+  # data, so no merged-vs-truth table. A second pass reads the refinements
+  # capped at 1.81 A (`run_pipeline.py --refine-tag d1.81`), the common limit
+  # of the shoebox arms and laue v0.5.1, for arms that reach further.
+  H=$S/hewl1118_runs
+  ARMS="--arm T0=$H/rb/hewl1118_kmix_base/epoch_0019/preds_epoch_0019.mtz
+        --arm B1=$H/rb/hewl1118_kmixv2_post/epoch_0019/preds_epoch_0019.mtz
+        --arm P2=$H/rb/hewl1118_kmix_h128_grid05/epoch_0019/preds_epoch_0019.mtz
+        --arm laue_v051=$H/laue_v0.5.1/integrated_HEWL_anom_0999.mtz
+        --arm precognition=$H/precognition/HEWL_NaI3_varEll_0999_dhkl.mtz"
+  ARMS=$(echo $ARMS)  # one line: a newline inside the ssh command ends it
+  ssh cannon "git -C $REPO pull -q" || exit 1
+  for tag in "" d1.81; do
+    out=$H/figdata/downstream${tag:+_$tag}
+    sub=hewl1118_downstream${tag:+_$tag}
+    echo "$sub <- $out"
+    ssh cannon "cd $REPO && PYTHONPATH=$REPO/src $P scripts/sim_truth/collect_downstream.py \
+      --dataset hewl_1118 --default-seed 0 --out-dir $out ${tag:+--refine-tag $tag} $ARMS" \
+      > /dev/null || exit 1
+    mkdir -p "$DEST/$sub"
+    scp -q "cannon:$out/downstream_*.csv" "$DEST/$sub/"
   done
 fi
 

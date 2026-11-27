@@ -119,14 +119,14 @@ def main() -> None:
             if logs:
                 tabs = metrics.refinement_shells_from_phenix_log(logs[-1])
                 fom = {r["shell"]: r for r in tabs["fom"]}
-                for r in tabs["rfactors"]:
-                    f = fom.get(r["shell"], {})
-                    shells_rows.append({**key, **r, **{k: f.get(k) for k in ("fom", "phase_error", "alpha", "beta")}})
+                for sh in tabs["rfactors"]:
+                    f = fom.get(sh["shell"], {})
+                    shells_rows.append({**key, **sh, **{k: f.get(k) for k in ("fom", "phase_error", "alpha", "beta")}})
                 for i, st in enumerate(metrics.refinement_steps_from_phenix_log(logs[-1])):
                     steps_rows.append({**key, "step": i, **st})
                 mtz2 = next(iter(sorted((work / "refine2").glob("*_2.mtz"))), None)
                 if mtz2 is not None and tabs["rfactors"]:
-                    cc_rows += [{**key, **r} for r in cc_work_free(mtz2, tabs["rfactors"])]
+                    cc_rows += [{**key, **c} for c in cc_work_free(mtz2, tabs["rfactors"])]
             ph = work / "peak_heights.csv"
             model = next(iter(sorted((work / "refine2").glob("*.pdb"))), None)
             if ph.is_file():
