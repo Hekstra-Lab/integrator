@@ -252,6 +252,13 @@ fi
 has simwindow && [ -f "$DATA/profile_fit_vs_truth_mos025_pc_m0_default41.csv" ] && step simwindow "${PY[@]}" scripts/figures/fig_sim_window_compare.py \
   --window "25x25=mos025_pc_m0_default:sim_truth_scores_mos025_pc.csv:sim_crps_mos025_pc.csv" \
   --window "41x41=mos025_pc_m0_default41:sim_truth_scores_mos025_41_pc.csv:sim_crps_mos025_41_pc.csv" --out sim_window_mos025
+if has simwindow && [ -f "$DATA/sim_truth_joined_mos025_41_pc.csv.gz" ]; then
+  for est in rb posterior; do
+    step simwindow "${PY[@]}" scripts/figures/fig_sim_truth_scatter.py --src "$DATA/sim_truth_joined_mos025_pc.csv.gz" \
+      --compare "$DATA/sim_truth_joined_mos025_41_pc.csv.gz" --labels "25x25,41x41" --psf-fraction 0 \
+      --methods laue_integrate,svae_bg_$est,t0_$est,p2_$est,b1_$est,geom_both_$est --tag mos025_window_$est
+  done
+fi
 has simprofile && ls "$DATA"/profile_truth_examples_*.npz >/dev/null 2>&1 && step simprofile "${PY[@]}" scripts/figures/fig_profile_truth_examples.py
 # simulation-based calibration, one directory per scored run (scripts/sim_truth/sbc_ranks.py)
 has simsbc && ls "$DATA"/sbc/*/sbc_ecdf.csv >/dev/null 2>&1 && step simsbc "${PY[0]}" "${PY[1]}" --with "arviz<1" "${PY[@]:2}" scripts/figures/fig_sim_sbc.py --src "$DATA"/sbc/*/

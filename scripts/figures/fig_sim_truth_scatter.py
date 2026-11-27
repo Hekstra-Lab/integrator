@@ -126,6 +126,42 @@ AXES = {  # quantity -> (x label, y label, title, output stem)
 }
 
 
+def compare(a) -> None:
+    """One row per method, one column per joined table, on shared axes."""
+    tabs = []
+    for src in (a.src, a.compare):
+        t = pl.read_csv(src, infer_schema_length=None).filter(pl.col("in_domain"))
+        tabs.append(t.with_columns((pl.col("I") / pl.col("gain")).alias("i_hat")))
+    labels = a.labels.split(",")
+    present = [set(t["method"].unique().to_list()) for t in tabs]
+    methods = ([m.strip() for m in a.methods.split(",")] if a.methods
+               else [m for m in TITLES if m in present[0] & present[1]])
+    methods = [m for m in methods if m in present[0] | present[1]]
+    figstyle.use()
+    roles = figstyle.roles()
+    edges = np.logspace(-1, 4.5, 23)
+    full = pl.concat([t.select("i_true") for t in tabs])
+    fig, axes = plt.subplots(len(methods), 2, figsize=figstyle.figsize("full", aspect=0.42 * len(methods)),
+                             layout="constrained", squeeze=False, sharex=True, sharey=True)
+    for i, m in enumerate(methods):
+        for j, t in enumerate(tabs):
+            ax = axes[i, j]
+            d = t.filter(pl.col("method") == m)
+            if not d.height:
+                ax.set_visible(False)
+                continue
+            _intensity(ax, d, a, roles, edges, full)
+            ax.set_title(f"{TITLES.get(m, m)}, {labels[j]}  (n = {len(d):,})", fontsize=6)
+    for ax in axes[-1]:
+        ax.set_xlabel(AXES["intensity"][0])
+    fig.supylabel(AXES["intensity"][1], fontsize=7)
+    axes[0, 0].legend(loc="upper left", fontsize=6)
+    OUT.mkdir(parents=True, exist_ok=True)
+    for p in figstyle.save(fig, OUT / ("sim_truth_scatter_compare" + (f"_{a.tag}" if a.tag else ""))):
+        print(p)
+    plt.close(fig)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", type=Path, default=SRC)
@@ -138,7 +174,15 @@ def main() -> None:
     ap.add_argument("--ncols", type=int, default=3)
     ap.add_argument("--tag", default="",
                     help="appended to the output name, so a second set of methods does not replace the first")
+    ap.add_argument("--compare", type=Path, default=None,
+                    help="a second joined table of the same simulation (another shoebox size): one row per method, "
+                         "a column per table, same axes (intensity only)")
+    ap.add_argument("--labels", default="first,second", help="with --compare: column titles, comma separated")
+    ap.add_argument("--methods", default=None, help="with --compare: the methods, comma separated, in order")
     a = ap.parse_args()
+    if a.compare is not None:
+        compare(a)
+        return
     if not a.src.exists():
         raise SystemExit(f"{a.src} is missing; copy it from the sims/<grid>/<row>/joined_vs_truth.csv")
     if a.quantity == "background":
