@@ -393,12 +393,13 @@ if has hewl1118_profiles; then
   scp -q "cannon:$F/profile_maps_hewl1118.npz" "$DEST/" && echo "hewl1118_profiles <- $F/profile_maps_hewl1118.npz"
   # the full first-1000-image dump if it exists, else the 50-image subset
   # (laue_dials_rerun.sbatch IMAGES=); hewl_1118 is one file per image, so the
-  # join is on the experiment id, which is the shoeboxes' image_num
+  # join is on the file number - 1, which is the shoeboxes' image_num (not the
+  # experiment id: eight files below 1000 were not indexed)
   LP=$(ssh cannon "for f in $LM/laue_profiles_main.npz ${LM}_subset/laue_profiles_subset.npz; do \
     [ -s \$f ] && { echo \$f; break; }; done")
   if [ -n "$LP" ]; then
     ssh cannon "git -C $REPO pull -q && cd $REPO && $P scripts/sim_truth/laue_profiles.py \
-      --reduce-from $LP --maps $F/profile_maps_hewl1118.npz --join expt_id \
+      --reduce-from $LP --maps $F/profile_maps_hewl1118.npz --join file_index \
       --out $F/laue_profiles_hewl1118_main.npz" || exit 1
     echo "hewl1118_profiles <- $LP"
     scp -q "cannon:$F/laue_profiles_hewl1118_main.npz" "$DEST/"

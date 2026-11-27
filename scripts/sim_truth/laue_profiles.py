@@ -21,7 +21,11 @@ Per reflection the npz holds
                                       on every row when each image is its own file
     expt_id                           the experiment's index in --reference-expt,
                                       found by image path (default: in --expt);
-                                      the `image_num` our shoeboxes carry on hewl_1118
+    file_index                        the trailing integer of the image file's name,
+                                      minus 1 (HEWL_NaI_3_2_0248.mccd -> 247); -1 when
+                                      the name has none. This is the `image_num` of the
+                                      hewl_1118 shoeboxes, which differs from the
+                                      experiment id wherever files were not indexed
     I, sigI, bg                       laue's intensity, sigma, per-pixel background
     radius, n_valid                   window radius and usable pixels in the disc
     loc (y, x), scale (2x2)           the fitted Gaussian, image coordinates
@@ -56,8 +60,8 @@ fits nothing; it reads a full npz and a `dump_profile_maps.py` npz and writes wh
         --out laue_profiles_reduced.npz [--join expt_id]
 
 `--join` names the laue column matched to the maps' `<arm>_named_image`: `image_num`
-(default) for a single multi-frame file, `expt_id` where the shoeboxes' image number
-is the experiment id (hewl_1118, one file per image).
+(default) for a single multi-frame file, `file_index` for hewl_1118 (one file per
+image, numbered from 1), `expt_id` where the shoeboxes number images by experiment.
 """
 
 from __future__ import annotations
@@ -91,7 +95,7 @@ def _install():
 
 
 def _one_image(job):
-    img_set, table, params, box, image_num, expt_id = job
+    img_set, table, params, box, image_num, expt_id, file_index = job
     li = _install()
     _KEPT.clear()
     li.integrate_image(img_set, table, *params)
@@ -117,7 +121,8 @@ def _one_image(job):
     r_idx = np.broadcast_to(np.arange(len(cen))[:, None], p.shape)
     np.add.at(prof, (r_idx[inside], (by * box + bx)[inside]), p[inside])
     return dict(
-        image_num=np.full(len(cen), image_num), expt_id=np.full(len(cen), expt_id), h=hkl_in[rows, 0], k=hkl_in[rows, 1], l=hkl_in[rows, 2],
+        image_num=np.full(len(cen), image_num), expt_id=np.full(len(cen), expt_id),
+        file_index=np.full(len(cen), file_index), h=hkl_in[rows, 0], k=hkl_in[rows, 1], l=hkl_in[rows, 2],
         x=cen[:, 0], y=cen[:, 1], I=it.intensity, sigI=it.uncertainty, bg=it.background.squeeze(-1),
         radius=np.full(len(cen), it.radius), n_valid=it.window_valid.sum(-1), loc=it.profile_loc,
         scale=it.profile_scale, strong=it.strong.astype(bool), profile_box=prof.astype(np.float32),
@@ -143,7 +148,7 @@ def reduce_for_figure(full_path: str, maps_path: str, out_path: str, join: str =
     want = np.unique(np.concatenate([key(*(maps[f"{a}_{tag}_{c}"] for c in ("image", "h", "k", "l")))
                                      for a, tag in sets]))
     rows = np.flatnonzero(np.isin(have, want))
-    out = {k: full[k][rows] for k in ("image_num", "expt_id", "h", "k", "l", "x", "y", "profile_box")
+    out = {k: full[k][rows] for k in ("image_num", "expt_id", "file_index", "h", "k", "l", "x", "y", "profile_box")
            if k in full.files}
     if join != "image_num":
         out["image_num"] = full[join][rows]  # the figure joins on image_num
@@ -185,7 +190,7 @@ def main():
     ap.add_argument("--reference-expt", default=None,
                     help="the experiment list whose indices expt_id reports, matched by image path "
                          "(for a subset of it); default --expt")
-    ap.add_argument("--join", choices=("image_num", "expt_id"), default="image_num",
+    ap.add_argument("--join", choices=("image_num", "expt_id", "file_index"), default="image_num",
                     help="with --reduce-from: the laue column matched to the maps' image number")
     a = ap.parse_args()
     if a.reduce_from:
@@ -219,8 +224,15 @@ def main():
         expt_ids = [where[os.path.basename(e.imageset.paths()[0])] for e in expts]
     else:
         expt_ids = list(range(len(expts)))
-    jobs = [(imagesets[k], preds.select(preds["id"] == i), params, a.box, frames[i] + 1, expt_ids[i])
-            for k, i in enumerate(ids)]
+    import re
+
+    def file_index(e):
+        m = re.search(r"(\d+)\.[^.\d]+$", os.path.basename(e.imageset.paths()[0]))
+        return int(m.group(1)) - 1 if m else -1
+
+    file_indices = [file_index(e) for e in expts]
+    jobs = [(imagesets[k], preds.select(preds["id"] == i), params, a.box, frames[i] + 1, expt_ids[i],
+             file_indices[i]) for k, i in enumerate(ids)]
     if a.max_images:
         jobs = jobs[: a.max_images]
     t0 = time.time()
