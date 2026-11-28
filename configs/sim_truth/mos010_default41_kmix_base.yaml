@@ -1,0 +1,155 @@
+# mos010_default41_kmix_base: mos025_m0_default41_kmix_base.yaml on mos010 (datsimx mosaic spread 0.10), shoeboxes pc_default_41 (laue-dials main d57f96e,
+# default optimize_indexing macrocycles, the laue_dials_pc run every mos010 arm uses; misorientation after refine median 0.0029 deg).
+# Differs in data_dir and this dataset's Wilson init_G/init_B (scripts/poly/estimate_wilson_init.py: 2089.6, 12.1). Its header follows.
+# mos025_m0_default41_kmix_base: mos025_m0_default_kmix_base.yaml on 41x41 shoeboxes (pc_m0_default_41, cut from the same laue-dials
+# m0 reflections as pc_m0_default_25). Differs in data_dir, h/w/output_dim/input_shape/profile_shape (41, 1681) and the
+# dataset's Wilson init_G/init_B (estimate_wilson_init.py on these boxes: 2068.5, 13.2); the kmix starting widths and width cap scale with the window by construction.
+# At mosaic 0.25 the 25x25 box holds 0.836 of the truth-mask photons (truth profile fit), the reason for this size.
+# T0: mos010_default_streak.yaml with qp = streak_kmix_profile, n_components 3, residual: none, init_grid_scale 1.0.
+# K aligned Gaussian components along the analytic azimuth; widths are softplus excess over the pixel under one cap
+# (window half-side); starting widths on a geometric grid from the window (along 1 px to side/4, across 0.3 px to side/8)
+# times init_grid_scale. No setting comes from a true profile. The profile encoder is cut out (residual: none).
+# Otherwise identical to mos010_default_streak.yaml, whose header follows.
+# N1: mos010_default.yaml with qp = streak_base_profile at its defaults: closed-form streak base
+# (analytic azimuth, tanh-bounded extents from radius, centre from xyzcal) plus the detector-frame
+# learned-basis residual W h gated by the base's profile-fit signal-to-noise (z0 = 12).
+# init_extent from bright-spot moments of this dataset (4.2, 1.0 px).
+# mos010_default: svae, gate: responsibility, learned_basis_profile, 25x25, on the datsimx mos010 run,
+# the DEFAULT laue.predict set (162,117 reflections), nanoBragg-noise photon-counting (gain 1, readout 0, calib 0), cut at laue.integrate's own reflections and centroids (docs/sim_truth.md).
+# From configs/poly/hewl1118_svae_gate_responsibility.yaml; differs in data_dir and the dataset's own
+# beam_center (dataset.yaml beam_center_px), lambda_min/max (spectrum 1.02-1.18 A +- 0.01) and Wilson
+# init_G/init_B (this dataset's own, scripts/poly/estimate_wilson_init.py, photons), plus
+# profile encoder output_activation: none (a final ReLU made x = 0 absorbing: svae_profile_encoder_dead)
+# and max_epochs 60 (the DHFR sim arms). intensity_variance stays at its default; score both estimators,
+# predict config from scripts/poly/rb_predict_config.py KEYS=both.
+mode: polychromatic
+integrator:
+  name: svae
+  args:
+    encoder_out: 32
+    mc_samples: 50
+    predict_keys:
+    - refl_ids
+    - is_test
+    - qi_mean
+    - qi_var
+    - qbg_mean
+    - qbg_var
+    - intensity.sum.value
+    - intensity.sum.variance
+    - background.sum.value
+    - background.sum.variance
+    - d
+    - wavelength
+    - H
+    - K
+    - L
+    data_dim: 2d
+    d: 1
+    h: 41
+    w: 41
+    gate: responsibility
+optimizer:
+  lr: 0.001
+  weight_decay: 0.0
+  lr_schedule: null
+surrogates:
+  qp:
+    name: streak_kmix_profile
+    args:
+      latent_dim: 12
+      init_std: 0.5
+      prior_scale: 3.0
+      output_dim: 1681
+      input_dim: 32
+      beam_center:
+      - 2074.5
+      - 2181.5
+      lambda_min: 1.01
+      lambda_max: 1.19
+      profile_shape:
+      - 1
+      - 41
+      - 41
+      n_components: 3
+      init_grid_scale: 1.0
+      residual: none
+  qbg:
+    name: gamma
+    args:
+      reparameterization: mean_fano
+      eps: 1.0e-06
+      k_min: 0.01
+      in_features: 32
+  qi:
+    name: gamma
+    args:
+      reparameterization: mean_fano
+      eps: 1.0e-06
+      k_min: 0.01
+      in_features: 32
+loss:
+  name: polychromatic_wilson
+  args:
+    degree: 5
+    lambda_min: 1.01
+    lambda_max: 1.19
+    init_G: 2089.6
+    init_B: 12.1
+    b_min: 1.0
+    polarization: false
+    lorentz: false
+    intensity_kl_weight: 1.0
+    background_kl_weight: 1.0
+    profile_kl_weight: 1.0
+    bg_rate: 1.0
+    bg_concentration: 1.0
+    n_bins: 30
+    beam_center:
+    - 2074.5
+    - 2181.5
+data_loader:
+  name: polychromatic_data
+  args:
+    data_dir: /n/netscratch/hekstra_lab/Lab/laldama/sims/paper_full/mos010/shoeboxes/pc_default_41
+    batch_size: 512
+    validation_split: 0.2
+    num_workers: 8
+    include_test: true
+    subset_size: null
+    resolution_cutoff: null
+    min_valid_pixels: 10
+    transform: anscombe
+    shoebox_file_names:
+      data_dir: /n/netscratch/hekstra_lab/Lab/laldama/sims/paper_full/mos010/shoeboxes/pc_default_41
+      counts: counts.npy
+      masks: masks.npy
+      reference: metadata.npy
+      standardized_counts: null
+trainer:
+  max_epochs: 60
+  accelerator: gpu
+  devices: 1
+  logger: true
+  precision: '32'
+  check_val_every_n_epoch: 5
+  log_every_n_steps: 10
+  deterministic: false
+  enable_checkpointing: true
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+checkpoint:
+  save_top_k: -1
+encoders:
+- name: profile_encoder
+  args:
+    data_dim: 2d
+    encoder_out: 32
+    input_shape:
+    - 41
+    - 41
+    output_activation: none
+- name: intensity_encoder
+  args:
+    data_dim: 2d
+    encoder_out: 32
