@@ -57,7 +57,7 @@ if [ ${#want[@]} -eq 0 ]; then
   if [ -n "$TEMPLATE" ]; then
     want=(ccsym pdz2 refine basis basiscmp cost)
   else
-    want=(shoebox loss wilson basis basiscmp cost scatter merging peaks spectrum careless ccsym pdz2 refine shape patch arms simsampling simimage simtruth simshoebox simtruthpc simprofile simcmp simsbc simprior simcrps simprofcmp hewl1118profiles simmosaic simtruth025 simtruth025b simmosaiccc simwindow)
+    want=(shoebox loss wilson basis basiscmp cost scatter merging peaks spectrum careless ccsym pdz2 refine shape patch arms simsampling simimage simtruth simshoebox simtruthpc simprofile simcmp simsbc simprior simcrps simprofcmp hewl1118profiles simmosaic simtruth025 simtruth025b simtruth005 simtruth050 simtruth050b simbias simmosaiccc simwindow simwindow050)
   fi
 fi
 has() { printf '%s\n' "${want[@]}" | grep -qx "$1"; }
@@ -207,33 +207,38 @@ SIMPC="$DATA/sim_truth_joined_mos010_pc.csv.gz"
 has simtruthpc && [ -f "$SIMPC" ] && step simtruthpc "${PY[@]}" scripts/figures/fig_sim_truth_scatter.py --src "$SIMPC" --psf-fraction 0
 has simtruthpc && [ -f "$DATA/sim_truth_scores_mos010_pc.csv" ] && step simtruthpc "${PY[@]}" scripts/figures/fig_sim_truth_scores.py
 has simtruthpc && [ -f "$DATA/sim_truth_scores_by_d_mos010_pc.csv" ] && step simtruthpc "${PY[@]}" scripts/figures/fig_sim_truth_scores.py --by-d "$DATA/sim_truth_scores_by_d_mos010_pc.csv"
-# mos025 (mosaic spread 0.25, laue-dials n_macrocycles=0): the arms against truth, as simtruthpc / simcrps / simcmp do for mos010
-S25="$DATA/sim_truth_joined_mos025_pc.csv.gz"
-if has simtruth025 && [ -f "$S25" ]; then
-  step simtruth025 "${PY[@]}" scripts/figures/fig_sim_truth_scatter.py --src "$S25" --psf-fraction 0 --tag mos025
-  step simtruth025 "${PY[@]}" scripts/figures/fig_sim_truth_scores.py --src "$DATA/sim_truth_scores_mos025_pc.csv" --tag mos025
-  step simtruth025 "${PY[@]}" scripts/figures/fig_sim_truth_scores.py --src "$DATA/sim_truth_scores_mos025_pc.csv" \
-    --by-d "$DATA/sim_truth_scores_by_d_mos025_pc.csv" --tag mos025
-  step simtruth025 "${PY[@]}" scripts/figures/fig_sim_crps.py --src "$DATA/sim_crps_mos025_pc.csv" --base b1_rb
+# one mosaic row against truth, as simtruthpc / simcrps / simcmp do for mos010:
+# sim_truth_set TARGET FILE_TAG DATASET -- reads sim_truth_{joined,scores,scores_by_d}_<FILE_TAG>_pc and sim_crps_<FILE_TAG>_pc
+# (mos005, mos025, mos050: laue-dials n_macrocycles=0; the _41 tags are the same reflections on 41x41 shoeboxes)
+sim_truth_set() {
+  local target=$1 tag=$2 ds=$3 j="$DATA/sim_truth_joined_$2_pc.csv.gz"
+  has "$target" && [ -f "$j" ] || return 0
+  step "$target" "${PY[@]}" scripts/figures/fig_sim_truth_scatter.py --src "$j" --psf-fraction 0 --tag "$tag"
+  step "$target" "${PY[@]}" scripts/figures/fig_sim_truth_scores.py --src "$DATA/sim_truth_scores_${tag}_pc.csv" --tag "$tag"
+  step "$target" "${PY[@]}" scripts/figures/fig_sim_truth_scores.py --src "$DATA/sim_truth_scores_${tag}_pc.csv" \
+    --by-d "$DATA/sim_truth_scores_by_d_${tag}_pc.csv" --tag "$tag"
+  step "$target" "${PY[@]}" scripts/figures/fig_sim_crps.py --src "$DATA/sim_crps_${tag}_pc.csv" --base b1_rb
   for est in rb posterior; do
-    step simtruth025 "${PY[@]}" scripts/figures/fig_intensity_scatter.py --data "$S25" --id shot,h,k,l --value i_hat --in-domain \
-      --dataset mos025_pc_m0_default --methods laue_integrate,svae_bg_$est,t0_$est,p2_$est,b1_$est,geom_both_$est \
-      --out-dir docs/figures/sim/cmp --prefix mos025_pc_m0_default_$est
+    step "$target" "${PY[@]}" scripts/figures/fig_intensity_scatter.py --data "$j" --id shot,h,k,l --value i_hat --in-domain \
+      --dataset "$ds" --methods laue_integrate,svae_bg_$est,t0_$est,p2_$est,b1_$est,geom_both_$est \
+      --out-dir docs/figures/sim/cmp --prefix "${ds}_$est"
   done
-fi
-# the same on 41x41 shoeboxes (pc_m0_default_41), where the 25x25 window held 0.836 of the truth photons
-S41="$DATA/sim_truth_joined_mos025_41_pc.csv.gz"
-if has simtruth025b && [ -f "$S41" ]; then
-  step simtruth025b "${PY[@]}" scripts/figures/fig_sim_truth_scatter.py --src "$S41" --psf-fraction 0 --tag mos025_41
-  step simtruth025b "${PY[@]}" scripts/figures/fig_sim_truth_scores.py --src "$DATA/sim_truth_scores_mos025_41_pc.csv" --tag mos025_41
-  step simtruth025b "${PY[@]}" scripts/figures/fig_sim_truth_scores.py --src "$DATA/sim_truth_scores_mos025_41_pc.csv" \
-    --by-d "$DATA/sim_truth_scores_by_d_mos025_41_pc.csv" --tag mos025_41
-  step simtruth025b "${PY[@]}" scripts/figures/fig_sim_crps.py --src "$DATA/sim_crps_mos025_41_pc.csv" --base b1_rb
-  for est in rb posterior; do
-    step simtruth025b "${PY[@]}" scripts/figures/fig_intensity_scatter.py --data "$S41" --id shot,h,k,l --value i_hat --in-domain \
-      --dataset mos025_pc_m0_default41 --methods laue_integrate,svae_bg_$est,t0_$est,p2_$est,b1_$est,geom_both_$est \
-      --out-dir docs/figures/sim/cmp --prefix mos025_pc_m0_default41_$est
-  done
+}
+sim_truth_set simtruth025 mos025 mos025_pc_m0_default
+sim_truth_set simtruth025b mos025_41 mos025_pc_m0_default41
+sim_truth_set simtruth005 mos005 mos005_pc_m0_default
+sim_truth_set simtruth050 mos050 mos050_pc_m0_default
+sim_truth_set simtruth050b mos050_41 mos050_pc_m0_default41
+# the median and sd of the relative deviation from truth per bin of truth intensity, one column per mosaic spread
+# (25x25 shoeboxes), and the same for 25x25 against 41x41 at 0.25 and 0.50
+if has simbias; then
+  MT=() ; for t in mos005:0.05 mos025:0.25 mos050:0.50; do f="$DATA/sim_truth_scores_${t%%:*}_pc.csv"; [ -f "$f" ] && MT+=("mosaic ${t#*:}°=$f"); done
+  BM=laue_integrate,svae_bg_rb,t0_rb,p2_rb,b1_rb,geom_both_rb
+  [ ${#MT[@]} -gt 0 ] && step simbias "${PY[@]}" scripts/figures/fig_sim_truth_scores.py --mosaic "${MT[@]}" --methods $BM --out sim_truth_bias_mosaic
+  [ ${#MT[@]} -gt 0 ] && step simbias "${PY[@]}" scripts/figures/fig_sim_truth_scores.py --mosaic "${MT[@]}" \
+    --methods laue_integrate,svae_bg_posterior,t0_posterior,p2_posterior,b1_posterior,geom_both_posterior --out sim_truth_bias_mosaic_posterior
+  WT=(); for t in mos025:0.25 mos050:0.50; do for w in "":25x25 _41:41x41; do f="$DATA/sim_truth_scores_${t%%:*}${w%%:*}_pc.csv"; [ -f "$f" ] && WT+=("${t#*:}°, ${w#*:}=$f"); done; done
+  [ ${#WT[@]} -gt 0 ] && step simbias "${PY[@]}" scripts/figures/fig_sim_truth_scores.py --mosaic "${WT[@]}" --methods $BM --out sim_truth_bias_window
 fi
 # careless.stats (every tool) and phenix's per-shell R-work / R-free, mos010 against mos025, careless seed 1:
 # per model with a line per mosaic spread (--facet method) and per mosaic spread with a line per model (--facet dataset)
@@ -269,6 +274,42 @@ if has simwindow && [ -f "$DATA/sim_downstream_mos025_41/downstream_careless_sta
       --method laue_integrate,svae_bg_rb,t0_rb,p2_rb,b1_rb,geom_both_rb \
       --dataset-label "mos025_pc_m0_default=25x25" --dataset-label "mos025_pc_m0_default41=41x41" \
       --out-dir docs/figures/sim/window --prefix sim_window
+  done
+fi
+# careless.stats and phenix R-work / R-free across every mosaic row on the averaged-checkpoint protocol, careless seed 1
+MOSROWS=(mos005_pc_m0_default="mosaic 0.05°" mos025_pc_m0_default="mosaic 0.25°" mos050_pc_m0_default="mosaic 0.50°")
+if has simmosaiccc && [ -f "$DATA/sim_downstream_mos005/downstream_careless_stats.csv" ]; then
+  CS=(); RS=(); LB=()
+  for r in "${MOSROWS[@]}"; do d=${r%%=*}; k=${d%%_pc*}; [ -f "$DATA/sim_downstream_$k/downstream_careless_stats.csv" ] || continue
+    CS+=("$DATA/sim_downstream_$k/downstream_careless_stats.csv"); RS+=("$DATA/sim_downstream_$k/downstream_refine_shells.csv"); LB+=(--dataset-label "$r"); done
+  # --facet overlay takes exactly two datasets; with three, --facet method draws a line per mosaic spread
+  for f in dataset method; do
+    step simmosaiccc "${PY[@]}" scripts/figures/fig_careless_stats.py --data "${CS[0]}" --extra-data "${CS[@]:1}" \
+      --refine-shells "${RS[@]}" --seed 1 --facet $f --tool cchalf,ccanom,ccpred,rsplit,isigi,completeness,phenix --correlation pearson \
+      --method laue_integrate,svae_bg_rb,t0_rb,p2_rb,b1_rb,geom_both_rb "${LB[@]}" \
+      --out-dir docs/figures/sim/mosaic --prefix sim_mosaic_all
+  done
+fi
+# mos050 on 25x25 against 41x41 shoeboxes, as simwindow does for mos025
+has simwindow050 && [ -f "$DATA/profile_fit_vs_truth_mos050_pc_m0_default41.csv" ] && step simwindow050 "${PY[@]}" scripts/figures/fig_sim_window_compare.py \
+  --window "25x25=mos050_pc_m0_default:sim_truth_scores_mos050_pc.csv:sim_crps_mos050_pc.csv" \
+  --window "41x41=mos050_pc_m0_default41:sim_truth_scores_mos050_41_pc.csv:sim_crps_mos050_41_pc.csv" --out sim_window_mos050
+if has simwindow050 && [ -f "$DATA/sim_truth_joined_mos050_41_pc.csv.gz" ]; then
+  for est in rb posterior; do
+    step simwindow050 "${PY[@]}" scripts/figures/fig_sim_truth_scatter.py --src "$DATA/sim_truth_joined_mos050_pc.csv.gz" \
+      --compare "$DATA/sim_truth_joined_mos050_41_pc.csv.gz" --labels "25x25,41x41" --psf-fraction 0 \
+      --methods laue_integrate,svae_bg_$est,t0_$est,p2_$est,b1_$est,geom_both_$est --tag mos050_window_$est
+  done
+fi
+if has simwindow050 && [ -f "$DATA/sim_downstream_mos050_41/downstream_careless_stats.csv" ]; then
+  for f in method dataset overlay; do
+    step simwindow050 "${PY[@]}" scripts/figures/fig_careless_stats.py --data "$DATA/sim_downstream_mos050/downstream_careless_stats.csv" \
+      --extra-data "$DATA/sim_downstream_mos050_41/downstream_careless_stats.csv" \
+      --refine-shells "$DATA/sim_downstream_mos050/downstream_refine_shells.csv" "$DATA/sim_downstream_mos050_41/downstream_refine_shells.csv" \
+      --seed 1 --facet $f --tool cchalf,ccanom,ccpred,rsplit,isigi,completeness,phenix --correlation pearson \
+      --method svae_bg_rb,t0_rb,p2_rb,b1_rb,geom_both_rb \
+      --dataset-label "mos050_pc_m0_default=25x25" --dataset-label "mos050_pc_m0_default41=41x41" \
+      --out-dir docs/figures/sim/window --prefix sim_window_mos050
   done
 fi
 has simprofile && ls "$DATA"/profile_truth_examples_*.npz >/dev/null 2>&1 && step simprofile "${PY[@]}" scripts/figures/fig_profile_truth_examples.py

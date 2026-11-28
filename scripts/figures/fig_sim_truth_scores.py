@@ -141,6 +141,61 @@ def by_d(src: Path) -> None:
 
 TAG = ""
 
+M_PANELS = (("median $(\\hat I - I_\\mathrm{true}) / I_\\mathrm{true}$", 0.0),
+            ("sd $(\\hat I - I_\\mathrm{true}) / I_\\mathrm{true}$", None))
+
+
+def mosaic(specs, methods, out) -> None:
+    """One column per dataset (LABEL=SCORES_CSV), shared axes: the median of
+    $\\hat I - I_\\mathrm{true}$ and its sd, each divided by the bin's median
+    $I_\\mathrm{true}$, against that median; bins with $I_\\mathrm{true} < 1$ left out. The bias axis is
+    linear within $\\pm 1$ and logarithmic beyond, so a faint-end excess does not flatten the rest."""
+    import arms
+
+    sets = []
+    for spec in specs:
+        label, path = spec.split("=", 1)
+        df = pl.read_csv(path, infer_schema_length=None).filter(
+            (pl.col("i_true_hi") != float("inf")) & (pl.col("i_true_lo") >= 1))
+        if methods:
+            df = df.filter(pl.col("method").is_in(methods))
+        sets.append((label, df.with_columns(
+            (pl.col("dev_median") / pl.col("i_true_median")).alias("p0"),
+            (pl.col("dev_sd") / pl.col("i_true_median")).alias("p1"))))
+    present = []
+    for _, df in sets:
+        present += [m for m in df["method"].unique(maintain_order=True).to_list() if m not in present]
+    order = methods or present
+    colour = colours(order)
+    ink = figstyle.roles()["ink"]
+    ref = figstyle.reference_style()
+    fig, axes = plt.subplots(2, len(sets), figsize=figstyle.figsize("full", aspect=0.55), layout="constrained",
+                             sharex=True, sharey="row", squeeze=False)
+    for j, (label, df) in enumerate(sets):
+        for method in [m for m in order if m in df["method"].to_list()]:
+            arch, est = split(method)
+            d = df.filter(pl.col("method") == method).sort("i_true_median")
+            for i in range(2):
+                axes[i][j].plot(d["i_true_median"].to_numpy(), d[f"p{i}"].to_numpy(), color=colour.get(arch, ink),
+                                ls=EST.get(est, ":"), lw=1.0, marker="o", ms=2, label=arms.label(method))
+        axes[0][j].set_title(label, fontsize=7)
+        for i, (_, r) in enumerate(M_PANELS):
+            if r is not None:
+                axes[i][j].axhline(r, **ref)
+            axes[i][j].set_xscale("log")
+        axes[0][j].set_yscale("symlog", linthresh=1.0)
+        axes[0][j].set_yticks([-1, -0.5, 0, 0.5, 1, 10], ["$-1$", "$-0.5$", "0", "0.5", "1", "10"])
+        axes[1][j].set_yscale("log")
+    fig.supxlabel("median $I_\\mathrm{true}$ of the bin (photons)", fontsize=7)
+    for i, (ylabel, _) in enumerate(M_PANELS):
+        axes[i][0].set_ylabel(ylabel, fontsize=6)
+    handles, labels = axes[0][0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="outside upper center", ncol=min(len(labels), 6), fontsize=5, frameon=False)
+    OUT.mkdir(parents=True, exist_ok=True)
+    for p in figstyle.save(fig, OUT / out):
+        print(p)
+    plt.close(fig)
+
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -149,9 +204,18 @@ def main() -> None:
                     help="score_against_truth.py --by-d-out table; draws the per-shell figures instead")
     ap.add_argument("--tag", default="",
                     help="appended to every output name, so a second set of methods does not replace the first")
+    ap.add_argument("--mosaic", nargs="+", default=None, metavar="LABEL=SCORES_CSV",
+                    help="one column per table (e.g. one per mosaic spread): median and sd of the relative deviation "
+                         "per bin of truth intensity, on shared axes; figure --out")
+    ap.add_argument("--methods", default="", help="--mosaic: comma-separated methods, in legend order")
+    ap.add_argument("--out", default="sim_truth_scores_mosaic", help="--mosaic: output name")
     a = ap.parse_args()
     global TAG
     TAG = f"_{a.tag}" if a.tag else ""
+    if a.mosaic:
+        figstyle.use()
+        mosaic(a.mosaic, [m for m in a.methods.split(",") if m], a.out + TAG)
+        return
     if a.by_d is not None:
         figstyle.use()
         OUT.mkdir(parents=True, exist_ok=True)
