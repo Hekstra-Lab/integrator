@@ -1081,6 +1081,54 @@ def table_sim_window() -> None:
           "laue.integrate's intensities) against the true intensity.")
 
 
+SIM_STAGES = (
+    ("truth_all", "simulated reflections"),
+    ("truth_ge10", r"simulated, $I_\mathrm{true} \geq 10$ ph"),
+    ("truth_ge100", r"simulated, $I_\mathrm{true} \geq 100$ ph"),
+    ("strong", "strong spots (find\\_spots)"),
+    ("indexed", "indexed (optimize\\_indexing)"),
+    ("refined", "refined (refine)"),
+    ("experiments", "images kept (refine)"),
+    ("predicted", "predicted (predict)"),
+    ("integrated", "integrated (integrate)"),
+    ("shoeboxes_25", r"shoeboxes, 25$\times$25"),
+    ("shoeboxes_41", r"shoeboxes, 41$\times$41"),
+)
+SIM_STAGE_LABELS = {"mos005": "0.05", "mos010": "0.10", "mos025": "0.25", "mos050": "0.50"}
+
+
+def table_sim_laue_stages() -> None:
+    """Reflections surviving each laue-dials stage per mosaic spread (laue_stage_counts.py)."""
+    import polars as pl
+
+    src = ROOT / "docs" / "figures" / "data" / "sim_laue_stage_counts.csv"
+    if not src.is_file():
+        return
+    d = pl.read_csv(src)
+    sets = [s for s in SIM_STAGE_LABELS if d.filter(dataset=s).height]
+    rows = []
+    for stage, label in SIM_STAGES:
+        row = {"stage": label}
+        for s in sets:
+            v = d.filter((pl.col("dataset") == s) & (pl.col("stage") == stage))["n"]
+            row[s] = int(v[0]) if len(v) and v[0] is not None else None
+            ref = d.filter((pl.col("dataset") == s) & (pl.col("stage") == "truth_ge10"))["n"]
+            row[f"{s}_frac"] = (row[s] / float(ref[0]) if row[s] is not None and stage not in
+                                ("truth_all", "experiments") and len(ref) else None)
+        rows.append(row)
+    t = Table(rows)
+    t.column("stage", label="stage")
+    for s in sets:
+        t.column(s, label=f"mosaic {SIM_STAGE_LABELS[s]}$^\\circ$", fmt="{:,}")
+        t.column(f"{s}_frac", label=r"/ sim. $\geq 10$", fmt="{:.2f}")
+    write(t, "sim_laue_stages",
+          "Reflections surviving each laue-dials stage (laue-dials main d57f96e; mos005, mos025 and mos050 "
+          "with optimize\\_indexing n\\_macrocycles=0, mos010 with the default 3) on the four datsimx rows, which "
+          "differ only in mosaic spread. The fraction column divides by the simulated reflections with "
+          "$I_\\mathrm{true}\\geq 10$ photons. The shoeboxes are cut from the integrated list, so every method "
+          "integrates the predicted reflections and no others.")
+
+
 def main() -> int:
     if "--only" in sys.argv and sys.argv[sys.argv.index("--only") + 1] == "sim":
         # the simulation tables read docs/figures/data/sim_downstream and need no DIALS logs
@@ -1089,6 +1137,7 @@ def main() -> int:
         table_sim_downstream()
         table_sim_mosaic()
         table_sim_window()
+        table_sim_laue_stages()
         return 0
     if not LOGS.is_dir():
         raise SystemExit(
@@ -1107,6 +1156,7 @@ def main() -> int:
     table_sim_downstream()
     table_sim_mosaic()
     table_sim_window()
+    table_sim_laue_stages()
     write_long_format()
     write_statistic_labels()
     return 0

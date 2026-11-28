@@ -43,6 +43,7 @@ mkdir -p "$DEST"
 # hewl1118_downstream        collect_downstream.py over the hewl_1118 arms,
 #                            full range and capped at 1.81 A
 # shoebox_mosaic             the same reflections in mos010 and mos025
+# laue_stages                reflections surviving each laue-dials stage, four mosaic rows
 # hewl1118_profiles          profile_maps_hewl1118.npz and laue-dials' profiles
 #                            reduced to its reflections and regions
 want=("$@")
@@ -356,6 +357,15 @@ if has shoebox_mosaic; then
     --truth mos010_pc_default_mosaic=$M/mos010/truth/shots_1_rank0.h5 \
     --truth mos025_pc_m0_default_mosaic=$M/mos025/truth/shots_1_rank0.h5" || exit 1
   scp -q "cannon:$M/mos025/figdata/shoebox_examples_mosaic.npz" "$DEST/" && echo "shoebox_mosaic <- $M/mos025/figdata"
+fi
+
+if has laue_stages; then
+  # reflections surviving each laue-dials stage on the four datsimx mosaic rows (laue_stage_counts.py)
+  PF=$S/sims/paper_full
+  ssh cannon "git -C $REPO pull -q && cd $REPO && $P scripts/sim_truth/laue_stage_counts.py --out $PF/figdata/sim_laue_stage_counts.csv \
+    mos005=$PF/mos005:laue_dials_pc_m0:pc_m0_default mos010=$PF/mos010:laue_dials_pc:pc_default \
+    mos025=$PF/mos025:laue_dials_pc_m0:pc_m0_default mos050=$PF/mos050:laue_dials_pc_m0:pc_m0_default" > /dev/null || exit 1
+  scp -q "cannon:$PF/figdata/sim_laue_stage_counts.csv" "$DEST/" && echo "laue_stages <- $PF/figdata"
 fi
 
 if has hewl1118_downstream; then
